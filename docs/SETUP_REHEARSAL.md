@@ -26,6 +26,9 @@ The rehearsal verifies:
 13. `loom shadow compare` now compares reference-adapter event decisions
     against Loom's captured shadow events.
 14. `loom shadow report` surfaces the latest shadow capture or comparison report honestly.
+15. The compare/report surfaces now include hook-level divergence details so
+    each mismatch can be reviewed without inflating the result into a runtime
+    parity claim.
 
 ## What the rehearsal does not prove
 
@@ -71,4 +74,7 @@ That fresh-clone run passed and confirmed:
 The current rehearsal now also exercises `loom shadow compare` against a
 reference event log generated from the kernel-side OpenClaw-compatible adapter.
 That makes the divergence surface more useful without turning it into a live
-runtime parity claim.
+runtime parity claim. The current rehearsal still exposes a single honest
+remaining mismatch: `audit_emission` is `not_exercised` on the reference side
+and `kernel_preview_written` on the Loom side, which is now surfaced as a
+hook-level divergence instead of only as an aggregate count.

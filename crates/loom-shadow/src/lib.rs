@@ -41,7 +41,22 @@ pub struct ComparisonSummary {
     pub matches: usize,
     pub divergences: usize,
     pub divergence_rate: f64,
+    pub hook_results: Vec<HookComparison>,
     pub note: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HookComparison {
+    pub pair_index: usize,
+    pub hook_name: String,
+    pub input_hash: String,
+    pub primary_decision: String,
+    pub shadow_decision: String,
+    pub matched: bool,
+    pub primary_agent_id: String,
+    pub shadow_agent_id: String,
+    pub primary_org_id: String,
+    pub shadow_org_id: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -307,20 +322,41 @@ pub fn compare_logs(
     let pairs_compared = primary_events.len().min(shadow_events.len());
     let mut matches = 0usize;
     let mut divergences = 0usize;
+    let mut hook_results = Vec::new();
 
     for idx in 0..pairs_compared {
         let left = &primary_events[idx];
         let right = &shadow_events[idx];
-        if left.hook_name == right.hook_name
+        let matched = left.hook_name == right.hook_name
             && left.input_hash == right.input_hash
             && left.decision == right.decision
             && left.agent_id == right.agent_id
-            && left.org_id == right.org_id
-        {
+            && left.org_id == right.org_id;
+        if matched {
             matches += 1;
         } else {
             divergences += 1;
         }
+        hook_results.push(HookComparison {
+            pair_index: idx,
+            hook_name: if left.hook_name == right.hook_name {
+                left.hook_name.clone()
+            } else {
+                format!("{} -> {}", left.hook_name, right.hook_name)
+            },
+            input_hash: if left.input_hash == right.input_hash {
+                left.input_hash.clone()
+            } else {
+                format!("{} -> {}", left.input_hash, right.input_hash)
+            },
+            primary_decision: left.decision.clone(),
+            shadow_decision: right.decision.clone(),
+            matched,
+            primary_agent_id: left.agent_id.clone(),
+            shadow_agent_id: right.agent_id.clone(),
+            primary_org_id: left.org_id.clone(),
+            shadow_org_id: right.org_id.clone(),
+        });
     }
 
     divergences += primary_events.len().max(shadow_events.len()) - pairs_compared;
@@ -339,6 +375,7 @@ pub fn compare_logs(
         matches,
         divergences,
         divergence_rate,
+        hook_results,
         note: "file-level comparison only; not proof of runtime parity".to_string(),
     };
 
@@ -414,8 +451,31 @@ pub fn render_preflight_json(capture: &PreflightCapture) -> String {
 }
 
 pub fn render_compare_human(summary: &ComparisonSummary) -> String {
+    let divergence_lines = {
+        let rendered = summary
+            .hook_results
+            .iter()
+            .filter(|item| !item.matched)
+            .map(|item| {
+                format!(
+                    "  [{}] {} | primary={} | shadow={} | input={}\n",
+                    item.pair_index,
+                    item.hook_name,
+                    item.primary_decision,
+                    item.shadow_decision,
+                    item.input_hash
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("");
+        if rendered.is_empty() {
+            "  (none)\n".to_string()
+        } else {
+            rendered
+        }
+    };
     format!(
-        "Shadow comparison\n=================\nprimary_log:     {}\nshadow_log:      {}\nprimary_events:  {}\nshadow_events:   {}\npairs_compared:  {}\nmatches:         {}\ndivergences:     {}\ndivergence_rate: {:.4}\nnote:            {}\n",
+        "Shadow comparison\n=================\nprimary_log:     {}\nshadow_log:      {}\nprimary_events:  {}\nshadow_events:   {}\npairs_compared:  {}\nmatches:         {}\ndivergences:     {}\ndivergence_rate: {:.4}\n\nDivergence details\n------------------\n{}note:            {}\n",
         summary.primary_log.display(),
         summary.shadow_log.display(),
         summary.primary_events,
@@ -424,13 +484,34 @@ pub fn render_compare_human(summary: &ComparisonSummary) -> String {
         summary.matches,
         summary.divergences,
         summary.divergence_rate,
+        divergence_lines,
         summary.note,
     )
 }
 
 pub fn render_compare_json(summary: &ComparisonSummary) -> String {
+    let hook_results = summary
+        .hook_results
+        .iter()
+        .map(|item| {
+            format!(
+                "    {{\"pair_index\":{},\"hook_name\":{},\"input_hash\":{},\"primary_decision\":{},\"shadow_decision\":{},\"matched\":{},\"primary_agent_id\":{},\"shadow_agent_id\":{},\"primary_org_id\":{},\"shadow_org_id\":{}}}",
+                item.pair_index,
+                json_string(&item.hook_name),
+                json_string(&item.input_hash),
+                json_string(&item.primary_decision),
+                json_string(&item.shadow_decision),
+                if item.matched { "true" } else { "false" },
+                json_string(&item.primary_agent_id),
+                json_string(&item.shadow_agent_id),
+                json_string(&item.primary_org_id),
+                json_string(&item.shadow_org_id),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",\n");
     format!(
-        "{{\n  \"status\": \"comparison_complete\",\n  \"primary_log\": {},\n  \"shadow_log\": {},\n  \"primary_events\": {},\n  \"shadow_events\": {},\n  \"pairs_compared\": {},\n  \"matches\": {},\n  \"divergences\": {},\n  \"divergence_rate\": {:.6},\n  \"note\": {}\n}}\n",
+        "{{\n  \"status\": \"comparison_complete\",\n  \"primary_log\": {},\n  \"shadow_log\": {},\n  \"primary_events\": {},\n  \"shadow_events\": {},\n  \"pairs_compared\": {},\n  \"matches\": {},\n  \"divergences\": {},\n  \"divergence_rate\": {:.6},\n  \"hook_results\": [\n{}\n  ],\n  \"note\": {}\n}}\n",
         json_string(&summary.primary_log.display().to_string()),
         json_string(&summary.shadow_log.display().to_string()),
         summary.primary_events,
@@ -439,6 +520,7 @@ pub fn render_compare_json(summary: &ComparisonSummary) -> String {
         summary.matches,
         summary.divergences,
         summary.divergence_rate,
+        hook_results,
         json_string(&summary.note),
     )
 }
@@ -675,8 +757,43 @@ mod tests {
         let summary = compare_logs(Some(&root), &log_a, &log_b).expect("compare");
         assert_eq!(summary.matches, 1);
         assert_eq!(summary.divergences, 0);
+        assert_eq!(summary.hook_results.len(), 1);
+        assert!(summary.hook_results[0].matched);
         let report = render_shadow_report(&root).expect("render report");
         assert!(report.contains("comparison_complete"));
+        assert!(report.contains("\"hook_results\""));
+    }
+
+    #[test]
+    fn compare_report_surfaces_hook_level_divergence_details() {
+        let root = temp_path("loom-shadow-divergence");
+        let shadow_dir = root.join(".loom/shadow");
+        fs::create_dir_all(&shadow_dir).expect("shadow dir");
+        let primary = shadow_dir.join("primary.jsonl");
+        let shadow = shadow_dir.join("shadow.jsonl");
+        fs::write(
+            &primary,
+            "{\"hook_name\":\"audit_emission\",\"input_hash\":\"abc\",\"decision\":\"not_exercised\",\"agent_id\":\"agent_atlas\",\"org_id\":\"org_demo\"}\n",
+        )
+        .expect("write primary");
+        fs::write(
+            &shadow,
+            "{\"hook_name\":\"audit_emission\",\"input_hash\":\"abc\",\"decision\":\"kernel_preview_written\",\"agent_id\":\"agent_atlas\",\"org_id\":\"org_demo\"}\n",
+        )
+        .expect("write shadow");
+
+        let summary = compare_logs(Some(&root), &primary, &shadow).expect("compare");
+        assert_eq!(summary.matches, 0);
+        assert_eq!(summary.divergences, 1);
+        assert_eq!(summary.hook_results.len(), 1);
+        assert_eq!(summary.hook_results[0].hook_name, "audit_emission");
+        assert!(!summary.hook_results[0].matched);
+        let human = render_compare_human(&summary);
+        assert!(human.contains("Divergence details"));
+        assert!(human.contains("[0] audit_emission | primary=not_exercised | shadow=kernel_preview_written | input=abc"));
+        let json = render_compare_json(&summary);
+        assert!(json.contains("\"hook_results\""));
+        assert!(json.contains("\"shadow_decision\":\"kernel_preview_written\""));
     }
 
     fn temp_path(prefix: &str) -> PathBuf {

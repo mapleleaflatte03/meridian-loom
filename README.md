@@ -17,7 +17,7 @@ Experimental public scaffold for the planned Meridian-native runtime.
 - A Rust workspace with:
   - `loom-core` — config/state helpers, identity resolution, contract inspection, envelope build
   - `loom-cli` — `loom` binary
-  - `loom-shadow` — shadow event capture, comparison, and report surfaces
+- `loom-shadow` — shadow event capture, comparison, and report surfaces
 - Working commands:
   - `loom init`
   - `loom doctor`
@@ -34,6 +34,8 @@ Experimental public scaffold for the planned Meridian-native runtime.
 - A local setup rehearsal script:
   - `scripts/rehearse_setup.sh` (auto-discovers a governed agent from the
     current kernel registry before running the experimental preflight flow)
+  - the compare/report surfaces now emit per-hook divergence details so the
+    remaining gap is inspectable without pretending runtime parity
 
 ## What does not exist yet
 
@@ -105,8 +107,10 @@ surfaces. Two of those remain preview-only surfaces:
 
 The scaffold also captures experimental paths for `agent_identity`,
 `action_envelope`, `cost_attribution`, and shadow divergence reporting against
-reference adapter events. It is still not enough to claim Loom exists as a
-governed execution runtime.
+reference adapter events. `loom shadow compare` and `loom shadow report` now
+surface `hook_results` / divergence details per hook so the current mismatch is
+explicit instead of buried in a single aggregate rate. It is still not enough
+to claim Loom exists as a governed execution runtime.
 
 ## Publication readiness
 
