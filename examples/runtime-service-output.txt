@@ -1,0 +1,454 @@
+== Meridian Loom runtime service rehearsal ==
+root:   /tmp/loom-runtime-service
+kernel: /tmp/loom-runtime-service-kernel.oC6PAg
+agent:  agent_allow
+org:    org_demo
+Meridian Loom // INIT
+====================
+root:        /tmp/loom-runtime-service
+mode:        embedded
+org_id:      org_demo
+state_dir:   .loom
+kernel_path: /tmp/loom-runtime-service-kernel.oC6PAg
+status:      initialized experimental scaffold
+next_step:   loom doctor --root /tmp/loom-runtime-service --format human
+Meridian Loom // RUNTIME SERVICE
+=================================
+phase:       experimental local runtime service
+boundary:    service-owned ingress is locally real; live OpenClaw replacement is not
+
+Current state
+=============
+root:                /tmp/loom-runtime-service
+service_dir:         /tmp/loom-runtime-service/.loom/runtime/service
+socket_path:         /tmp/loom-runtime-service/.loom/runtime/service/runtime.sock
+session_id:          service-1774292834
+pid:                 24
+running:             true
+status:              running
+booted_at:           1774292834
+updated_at:          1774292834
+stopped_at:          (none)
+poll_seconds:        1
+max_jobs:            1
+max_iterations:      20
+iterations_completed:1
+submitted:           0
+processed:           0
+allowed:             0
+denied:              0
+failed:              0
+pending_jobs:        0
+processed_jobs:      0
+failed_jobs:         0
+last_request_id:     (none)
+last_job_id:         (none)
+runtime_state:       /tmp/loom-runtime-service/.loom/runtime/service/runtime_state.json
+stdout_log:          /tmp/loom-runtime-service/.loom/runtime/service/service.log
+event_log:           /tmp/loom-runtime-service/.loom/runtime/service/service_events.jsonl
+ingress_stream:      /tmp/loom-runtime-service/.loom/runtime/ingress/stream.jsonl
+stop_request:        /tmp/loom-runtime-service/.loom/runtime/service/stop.requested
+note:                service iteration 1 complete; submitted=0 processed=0 allowed=0 denied=0 failed=0
+
+Next
+====
+1. loom service submit --root /tmp/loom-runtime-service --agent-id agent_atlas --action-type research --resource web_search --estimated-cost-usd 0.05
+2. loom service status --root /tmp/loom-runtime-service
+3. loom parity report --root /tmp/loom-runtime-service
+4. loom job inspect --job-id <job_id> --root /tmp/loom-runtime-service
+Meridian Loom // ACTION ENVELOPE
+=================================
+agent_id:            agent_allow
+agent_name:          Allow Path
+org_id:              org_demo
+runtime_id:          local_kernel
+runtime_label:       Local Kernel Runtime
+action_type:         research
+resource:            web_search
+estimated_cost_usd:  0.0500
+run_id:              (none)
+session_id:          (none)
+source:              loom_experimental_preflight
+input_hash:          563bb9b3929c696e
+
+
+Meridian Loom // SERVICE SUBMIT
+================================
+phase:       experimental runtime ingress
+boundary:    service-owned local ingress is real; live transport replacement is not
+
+Current state
+=============
+request_id:          ingress::org_demo::agent_allow::research::563bb9b3929c696e::1774292834
+accepted_at:         1774292835
+socket_path:         /tmp/loom-runtime-service/.loom/runtime/service/runtime.sock
+job_id:              563bb9b3929c696e
+policy_class:        standard
+queue_path:          /tmp/loom-runtime-service/.loom/runtime/queue/pending/standard/1774292835-agent_allow-563bb9b3.json
+ingress_request:     /tmp/loom-runtime-service/.loom/runtime/ingress/requests/ingress--org_demo--agent_allow--research--563bb9b3929c696e--1774292834.json
+ingress_receipt:     /tmp/loom-runtime-service/.loom/runtime/ingress/receipts/ingress--org_demo--agent_allow--research--563bb9b3929c696e--1774292834.json
+note:                service ingress accepted and queued action for local runtime supervision via file-backed transport
+
+Next
+====
+1. loom service status --root <path>
+2. loom job inspect --job-id 563bb9b3929c696e --root <path>
+3. loom parity report --root <path>
+Meridian Loom // RUNTIME SERVICE
+=================================
+phase:       experimental local runtime service
+boundary:    service-owned ingress is locally real; live OpenClaw replacement is not
+
+Current state
+=============
+root:                /tmp/loom-runtime-service
+service_dir:         /tmp/loom-runtime-service/.loom/runtime/service
+socket_path:         /tmp/loom-runtime-service/.loom/runtime/service/runtime.sock
+session_id:          service-1774292834
+pid:                 24
+running:             true
+status:              running
+booted_at:           1774292834
+updated_at:          1774292836
+stopped_at:          (none)
+poll_seconds:        1
+max_jobs:            1
+max_iterations:      20
+iterations_completed:3
+submitted:           1
+processed:           1
+allowed:             1
+denied:              0
+failed:              0
+pending_jobs:        0
+processed_jobs:      1
+failed_jobs:         0
+last_request_id:     ingress::org_demo::agent_allow::research::563bb9b3929c696e::1774292834
+last_job_id:         563bb9b3929c696e
+runtime_state:       /tmp/loom-runtime-service/.loom/runtime/service/runtime_state.json
+stdout_log:          /tmp/loom-runtime-service/.loom/runtime/service/service.log
+event_log:           /tmp/loom-runtime-service/.loom/runtime/service/service_events.jsonl
+ingress_stream:      /tmp/loom-runtime-service/.loom/runtime/ingress/stream.jsonl
+stop_request:        /tmp/loom-runtime-service/.loom/runtime/service/stop.requested
+note:                service iteration 3 complete; submitted=1 processed=1 allowed=1 denied=0 failed=0
+
+Next
+====
+1. loom service submit --root /tmp/loom-runtime-service --agent-id agent_atlas --action-type research --resource web_search --estimated-cost-usd 0.05
+2. loom service status --root /tmp/loom-runtime-service
+3. loom parity report --root /tmp/loom-runtime-service
+4. loom job inspect --job-id 563bb9b3929c696e --root /tmp/loom-runtime-service
+Meridian Loom // JOB LIST
+==========================
+phase:       experimental runtime-owned job ledger
+boundary:    local job state is real; hosted scheduler remains future work
+
+Current state
+=============
+root:                /tmp/loom-runtime-service
+status_filter:       (none)
+jobs_found:          1
+
+Entries
+-------
+  563bb9b3929c696e | status=completed | stage=local_queue_supervisor | bucket=processed:standard | agent=agent_allow | action=research::web_search | updated_at=1774292835
+
+Next
+====
+1. loom job inspect --job-id <input_hash> --root /tmp/loom-runtime-service
+2. loom supervisor daemon status --root /tmp/loom-runtime-service
+3. loom parity report --root /tmp/loom-runtime-service
+Meridian Loom // PARITY REPORT
+===============================
+phase:       runtime-side parity surface
+boundary:    action-level parity now compares Loom runtime events to the OpenClaw-compatible reference adapter; live host probe remains supplementary
+
+Parity latest
+=============
+source: /tmp/loom-runtime-service/.loom/parity/latest.json
+
+{
+  "status": "parity_report_captured",
+  "execution_path": "/tmp/loom-runtime-service/.loom/runtime/last_execution.json",
+  "runtime_event_path": "/tmp/loom-runtime-service/.loom/runtime/events/563bb9b3929c696e.json",
+  "runtime_event_stream_path": "/tmp/loom-runtime-service/.loom/runtime/events/stream.jsonl",
+  "decision_path": "/tmp/loom-runtime-service/.loom/shadow/decision.json",
+  "audit_log_path": "/tmp/loom-runtime-service-kernel.oC6PAg/kernel/runtime_audit/loom_runtime_events.jsonl",
+  "parity_stream_path": "/tmp/loom-runtime-service/.loom/parity/stream.jsonl",
+  "comparison_latest_path": ".loom/parity/comparison_latest.json",
+  "comparison_stream_path": ".loom/parity/comparison_stream.jsonl",
+  "openclaw_live_probe_path": null,
+  "openclaw_live_probe_stream_path": "/tmp/loom-runtime-service/.loom/parity/openclaw_live_stream.jsonl",
+  "reference_decision": "allow",
+  "reference_stage": "ok",
+  "overall_decision": "allow",
+  "effective_stage": "ok",
+  "openclaw_live_probe_status": "not_available",
+  "openclaw_live_probe_note": "live OpenClaw proof script not found at /tmp/loom-runtime-service-kernel.oC6PAg/kernel/missing_openclaw_runtime_proof.py",
+  "parity_status": "match",
+  "parity_reason": "reference and loom agreed on allow at stage ok",
+  "note": "runtime-side parity stream now captures Loom execution plus a per-action OpenClaw live probe artifact when available; hosted per-action parity remains future work"
+}
+
+Parity stream
+=============
+source: /tmp/loom-runtime-service/.loom/parity/stream.jsonl
+
+{"timestamp":"1774292835","source":"openclaw_reference_stream","phase":"reference_gate","hook_name":"ok","decision":"allow","stage":"ok","agent_id":"agent_allow","org_id":"org_demo","input_hash":"563bb9b3929c696e","reason":"ok"}
+{"timestamp":"1774292835","source":"loom_runtime_stream","phase":"worker_supervisor","hook_name":"ok","decision":"allow","stage":"ok","agent_id":"agent_allow","org_id":"org_demo","input_hash":"563bb9b3929c696e","reason":"ok","worker_status":"completed","worker_kind":"python_reference_worker","worker_result_path":"/tmp/loom-runtime-service/.loom/runtime/jobs/563bb9b3929c696e/result.json"}
+{"timestamp":"1774292835","source":"loom_runtime_stream","phase":"audit_emission","hook_name":"audit_emission","decision":"kernel_cli_runtime_event_written","stage":"runtime_audit","agent_id":"agent_allow","org_id":"org_demo","input_hash":"563bb9b3929c696e","reason":"worker_executed","audit_log":"/tmp/loom-runtime-service-kernel.oC6PAg/kernel/runtime_audit/loom_runtime_events.jsonl"}
+{"timestamp":"1774292835","source":"openclaw_live_probe","phase":"live_runtime_probe","hook_name":"runtime_health","decision":"not_available","stage":"live_single_host_openclaw","agent_id":"agent_allow","org_id":"org_demo","input_hash":"563bb9b3929c696e","reason":"live OpenClaw proof script not found at /tmp/loom-runtime-service-kernel.oC6PAg/kernel/missing_openclaw_runtime_proof.py","probe_path":"","probe_stream_path":"/tmp/loom-runtime-service/.loom/parity/openclaw_live_stream.jsonl"}
+
+Reference action latest
+=======================
+source: /tmp/loom-runtime-service/.loom/parity/reference_latest.json
+
+{
+  "status": "reference_action_captured",
+  "source": "openclaw_compatible_reference_adapter",
+  "input_hash": "563bb9b3929c696e",
+  "agent_id": "agent_allow",
+  "org_id": "org_demo",
+  "action_type": "research",
+  "resource": "web_search",
+  "estimated_cost_usd": 0.050000,
+  "reference_allowed": true,
+  "reference_decision": "allow",
+  "reference_stage": "ok",
+  "reference_reason": "ok",
+  "effective_source": "reference_gate",
+  "effective_stage": "ok",
+  "overall_decision": "allow",
+  "note": "action-level OpenClaw-compatible reference snapshot for parity comparison"
+}
+
+Reference action stream
+=======================
+source: /tmp/loom-runtime-service/.loom/parity/reference_stream.jsonl
+
+{"timestamp":"1774292835","input_hash":"563bb9b3929c696e","status":"reference_action_captured","reference_decision":"allow","reference_stage":"ok","action_type":"research","resource":"web_search","artifact_path":"/tmp/loom-runtime-service/.loom/parity/reference/563bb9b3929c696e.json"}
+
+Action parity latest
+====================
+source: /tmp/loom-runtime-service/.loom/parity/comparison_latest.json
+
+{
+  "status": "action_parity_compared",
+  "comparison_id": "parity::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed::match",
+  "event_schema_version": "loom.runtime.v1",
+  "input_hash": "563bb9b3929c696e",
+  "job_id": "job::org_demo::agent_allow::research::563bb9b3929c696e",
+  "execution_id": "execution::job__org_demo__agent_allow__research__563bb9b3929c696e::ok::worker_executed",
+  "decision_id": "decision::job__org_demo__agent_allow__research__563bb9b3929c696e::ok::allow",
+  "parity_id": "parity::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed::match",
+  "audit_id": "audit::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed::research",
+  "runtime_event_id": "loom.runtime.v1::org_demo::agent_allow::research::web_search::worker_executed::ok::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed",
+  "action_type": "research",
+  "resource": "web_search",
+  "reference_decision": "allow",
+  "reference_stage": "ok",
+  "runtime_decision": "allow",
+  "runtime_stage": "ok",
+  "runtime_outcome": "worker_executed",
+  "comparison_status": "match",
+  "openclaw_live_probe_status": "not_available",
+  "execution_path": "/tmp/loom-runtime-service/.loom/runtime/last_execution.json",
+  "runtime_event_path": "/tmp/loom-runtime-service/.loom/runtime/events/563bb9b3929c696e.json",
+  "audit_log_path": "/tmp/loom-runtime-service-kernel.oC6PAg/kernel/runtime_audit/loom_runtime_events.jsonl",
+  "note": "action-level parity comparison between Loom runtime execution and the OpenClaw-compatible reference adapter; live probe remains supplementary"
+}
+
+Action parity stream
+====================
+source: /tmp/loom-runtime-service/.loom/parity/comparison_stream.jsonl
+
+{"timestamp":"1774292835","comparison_id":"parity::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed::match","input_hash":"563bb9b3929c696e","job_id":"job::org_demo::agent_allow::research::563bb9b3929c696e","execution_id":"execution::job__org_demo__agent_allow__research__563bb9b3929c696e::ok::worker_executed","runtime_event_id":"loom.runtime.v1::org_demo::agent_allow::research::web_search::worker_executed::ok::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed","reference_decision":"allow","runtime_decision":"allow","comparison_status":"match","openclaw_live_probe_status":"not_available","artifact_path":"/tmp/loom-runtime-service/.loom/parity/comparisons/563bb9b3929c696e.json"}
+
+Action parity summary
+=====================
+status:      match
+expected:    allow via ok
+actual:      allow via ok
+action_type: research
+resource:    web_search
+live_probe:  not_captured
+note:        action-level parity is match against the OpenClaw-compatible reference adapter; live OpenClaw proof remains supplementary
+
+
+Runtime event latest
+====================
+source: /tmp/loom-runtime-service/.loom/runtime/events/latest.json
+
+{
+  "schema_version": "loom.runtime.v1",
+  "event_id": "loom.runtime.v1::org_demo::agent_allow::research::web_search::worker_executed::ok::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed",
+  "truth_class": "experimental_runtime_local",
+  "org_id": "org_demo",
+  "agent_id": "agent_allow",
+  "action_type": "research",
+  "resource": "web_search",
+  "outcome": "worker_executed",
+  "stage": "ok",
+  "source": "loom_runtime_execute",
+  "subject_kind": "action_envelope",
+  "subject_id": "envelope::org_demo::agent_allow::research::563bb9b3929c696e",
+  "job_id": "job::org_demo::agent_allow::research::563bb9b3929c696e",
+  "execution_id": "execution::job__org_demo__agent_allow__research__563bb9b3929c696e::ok::worker_executed",
+  "decision_id": "decision::job__org_demo__agent_allow__research__563bb9b3929c696e::ok::allow",
+  "parity_id": "parity::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed::match",
+  "audit_id": "audit::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed::research",
+  "note": "runtime execution receipt with canonical proof identifiers",
+  "artifact_refs": [
+    {"artifact_id":"artifact::execution_receipt::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed::runtime_execution","artifact_kind":"execution_receipt","label":"runtime_execution","path":"/tmp/loom-runtime-service/.loom/runtime/last_execution.json","source_event_id":"loom.runtime.v1::org_demo::agent_allow::research::web_search::worker_executed::ok::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed","job_id":"job::org_demo::agent_allow::research::563bb9b3929c696e","execution_id":"execution::job__org_demo__agent_allow__research__563bb9b3929c696e::ok::worker_executed","content_sha256":"unverified_local","note":"runtime execution receipt"},
+    {"artifact_id":"artifact::decision_receipt::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed::runtime_decision","artifact_kind":"decision_receipt","label":"runtime_decision","path":"/tmp/loom-runtime-service/.loom/shadow/decision.json","source_event_id":"loom.runtime.v1::org_demo::agent_allow::research::web_search::worker_executed::ok::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed","job_id":"job::org_demo::agent_allow::research::563bb9b3929c696e","execution_id":"execution::job__org_demo__agent_allow__research__563bb9b3929c696e::ok::worker_executed","content_sha256":"unverified_local","note":"pre-execution decision artifact"},
+    {"artifact_id":"artifact::audit_log::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed::runtime_audit","artifact_kind":"audit_log","label":"runtime_audit","path":"/tmp/loom-runtime-service-kernel.oC6PAg/kernel/runtime_audit/loom_runtime_events.jsonl","source_event_id":"loom.runtime.v1::org_demo::agent_allow::research::web_search::worker_executed::ok::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed","job_id":"job::org_demo::agent_allow::research::563bb9b3929c696e","execution_id":"execution::job__org_demo__agent_allow__research__563bb9b3929c696e::ok::worker_executed","content_sha256":"unverified_local","note":"kernel-owned runtime audit status=kernel_cli_runtime_event_written"},
+    {"artifact_id":"artifact::parity_stream::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed::runtime_parity_stream","artifact_kind":"parity_stream","label":"runtime_parity_stream","path":"/tmp/loom-runtime-service/.loom/parity/stream.jsonl","source_event_id":"loom.runtime.v1::org_demo::agent_allow::research::web_search::worker_executed::ok::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed","job_id":"job::org_demo::agent_allow::research::563bb9b3929c696e","execution_id":"execution::job__org_demo__agent_allow__research__563bb9b3929c696e::ok::worker_executed","content_sha256":"unverified_local","note":"parity_status=match"},
+    {"artifact_id":"artifact::parity_report::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed::runtime_parity_report","artifact_kind":"parity_report","label":"runtime_parity_report","path":"/tmp/loom-runtime-service/.loom/parity/latest.json","source_event_id":"loom.runtime.v1::org_demo::agent_allow::research::web_search::worker_executed::ok::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed","job_id":"job::org_demo::agent_allow::research::563bb9b3929c696e","execution_id":"execution::job__org_demo__agent_allow__research__563bb9b3929c696e::ok::worker_executed","content_sha256":"unverified_local","note":"reference and loom agreed on allow at stage ok"},
+    {"artifact_id":"artifact::runtime_event::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed::runtime_event","artifact_kind":"runtime_event","label":"runtime_event","path":"/tmp/loom-runtime-service/.loom/runtime/events/563bb9b3929c696e.json","source_event_id":"loom.runtime.v1::org_demo::agent_allow::research::web_search::worker_executed::ok::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed","job_id":"job::org_demo::agent_allow::research::563bb9b3929c696e","execution_id":"execution::job__org_demo__agent_allow__research__563bb9b3929c696e::ok::worker_executed","content_sha256":"unverified_local","note":"canonical runtime event receipt"},
+    {"artifact_id":"artifact::runtime_event_stream::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed::runtime_event_stream","artifact_kind":"runtime_event_stream","label":"runtime_event_stream","path":"/tmp/loom-runtime-service/.loom/runtime/events/stream.jsonl","source_event_id":"loom.runtime.v1::org_demo::agent_allow::research::web_search::worker_executed::ok::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed","job_id":"job::org_demo::agent_allow::research::563bb9b3929c696e","execution_id":"execution::job__org_demo__agent_allow__research__563bb9b3929c696e::ok::worker_executed","content_sha256":"unverified_local","note":"runtime event stream entry appended"},
+    {"artifact_id":"artifact::worker_request::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed::worker_request","artifact_kind":"worker_request","label":"worker_request","path":"/tmp/loom-runtime-service/.loom/runtime/jobs/563bb9b3929c696e/request.json","source_event_id":"loom.runtime.v1::org_demo::agent_allow::research::web_search::worker_executed::ok::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed","job_id":"job::org_demo::agent_allow::research::563bb9b3929c696e","execution_id":"execution::job__org_demo__agent_allow__research__563bb9b3929c696e::ok::worker_executed","content_sha256":"unverified_local","note":"worker dispatch envelope"},
+    {"artifact_id":"artifact::worker_result::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed::worker_result","artifact_kind":"worker_result","label":"worker_result","path":"/tmp/loom-runtime-service/.loom/runtime/jobs/563bb9b3929c696e/result.json","source_event_id":"loom.runtime.v1::org_demo::agent_allow::research::web_search::worker_executed::ok::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed","job_id":"job::org_demo::agent_allow::research::563bb9b3929c696e","execution_id":"execution::job__org_demo__agent_allow__research__563bb9b3929c696e::ok::worker_executed","content_sha256":"unverified_local","note":"worker_status=completed"},
+    {"artifact_id":"artifact::worker_log::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed::worker_log","artifact_kind":"worker_log","label":"worker_log","path":"/tmp/loom-runtime-service/.loom/runtime/jobs/563bb9b3929c696e/worker.log","source_event_id":"loom.runtime.v1::org_demo::agent_allow::research::web_search::worker_executed::ok::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed","job_id":"job::org_demo::agent_allow::research::563bb9b3929c696e","execution_id":"execution::job__org_demo__agent_allow__research__563bb9b3929c696e::ok::worker_executed","content_sha256":"unverified_local","note":"experimental supervisor dispatched /tmp/loom-runtime-service/workers/python/loom_runtime_worker.py"},
+    {"artifact_id":"artifact::openclaw_live_probe_stream::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed::openclaw_live_probe_stream","artifact_kind":"openclaw_live_probe_stream","label":"openclaw_live_probe_stream","path":"/tmp/loom-runtime-service/.loom/parity/openclaw_live_stream.jsonl","source_event_id":"loom.runtime.v1::org_demo::agent_allow::research::web_search::worker_executed::ok::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed","job_id":"job::org_demo::agent_allow::research::563bb9b3929c696e","execution_id":"execution::job__org_demo__agent_allow__research__563bb9b3929c696e::ok::worker_executed","content_sha256":"unverified_local","note":"live OpenClaw probe stream entries"}
+  ]
+}
+Runtime event stream
+====================
+source: /tmp/loom-runtime-service/.loom/runtime/events/stream.jsonl
+
+{"schema_version":"loom.runtime.v1","event_id":"loom.runtime.v1::org_demo::agent_allow::research::web_search::worker_executed::ok::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed","truth_class":"experimental_runtime_local","org_id":"org_demo","agent_id":"agent_allow","action_type":"research","resource":"web_search","outcome":"worker_executed","stage":"ok","source":"loom_runtime_execute","subject_kind":"action_envelope","subject_id":"envelope::org_demo::agent_allow::research::563bb9b3929c696e","job_id":"job::org_demo::agent_allow::research::563bb9b3929c696e","execution_id":"execution::job__org_demo__agent_allow__research__563bb9b3929c696e::ok::worker_executed","decision_id":"decision::job__org_demo__agent_allow__research__563bb9b3929c696e::ok::allow","parity_id":"parity::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed::match","audit_id":"audit::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed::research","note":"runtime execution receipt with canonical proof identifiers","artifact_refs":[{"artifact_id":"artifact::execution_receipt::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed::runtime_execution","artifact_kind":"execution_receipt","label":"runtime_execution","path":"/tmp/loom-runtime-service/.loom/runtime/last_execution.json","source_event_id":"loom.runtime.v1::org_demo::agent_allow::research::web_search::worker_executed::ok::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed","job_id":"job::org_demo::agent_allow::research::563bb9b3929c696e","execution_id":"execution::job__org_demo__agent_allow__research__563bb9b3929c696e::ok::worker_executed","content_sha256":"unverified_local","note":"runtime execution receipt"},{"artifact_id":"artifact::decision_receipt::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed::runtime_decision","artifact_kind":"decision_receipt","label":"runtime_decision","path":"/tmp/loom-runtime-service/.loom/shadow/decision.json","source_event_id":"loom.runtime.v1::org_demo::agent_allow::research::web_search::worker_executed::ok::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed","job_id":"job::org_demo::agent_allow::research::563bb9b3929c696e","execution_id":"execution::job__org_demo__agent_allow__research__563bb9b3929c696e::ok::worker_executed","content_sha256":"unverified_local","note":"pre-execution decision artifact"},{"artifact_id":"artifact::audit_log::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed::runtime_audit","artifact_kind":"audit_log","label":"runtime_audit","path":"/tmp/loom-runtime-service-kernel.oC6PAg/kernel/runtime_audit/loom_runtime_events.jsonl","source_event_id":"loom.runtime.v1::org_demo::agent_allow::research::web_search::worker_executed::ok::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed","job_id":"job::org_demo::agent_allow::research::563bb9b3929c696e","execution_id":"execution::job__org_demo__agent_allow__research__563bb9b3929c696e::ok::worker_executed","content_sha256":"unverified_local","note":"kernel-owned runtime audit status=kernel_cli_runtime_event_written"},{"artifact_id":"artifact::parity_stream::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed::runtime_parity_stream","artifact_kind":"parity_stream","label":"runtime_parity_stream","path":"/tmp/loom-runtime-service/.loom/parity/stream.jsonl","source_event_id":"loom.runtime.v1::org_demo::agent_allow::research::web_search::worker_executed::ok::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed","job_id":"job::org_demo::agent_allow::research::563bb9b3929c696e","execution_id":"execution::job__org_demo__agent_allow__research__563bb9b3929c696e::ok::worker_executed","content_sha256":"unverified_local","note":"parity_status=match"},{"artifact_id":"artifact::parity_report::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed::runtime_parity_report","artifact_kind":"parity_report","label":"runtime_parity_report","path":"/tmp/loom-runtime-service/.loom/parity/latest.json","source_event_id":"loom.runtime.v1::org_demo::agent_allow::research::web_search::worker_executed::ok::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed","job_id":"job::org_demo::agent_allow::research::563bb9b3929c696e","execution_id":"execution::job__org_demo__agent_allow__research__563bb9b3929c696e::ok::worker_executed","content_sha256":"unverified_local","note":"reference and loom agreed on allow at stage ok"},{"artifact_id":"artifact::runtime_event::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed::runtime_event","artifact_kind":"runtime_event","label":"runtime_event","path":"/tmp/loom-runtime-service/.loom/runtime/events/563bb9b3929c696e.json","source_event_id":"loom.runtime.v1::org_demo::agent_allow::research::web_search::worker_executed::ok::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed","job_id":"job::org_demo::agent_allow::research::563bb9b3929c696e","execution_id":"execution::job__org_demo__agent_allow__research__563bb9b3929c696e::ok::worker_executed","content_sha256":"unverified_local","note":"canonical runtime event receipt"},{"artifact_id":"artifact::runtime_event_stream::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed::runtime_event_stream","artifact_kind":"runtime_event_stream","label":"runtime_event_stream","path":"/tmp/loom-runtime-service/.loom/runtime/events/stream.jsonl","source_event_id":"loom.runtime.v1::org_demo::agent_allow::research::web_search::worker_executed::ok::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed","job_id":"job::org_demo::agent_allow::research::563bb9b3929c696e","execution_id":"execution::job__org_demo__agent_allow__research__563bb9b3929c696e::ok::worker_executed","content_sha256":"unverified_local","note":"runtime event stream entry appended"},{"artifact_id":"artifact::worker_request::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed::worker_request","artifact_kind":"worker_request","label":"worker_request","path":"/tmp/loom-runtime-service/.loom/runtime/jobs/563bb9b3929c696e/request.json","source_event_id":"loom.runtime.v1::org_demo::agent_allow::research::web_search::worker_executed::ok::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed","job_id":"job::org_demo::agent_allow::research::563bb9b3929c696e","execution_id":"execution::job__org_demo__agent_allow__research__563bb9b3929c696e::ok::worker_executed","content_sha256":"unverified_local","note":"worker dispatch envelope"},{"artifact_id":"artifact::worker_result::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed::worker_result","artifact_kind":"worker_result","label":"worker_result","path":"/tmp/loom-runtime-service/.loom/runtime/jobs/563bb9b3929c696e/result.json","source_event_id":"loom.runtime.v1::org_demo::agent_allow::research::web_search::worker_executed::ok::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed","job_id":"job::org_demo::agent_allow::research::563bb9b3929c696e","execution_id":"execution::job__org_demo__agent_allow__research__563bb9b3929c696e::ok::worker_executed","content_sha256":"unverified_local","note":"worker_status=completed"},{"artifact_id":"artifact::worker_log::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed::worker_log","artifact_kind":"worker_log","label":"worker_log","path":"/tmp/loom-runtime-service/.loom/runtime/jobs/563bb9b3929c696e/worker.log","source_event_id":"loom.runtime.v1::org_demo::agent_allow::research::web_search::worker_executed::ok::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed","job_id":"job::org_demo::agent_allow::research::563bb9b3929c696e","execution_id":"execution::job__org_demo__agent_allow__research__563bb9b3929c696e::ok::worker_executed","content_sha256":"unverified_local","note":"experimental supervisor dispatched /tmp/loom-runtime-service/workers/python/loom_runtime_worker.py"},{"artifact_id":"artifact::openclaw_live_probe_stream::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed::openclaw_live_probe_stream","artifact_kind":"openclaw_live_probe_stream","label":"openclaw_live_probe_stream","path":"/tmp/loom-runtime-service/.loom/parity/openclaw_live_stream.jsonl","source_event_id":"loom.runtime.v1::org_demo::agent_allow::research::web_search::worker_executed::ok::job__org_demo__agent_allow__research__563bb9b3929c696e::execution__job__org_demo__agent_allow__research__563bb9b3929c696e__ok__worker_executed","job_id":"job::org_demo::agent_allow::research::563bb9b3929c696e","execution_id":"execution::job__org_demo__agent_allow__research__563bb9b3929c696e::ok::worker_executed","content_sha256":"unverified_local","note":"live OpenClaw probe stream entries"}]}
+
+OpenClaw live probe
+===================
+source: (not captured)
+
+OpenClaw live probe stream
+==========================
+source: /tmp/loom-runtime-service/.loom/parity/openclaw_live_stream.jsonl
+
+{"timestamp":"1774292835","input_hash":"563bb9b3929c696e","status":"not_available","reason":"live OpenClaw proof script not found at /tmp/loom-runtime-service-kernel.oC6PAg/kernel/missing_openclaw_runtime_proof.py","probe_path":null}
+
+Meridian Loom // RUNTIME SERVICE
+=================================
+phase:       experimental local runtime service
+boundary:    service-owned ingress is locally real; live OpenClaw replacement is not
+
+Current state
+=============
+root:                /tmp/loom-runtime-service
+service_dir:         /tmp/loom-runtime-service/.loom/runtime/service
+socket_path:         /tmp/loom-runtime-service/.loom/runtime/service/runtime.sock
+session_id:          service-1774292834
+pid:                 24
+running:             true
+status:              running
+booted_at:           1774292834
+updated_at:          1774292836
+stopped_at:          (none)
+poll_seconds:        1
+max_jobs:            1
+max_iterations:      20
+iterations_completed:3
+submitted:           1
+processed:           1
+allowed:             1
+denied:              0
+failed:              0
+pending_jobs:        0
+processed_jobs:      1
+failed_jobs:         0
+last_request_id:     ingress::org_demo::agent_allow::research::563bb9b3929c696e::1774292834
+last_job_id:         563bb9b3929c696e
+runtime_state:       /tmp/loom-runtime-service/.loom/runtime/service/runtime_state.json
+stdout_log:          /tmp/loom-runtime-service/.loom/runtime/service/service.log
+event_log:           /tmp/loom-runtime-service/.loom/runtime/service/service_events.jsonl
+ingress_stream:      /tmp/loom-runtime-service/.loom/runtime/ingress/stream.jsonl
+stop_request:        /tmp/loom-runtime-service/.loom/runtime/service/stop.requested
+note:                service iteration 3 complete; submitted=1 processed=1 allowed=1 denied=0 failed=0; stop request recorded at /tmp/loom-runtime-service/.loom/runtime/service/stop.requested
+
+Next
+====
+1. loom service submit --root /tmp/loom-runtime-service --agent-id agent_atlas --action-type research --resource web_search --estimated-cost-usd 0.05
+2. loom service status --root /tmp/loom-runtime-service
+3. loom parity report --root /tmp/loom-runtime-service
+4. loom job inspect --job-id 563bb9b3929c696e --root /tmp/loom-runtime-service
+Meridian Loom // RUNTIME SERVICE
+=================================
+phase:       experimental local runtime service
+boundary:    service-owned ingress is locally real; live OpenClaw replacement is not
+
+Current state
+=============
+root:                /tmp/loom-runtime-service
+service_dir:         /tmp/loom-runtime-service/.loom/runtime/service
+socket_path:         /tmp/loom-runtime-service/.loom/runtime/service/runtime.sock
+session_id:          service-1774292834
+pid:                 24
+running:             false
+status:              stop_requested
+booted_at:           1774292834
+updated_at:          1774292837
+stopped_at:          1774292837
+poll_seconds:        1
+max_jobs:            1
+max_iterations:      20
+iterations_completed:3
+submitted:           1
+processed:           1
+allowed:             1
+denied:              0
+failed:              0
+pending_jobs:        0
+processed_jobs:      1
+failed_jobs:         0
+last_request_id:     ingress::org_demo::agent_allow::research::563bb9b3929c696e::1774292834
+last_job_id:         563bb9b3929c696e
+runtime_state:       /tmp/loom-runtime-service/.loom/runtime/service/runtime_state.json
+stdout_log:          /tmp/loom-runtime-service/.loom/runtime/service/service.log
+event_log:           /tmp/loom-runtime-service/.loom/runtime/service/service_events.jsonl
+ingress_stream:      /tmp/loom-runtime-service/.loom/runtime/ingress/stream.jsonl
+stop_request:        /tmp/loom-runtime-service/.loom/runtime/service/stop.requested
+note:                runtime service stopped via stop_requested after 3 iterations
+
+Next
+====
+1. loom service submit --root /tmp/loom-runtime-service --agent-id agent_atlas --action-type research --resource web_search --estimated-cost-usd 0.05
+2. loom service status --root /tmp/loom-runtime-service
+3. loom parity report --root /tmp/loom-runtime-service
+4. loom job inspect --job-id 563bb9b3929c696e --root /tmp/loom-runtime-service
+service_runtime_state:
+{
+  "status": "stop_requested",
+  "updated_at": "1774292837",
+  "session_id": "service-1774292834",
+  "pid": 24,
+  "running": false,
+  "socket_path": "/tmp/loom-runtime-service/.loom/runtime/service/runtime.sock",
+  "booted_at": "1774292834",
+  "stopped_at": "1774292837",
+  "poll_seconds": 1,
+  "max_jobs": 1,
+  "max_iterations": 20,
+  "iterations_completed": 3,
+  "submitted": 1,
+  "processed": 1,
+  "allowed": 1,
+  "denied": 0,
+  "failed": 0,
+  "pending_jobs": 0,
+  "processed_jobs": 1,
+  "failed_jobs": 0,
+  "last_request_id": "ingress::org_demo::agent_allow::research::563bb9b3929c696e::1774292834",
+  "last_job_id": "563bb9b3929c696e",
+  "note": "runtime service stopped via stop_requested after 3 iterations"
+}
+service_events:
+{"timestamp":"1774292834","session_id":"service-1774292834","status":"socket_bind_failed","socket_path":"/tmp/loom-runtime-service/.loom/runtime/service/runtime.sock","note":"socket ingress unavailable; using file-backed ingress only: Operation not permitted (os error 1)"}
+{"timestamp":"1774292834","session_id":"service-1774292834","status":"iteration_complete","iteration":1,"submitted":0,"processed":0,"allowed":0,"denied":0,"failed":0,"pending_jobs":0,"processed_jobs":0,"failed_jobs":0,"last_request_id":"","last_job_id":""}
+{"timestamp":"1774292835","session_id":"service-1774292834","request_id":"ingress::org_demo::agent_allow::research::563bb9b3929c696e::1774292834","status":"accepted","job_id":"563bb9b3929c696e","note":"service ingress accepted and queued action","transport":"file_ingress"}
+{"timestamp":"1774292835","session_id":"service-1774292834","status":"iteration_complete","iteration":2,"submitted":1,"processed":1,"allowed":1,"denied":0,"failed":0,"pending_jobs":0,"processed_jobs":1,"failed_jobs":0,"last_request_id":"ingress::org_demo::agent_allow::research::563bb9b3929c696e::1774292834","last_job_id":"563bb9b3929c696e"}
+{"timestamp":"1774292836","session_id":"service-1774292834","status":"iteration_complete","iteration":3,"submitted":1,"processed":1,"allowed":1,"denied":0,"failed":0,"pending_jobs":0,"processed_jobs":1,"failed_jobs":0,"last_request_id":"ingress::org_demo::agent_allow::research::563bb9b3929c696e::1774292834","last_job_id":"563bb9b3929c696e"}
+ingress_stream:
+{"timestamp":"1774292834","request_id":"ingress::org_demo::agent_allow::research::563bb9b3929c696e::1774292834","status":"staged","transport":"file_ingress","socket_path":"/tmp/loom-runtime-service/.loom/runtime/service/runtime.sock","job_id":"563bb9b3929c696e","note":"service submit staged request for file-backed ingress"}
+{"timestamp":"1774292835","request_id":"ingress::org_demo::agent_allow::research::563bb9b3929c696e::1774292834","status":"accepted","job_id":"563bb9b3929c696e","policy_class":"standard","queue_path":"/tmp/loom-runtime-service/.loom/runtime/queue/pending/standard/1774292835-agent_allow-563bb9b3.json","socket_path":"/tmp/loom-runtime-service/.loom/runtime/service/runtime.sock"}
+== Runtime service rehearsal complete ==

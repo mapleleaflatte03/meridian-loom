@@ -22,7 +22,10 @@ use scheduler_state::{
     transition_job, update_job_metadata, JobStatus, SchedulerState,
 };
 use proof_views::render_proof_first_status_human;
+use serde_json::Value;
 use std::fs;
+use std::io::{ErrorKind, Read, Write};
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread;
@@ -256,6 +259,65 @@ pub struct SupervisorDaemonSnapshot {
     pub processed_jobs: usize,
     pub failed_jobs: usize,
     pub heartbeat_entries: usize,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RuntimeServiceSnapshot {
+    pub root: PathBuf,
+    pub service_dir: PathBuf,
+    pub socket_path: PathBuf,
+    pub runtime_state_path: PathBuf,
+    pub stop_request_path: PathBuf,
+    pub stdout_log_path: PathBuf,
+    pub event_log_path: PathBuf,
+    pub ingress_stream_path: PathBuf,
+    pub available: bool,
+    pub session_id: String,
+    pub pid: u32,
+    pub running: bool,
+    pub status: String,
+    pub updated_at: String,
+    pub booted_at: String,
+    pub stopped_at: String,
+    pub poll_seconds: u64,
+    pub max_jobs: usize,
+    pub max_iterations: usize,
+    pub iterations_completed: usize,
+    pub submitted: usize,
+    pub processed: usize,
+    pub allowed: usize,
+    pub denied: usize,
+    pub failed: usize,
+    pub pending_jobs: usize,
+    pub processed_jobs: usize,
+    pub failed_jobs: usize,
+    pub last_request_id: String,
+    pub last_job_id: String,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RuntimeServiceSubmitCapture {
+    pub request_id: String,
+    pub socket_path: PathBuf,
+    pub ingress_request_path: PathBuf,
+    pub ingress_receipt_path: PathBuf,
+    pub job_id: String,
+    pub policy_class: String,
+    pub queue_path: PathBuf,
+    pub accepted_at: String,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RuntimeServiceImportCapture {
+    pub commitments_source: String,
+    pub imports_dir: PathBuf,
+    pub imported: usize,
+    pub skipped: usize,
+    pub last_import_id: String,
+    pub last_job_id: String,
     pub note: String,
 }
 
@@ -2268,6 +2330,955 @@ pub fn request_supervisor_daemon_stop(root: &Path) -> ShadowResult<SupervisorDae
     Ok(snapshot)
 }
 
+pub fn run_runtime_service_loop(
+    root: &Path,
+    override_kernel_path: Option<&str>,
+    socket_override: Option<&str>,
+    commitments_source: Option<&str>,
+    workspace_token: Option<&str>,
+    max_jobs: usize,
+    poll_seconds: u64,
+    max_iterations: usize,
+    session_id: &str,
+) -> ShadowResult<RuntimeServiceSnapshot> {
+    ensure_runtime_service_dir(root)?;
+    let socket_path = service_socket_path(root, socket_override)?;
+    let runtime_state_path = runtime_service_state_path(root)?;
+    let stop_request_path = service_stop_request_path(root)?;
+    let event_log_path = runtime_service_event_log_path(root)?;
+    let _ingress_stream_path = runtime_ingress_stream_path(root)?;
+    let booted_at = timestamp_now();
+    let pid = std::process::id();
+
+    if stop_request_path.exists() {
+        fs::remove_file(&stop_request_path).map_err(io_err)?;
+    }
+    if socket_path.exists() && !socket_path.is_dir() {
+        fs::remove_file(&socket_path).map_err(io_err)?;
+    }
+    if let Some(parent) = socket_path.parent() {
+        fs::create_dir_all(parent).map_err(io_err)?;
+    }
+
+    let listener = match UnixListener::bind(&socket_path) {
+        Ok(listener) => {
+            listener.set_nonblocking(true).map_err(io_err)?;
+            Some(listener)
+        }
+        Err(error) => {
+            append_line(
+                &event_log_path,
+                &format!(
+                    "{{\"timestamp\":{},\"session_id\":{},\"status\":\"socket_bind_failed\",\"socket_path\":{},\"note\":{}}}\n",
+                    json_string(&timestamp_now()),
+                    json_string(session_id),
+                    json_string(&socket_path.display().to_string()),
+                    json_string(&format!(
+                        "socket ingress unavailable; using file-backed ingress only: {}",
+                        error
+                    )),
+                ),
+            )?;
+            None
+        }
+    };
+
+    let mut iterations_completed = 0usize;
+    let mut submitted = 0usize;
+    let mut processed = 0usize;
+    let mut allowed = 0usize;
+    let mut denied = 0usize;
+    let mut failed = 0usize;
+    let mut last_request_id = String::new();
+    let mut last_job_id = String::new();
+    let mut stop_reason = "max_iterations_completed".to_string();
+
+    write_runtime_service_state(
+        &runtime_state_path,
+        &socket_path,
+        session_id,
+        pid,
+        true,
+        "running",
+        &booted_at,
+        "",
+        poll_seconds,
+        max_jobs,
+        max_iterations,
+        iterations_completed,
+        submitted,
+        processed,
+        allowed,
+        denied,
+        failed,
+        count_runtime_queue_entries(root, "pending")?,
+        count_runtime_queue_entries(root, "processed")?,
+        count_runtime_queue_entries(root, "failed")?,
+        "",
+        "",
+        if listener.is_some() {
+            format!("runtime service {} booted with socket ingress", session_id)
+        } else {
+            format!("runtime service {} booted with file-backed ingress only", session_id)
+        },
+    )?;
+
+    for iteration in 0..max_iterations.max(1) {
+        if stop_request_path.exists() {
+            stop_reason = "stop_requested".to_string();
+            break;
+        }
+
+        if let Some(listener) = listener.as_ref() {
+            loop {
+                match listener.accept() {
+                    Ok((mut stream, _addr)) => {
+                        let request_contents = read_stream_string(&mut stream)?;
+                        let reply = handle_runtime_service_request(
+                            root,
+                            override_kernel_path,
+                            &socket_path,
+                            &request_contents,
+                        )?;
+                        if reply.status == "accepted" {
+                            submitted += 1;
+                            last_request_id = reply.request_id.clone();
+                            last_job_id = reply.job_id.clone();
+                        } else if reply.status == "stop_requested" {
+                            last_request_id = reply.request_id.clone();
+                        }
+                        append_line(
+                            &event_log_path,
+                            &format!(
+                                "{{\"timestamp\":{},\"session_id\":{},\"request_id\":{},\"status\":{},\"job_id\":{},\"note\":{}}}\n",
+                                json_string(&timestamp_now()),
+                                json_string(session_id),
+                                json_string(&reply.request_id),
+                                json_string(&reply.status),
+                                json_string(&reply.job_id),
+                                json_string(&reply.note),
+                            ),
+                        )?;
+                        stream.write_all(reply.payload.as_bytes()).map_err(io_err)?;
+                        stream.flush().map_err(io_err)?;
+                        if reply.status == "stop_requested" {
+                            stop_reason = "stop_requested".to_string();
+                        }
+                    }
+                    Err(error) if error.kind() == ErrorKind::WouldBlock => break,
+                    Err(error) => return Err(io_err(error)),
+                }
+            }
+        }
+
+        for request_path in collect_pending_runtime_ingress_requests(root)? {
+            let request_contents = fs::read_to_string(&request_path).map_err(io_err)?;
+            let reply = handle_runtime_service_request(
+                root,
+                override_kernel_path,
+                &socket_path,
+                &request_contents,
+            )?;
+            if reply.status == "accepted" {
+                submitted += 1;
+                last_request_id = reply.request_id.clone();
+                last_job_id = reply.job_id.clone();
+            } else if reply.status == "stop_requested" {
+                last_request_id = reply.request_id.clone();
+                stop_reason = "stop_requested".to_string();
+            }
+            append_line(
+                &event_log_path,
+                &format!(
+                    "{{\"timestamp\":{},\"session_id\":{},\"request_id\":{},\"status\":{},\"job_id\":{},\"note\":{},\"transport\":\"file_ingress\"}}\n",
+                    json_string(&timestamp_now()),
+                    json_string(session_id),
+                    json_string(&reply.request_id),
+                    json_string(&reply.status),
+                    json_string(&reply.job_id),
+                    json_string(&reply.note),
+                ),
+            )?;
+        }
+
+        if let Some(commitments_source) = commitments_source {
+            let import = import_commitment_execution_requests(
+                root,
+                override_kernel_path,
+                commitments_source,
+                workspace_token,
+            )?;
+            if import.imported > 0 {
+                submitted += import.imported;
+                last_request_id = import.last_import_id.clone();
+                last_job_id = import.last_job_id.clone();
+                append_line(
+                    &event_log_path,
+                    &format!(
+                        "{{\"timestamp\":{},\"session_id\":{},\"status\":\"commitment_imported\",\"imported\":{},\"skipped\":{},\"last_import_id\":{},\"last_job_id\":{},\"source\":{},\"note\":{}}}\n",
+                        json_string(&timestamp_now()),
+                        json_string(session_id),
+                        import.imported,
+                        import.skipped,
+                        json_string(&import.last_import_id),
+                        json_string(&import.last_job_id),
+                        json_string(&import.commitments_source),
+                        json_string(&import.note),
+                    ),
+                )?;
+            }
+        }
+
+        let run = run_supervisor(root, override_kernel_path, max_jobs)?;
+        iterations_completed = iteration + 1;
+        processed += run.processed;
+        allowed += run.allowed;
+        denied += run.denied;
+        failed += run.failed;
+
+        let pending_jobs = count_runtime_queue_entries(root, "pending")?;
+        let processed_jobs = count_runtime_queue_entries(root, "processed")?;
+        let failed_jobs = count_runtime_queue_entries(root, "failed")?;
+        write_runtime_service_state(
+            &runtime_state_path,
+            &socket_path,
+            session_id,
+            pid,
+            true,
+            "running",
+            &booted_at,
+            "",
+            poll_seconds,
+            max_jobs,
+            max_iterations,
+            iterations_completed,
+            submitted,
+            processed,
+            allowed,
+            denied,
+            failed,
+            pending_jobs,
+            processed_jobs,
+            failed_jobs,
+            &last_request_id,
+            &last_job_id,
+            format!(
+                "service iteration {} complete; submitted={} processed={} allowed={} denied={} failed={}",
+                iterations_completed, submitted, processed, allowed, denied, failed
+            ),
+        )?;
+
+        append_line(
+            &event_log_path,
+            &format!(
+                "{{\"timestamp\":{},\"session_id\":{},\"status\":\"iteration_complete\",\"iteration\":{},\"submitted\":{},\"processed\":{},\"allowed\":{},\"denied\":{},\"failed\":{},\"pending_jobs\":{},\"processed_jobs\":{},\"failed_jobs\":{},\"last_request_id\":{},\"last_job_id\":{}}}\n",
+                json_string(&timestamp_now()),
+                json_string(session_id),
+                iterations_completed,
+                submitted,
+                processed,
+                allowed,
+                denied,
+                failed,
+                pending_jobs,
+                processed_jobs,
+                failed_jobs,
+                json_string(&last_request_id),
+                json_string(&last_job_id),
+            ),
+        )?;
+
+        if stop_reason == "stop_requested" {
+            break;
+        }
+        if iterations_completed >= max_iterations {
+            break;
+        }
+        if poll_seconds > 0 {
+            thread::sleep(Duration::from_secs(poll_seconds));
+        }
+    }
+
+    drop(listener);
+    if socket_path.exists() && !socket_path.is_dir() {
+        fs::remove_file(&socket_path).map_err(io_err)?;
+    }
+
+    let stopped_at = timestamp_now();
+    write_runtime_service_state(
+        &runtime_state_path,
+        &socket_path,
+        session_id,
+        pid,
+        false,
+        if stop_reason == "stop_requested" { "stop_requested" } else { "completed" },
+        &booted_at,
+        &stopped_at,
+        poll_seconds,
+        max_jobs,
+        max_iterations,
+        iterations_completed,
+        submitted,
+        processed,
+        allowed,
+        denied,
+        failed,
+        count_runtime_queue_entries(root, "pending")?,
+        count_runtime_queue_entries(root, "processed")?,
+        count_runtime_queue_entries(root, "failed")?,
+        &last_request_id,
+        &last_job_id,
+        format!(
+            "runtime service stopped via {} after {} iterations",
+            stop_reason, iterations_completed
+        ),
+    )?;
+
+    if stop_request_path.exists() {
+        fs::remove_file(&stop_request_path).map_err(io_err)?;
+    }
+
+    runtime_service_status(root, socket_override)
+}
+
+pub fn runtime_service_status(
+    root: &Path,
+    socket_override: Option<&str>,
+) -> ShadowResult<RuntimeServiceSnapshot> {
+    let service_dir = ensure_runtime_service_dir(root)?;
+    let socket_path = service_socket_path(root, socket_override)?;
+    let runtime_state_path = runtime_service_state_path(root)?;
+    let stop_request_path = service_stop_request_path(root)?;
+    let stdout_log_path = service_stdout_log_path(root)?;
+    let event_log_path = runtime_service_event_log_path(root)?;
+    let ingress_stream_path = runtime_ingress_stream_path(root)?;
+
+    if !runtime_state_path.exists() {
+        return Ok(RuntimeServiceSnapshot {
+            root: root.to_path_buf(),
+            service_dir,
+            socket_path,
+            runtime_state_path,
+            stop_request_path,
+            stdout_log_path,
+            event_log_path,
+            ingress_stream_path,
+            available: false,
+            session_id: String::new(),
+            pid: 0,
+            running: false,
+            status: "not_started".to_string(),
+            updated_at: "not_started".to_string(),
+            booted_at: String::new(),
+            stopped_at: String::new(),
+            poll_seconds: 0,
+            max_jobs: 0,
+            max_iterations: 0,
+            iterations_completed: 0,
+            submitted: 0,
+            processed: 0,
+            allowed: 0,
+            denied: 0,
+            failed: 0,
+            pending_jobs: count_runtime_queue_entries(root, "pending")?,
+            processed_jobs: count_runtime_queue_entries(root, "processed")?,
+            failed_jobs: count_runtime_queue_entries(root, "failed")?,
+            last_request_id: String::new(),
+            last_job_id: String::new(),
+            note: "no runtime service state captured yet; run `loom service start` first".to_string(),
+        });
+    }
+
+    let contents = fs::read_to_string(&runtime_state_path).map_err(io_err)?;
+    let pid = extract_json_number(&contents, "\"pid\"")
+        .map(|value| value as u32)
+        .unwrap_or(0);
+    let running_flag = extract_json_bool(&contents, "\"running\"").unwrap_or(false);
+    let alive = if pid > 0 {
+        PathBuf::from(format!("/proc/{}", pid)).exists()
+    } else {
+        false
+    };
+
+    Ok(RuntimeServiceSnapshot {
+        root: root.to_path_buf(),
+        service_dir,
+        socket_path,
+        runtime_state_path,
+        stop_request_path,
+        stdout_log_path,
+        event_log_path,
+        ingress_stream_path,
+        available: true,
+        session_id: extract_json_string(&contents, "\"session_id\"").unwrap_or_default(),
+        pid,
+        running: running_flag && alive,
+        status: extract_json_string(&contents, "\"status\"").unwrap_or_else(|| "unknown".to_string()),
+        updated_at: extract_json_string(&contents, "\"updated_at\"").unwrap_or_default(),
+        booted_at: extract_json_string(&contents, "\"booted_at\"").unwrap_or_default(),
+        stopped_at: extract_json_string(&contents, "\"stopped_at\"").unwrap_or_default(),
+        poll_seconds: extract_json_number(&contents, "\"poll_seconds\"")
+            .map(|value| value as u64)
+            .unwrap_or(0),
+        max_jobs: extract_json_number(&contents, "\"max_jobs\"")
+            .map(|value| value as usize)
+            .unwrap_or(0),
+        max_iterations: extract_json_number(&contents, "\"max_iterations\"")
+            .map(|value| value as usize)
+            .unwrap_or(0),
+        iterations_completed: extract_json_number(&contents, "\"iterations_completed\"")
+            .map(|value| value as usize)
+            .unwrap_or(0),
+        submitted: extract_json_number(&contents, "\"submitted\"")
+            .map(|value| value as usize)
+            .unwrap_or(0),
+        processed: extract_json_number(&contents, "\"processed\"")
+            .map(|value| value as usize)
+            .unwrap_or(0),
+        allowed: extract_json_number(&contents, "\"allowed\"")
+            .map(|value| value as usize)
+            .unwrap_or(0),
+        denied: extract_json_number(&contents, "\"denied\"")
+            .map(|value| value as usize)
+            .unwrap_or(0),
+        failed: extract_json_number(&contents, "\"failed\"")
+            .map(|value| value as usize)
+            .unwrap_or(0),
+        pending_jobs: extract_json_number(&contents, "\"pending_jobs\"")
+            .map(|value| value as usize)
+            .unwrap_or(0),
+        processed_jobs: extract_json_number(&contents, "\"processed_jobs\"")
+            .map(|value| value as usize)
+            .unwrap_or(0),
+        failed_jobs: extract_json_number(&contents, "\"failed_jobs\"")
+            .map(|value| value as usize)
+            .unwrap_or(0),
+        last_request_id: extract_json_string(&contents, "\"last_request_id\"").unwrap_or_default(),
+        last_job_id: extract_json_string(&contents, "\"last_job_id\"").unwrap_or_default(),
+        note: extract_json_string(&contents, "\"note\"").unwrap_or_default(),
+    })
+}
+
+pub fn request_runtime_service_stop(
+    root: &Path,
+    socket_override: Option<&str>,
+) -> ShadowResult<RuntimeServiceSnapshot> {
+    let stop_request_path = service_stop_request_path(root)?;
+    fs::write(
+        &stop_request_path,
+        format!(
+            "{{\n  \"status\": \"stop_requested\",\n  \"requested_at\": {}\n}}\n",
+            json_string(&timestamp_now())
+        ),
+    )
+    .map_err(io_err)?;
+    let mut snapshot = runtime_service_status(root, socket_override)?;
+    snapshot.note = format!(
+        "{}; stop request recorded at {}",
+        if snapshot.note.is_empty() {
+            "stop requested".to_string()
+        } else {
+            snapshot.note.clone()
+        },
+        stop_request_path.display()
+    );
+    Ok(snapshot)
+}
+
+pub fn submit_runtime_service_action(
+    root: &Path,
+    socket_override: Option<&str>,
+    kernel_path: &Path,
+    envelope: &ActionEnvelope,
+) -> ShadowResult<RuntimeServiceSubmitCapture> {
+    let socket_path = service_socket_path(root, socket_override)?;
+    let request_id = canonical_join_runtime(&[
+        "ingress",
+        &envelope.org_id,
+        &envelope.agent_id,
+        &envelope.action_type,
+        &envelope_input_hash(envelope),
+        &timestamp_now(),
+    ]);
+    let request = format!(
+        "{{\"request_type\":{},\"request_id\":{},\"agent_id\":{},\"org_id\":{},\"action_type\":{},\"resource\":{},\"estimated_cost_usd\":{:.6},\"run_id\":{},\"session_id\":{},\"kernel_path\":{}}}\n",
+        json_string("submit_action"),
+        json_string(&request_id),
+        json_string(&envelope.agent_id),
+        json_string(&envelope.org_id),
+        json_string(&envelope.action_type),
+        json_string(&envelope.resource),
+        envelope.estimated_cost_usd,
+        json_string(&envelope.run_id),
+        json_string(&envelope.session_id),
+        json_string(&kernel_path.display().to_string()),
+    );
+
+    let service_snapshot = runtime_service_status(root, socket_override)?;
+    if !service_snapshot.available || !service_snapshot.running {
+        return Err("runtime service is not running; start it with `loom service start` first".to_string());
+    }
+
+    if socket_path.exists() {
+        if let Ok(reply) = send_runtime_service_request(&socket_path, &request) {
+            let status = extract_json_string(&reply, "\"status\"").unwrap_or_else(|| "unknown".to_string());
+            if status != "accepted" {
+                return Err(format!(
+                    "runtime service submission failed: {}",
+                    extract_json_string(&reply, "\"note\"").unwrap_or(reply)
+                ));
+            }
+            return Ok(RuntimeServiceSubmitCapture {
+                request_id: extract_json_string(&reply, "\"request_id\"").unwrap_or(request_id),
+                socket_path,
+                ingress_request_path: PathBuf::from(
+                    extract_json_string(&reply, "\"ingress_request_path\"").unwrap_or_default(),
+                ),
+                ingress_receipt_path: PathBuf::from(
+                    extract_json_string(&reply, "\"ingress_receipt_path\"").unwrap_or_default(),
+                ),
+                job_id: extract_json_string(&reply, "\"job_id\"").unwrap_or_default(),
+                policy_class: extract_json_string(&reply, "\"policy_class\"").unwrap_or_default(),
+                queue_path: PathBuf::from(
+                    extract_json_string(&reply, "\"queue_path\"").unwrap_or_default()
+                ),
+                accepted_at: extract_json_string(&reply, "\"accepted_at\"").unwrap_or_default(),
+                note: extract_json_string(&reply, "\"note\"").unwrap_or_default(),
+            });
+        }
+    }
+
+    let ingress_request_path = runtime_ingress_request_path(root, &request_id)?;
+    let ingress_receipt_path = runtime_ingress_receipt_path(root, &request_id)?;
+    fs::write(
+        &ingress_request_path,
+        format!(
+            "{{\n  \"status\": \"staged\",\n  \"request_id\": {},\n  \"request_type\": {},\n  \"received_at\": {},\n  \"transport\": \"file_ingress\",\n  \"socket_path\": {},\n  \"agent_id\": {},\n  \"org_id\": {},\n  \"action_type\": {},\n  \"resource\": {},\n  \"estimated_cost_usd\": {:.6},\n  \"run_id\": {},\n  \"session_id\": {},\n  \"kernel_path\": {}\n}}\n",
+            json_string(&request_id),
+            json_string("submit_action"),
+            json_string(&timestamp_now()),
+            json_string(&socket_path.display().to_string()),
+            json_string(&envelope.agent_id),
+            json_string(&envelope.org_id),
+            json_string(&envelope.action_type),
+            json_string(&envelope.resource),
+            envelope.estimated_cost_usd,
+            json_string(&envelope.run_id),
+            json_string(&envelope.session_id),
+            json_string(&kernel_path.display().to_string()),
+        ),
+    )
+    .map_err(io_err)?;
+    append_line(
+        &runtime_ingress_stream_path(root)?,
+        &format!(
+            "{{\"timestamp\":{},\"request_id\":{},\"status\":\"staged\",\"transport\":\"file_ingress\",\"socket_path\":{},\"job_id\":{},\"note\":\"service submit staged request for file-backed ingress\"}}\n",
+            json_string(&timestamp_now()),
+            json_string(&request_id),
+            json_string(&socket_path.display().to_string()),
+            json_string(&envelope_input_hash(envelope)),
+        ),
+    )?;
+
+    for _ in 0..25 {
+        if ingress_receipt_path.exists() {
+            let reply = fs::read_to_string(&ingress_receipt_path).map_err(io_err)?;
+            return Ok(RuntimeServiceSubmitCapture {
+                request_id: extract_json_string(&reply, "\"request_id\"").unwrap_or(request_id),
+                socket_path,
+                ingress_request_path,
+                ingress_receipt_path,
+                job_id: extract_json_string(&reply, "\"job_id\"").unwrap_or_else(|| envelope_input_hash(envelope)),
+                policy_class: extract_json_string(&reply, "\"policy_class\"").unwrap_or_default(),
+                queue_path: PathBuf::from(
+                    extract_json_string(&reply, "\"queue_path\"").unwrap_or_default()
+                ),
+                accepted_at: extract_json_string(&reply, "\"accepted_at\"").unwrap_or_default(),
+                note: format!(
+                    "{} via file-backed transport",
+                    extract_json_string(&reply, "\"note\"")
+                        .unwrap_or_else(|| "service ingress accepted".to_string())
+                ),
+            });
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+
+    let fallback_policy_class =
+        classify_action(&envelope.action_type, envelope.estimated_cost_usd, false).label().to_string();
+    Ok(RuntimeServiceSubmitCapture {
+        request_id,
+        socket_path,
+        ingress_request_path,
+        ingress_receipt_path,
+        job_id: envelope_input_hash(envelope),
+        policy_class: fallback_policy_class.clone(),
+        queue_path: pending_queue_dir(root, PolicyClass::from_label(&fallback_policy_class).unwrap_or(PolicyClass::Standard))?
+            .join(format!("{}.json", sanitize_filename(&envelope_input_hash(envelope)))),
+        accepted_at: timestamp_now(),
+        note: "service request staged for file-backed ingress; awaiting acceptance receipt".to_string(),
+    })
+}
+
+struct RuntimeServiceReply {
+    status: String,
+    request_id: String,
+    job_id: String,
+    note: String,
+    payload: String,
+}
+
+fn handle_runtime_service_request(
+    root: &Path,
+    override_kernel_path: Option<&str>,
+    socket_path: &Path,
+    request_contents: &str,
+) -> ShadowResult<RuntimeServiceReply> {
+    let request_type = extract_json_string(request_contents, "\"request_type\"")
+        .unwrap_or_else(|| "unknown".to_string());
+    let request_id = extract_json_string(request_contents, "\"request_id\"")
+        .unwrap_or_else(|| canonical_join_runtime(&["ingress", &timestamp_now()]));
+
+    match request_type.as_str() {
+        "submit_action" => {
+            let agent_id = extract_json_string(request_contents, "\"agent_id\"")
+                .ok_or_else(|| "service request missing agent_id".to_string())?;
+            let org_id = extract_json_string(request_contents, "\"org_id\"")
+                .unwrap_or_else(|| "local_foundry".to_string());
+            let action_type = extract_json_string(request_contents, "\"action_type\"")
+                .ok_or_else(|| "service request missing action_type".to_string())?;
+            let resource = extract_json_string(request_contents, "\"resource\"")
+                .ok_or_else(|| "service request missing resource".to_string())?;
+            let estimated_cost_usd = extract_json_number(request_contents, "\"estimated_cost_usd\"")
+                .unwrap_or(0.0);
+            let run_id = extract_json_string(request_contents, "\"run_id\"");
+            let session_id = extract_json_string(request_contents, "\"session_id\"");
+            let kernel_path_raw = extract_json_string(request_contents, "\"kernel_path\"")
+                .or_else(|| override_kernel_path.map(|value| value.to_string()))
+                .unwrap_or_default();
+            let effective_kernel_path = kernel_path_for(root, Some(kernel_path_raw.as_str()))?;
+            let envelope = build_action_envelope(
+                root,
+                Some(effective_kernel_path.to_string_lossy().as_ref()),
+                &agent_id,
+                Some(&org_id),
+                &action_type,
+                &resource,
+                estimated_cost_usd,
+                run_id.as_deref(),
+                session_id.as_deref(),
+            )?;
+            let ingress_request_path = runtime_ingress_request_path(root, &request_id)?;
+            fs::write(
+                &ingress_request_path,
+                format!(
+                    "{{\n  \"status\": \"received\",\n  \"request_id\": {},\n  \"request_type\": {},\n  \"received_at\": {},\n  \"socket_path\": {},\n  \"agent_id\": {},\n  \"org_id\": {},\n  \"action_type\": {},\n  \"resource\": {},\n  \"estimated_cost_usd\": {:.6}\n}}\n",
+                    json_string(&request_id),
+                    json_string(&request_type),
+                    json_string(&timestamp_now()),
+                    json_string(&socket_path.display().to_string()),
+                    json_string(&agent_id),
+                    json_string(&org_id),
+                    json_string(&action_type),
+                    json_string(&resource),
+                    estimated_cost_usd,
+                ),
+            )
+            .map_err(io_err)?;
+            let enqueue = enqueue_action(root, &effective_kernel_path, &envelope)?;
+            let ingress_receipt_path = runtime_ingress_receipt_path(root, &request_id)?;
+            fs::write(
+                &ingress_receipt_path,
+                format!(
+                    "{{\n  \"status\": \"accepted\",\n  \"request_id\": {},\n  \"accepted_at\": {},\n  \"job_id\": {},\n  \"policy_class\": {},\n  \"queue_path\": {},\n  \"kernel_path\": {},\n  \"note\": \"service ingress accepted and queued action for local runtime supervision\"\n}}\n",
+                    json_string(&request_id),
+                    json_string(&timestamp_now()),
+                    json_string(&enqueue.input_hash),
+                    json_string(&enqueue.policy_class),
+                    json_string(&enqueue.queue_path.display().to_string()),
+                    json_string(&enqueue.kernel_path),
+                ),
+            )
+            .map_err(io_err)?;
+            append_line(
+                &runtime_ingress_stream_path(root)?,
+                &format!(
+                    "{{\"timestamp\":{},\"request_id\":{},\"status\":\"accepted\",\"job_id\":{},\"policy_class\":{},\"queue_path\":{},\"socket_path\":{}}}\n",
+                    json_string(&timestamp_now()),
+                    json_string(&request_id),
+                    json_string(&enqueue.input_hash),
+                    json_string(&enqueue.policy_class),
+                    json_string(&enqueue.queue_path.display().to_string()),
+                    json_string(&socket_path.display().to_string()),
+                ),
+            )?;
+            let payload = format!(
+                "{{\"status\":\"accepted\",\"request_id\":{},\"accepted_at\":{},\"job_id\":{},\"policy_class\":{},\"queue_path\":{},\"ingress_request_path\":{},\"ingress_receipt_path\":{},\"note\":\"service ingress accepted and queued action\"}}\n",
+                json_string(&request_id),
+                json_string(&timestamp_now()),
+                json_string(&enqueue.input_hash),
+                json_string(&enqueue.policy_class),
+                json_string(&enqueue.queue_path.display().to_string()),
+                json_string(&ingress_request_path.display().to_string()),
+                json_string(&ingress_receipt_path.display().to_string()),
+            );
+            Ok(RuntimeServiceReply {
+                status: "accepted".to_string(),
+                request_id,
+                job_id: enqueue.input_hash,
+                note: "service ingress accepted and queued action".to_string(),
+                payload,
+            })
+        }
+        "stop" => {
+            let stop_request_path = service_stop_request_path(root)?;
+            fs::write(
+                &stop_request_path,
+                format!(
+                    "{{\n  \"status\": \"stop_requested\",\n  \"request_id\": {},\n  \"requested_at\": {}\n}}\n",
+                    json_string(&request_id),
+                    json_string(&timestamp_now())
+                ),
+            )
+            .map_err(io_err)?;
+            let payload = format!(
+                "{{\"status\":\"stop_requested\",\"request_id\":{},\"note\":\"runtime service stop has been requested\"}}\n",
+                json_string(&request_id),
+            );
+            Ok(RuntimeServiceReply {
+                status: "stop_requested".to_string(),
+                request_id,
+                job_id: String::new(),
+                note: "runtime service stop has been requested".to_string(),
+                payload,
+            })
+        }
+        _ => {
+            let payload = format!(
+                "{{\"status\":\"rejected\",\"request_id\":{},\"note\":{}}}\n",
+                json_string(&request_id),
+                json_string(&format!("unknown request_type '{}'", request_type)),
+            );
+            Ok(RuntimeServiceReply {
+                status: "rejected".to_string(),
+                request_id,
+                job_id: String::new(),
+                note: format!("unknown request_type '{}'", request_type),
+                payload,
+            })
+        }
+    }
+}
+
+fn send_runtime_service_request(socket_path: &Path, request: &str) -> ShadowResult<String> {
+    let mut stream = UnixStream::connect(socket_path).map_err(io_err)?;
+    stream.write_all(request.as_bytes()).map_err(io_err)?;
+    stream.shutdown(std::net::Shutdown::Write).map_err(io_err)?;
+    read_stream_string(&mut stream)
+}
+
+fn collect_pending_runtime_ingress_requests(root: &Path) -> ShadowResult<Vec<PathBuf>> {
+    let request_dir = ensure_runtime_ingress_dir(root)?.join("requests");
+    let mut paths = Vec::new();
+    for entry in fs::read_dir(&request_dir).map_err(io_err)? {
+        let path = entry.map_err(io_err)?.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        let Some(stem) = path.file_stem().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if runtime_ingress_receipt_path(root, stem)?.exists() {
+            continue;
+        }
+        paths.push(path);
+    }
+    paths.sort();
+    Ok(paths)
+}
+
+pub fn import_commitment_execution_requests(
+    root: &Path,
+    override_kernel_path: Option<&str>,
+    commitments_source: &str,
+    workspace_token: Option<&str>,
+) -> ShadowResult<RuntimeServiceImportCapture> {
+    let imports_dir = ensure_runtime_imports_dir(root)?.join("commitment_execution");
+    fs::create_dir_all(&imports_dir).map_err(io_err)?;
+    let effective_kernel_path = kernel_path_for(root, override_kernel_path)?;
+    let snapshot = load_commitments_snapshot(commitments_source, workspace_token)?;
+    let commitments = snapshot
+        .get("commitments")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+
+    let mut imported = 0usize;
+    let mut skipped = 0usize;
+    let mut last_import_id = String::new();
+    let mut last_job_id = String::new();
+
+    for commitment in commitments {
+        let commitment_id = value_string(commitment.get("commitment_id"));
+        let source_org_id = value_string(commitment.get("source_institution_id"));
+        let delivery_refs = commitment
+            .get("delivery_refs")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        for delivery in delivery_refs {
+            if value_string(delivery.get("message_type")) != "execution_request" {
+                continue;
+            }
+            let adapter_envelope = delivery
+                .get("adapter_envelope")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default();
+            if adapter_envelope.is_empty() {
+                skipped += 1;
+                continue;
+            }
+            let import_id = canonical_join_runtime(&[
+                "commitment",
+                &commitment_id,
+                &value_string(delivery.get("envelope_id")),
+                &value_string(delivery.get("receipt_id")),
+            ]);
+            let marker_path = imports_dir.join(format!("{}.json", sanitize_filename(&import_id)));
+            if marker_path.exists() {
+                skipped += 1;
+                continue;
+            }
+
+            let envelope = build_commitment_import_envelope(
+                root,
+                &effective_kernel_path,
+                &source_org_id,
+                &adapter_envelope,
+            )?;
+            let enqueue = enqueue_action(root, &effective_kernel_path, &envelope)?;
+            fs::write(
+                &marker_path,
+                format!(
+                    "{{\n  \"status\": \"imported\",\n  \"imported_at\": {},\n  \"import_id\": {},\n  \"commitment_id\": {},\n  \"delivery_envelope_id\": {},\n  \"delivery_receipt_id\": {},\n  \"job_id\": {},\n  \"queue_path\": {},\n  \"commitments_source\": {},\n  \"note\": \"sender-side execution_request imported from commitment delivery ref\"\n}}\n",
+                    json_string(&timestamp_now()),
+                    json_string(&import_id),
+                    json_string(&commitment_id),
+                    json_string(&value_string(delivery.get("envelope_id"))),
+                    json_string(&value_string(delivery.get("receipt_id"))),
+                    json_string(&enqueue.input_hash),
+                    json_string(&enqueue.queue_path.display().to_string()),
+                    json_string(commitments_source),
+                ),
+            )
+            .map_err(io_err)?;
+            imported += 1;
+            last_import_id = import_id;
+            last_job_id = enqueue.input_hash;
+        }
+    }
+
+    Ok(RuntimeServiceImportCapture {
+        commitments_source: commitments_source.to_string(),
+        imports_dir,
+        imported,
+        skipped,
+        last_import_id,
+        last_job_id,
+        note: if imported > 0 {
+            format!(
+                "imported {} sender-side execution_request deliveries from commitment outbox truth",
+                imported
+            )
+        } else {
+            "no new sender-side execution_request deliveries were imported".to_string()
+        },
+    })
+}
+
+fn load_commitments_snapshot(
+    commitments_source: &str,
+    workspace_token: Option<&str>,
+) -> ShadowResult<Value> {
+    let raw = if commitments_source.starts_with("http://")
+        || commitments_source.starts_with("https://")
+    {
+        let mut command = Command::new("curl");
+        command.arg("-sS");
+        if let Some(token) = workspace_token {
+            command.arg("-H").arg(format!("Authorization: Bearer {}", token));
+        }
+        command.arg(commitments_source);
+        let output = command.output().map_err(io_err)?;
+        if !output.status.success() {
+            return Err(format!(
+                "failed to load commitments snapshot from {}: {}",
+                commitments_source,
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        String::from_utf8(output.stdout).map_err(|error| error.to_string())?
+    } else {
+        fs::read_to_string(commitments_source).map_err(io_err)?
+    };
+    serde_json::from_str(&raw).map_err(|error| error.to_string())
+}
+
+fn build_commitment_import_envelope(
+    root: &Path,
+    kernel_path: &Path,
+    source_org_id: &str,
+    adapter_envelope: &serde_json::Map<String, Value>,
+) -> ShadowResult<ActionEnvelope> {
+    let agent_id = value_string(adapter_envelope.get("agent_id"));
+    let action_type = value_string(adapter_envelope.get("action_type"));
+    let resource = value_string(adapter_envelope.get("resource"));
+    if agent_id.is_empty() || action_type.is_empty() || resource.is_empty() {
+        return Err("commitment import is missing adapter_envelope agent_id/action_type/resource".to_string());
+    }
+    let estimated_cost_usd = adapter_envelope
+        .get("estimated_cost_usd")
+        .and_then(Value::as_f64)
+        .unwrap_or(0.0);
+    let run_id = value_string(adapter_envelope.get("run_id"));
+    let session_id = value_string(adapter_envelope.get("session_id"));
+    let envelope = build_action_envelope(
+        root,
+        Some(kernel_path.to_string_lossy().as_ref()),
+        &agent_id,
+        if source_org_id.is_empty() {
+            None
+        } else {
+            Some(source_org_id)
+        },
+        &action_type,
+        &resource,
+        estimated_cost_usd,
+        if run_id.is_empty() { None } else { Some(run_id.as_str()) },
+        if session_id.is_empty() {
+            None
+        } else {
+            Some(session_id.as_str())
+        },
+    )?;
+    Ok(envelope)
+}
+
+fn value_string(value: Option<&Value>) -> String {
+    value
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_string()
+}
+
+fn read_stream_string(stream: &mut UnixStream) -> ShadowResult<String> {
+    let mut buffer = String::new();
+    stream.read_to_string(&mut buffer).map_err(io_err)?;
+    Ok(buffer)
+}
+
 pub fn decision_exit_code(capture: &DecisionCapture, allow_code: i32, deny_code: i32) -> i32 {
     if capture.overall_decision == "allow" {
         allow_code
@@ -2998,6 +4009,163 @@ pub fn render_supervisor_daemon_json(snapshot: &SupervisorDaemonSnapshot) -> Str
     )
 }
 
+pub fn render_runtime_service_human(snapshot: &RuntimeServiceSnapshot) -> String {
+    if !snapshot.available {
+        return format!(
+            "Meridian Loom // RUNTIME SERVICE\n=================================\nphase:       experimental local runtime service\nboundary:    no service state captured yet; transport replacement remains future work\n\nCurrent state\n=============\nroot:                {}\nservice_dir:         {}\nsocket_path:         {}\nruntime_state:       {}\nstdout_log:          {}\nevent_log:           {}\ningress_stream:      {}\npending_jobs:        {}\nprocessed_jobs:      {}\nfailed_jobs:         {}\nnote:                {}\n\nNext\n====\n1. loom service start --root {} --max-jobs 1 --poll-seconds 1 --iterations 20\n2. loom service submit --root {} --agent-id agent_atlas --action-type research --resource web_search --estimated-cost-usd 0.05\n3. loom service status --root {}\n",
+            snapshot.root.display(),
+            snapshot.service_dir.display(),
+            snapshot.socket_path.display(),
+            snapshot.runtime_state_path.display(),
+            snapshot.stdout_log_path.display(),
+            snapshot.event_log_path.display(),
+            snapshot.ingress_stream_path.display(),
+            snapshot.pending_jobs,
+            snapshot.processed_jobs,
+            snapshot.failed_jobs,
+            snapshot.note,
+            snapshot.root.display(),
+            snapshot.root.display(),
+            snapshot.root.display(),
+        );
+    }
+
+    format!(
+        "Meridian Loom // RUNTIME SERVICE\n=================================\nphase:       experimental local runtime service\nboundary:    service-owned ingress is locally real; live OpenClaw replacement is not\n\nCurrent state\n=============\nroot:                {}\nservice_dir:         {}\nsocket_path:         {}\nsession_id:          {}\npid:                 {}\nrunning:             {}\nstatus:              {}\nbooted_at:           {}\nupdated_at:          {}\nstopped_at:          {}\npoll_seconds:        {}\nmax_jobs:            {}\nmax_iterations:      {}\niterations_completed:{}\nsubmitted:           {}\nprocessed:           {}\nallowed:             {}\ndenied:              {}\nfailed:              {}\npending_jobs:        {}\nprocessed_jobs:      {}\nfailed_jobs:         {}\nlast_request_id:     {}\nlast_job_id:         {}\nruntime_state:       {}\nstdout_log:          {}\nevent_log:           {}\ningress_stream:      {}\nstop_request:        {}\nnote:                {}\n\nNext\n====\n1. loom service submit --root {} --agent-id agent_atlas --action-type research --resource web_search --estimated-cost-usd 0.05\n2. loom service status --root {}\n3. loom parity report --root {}\n4. loom job inspect --job-id {} --root {}\n",
+        snapshot.root.display(),
+        snapshot.service_dir.display(),
+        snapshot.socket_path.display(),
+        if snapshot.session_id.is_empty() { "(none)".to_string() } else { snapshot.session_id.clone() },
+        snapshot.pid,
+        if snapshot.running { "true" } else { "false" },
+        snapshot.status,
+        if snapshot.booted_at.is_empty() { "(none)".to_string() } else { snapshot.booted_at.clone() },
+        if snapshot.updated_at.is_empty() { "(none)".to_string() } else { snapshot.updated_at.clone() },
+        if snapshot.stopped_at.is_empty() { "(none)".to_string() } else { snapshot.stopped_at.clone() },
+        snapshot.poll_seconds,
+        snapshot.max_jobs,
+        snapshot.max_iterations,
+        snapshot.iterations_completed,
+        snapshot.submitted,
+        snapshot.processed,
+        snapshot.allowed,
+        snapshot.denied,
+        snapshot.failed,
+        snapshot.pending_jobs,
+        snapshot.processed_jobs,
+        snapshot.failed_jobs,
+        if snapshot.last_request_id.is_empty() { "(none)".to_string() } else { snapshot.last_request_id.clone() },
+        if snapshot.last_job_id.is_empty() { "(none)".to_string() } else { snapshot.last_job_id.clone() },
+        snapshot.runtime_state_path.display(),
+        snapshot.stdout_log_path.display(),
+        snapshot.event_log_path.display(),
+        snapshot.ingress_stream_path.display(),
+        snapshot.stop_request_path.display(),
+        snapshot.note,
+        snapshot.root.display(),
+        snapshot.root.display(),
+        snapshot.root.display(),
+        if snapshot.last_job_id.is_empty() { "<job_id>".to_string() } else { snapshot.last_job_id.clone() },
+        snapshot.root.display(),
+    )
+}
+
+pub fn render_runtime_service_json(snapshot: &RuntimeServiceSnapshot) -> String {
+    format!(
+        "{{\n  \"status\": {},\n  \"root\": {},\n  \"service_dir\": {},\n  \"socket_path\": {},\n  \"runtime_state_path\": {},\n  \"stop_request_path\": {},\n  \"stdout_log_path\": {},\n  \"event_log_path\": {},\n  \"ingress_stream_path\": {},\n  \"available\": {},\n  \"session_id\": {},\n  \"pid\": {},\n  \"running\": {},\n  \"service_status\": {},\n  \"updated_at\": {},\n  \"booted_at\": {},\n  \"stopped_at\": {},\n  \"poll_seconds\": {},\n  \"max_jobs\": {},\n  \"max_iterations\": {},\n  \"iterations_completed\": {},\n  \"submitted\": {},\n  \"processed\": {},\n  \"allowed\": {},\n  \"denied\": {},\n  \"failed\": {},\n  \"pending_jobs\": {},\n  \"processed_jobs\": {},\n  \"failed_jobs\": {},\n  \"last_request_id\": {},\n  \"last_job_id\": {},\n  \"note\": {}\n}}\n",
+        json_string(if snapshot.available { "runtime_service_status_available" } else { "runtime_service_not_started" }),
+        json_string(&snapshot.root.display().to_string()),
+        json_string(&snapshot.service_dir.display().to_string()),
+        json_string(&snapshot.socket_path.display().to_string()),
+        json_string(&snapshot.runtime_state_path.display().to_string()),
+        json_string(&snapshot.stop_request_path.display().to_string()),
+        json_string(&snapshot.stdout_log_path.display().to_string()),
+        json_string(&snapshot.event_log_path.display().to_string()),
+        json_string(&snapshot.ingress_stream_path.display().to_string()),
+        if snapshot.available { "true" } else { "false" },
+        json_string(&snapshot.session_id),
+        snapshot.pid,
+        if snapshot.running { "true" } else { "false" },
+        json_string(&snapshot.status),
+        json_string(&snapshot.updated_at),
+        json_string(&snapshot.booted_at),
+        json_string(&snapshot.stopped_at),
+        snapshot.poll_seconds,
+        snapshot.max_jobs,
+        snapshot.max_iterations,
+        snapshot.iterations_completed,
+        snapshot.submitted,
+        snapshot.processed,
+        snapshot.allowed,
+        snapshot.denied,
+        snapshot.failed,
+        snapshot.pending_jobs,
+        snapshot.processed_jobs,
+        snapshot.failed_jobs,
+        json_string(&snapshot.last_request_id),
+        json_string(&snapshot.last_job_id),
+        json_string(&snapshot.note),
+    )
+}
+
+pub fn render_runtime_service_submit_human(capture: &RuntimeServiceSubmitCapture) -> String {
+    format!(
+        "Meridian Loom // SERVICE SUBMIT\n================================\nphase:       experimental runtime ingress\nboundary:    service-owned local ingress is real; live transport replacement is not\n\nCurrent state\n=============\nrequest_id:          {}\naccepted_at:         {}\nsocket_path:         {}\njob_id:              {}\npolicy_class:        {}\nqueue_path:          {}\ningress_request:     {}\ningress_receipt:     {}\nnote:                {}\n\nNext\n====\n1. loom service status --root <path>\n2. loom job inspect --job-id {} --root <path>\n3. loom parity report --root <path>\n",
+        capture.request_id,
+        capture.accepted_at,
+        capture.socket_path.display(),
+        capture.job_id,
+        capture.policy_class,
+        capture.queue_path.display(),
+        capture.ingress_request_path.display(),
+        capture.ingress_receipt_path.display(),
+        capture.note,
+        capture.job_id,
+    )
+}
+
+pub fn render_runtime_service_submit_json(capture: &RuntimeServiceSubmitCapture) -> String {
+    format!(
+        "{{\n  \"status\": \"service_submit_accepted\",\n  \"request_id\": {},\n  \"accepted_at\": {},\n  \"socket_path\": {},\n  \"ingress_request_path\": {},\n  \"ingress_receipt_path\": {},\n  \"job_id\": {},\n  \"policy_class\": {},\n  \"queue_path\": {},\n  \"note\": {}\n}}\n",
+        json_string(&capture.request_id),
+        json_string(&capture.accepted_at),
+        json_string(&capture.socket_path.display().to_string()),
+        json_string(&capture.ingress_request_path.display().to_string()),
+        json_string(&capture.ingress_receipt_path.display().to_string()),
+        json_string(&capture.job_id),
+        json_string(&capture.policy_class),
+        json_string(&capture.queue_path.display().to_string()),
+        json_string(&capture.note),
+    )
+}
+
+pub fn render_runtime_service_import_human(capture: &RuntimeServiceImportCapture) -> String {
+    format!(
+        "Meridian Loom // SERVICE IMPORT\n================================\nphase:       experimental sender-side execution_request import\nboundary:    commitment outbox import is locally real; hosted runtime replacement is not\n\nCurrent state\n=============\ncommitments_source:   {}\nimports_dir:          {}\nimported:             {}\nskipped:              {}\nlast_import_id:       {}\nlast_job_id:          {}\nnote:                 {}\n\nNext\n====\n1. loom job inspect --job-id {} --root <path>\n2. loom service status --root <path>\n3. loom parity report --root <path>\n",
+        capture.commitments_source,
+        capture.imports_dir.display(),
+        capture.imported,
+        capture.skipped,
+        if capture.last_import_id.is_empty() { "(none)".to_string() } else { capture.last_import_id.clone() },
+        if capture.last_job_id.is_empty() { "(none)".to_string() } else { capture.last_job_id.clone() },
+        capture.note,
+        if capture.last_job_id.is_empty() { "<job_id>".to_string() } else { capture.last_job_id.clone() },
+    )
+}
+
+pub fn render_runtime_service_import_json(capture: &RuntimeServiceImportCapture) -> String {
+    format!(
+        "{{\n  \"status\": \"service_import_completed\",\n  \"commitments_source\": {},\n  \"imports_dir\": {},\n  \"imported\": {},\n  \"skipped\": {},\n  \"last_import_id\": {},\n  \"last_job_id\": {},\n  \"note\": {}\n}}\n",
+        json_string(&capture.commitments_source),
+        json_string(&capture.imports_dir.display().to_string()),
+        capture.imported,
+        capture.skipped,
+        json_string(&capture.last_import_id),
+        json_string(&capture.last_job_id),
+        json_string(&capture.note),
+    )
+}
+
 pub fn render_compare_human(summary: &ComparisonSummary) -> String {
     let divergence_lines = {
         let rendered = summary
@@ -3448,6 +4616,26 @@ fn ensure_runtime_scheduler_dir(root: &Path) -> ShadowResult<PathBuf> {
     Ok(scheduler_dir)
 }
 
+fn ensure_runtime_service_dir(root: &Path) -> ShadowResult<PathBuf> {
+    let service_dir = ensure_runtime_dir(root)?.join("service");
+    fs::create_dir_all(&service_dir).map_err(io_err)?;
+    Ok(service_dir)
+}
+
+fn ensure_runtime_ingress_dir(root: &Path) -> ShadowResult<PathBuf> {
+    let ingress_dir = ensure_runtime_dir(root)?.join("ingress");
+    fs::create_dir_all(&ingress_dir).map_err(io_err)?;
+    fs::create_dir_all(ingress_dir.join("requests")).map_err(io_err)?;
+    fs::create_dir_all(ingress_dir.join("receipts")).map_err(io_err)?;
+    Ok(ingress_dir)
+}
+
+fn ensure_runtime_imports_dir(root: &Path) -> ShadowResult<PathBuf> {
+    let imports_dir = ensure_runtime_dir(root)?.join("imports");
+    fs::create_dir_all(&imports_dir).map_err(io_err)?;
+    Ok(imports_dir)
+}
+
 fn ensure_audit_dir(root: &Path) -> ShadowResult<PathBuf> {
     let audit_dir = root.join(".loom/audit");
     fs::create_dir_all(&audit_dir).map_err(io_err)?;
@@ -3474,6 +4662,45 @@ fn runtime_audit_log_path(root: &Path, override_kernel_path: Option<&str>) -> Pa
             .join("loom_runtime_events.jsonl"),
         Err(_) => root.join(".loom/audit/runtime_events.jsonl"),
     }
+}
+
+fn service_socket_path(root: &Path, socket_override: Option<&str>) -> ShadowResult<PathBuf> {
+    if let Some(raw) = socket_override {
+        let path = PathBuf::from(raw);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(io_err)?;
+        }
+        return Ok(path);
+    }
+    Ok(ensure_runtime_service_dir(root)?.join("runtime.sock"))
+}
+
+fn runtime_service_state_path(root: &Path) -> ShadowResult<PathBuf> {
+    Ok(ensure_runtime_service_dir(root)?.join("runtime_state.json"))
+}
+
+fn service_stop_request_path(root: &Path) -> ShadowResult<PathBuf> {
+    Ok(ensure_runtime_service_dir(root)?.join("stop.requested"))
+}
+
+fn service_stdout_log_path(root: &Path) -> ShadowResult<PathBuf> {
+    Ok(ensure_runtime_service_dir(root)?.join("service.log"))
+}
+
+fn runtime_service_event_log_path(root: &Path) -> ShadowResult<PathBuf> {
+    Ok(ensure_runtime_service_dir(root)?.join("service_events.jsonl"))
+}
+
+fn runtime_ingress_stream_path(root: &Path) -> ShadowResult<PathBuf> {
+    Ok(ensure_runtime_ingress_dir(root)?.join("stream.jsonl"))
+}
+
+fn runtime_ingress_request_path(root: &Path, request_id: &str) -> ShadowResult<PathBuf> {
+    Ok(ensure_runtime_ingress_dir(root)?.join("requests").join(format!("{}.json", sanitize_filename(request_id))))
+}
+
+fn runtime_ingress_receipt_path(root: &Path, request_id: &str) -> ShadowResult<PathBuf> {
+    Ok(ensure_runtime_ingress_dir(root)?.join("receipts").join(format!("{}.json", sanitize_filename(request_id))))
 }
 
 fn write_supervisor_runtime_state(
@@ -3519,6 +4746,64 @@ fn write_supervisor_runtime_state(
             pending_jobs,
             processed_jobs,
             failed_jobs,
+            json_string(&note),
+        ),
+    )
+    .map_err(io_err)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_runtime_service_state(
+    runtime_state_path: &Path,
+    socket_path: &Path,
+    session_id: &str,
+    pid: u32,
+    running: bool,
+    status: &str,
+    booted_at: &str,
+    stopped_at: &str,
+    poll_seconds: u64,
+    max_jobs: usize,
+    max_iterations: usize,
+    iterations_completed: usize,
+    submitted: usize,
+    processed: usize,
+    allowed: usize,
+    denied: usize,
+    failed: usize,
+    pending_jobs: usize,
+    processed_jobs: usize,
+    failed_jobs: usize,
+    last_request_id: &str,
+    last_job_id: &str,
+    note: String,
+) -> ShadowResult<()> {
+    fs::write(
+        runtime_state_path,
+        format!(
+            "{{\n  \"status\": {},\n  \"updated_at\": {},\n  \"session_id\": {},\n  \"pid\": {},\n  \"running\": {},\n  \"socket_path\": {},\n  \"booted_at\": {},\n  \"stopped_at\": {},\n  \"poll_seconds\": {},\n  \"max_jobs\": {},\n  \"max_iterations\": {},\n  \"iterations_completed\": {},\n  \"submitted\": {},\n  \"processed\": {},\n  \"allowed\": {},\n  \"denied\": {},\n  \"failed\": {},\n  \"pending_jobs\": {},\n  \"processed_jobs\": {},\n  \"failed_jobs\": {},\n  \"last_request_id\": {},\n  \"last_job_id\": {},\n  \"note\": {}\n}}\n",
+            json_string(status),
+            json_string(&timestamp_now()),
+            json_string(session_id),
+            pid,
+            if running { "true" } else { "false" },
+            json_string(&socket_path.display().to_string()),
+            json_string(booted_at),
+            json_string(stopped_at),
+            poll_seconds,
+            max_jobs,
+            max_iterations,
+            iterations_completed,
+            submitted,
+            processed,
+            allowed,
+            denied,
+            failed,
+            pending_jobs,
+            processed_jobs,
+            failed_jobs,
+            json_string(last_request_id),
+            json_string(last_job_id),
             json_string(&note),
         ),
     )
@@ -4458,6 +5743,15 @@ fn sanitize_filename(input: &str) -> String {
         .collect()
 }
 
+fn canonical_join_runtime(parts: &[&str]) -> String {
+    parts
+        .iter()
+        .map(|part| sanitize_filename(part))
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("::")
+}
+
 fn load_events(path: &Path) -> ShadowResult<Vec<ShadowEvent>> {
     let contents = fs::read_to_string(path).map_err(io_err)?;
     let mut events = Vec::new();
@@ -5391,6 +6685,308 @@ if __name__ == '__main__':
         assert!(snapshot.runtime_state_path.exists());
         let human = render_supervisor_daemon_human(&snapshot);
         assert!(human.contains("SUPERVISOR DAEMON"));
+    }
+
+    #[test]
+    fn runtime_service_accepts_socket_submit_and_processes_queue() {
+        let root = temp_path("loom-shadow-runtime-service");
+        fs::create_dir_all(&root).expect("root");
+        let kernel = temp_path("loom-shadow-runtime-service-kernel");
+        let kernel_dir = kernel.join("kernel");
+        fs::create_dir_all(kernel_dir.join("adapters")).expect("kernel dirs");
+        fs::write(
+            kernel_dir.join("runtimes.json"),
+            "{\n  \"runtimes\": {\n    \"local_kernel\": {\"id\": \"local_kernel\", \"label\": \"Local Kernel Runtime\"},\n    \"meridian_loom\": {\"status\": \"experimental\", \"notes\": \"service fixture\", \"contract_compliance\": {\"agent_identity\": null, \"action_envelope\": null, \"cost_attribution\": null, \"approval_hook\": null, \"audit_emission\": null, \"sanction_controls\": null, \"budget_gate\": null}}\n  }\n}\n",
+        )
+        .expect("write runtimes");
+        fs::write(
+            kernel_dir.join("agent_registry.py"),
+            "import json, sys\nagent_id = sys.argv[sys.argv.index('--agent_id') + 1]\norg_id = sys.argv[sys.argv.index('--org_id') + 1] if '--org_id' in sys.argv else 'org_demo'\nprint(json.dumps({'id': agent_id, 'name': 'Atlas', 'org_id': org_id, 'role': 'analyst', 'economy_key': 'atlas', 'approval_required': False, 'budget': {'max_per_run_usd': 0.5}, 'runtime_binding': {'runtime_id': 'local_kernel', 'runtime_label': 'Local Kernel Runtime', 'bound_org_id': org_id, 'boundary_name': 'workspace', 'identity_model': 'session', 'runtime_registered': True, 'registration_status': 'registered'}}, indent=2))\n",
+        )
+        .expect("write registry");
+        fs::write(
+            kernel_dir.join("court.py"),
+            "def get_restrictions(agent_id, org_id=None):\n    return []\n",
+        )
+        .expect("write court");
+        fs::write(
+            kernel_dir.join("authority.py"),
+            "def check_authority(agent_id, action, org_id=None):\n    return True, 'ok'\n",
+        )
+        .expect("write authority");
+        fs::write(
+            kernel_dir.join("treasury.py"),
+            "def check_budget(agent_id, cost_usd, org_id=None):\n    return True, 'ok'\n\ndef reserve_runtime_budget(*args, **kwargs):\n    return {'allowed': True, 'reservation_id': 'bud_service', 'reservation': {'reservation_id': 'bud_service'}, 'reason': 'ok'}\n\ndef commit_runtime_budget(reservation_id, actual_cost_usd, note=''):\n    return {'reservation_id': reservation_id, 'status': 'committed', 'commit_reason': note}\n\ndef release_runtime_budget(reservation_id, reason=''):\n    return {'reservation_id': reservation_id, 'status': 'released', 'release_reason': reason}\n",
+        )
+        .expect("write treasury");
+        fs::write(
+            kernel_dir.join("audit.py"),
+            "def log_event(*args, **kwargs):\n    return 'evt_service'\n",
+        )
+        .expect("write audit");
+        fs::write(kernel_dir.join("adapters/__init__.py"), "").expect("write adapter init");
+        fs::write(
+            kernel_dir.join("adapters/openclaw_compatible.py"),
+            "def pre_action_check(org_id, envelope):\n    return {'allowed': True, 'stage': 'ok', 'reason': 'ok', 'restrictions': []}\n",
+        )
+        .expect("write adapter");
+        init_workspace(
+            &root,
+            "embedded",
+            Some(kernel.to_string_lossy().as_ref()),
+            "org_demo",
+        )
+        .expect("init workspace");
+        let root_for_service = root.clone();
+        let kernel_for_service = kernel.clone();
+        let handle = thread::spawn(move || {
+            run_runtime_service_loop(
+                &root_for_service,
+                Some(kernel_for_service.to_string_lossy().as_ref()),
+                None,
+                None,
+                None,
+                1,
+                1,
+                3,
+                "service-test",
+            )
+        });
+
+        let socket_path = root.join(".loom/runtime/service/runtime.sock");
+        for _ in 0..20 {
+            if socket_path.exists() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        assert!(socket_path.exists(), "runtime service socket did not appear");
+
+        let capture = submit_runtime_service_action(&root, None, &kernel, &sample_envelope())
+            .expect("submit via service");
+        assert_eq!(capture.job_id, envelope_input_hash(&sample_envelope()));
+        request_runtime_service_stop(&root, None).expect("request stop");
+        let snapshot = handle.join().expect("join service thread").expect("service loop");
+        assert!(snapshot.available);
+        assert_eq!(snapshot.session_id, "service-test");
+        assert_eq!(snapshot.submitted, 1);
+        assert!(snapshot.processed >= 1);
+        let job = inspect_job(&root, &capture.job_id).expect("inspect job");
+        assert_eq!(job.status, "completed");
+        let human = render_runtime_service_human(&snapshot);
+        assert!(human.contains("RUNTIME SERVICE"));
+        assert!(human.contains("service-owned ingress is locally real"));
+    }
+
+    #[test]
+    fn runtime_service_falls_back_to_file_ingress_when_socket_bind_is_unavailable() {
+        let root = temp_path("loom-shadow-runtime-service-file");
+        fs::create_dir_all(&root).expect("root");
+        let kernel = temp_path("loom-shadow-runtime-service-file-kernel");
+        let kernel_dir = kernel.join("kernel");
+        fs::create_dir_all(kernel_dir.join("adapters")).expect("kernel dirs");
+        fs::write(
+            kernel_dir.join("runtimes.json"),
+            "{\n  \"runtimes\": {\n    \"local_kernel\": {\"id\": \"local_kernel\", \"label\": \"Local Kernel Runtime\"},\n    \"meridian_loom\": {\"status\": \"experimental\", \"notes\": \"file ingress fixture\", \"contract_compliance\": {\"agent_identity\": null, \"action_envelope\": null, \"cost_attribution\": null, \"approval_hook\": null, \"audit_emission\": null, \"sanction_controls\": null, \"budget_gate\": null}}\n  }\n}\n",
+        )
+        .expect("write runtimes");
+        fs::write(
+            kernel_dir.join("agent_registry.py"),
+            "import json, sys\nagent_id = sys.argv[sys.argv.index('--agent_id') + 1]\norg_id = sys.argv[sys.argv.index('--org_id') + 1] if '--org_id' in sys.argv else 'org_demo'\nprint(json.dumps({'id': agent_id, 'name': 'Atlas', 'org_id': org_id, 'role': 'analyst', 'economy_key': 'atlas', 'approval_required': False, 'budget': {'max_per_run_usd': 0.5}, 'runtime_binding': {'runtime_id': 'local_kernel', 'runtime_label': 'Local Kernel Runtime', 'bound_org_id': org_id, 'boundary_name': 'workspace', 'identity_model': 'session', 'runtime_registered': True, 'registration_status': 'registered'}}, indent=2))\n",
+        )
+        .expect("write registry");
+        fs::write(kernel_dir.join("court.py"), "def get_restrictions(agent_id, org_id=None):\n    return []\n").expect("write court");
+        fs::write(kernel_dir.join("authority.py"), "def check_authority(agent_id, action, org_id=None):\n    return True, 'ok'\n").expect("write authority");
+        fs::write(
+            kernel_dir.join("treasury.py"),
+            "def check_budget(agent_id, cost_usd, org_id=None):\n    return True, 'ok'\n\ndef reserve_runtime_budget(*args, **kwargs):\n    return {'allowed': True, 'reservation_id': 'bud_service', 'reservation': {'reservation_id': 'bud_service'}, 'reason': 'ok'}\n\ndef commit_runtime_budget(reservation_id, actual_cost_usd, note=''):\n    return {'reservation_id': reservation_id, 'status': 'committed', 'commit_reason': note}\n\ndef release_runtime_budget(reservation_id, reason=''):\n    return {'reservation_id': reservation_id, 'status': 'released', 'release_reason': reason}\n",
+        )
+        .expect("write treasury");
+        fs::write(kernel_dir.join("audit.py"), "def log_event(*args, **kwargs):\n    return 'evt_service'\n").expect("write audit");
+        fs::write(kernel_dir.join("adapters/__init__.py"), "").expect("write adapter init");
+        fs::write(
+            kernel_dir.join("adapters/openclaw_compatible.py"),
+            "def pre_action_check(org_id, envelope):\n    return {'allowed': True, 'stage': 'ok', 'reason': 'ok', 'restrictions': []}\n",
+        )
+        .expect("write adapter");
+        init_workspace(
+            &root,
+            "embedded",
+            Some(kernel.to_string_lossy().as_ref()),
+            "org_demo",
+        )
+        .expect("init workspace");
+
+        let socket_override = ensure_runtime_service_dir(&root)
+            .expect("service dir")
+            .display()
+            .to_string();
+        let root_for_service = root.clone();
+        let kernel_for_service = kernel.clone();
+        let socket_override_for_service = socket_override.clone();
+        let handle = thread::spawn(move || {
+            run_runtime_service_loop(
+                &root_for_service,
+                Some(kernel_for_service.to_string_lossy().as_ref()),
+                Some(&socket_override_for_service),
+                None,
+                None,
+                1,
+                0,
+                100,
+                "service-file-test",
+            )
+        });
+
+        for _ in 0..20 {
+            if let Ok(snapshot) = runtime_service_status(&root, Some(&socket_override)) {
+                if snapshot.available && snapshot.running {
+                    break;
+                }
+            }
+            let state_path = root.join(".loom/runtime/service/runtime_state.json");
+            if state_path.exists() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+
+        let capture = submit_runtime_service_action(
+            &root,
+            Some(&socket_override),
+            &kernel,
+            &sample_envelope(),
+        )
+        .expect("submit via file ingress fallback");
+        request_runtime_service_stop(&root, Some(&socket_override)).expect("request stop");
+        let snapshot = handle.join().expect("join service thread").expect("service loop");
+        assert!(snapshot.available);
+        assert_eq!(snapshot.session_id, "service-file-test");
+        assert_eq!(capture.job_id, envelope_input_hash(&sample_envelope()));
+        let job = inspect_job(&root, &capture.job_id).expect("inspect job");
+        assert_eq!(job.status, "completed");
+        assert!(capture.note.contains("file"));
+        let service_events = fs::read_to_string(snapshot.event_log_path).expect("service events");
+        assert!(service_events.contains("socket_bind_failed"));
+    }
+
+    #[test]
+    fn import_commitment_execution_requests_enqueues_sender_side_delivery_refs() {
+        let root = temp_path("loom-shadow-commitment-import");
+        fs::create_dir_all(&root).expect("root");
+        let kernel = temp_path("loom-shadow-commitment-import-kernel");
+        let kernel_dir = kernel.join("kernel");
+        fs::create_dir_all(kernel_dir.join("adapters")).expect("kernel dirs");
+        fs::write(
+            kernel_dir.join("runtimes.json"),
+            "{\n  \"runtimes\": {\n    \"local_kernel\": {\"id\": \"local_kernel\", \"label\": \"Local Kernel Runtime\"},\n    \"meridian_loom\": {\"status\": \"experimental\", \"notes\": \"commitment import fixture\", \"contract_compliance\": {\"agent_identity\": null, \"action_envelope\": null, \"cost_attribution\": null, \"approval_hook\": null, \"audit_emission\": null, \"sanction_controls\": null, \"budget_gate\": null}}\n  }\n}\n",
+        )
+        .expect("write runtimes");
+        fs::write(
+            kernel_dir.join("agent_registry.py"),
+            "import json, sys\nagent_id = sys.argv[sys.argv.index('--agent_id') + 1]\norg_id = sys.argv[sys.argv.index('--org_id') + 1] if '--org_id' in sys.argv else 'org_alpha'\nprint(json.dumps({'id': agent_id, 'name': 'Atlas', 'org_id': org_id, 'role': 'analyst', 'economy_key': 'atlas', 'approval_required': False, 'budget': {'max_per_run_usd': 5.0}, 'runtime_binding': {'runtime_id': 'local_kernel', 'runtime_label': 'Local Kernel Runtime', 'bound_org_id': org_id, 'boundary_name': 'workspace', 'identity_model': 'session', 'runtime_registered': True, 'registration_status': 'registered'}}, indent=2))\n",
+        )
+        .expect("write registry");
+        fs::write(kernel_dir.join("court.py"), "def get_restrictions(agent_id, org_id=None):\n    return []\n").expect("write court");
+        fs::write(kernel_dir.join("authority.py"), "def check_authority(agent_id, action, org_id=None):\n    return True, 'ok'\n").expect("write authority");
+        fs::write(kernel_dir.join("treasury.py"), "def check_budget(agent_id, cost_usd, org_id=None):\n    return True, 'ok'\n").expect("write treasury");
+        fs::write(kernel_dir.join("audit.py"), "def log_event(*args, **kwargs):\n    return 'evt_import'\n").expect("write audit");
+        init_workspace(
+            &root,
+            "embedded",
+            Some(kernel.to_string_lossy().as_ref()),
+            "org_alpha",
+        )
+        .expect("init workspace");
+
+        let commitments_path = root.join("commitments_snapshot.json");
+        fs::write(
+            &commitments_path,
+            format!(
+                "{{\n  \"bound_org_id\": \"org_alpha\",\n  \"commitments\": [\n    {{\n      \"commitment_id\": \"commit_demo\",\n      \"source_institution_id\": \"org_alpha\",\n      \"delivery_refs\": [\n        {{\n          \"message_type\": \"execution_request\",\n          \"envelope_id\": \"fedenv_demo\",\n          \"receipt_id\": \"fedrcpt_demo\",\n          \"adapter_envelope\": {{\n            \"agent_id\": \"atlas\",\n            \"action_type\": \"federated_execution\",\n            \"resource\": \"host_beta/shared_brief_review\",\n            \"estimated_cost_usd\": 0.10,\n            \"run_id\": \"run_import_demo\",\n            \"session_id\": \"sess_import_demo\",\n            \"details\": {{\n              \"message_type\": \"execution_request\",\n              \"commitment_id\": \"commit_demo\"\n            }}\n          }}\n        }}\n      ]\n    }}\n  ]\n}}\n"
+            ),
+        )
+        .expect("write commitments snapshot");
+
+        let capture = import_commitment_execution_requests(
+            &root,
+            Some(kernel.to_string_lossy().as_ref()),
+            commitments_path.to_string_lossy().as_ref(),
+            None,
+        )
+        .expect("import commitments");
+        assert_eq!(capture.imported, 1);
+        assert_eq!(capture.skipped, 0);
+        assert!(!capture.last_job_id.is_empty());
+        let job = inspect_job(&root, &capture.last_job_id).expect("inspect imported job");
+        assert_eq!(job.status, "queued");
+        assert_eq!(job.action_type, "federated_execution");
+        assert_eq!(job.org_id, "org_alpha");
+    }
+
+    #[test]
+    fn runtime_service_loop_imports_commitments_source_and_processes_job() {
+        let root = temp_path("loom-shadow-commitment-service-import");
+        fs::create_dir_all(&root).expect("root");
+        let kernel = temp_path("loom-shadow-commitment-service-import-kernel");
+        let kernel_dir = kernel.join("kernel");
+        fs::create_dir_all(kernel_dir.join("adapters")).expect("kernel dirs");
+        fs::write(
+            kernel_dir.join("runtimes.json"),
+            "{\n  \"runtimes\": {\n    \"local_kernel\": {\"id\": \"local_kernel\", \"label\": \"Local Kernel Runtime\"},\n    \"meridian_loom\": {\"status\": \"experimental\", \"notes\": \"service import fixture\", \"contract_compliance\": {\"agent_identity\": null, \"action_envelope\": null, \"cost_attribution\": null, \"approval_hook\": null, \"audit_emission\": null, \"sanction_controls\": null, \"budget_gate\": null}}\n  }\n}\n",
+        )
+        .expect("write runtimes");
+        fs::write(
+            kernel_dir.join("agent_registry.py"),
+            "import json, sys\nagent_id = sys.argv[sys.argv.index('--agent_id') + 1]\norg_id = sys.argv[sys.argv.index('--org_id') + 1] if '--org_id' in sys.argv else 'org_alpha'\nprint(json.dumps({'id': agent_id, 'name': 'Atlas', 'org_id': org_id, 'role': 'analyst', 'economy_key': 'atlas', 'approval_required': False, 'budget': {'max_per_run_usd': 5.0}, 'runtime_binding': {'runtime_id': 'local_kernel', 'runtime_label': 'Local Kernel Runtime', 'bound_org_id': org_id, 'boundary_name': 'workspace', 'identity_model': 'session', 'runtime_registered': True, 'registration_status': 'registered'}}, indent=2))\n",
+        )
+        .expect("write registry");
+        fs::write(kernel_dir.join("court.py"), "def get_restrictions(agent_id, org_id=None):\n    return []\n").expect("write court");
+        fs::write(kernel_dir.join("authority.py"), "def check_authority(agent_id, action, org_id=None):\n    return True, 'ok'\n").expect("write authority");
+        fs::write(
+            kernel_dir.join("treasury.py"),
+            "def check_budget(agent_id, cost_usd, org_id=None):\n    return True, 'ok'\n\ndef reserve_runtime_budget(*args, **kwargs):\n    return {'allowed': True, 'reservation_id': 'bud_service', 'reservation': {'reservation_id': 'bud_service'}, 'reason': 'ok'}\n\ndef commit_runtime_budget(reservation_id, actual_cost_usd, note=''):\n    return {'reservation_id': reservation_id, 'status': 'committed', 'commit_reason': note}\n\ndef release_runtime_budget(reservation_id, reason=''):\n    return {'reservation_id': reservation_id, 'status': 'released', 'release_reason': reason}\n",
+        )
+        .expect("write treasury");
+        fs::write(kernel_dir.join("audit.py"), "def log_event(*args, **kwargs):\n    return 'evt_import'\n").expect("write audit");
+        fs::write(kernel_dir.join("adapters/__init__.py"), "").expect("write adapter init");
+        fs::write(
+            kernel_dir.join("adapters/openclaw_compatible.py"),
+            "def pre_action_check(org_id, envelope):\n    return {'allowed': True, 'stage': 'ok', 'reason': 'ok', 'restrictions': []}\n",
+        )
+        .expect("write adapter");
+        init_workspace(
+            &root,
+            "embedded",
+            Some(kernel.to_string_lossy().as_ref()),
+            "org_alpha",
+        )
+        .expect("init workspace");
+
+        let commitments_path = root.join("commitments_snapshot.json");
+        fs::write(
+            &commitments_path,
+            "{\n  \"bound_org_id\": \"org_alpha\",\n  \"commitments\": [\n    {\n      \"commitment_id\": \"commit_demo\",\n      \"source_institution_id\": \"org_alpha\",\n      \"delivery_refs\": [\n        {\n          \"message_type\": \"execution_request\",\n          \"envelope_id\": \"fedenv_demo\",\n          \"receipt_id\": \"fedrcpt_demo\",\n          \"adapter_envelope\": {\n            \"agent_id\": \"atlas\",\n            \"action_type\": \"federated_execution\",\n            \"resource\": \"host_beta/shared_brief_review\",\n            \"estimated_cost_usd\": 0.10,\n            \"run_id\": \"run_import_demo\",\n            \"session_id\": \"sess_import_demo\",\n            \"details\": {\"message_type\": \"execution_request\", \"commitment_id\": \"commit_demo\"}\n          }\n        }\n      ]\n    }\n  ]\n}\n",
+        )
+        .expect("write commitments snapshot");
+
+        let snapshot = run_runtime_service_loop(
+            &root,
+            Some(kernel.to_string_lossy().as_ref()),
+            None,
+            Some(commitments_path.to_string_lossy().as_ref()),
+            None,
+            1,
+            0,
+            2,
+            "service-import-test",
+        )
+        .expect("service loop");
+        assert!(snapshot.available);
+        assert_eq!(snapshot.submitted, 1);
+        assert_eq!(snapshot.processed, 1);
+        let marker_dir = root.join(".loom/runtime/imports/commitment_execution");
+        assert!(marker_dir.exists());
     }
 
     fn temp_path(prefix: &str) -> PathBuf {

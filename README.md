@@ -170,6 +170,33 @@ And a sixth rehearsal for bounded daemon lifecycle:
 
 Its checked-in transcript lives at `examples/supervisor-daemon-output.txt`.
 
+And a seventh rehearsal for the local runtime service shell:
+
+```bash
+./scripts/rehearse_runtime_service.sh
+```
+
+That path proves a local service lifecycle is now real:
+- `loom service start` writes runtime service state and background logs
+- `loom service submit` accepts a governed action through the service boundary
+- the current transport is truthful: Unix socket first, file-backed ingress
+  fallback when the socket boundary is unavailable on the host
+- `loom service status` and `loom service stop` close the local lifecycle cleanly
+
+Its checked-in transcript lives at `examples/runtime-service-output.txt`.
+
+And an eighth rehearsal for sender-side commitment outbox import:
+
+```bash
+./scripts/rehearse_commitment_import.sh
+```
+
+That path proves Loom can now import sender-side `execution_request`
+`delivery_refs` into the local queue from a commitments snapshot, instead of
+pretending the only ingress story is a handwritten local envelope.
+
+Its checked-in transcript lives at `examples/commitment-import-output.txt`.
+
 The local Wasm lane is runnable too:
 
 ```bash
@@ -225,12 +252,15 @@ transport replacement strategy.
   - contract inspection
   - action envelope construction
   - capsule inspection
+  - Wasmtime host profile and limit resolution
   - runtime-owned job ledger
 - `loom-shadow`
   - shadow preflight capture
   - decision capture
   - fail-closed shell gate
   - runtime execution rehearsal receipt
+  - local runtime service shell with queue ownership
+  - sender-side commitment outbox import
   - parity stream
   - report surfaces
 - `loom-cli`
@@ -251,6 +281,8 @@ Current human-mode output uses a single grammar:
 - `Meridian Loom // CAPSULE INSPECT`
 - `Meridian Loom // JOB LIST`
 - `Meridian Loom // JOB INSPECT`
+- `Meridian Loom // RUNTIME SERVICE`
+- `Meridian Loom // COMMITMENT IMPORT`
 - `Meridian Loom // SUPERVISOR STATUS`
 - `Meridian Loom // SUPERVISOR DAEMON`
 - `Meridian Loom // SHADOW PREFLIGHT`
@@ -277,6 +309,8 @@ is “what parts of a real runtime path are already tangible?”
 | Governed local supervisor | `loom action execute` now dispatches an experimental local Python worker when the effective decision is `allow`, and still fails closed with exit code `2` when denied. This is a real local supervisor path, not a hosted runtime replacement. |
 | Queue-backed supervisor lane | `loom action enqueue` and `loom supervisor run` now provide a real local queue boundary. A queued action is materialized under `.loom/runtime/queue/`, then processed through the same decision surface and worker dispatch path when the supervisor runs. |
 | Runtime-owned job ledger | `loom job list` and `loom job inspect` now surface persisted job state from `.loom/runtime/jobs/<input_hash>/job.json`. Queue, runtime, decision, parity, and audit artifact paths are now operator-readable without spelunking the runtime tree manually. |
+| Local runtime service shell | `loom service start/status/submit/stop` now provide a real local service lifecycle with runtime state, service events, ingress stream artifacts, and truthful transport reporting. On hosts where the Unix socket boundary is unavailable, the service falls back to file-backed ingress instead of failing silently. |
+| Commitment outbox import | `loom service import-commitments` can now read sender-side `execution_request` delivery refs from a commitments snapshot and materialize those requests into the local Loom queue. This is a real local ingress seam from kernel truth, not yet a hosted cross-host replacement path. |
 | Supervisor watch loop | `loom supervisor watch` now runs that same queue supervisor in a bounded polling loop, writes `.loom/runtime/supervisor/status.json`, and appends heartbeat history into `.loom/runtime/supervisor/heartbeat.jsonl`. This makes local supervisor state inspectable, but it is still not a daemonized or hosted scheduler. |
 | Daemon lifecycle rehearsal | `loom supervisor daemon start/status/stop` now wrap the same queue supervisor with a real local lifecycle shell. A background child writes `.loom/runtime/supervisor/runtime_state.json`, appends heartbeat history, and honors a local stop request. This is still a bounded local daemon rehearsal, not a hosted supervisor service. |
 | Runtime-side audit emission | `loom action execute` and `loom supervisor run` now write runtime audit entries through the kernel-owned `audit.py log-runtime` path into `kernel/runtime_audit/loom_runtime_events.jsonl` when a kernel is present. This is a canonical kernel-owned file for the current rehearsal boundary, but still not the hosted kernel's global audit trail. |
@@ -290,6 +324,7 @@ Loom is still missing the things that would make it a real runtime:
 
 - no hosted supervisor loop or scheduler
 - no runtime-owned multi-worker scheduler beyond the current local daemon rehearsal
+- no hosted runtime service or durable ingress transport
 - no native transport adapters
 - no long-running scheduler/runtime loop
 - no native sanction enforcement inside a hosted worker runtime
@@ -318,6 +353,11 @@ loom job list
 loom job inspect
 loom action enqueue
 loom action execute
+loom service start
+loom service status
+loom service submit
+loom service import-commitments
+loom service stop
 loom supervisor run
 loom supervisor watch
 loom supervisor status

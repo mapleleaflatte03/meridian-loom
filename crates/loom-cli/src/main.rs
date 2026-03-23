@@ -21,11 +21,16 @@ use loom_shadow::{
     render_supervisor_lanes_human, render_supervisor_lanes_json,
     render_preflight_human, render_preflight_json, render_runtime_execution_human,
     render_runtime_execution_json, render_supervisor_daemon_human,
-    render_supervisor_daemon_json, render_shadow_report, render_supervisor_run_human,
+    render_supervisor_daemon_json, render_runtime_service_human,
+    render_runtime_service_import_human, render_runtime_service_import_json,
+    render_runtime_service_json, render_runtime_service_submit_human,
+    render_runtime_service_submit_json, render_shadow_report, render_supervisor_run_human,
     render_supervisor_run_json, render_supervisor_status_human, render_supervisor_status_json,
     render_supervisor_watch_human, render_supervisor_watch_json, run_supervisor,
-    run_supervisor_daemon_loop, request_supervisor_daemon_stop, supervisor_daemon_status,
-    supervisor_status, watch_supervisor,
+    import_commitment_execution_requests,
+    run_supervisor_daemon_loop, request_runtime_service_stop, request_supervisor_daemon_stop,
+    run_runtime_service_loop, runtime_service_status, submit_runtime_service_action,
+    supervisor_daemon_status, supervisor_status, watch_supervisor,
 };
 use std::env;
 use std::io::{self, IsTerminal};
@@ -63,6 +68,7 @@ fn run() -> LoomResult<()> {
         "envelope" => handle_envelope(&args[1..]),
         "action" => handle_action(&args[1..]),
         "supervisor" => handle_supervisor(&args[1..]),
+        "service" => handle_service(&args[1..]),
         "shadow" => handle_shadow(&args[1..]),
         "parity" => handle_parity(&args[1..]),
         "wasm" => handle_wasm(&args[1..]),
@@ -900,6 +906,248 @@ fn handle_supervisor_daemon(args: &[String]) -> LoomResult<()> {
     }
 }
 
+fn handle_service(args: &[String]) -> LoomResult<()> {
+    match args.first().map(String::as_str) {
+        Some("start") => {
+            let root = root_from(take_value(args, "--root").as_deref())?;
+            let kernel_path = take_value(args, "--kernel-path");
+            let socket_path = take_value(args, "--socket");
+            let commitments_source = take_value(args, "--commitments-source");
+            let workspace_token = take_value(args, "--workspace-token");
+            let max_jobs = take_value(args, "--max-jobs")
+                .and_then(|raw| raw.parse::<usize>().ok())
+                .unwrap_or(1);
+            let poll_seconds = take_value(args, "--poll-seconds")
+                .and_then(|raw| raw.parse::<u64>().ok())
+                .unwrap_or(1);
+            let iterations = take_value(args, "--iterations")
+                .and_then(|raw| raw.parse::<usize>().ok())
+                .unwrap_or(120);
+            let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+            let service_dir = root.join(".loom/runtime/service");
+            std::fs::create_dir_all(&service_dir).map_err(|e| e.to_string())?;
+            let stdout_log_path = service_dir.join("service.log");
+            let stdout = std::fs::File::create(&stdout_log_path).map_err(|e| e.to_string())?;
+            let stderr = stdout.try_clone().map_err(|e| e.to_string())?;
+            let session_id = format!("service-{}", chrono_like_timestamp());
+            let exe = env::current_exe().map_err(|e| e.to_string())?;
+            let mut command = Command::new(exe);
+            command
+                .arg("service")
+                .arg("loop")
+                .arg("--root")
+                .arg(&root)
+                .arg("--max-jobs")
+                .arg(max_jobs.to_string())
+                .arg("--poll-seconds")
+                .arg(poll_seconds.to_string())
+                .arg("--iterations")
+                .arg(iterations.to_string())
+                .arg("--session-id")
+                .arg(&session_id)
+                .stdout(Stdio::from(stdout))
+                .stderr(Stdio::from(stderr));
+            if let Some(kernel_path) = kernel_path.as_deref() {
+                command.arg("--kernel-path").arg(kernel_path);
+            }
+            if let Some(socket_path) = socket_path.as_deref() {
+                command.arg("--socket").arg(socket_path);
+            }
+            if let Some(commitments_source) = commitments_source.as_deref() {
+                command.arg("--commitments-source").arg(commitments_source);
+            }
+            if let Some(workspace_token) = workspace_token.as_deref() {
+                command.arg("--workspace-token").arg(workspace_token);
+            }
+            let child = command.spawn().map_err(|e| e.to_string())?;
+            let note = format!(
+                "runtime service start requested; pid={} session_id={} log={}",
+                child.id(),
+                session_id,
+                stdout_log_path.display()
+            );
+            let fallback_note = note.clone();
+            let mut snapshot_result = runtime_service_status(&root, socket_path.as_deref());
+            for _ in 0..10 {
+                if let Ok(snapshot) = &snapshot_result {
+                    if snapshot.available {
+                        break;
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                snapshot_result = runtime_service_status(&root, socket_path.as_deref());
+            }
+            let snapshot = snapshot_result.unwrap_or_else(|_| loom_shadow::RuntimeServiceSnapshot {
+                root: root.clone(),
+                service_dir,
+                socket_path: socket_path
+                    .as_deref()
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|| root.join(".loom/runtime/service/runtime.sock")),
+                runtime_state_path: root.join(".loom/runtime/service/runtime_state.json"),
+                stop_request_path: root.join(".loom/runtime/service/stop.requested"),
+                stdout_log_path,
+                event_log_path: root.join(".loom/runtime/service/service_events.jsonl"),
+                ingress_stream_path: root.join(".loom/runtime/ingress/stream.jsonl"),
+                available: true,
+                session_id: session_id.clone(),
+                pid: child.id(),
+                running: true,
+                status: "starting".to_string(),
+                updated_at: String::new(),
+                booted_at: String::new(),
+                stopped_at: String::new(),
+                poll_seconds,
+                max_jobs,
+                max_iterations: iterations,
+                iterations_completed: 0,
+                submitted: 0,
+                processed: 0,
+                allowed: 0,
+                denied: 0,
+                failed: 0,
+                pending_jobs: 0,
+                processed_jobs: 0,
+                failed_jobs: 0,
+                last_request_id: String::new(),
+                last_job_id: String::new(),
+                note: fallback_note,
+            });
+            if format == "json" {
+                print!("{}", render_runtime_service_json(&snapshot));
+            } else {
+                let mut snapshot = snapshot;
+                if snapshot.note.is_empty() {
+                    snapshot.note = note;
+                }
+                print_human(&render_runtime_service_human(&snapshot));
+            }
+            Ok(())
+        }
+        Some("loop") => {
+            let root = root_from(take_value(args, "--root").as_deref())?;
+            let kernel_path = take_value(args, "--kernel-path");
+            let socket_path = take_value(args, "--socket");
+            let commitments_source = take_value(args, "--commitments-source");
+            let workspace_token = take_value(args, "--workspace-token");
+            let max_jobs = take_value(args, "--max-jobs")
+                .and_then(|raw| raw.parse::<usize>().ok())
+                .unwrap_or(1);
+            let poll_seconds = take_value(args, "--poll-seconds")
+                .and_then(|raw| raw.parse::<u64>().ok())
+                .unwrap_or(1);
+            let iterations = take_value(args, "--iterations")
+                .and_then(|raw| raw.parse::<usize>().ok())
+                .unwrap_or(120);
+            let session_id =
+                take_value(args, "--session-id").unwrap_or_else(|| format!("service-{}", chrono_like_timestamp()));
+            let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+            let snapshot = run_runtime_service_loop(
+                &root,
+                kernel_path.as_deref(),
+                socket_path.as_deref(),
+                commitments_source.as_deref(),
+                workspace_token.as_deref(),
+                max_jobs,
+                poll_seconds,
+                iterations,
+                &session_id,
+            )?;
+            if format == "json" {
+                print!("{}", render_runtime_service_json(&snapshot));
+            } else {
+                print_human(&render_runtime_service_human(&snapshot));
+            }
+            Ok(())
+        }
+        Some("status") => {
+            let root = root_from(take_value(args, "--root").as_deref())?;
+            let socket_path = take_value(args, "--socket");
+            let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+            let snapshot = runtime_service_status(&root, socket_path.as_deref())?;
+            if format == "json" {
+                print!("{}", render_runtime_service_json(&snapshot));
+            } else {
+                print_human(&render_runtime_service_human(&snapshot));
+            }
+            Ok(())
+        }
+        Some("stop") => {
+            let root = root_from(take_value(args, "--root").as_deref())?;
+            let socket_path = take_value(args, "--socket");
+            let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+            let snapshot = request_runtime_service_stop(&root, socket_path.as_deref())?;
+            if format == "json" {
+                print!("{}", render_runtime_service_json(&snapshot));
+            } else {
+                print_human(&render_runtime_service_human(&snapshot));
+            }
+            Ok(())
+        }
+        Some("submit") => {
+            let root = root_from(take_value(args, "--root").as_deref())?;
+            let agent_id = required_flag(args, "--agent-id")?;
+            let action_type = required_flag(args, "--action-type")?;
+            let resource = required_flag(args, "--resource")?;
+            let estimated_cost_usd = parse_f64_flag(args, "--estimated-cost-usd").unwrap_or(0.0);
+            let kernel_path = take_value(args, "--kernel-path");
+            let org_id = take_value(args, "--org-id");
+            let run_id = take_value(args, "--run-id");
+            let session_id = take_value(args, "--session-id");
+            let socket_path = take_value(args, "--socket");
+            let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+
+            let envelope = build_action_envelope(
+                &root,
+                kernel_path.as_deref(),
+                &agent_id,
+                org_id.as_deref(),
+                &action_type,
+                &resource,
+                estimated_cost_usd,
+                run_id.as_deref(),
+                session_id.as_deref(),
+            )?;
+            let effective_kernel_path = kernel_path_for(&root, kernel_path.as_deref())?;
+            let capture = submit_runtime_service_action(
+                &root,
+                socket_path.as_deref(),
+                &effective_kernel_path,
+                &envelope,
+            )?;
+            if format == "json" {
+                print!("{}", render_runtime_service_submit_json(&capture));
+            } else {
+                print_human_block(&[
+                    render_envelope_human(&envelope),
+                    render_runtime_service_submit_human(&capture),
+                ]);
+            }
+            Ok(())
+        }
+        Some("import-commitments") => {
+            let root = root_from(take_value(args, "--root").as_deref())?;
+            let kernel_path = take_value(args, "--kernel-path");
+            let commitments_source = required_flag(args, "--commitments-source")?;
+            let workspace_token = take_value(args, "--workspace-token");
+            let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+            let capture = import_commitment_execution_requests(
+                &root,
+                kernel_path.as_deref(),
+                &commitments_source,
+                workspace_token.as_deref(),
+            )?;
+            if format == "json" {
+                print!("{}", render_runtime_service_import_json(&capture));
+            } else {
+                print_human(&render_runtime_service_import_human(&capture));
+            }
+            Ok(())
+        }
+        _ => Err("service supports 'start', 'loop', 'status', 'submit', 'import-commitments', and 'stop'".to_string()),
+    }
+}
+
 fn take_value(args: &[String], flag: &str) -> Option<String> {
     args.windows(2)
         .find(|pair| pair[0] == flag)
@@ -961,6 +1209,11 @@ Runtime rehearsal\n\
 -----------------\n\
   loom action enqueue --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
   loom action execute --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
+  loom service start [--root PATH] [--kernel-path PATH] [--socket PATH] [--commitments-source PATH|URL] [--workspace-token TOKEN] [--max-jobs N] [--poll-seconds N] [--iterations N] [--format human|json]\n\
+  loom service status [--root PATH] [--socket PATH] [--format human|json]\n\
+  loom service submit --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--socket PATH] [--format human|json]\n\
+  loom service import-commitments --commitments-source PATH|URL [--workspace-token TOKEN] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
+  loom service stop [--root PATH] [--socket PATH] [--format human|json]\n\
   loom supervisor run [--root PATH] [--kernel-path PATH] [--max-jobs N] [--format human|json]\n\
   loom supervisor watch [--root PATH] [--kernel-path PATH] [--max-jobs N] [--iterations N] [--poll-seconds N] [--format human|json]\n\
   loom supervisor status [--root PATH] [--format human|json]\n\
@@ -978,10 +1231,10 @@ Runtime rehearsal\n\
 Next\n\
 ----\n\
   1. loom init --mode embedded --root /tmp/loom-rehearsal --kernel-path /tmp/meridian-kernel\n\
-  2. loom action enqueue --agent-id agent_atlas --action-type research --resource web_search --root /tmp/loom-rehearsal\n\
-  3. loom supervisor daemon start --root /tmp/loom-rehearsal --max-jobs 1 --poll-seconds 1 --iterations 10\n\
-  4. loom job list --root /tmp/loom-rehearsal --format human\n\
-  5. loom supervisor daemon status --root /tmp/loom-rehearsal --format human\n",
+  2. loom service start --root /tmp/loom-rehearsal --kernel-path /tmp/meridian-kernel --max-jobs 1 --poll-seconds 1 --iterations 20\n\
+  3. loom service submit --root /tmp/loom-rehearsal --agent-id agent_atlas --action-type research --resource web_search --estimated-cost-usd 0.05\n\
+  4. loom service import-commitments --root /tmp/loom-rehearsal --commitments-source /tmp/commitments.json\n\
+  5. loom parity report --root /tmp/loom-rehearsal\n",
     );
 }
 

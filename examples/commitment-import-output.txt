@@ -1,0 +1,100 @@
+== Meridian Loom commitment import rehearsal ==
+root:        /tmp/loom-commitment-import
+kernel:      /tmp/loom-commitment-import-kernel.K5UUZI
+commitments: /tmp/loom-commitment-import/commitments_snapshot.json
+Meridian Loom // INIT
+====================
+root:        /tmp/loom-commitment-import
+mode:        embedded
+org_id:      org_alpha
+state_dir:   .loom
+kernel_path: /tmp/loom-commitment-import-kernel.K5UUZI
+status:      initialized experimental scaffold
+next_step:   loom doctor --root /tmp/loom-commitment-import --format human
+{
+  "status": "service_import_completed",
+  "commitments_source": "/tmp/loom-commitment-import/commitments_snapshot.json",
+  "imports_dir": "/tmp/loom-commitment-import/.loom/runtime/imports/commitment_execution",
+  "imported": 1,
+  "skipped": 0,
+  "last_import_id": "commitment::commit_demo::fedenv_demo::fedrcpt_demo",
+  "last_job_id": "a62400298391370f",
+  "note": "imported 1 sender-side execution_request deliveries from commitment outbox truth"
+}
+Meridian Loom // JOB LIST
+==========================
+phase:       experimental runtime-owned job ledger
+boundary:    local job state is real; hosted scheduler remains future work
+
+Current state
+=============
+root:                /tmp/loom-commitment-import
+status_filter:       (none)
+jobs_found:          1
+
+Entries
+-------
+  a62400298391370f | status=queued | stage=queue_pending | bucket=pending:standard | agent=atlas | action=federated_execution::host_beta/shared_brief_review | updated_at=1774292834
+
+Next
+====
+1. loom job inspect --job-id <input_hash> --root /tmp/loom-commitment-import
+2. loom supervisor daemon status --root /tmp/loom-commitment-import
+3. loom parity report --root /tmp/loom-commitment-import
+Meridian Loom // JOB INSPECT
+=============================
+phase:       experimental runtime-owned job ledger
+boundary:    job lifecycle is locally inspectable; hosted scheduler remains future work
+
+Current state
+=============
+job_id:              a62400298391370f
+status:              queued
+stage:               queue_pending
+queue_bucket:        pending:standard
+queued_at:           1774292834
+updated_at:          1774292834
+agent_id:            atlas
+org_id:              org_alpha
+action_type:         federated_execution
+resource:            host_beta/shared_brief_review
+estimated_cost_usd:  0.100000
+runtime_outcome:     not_started
+budget_reservation:  not_requested (queue pending; runtime reservation not attempted yet)
+worker_status:       queued
+note:                queued for local supervisor rehearsal in standard lane
+
+Proof-first status
+==================
+schema_version:    loom.runtime.v1
+truth_class:       experimental_runtime_job_ledger
+event_id:          loom.runtime.v1::org_alpha::atlas::federated_execution::host_beta_shared_brief_review::queued::queue_pending::job__org_alpha__atlas__federated_execution__a62400298391370f::execution__job__org_alpha__atlas__federated_execution__a62400298391370f__queue_pending__not_started
+job_id:            job::org_alpha::atlas::federated_execution::a62400298391370f
+execution_id:      execution::job__org_alpha__atlas__federated_execution__a62400298391370f::queue_pending::not_started
+decision_id:       decision::job__org_alpha__atlas__federated_execution__a62400298391370f::queue_pending::queued
+parity_id:         parity::job__org_alpha__atlas__federated_execution__a62400298391370f::execution__job__org_alpha__atlas__federated_execution__a62400298391370f__queue_pending__not_started::missing
+audit_id:          audit::job__org_alpha__atlas__federated_execution__a62400298391370f::execution__job__org_alpha__atlas__federated_execution__a62400298391370f__queue_pending__not_started::federated_execution
+artifact_count:    2
+
+Artifacts
+=========
+- artifact::job_snapshot::job__org_alpha__atlas__federated_execution__a62400298391370f::execution__job__org_alpha__atlas__federated_execution__a62400298391370f__queue_pending__not_started::job_snapshot | kind=job_snapshot | label=job_snapshot | path=/tmp/loom-commitment-import/.loom/runtime/jobs/a62400298391370f/job.json | source=loom.runtime.v1::org_alpha::atlas::federated_execution::host_beta_shared_brief_review::not_started::queue_pending::job__org_alpha__atlas__federated_execution__a62400298391370f::execution__job__org_alpha__atlas__federated_execution__a62400298391370f__queue_pending__not_started | note=queued for local supervisor rehearsal in standard lane
+- artifact::queue_entry::job__org_alpha__atlas__federated_execution__a62400298391370f::execution__job__org_alpha__atlas__federated_execution__a62400298391370f__queue_pending__not_started::queue_entry | kind=queue_entry | label=queue_entry | path=/tmp/loom-commitment-import/.loom/runtime/queue/pending/standard/1774292834-atlas-a6240029.json | source=loom.runtime.v1::org_alpha::atlas::federated_execution::host_beta_shared_brief_review::not_started::queue_pending::job__org_alpha__atlas__federated_execution__a62400298391370f::execution__job__org_alpha__atlas__federated_execution__a62400298391370f__queue_pending__not_started | note=queue artifact for this job
+
+job_path:            /tmp/loom-commitment-import/.loom/runtime/jobs/a62400298391370f/job.json
+queue_path:          /tmp/loom-commitment-import/.loom/runtime/queue/pending/standard/1774292834-atlas-a6240029.json
+decision_path:       (not captured)
+execution_path:      (not captured)
+event_path:          (not captured)
+event_stream_path:   (not captured)
+audit_log_path:      (not captured)
+parity_report_path:  (not captured)
+
+Next
+====
+1. loom parity report --root /tmp/loom-commitment-import
+2. loom shadow report --root /tmp/loom-commitment-import
+3. Inspect /tmp/loom-commitment-import/.loom/runtime/jobs/a62400298391370f/job.json for the latest persisted job state.
+import_markers:
+/tmp/loom-commitment-import/.loom/runtime/imports/commitment_execution/commitment--commit_demo--fedenv_demo--fedrcpt_demo.json
+== Commitment import rehearsal complete ==

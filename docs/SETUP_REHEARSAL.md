@@ -22,7 +22,7 @@
 
 # Meridian Loom // Setup Rehearsal
 
-This repository includes six rehearsals:
+This repository includes eight focused rehearsals plus the broader setup sweep:
 
 - a founder-host rehearsal against the current kernel truth
 - a fixture-backed rehearsal for local sanction denial
@@ -30,6 +30,8 @@ This repository includes six rehearsals:
 - a fixture-backed queue supervisor rehearsal
 - a fixture-backed bounded supervisor watch rehearsal
 - a fixture-backed bounded supervisor daemon rehearsal
+- a fixture-backed local runtime service rehearsal
+- a fixture-backed sender-side commitment import rehearsal
 
 The point is not to pretend Loom is already a runtime. The point is to make the
 install path, operator path, and fail-closed runtime rehearsal concrete enough
@@ -50,6 +52,8 @@ to inspect honestly.
 | `./scripts/rehearse_supervisor_queue.sh` | queue-backed supervisor and job ledger | long-running hosted daemon |
 | `./scripts/rehearse_supervisor_watch.sh` | bounded watch-loop state and heartbeat history | daemonized service |
 | `./scripts/rehearse_supervisor_daemon.sh` | local daemon lifecycle shell | hosted runtime supervisor |
+| `./scripts/rehearse_runtime_service.sh` | local runtime service lifecycle, ingress stream, service-owned execution shell | hosted ingress service |
+| `./scripts/rehearse_commitment_import.sh` | sender-side commitment outbox import into Loom queue | live cross-host replacement |
 
 ## Current rehearsal scope
 
@@ -95,6 +99,16 @@ The rehearsal verifies:
 23. `loom wasm run` now executes a local Wasmtime guest under the configured
     store limits and pooling profile, so the Wasm resource lane is runnable
     instead of documentation-only.
+24. `loom service start/status/submit/stop` now expose a local runtime-service
+    shell with service state, service events, ingress receipts, and truthful
+    transport reporting.
+25. When the local Unix socket boundary is unavailable, the runtime service
+    falls back to file-backed ingress under `.loom/runtime/ingress/` instead of
+    failing silently.
+26. `loom service import-commitments` can now import sender-side
+    `execution_request` delivery refs from a commitments snapshot into the
+    local Loom queue, creating import markers under
+    `.loom/runtime/imports/commitment_execution/`.
 
 ## What the rehearsal does not prove
 
@@ -105,6 +119,8 @@ The rehearsal verifies:
 - It does not prove hosted per-action OpenClaw parity.
 - It does not prove a hosted daemon supervisor or long-running scheduler.
 - It does not prove a hosted long-running scheduler or worker pool.
+- It does not prove a hosted runtime service or durable ingress transport.
+- It does not prove live commitment-outbox cutover from an independent host.
 - The live OpenClaw probe is a runtime health/proof snapshot, not a replayed
   gate-by-gate execution stream.
 - The hosted kernel's global audit trail is still not owned by Loom.
@@ -234,6 +250,45 @@ That script proves the current daemon-lifecycle surface:
 
 Its checked-in transcript lives at
 `examples/supervisor-daemon-output.txt`.
+
+There is now a separate local runtime service rehearsal:
+
+```bash
+./scripts/rehearse_runtime_service.sh
+```
+
+That script proves the current local service shell:
+- `loom service start` writes `.loom/runtime/service/runtime_state.json`
+  and background log state
+- `loom service submit` can deliver a governed action through the service
+  boundary and wait for a receipt
+- the service prefers a Unix socket transport but truthfully falls back to
+  file-backed ingress when the socket boundary is unavailable on the host
+- `loom service status` reads the persisted service lifecycle state back as an
+  operator surface
+- `loom service stop` records a local stop request and the loop exits cleanly
+
+Its checked-in transcript lives at
+`examples/runtime-service-output.txt`.
+
+There is now a separate commitment import rehearsal:
+
+```bash
+./scripts/rehearse_commitment_import.sh
+```
+
+That script proves the current sender-side import seam:
+- a commitments snapshot can carry `delivery_refs` for
+  `execution_request` envelopes
+- `loom service import-commitments` can materialize those sender-side
+  `delivery_refs` into the Loom queue
+- the import writes marker files under
+  `.loom/runtime/imports/commitment_execution/`
+- the queued result is then inspectable through `loom job list` and
+  `loom job inspect`
+
+Its checked-in transcript lives at
+`examples/commitment-import-output.txt`.
 
 The rehearsal now also proves both fail-closed surfaces against the current
 kernel truth:
