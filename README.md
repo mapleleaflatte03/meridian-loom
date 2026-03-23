@@ -18,7 +18,8 @@
   <a href="docs/SETUP_REHEARSAL.md">Setup Rehearsal</a> ·
   <a href="docs/PUBLICATION_CHECKLIST.md">Publication Checklist</a> ·
   <a href="https://github.com/mapleleaflatte03/meridian-kernel">Meridian Kernel</a> ·
-  <a href="https://github.com/mapleleaflatte03/meridian-kernel/blob/main/docs/LOOM_SPEC.md">Loom Spec</a>
+  <a href="https://github.com/mapleleaflatte03/meridian-kernel/blob/main/docs/LOOM_SPEC.md">Loom Spec</a> ·
+  <a href="https://app.welliam.codes">Live Host</a>
 </p>
 
 <p align="center">
