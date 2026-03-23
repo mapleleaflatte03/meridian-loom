@@ -9,6 +9,15 @@ use std::collections::BTreeMap;
 use crate::wasm_limits::{default_limits, render_limits_human, validate_limits, WasmStoreLimits};
 use crate::wasm_profiles::{render_pooling_config_human, PoolingConfig, PoolingProfile};
 
+#[path = "wasm_runner.rs"]
+mod wasm_runner;
+
+#[allow(unused_imports)]
+pub use wasm_runner::{
+    run_wasm_guest, WasmExecutionRequest, WasmExecutionResult, WasmGuestSource,
+    WasmMemoryProbe,
+};
+
 /// Host-side runtime backend selection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HostBackend {
@@ -84,7 +93,7 @@ impl WasmHostBuilder {
             pooling: PoolingConfig::from_profile(PoolingProfile::Standard),
             fuel_metering_enabled: true,
             epoch_deadline_ms: Some(1_000),
-            notes: vec!["prepared host config; execution wiring remains pending".to_string()],
+            notes: vec!["prepared host config; execution lives in the experimental guest lane".to_string()],
         }
     }
 
@@ -295,6 +304,10 @@ pub fn validate_host_config(config: &WasmHostConfig) -> Result<(), Vec<String>> 
     .map(|_| ())
 }
 
+pub fn build_wasmtime_config(config: &WasmHostConfig) -> Result<wasmtime::Config, Vec<String>> {
+    wasm_runner::build_wasmtime_config(config)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -306,7 +319,7 @@ mod tests {
         assert_eq!(config.backend, HostBackend::PreviewOnly);
         assert!(config.component_model_enabled);
         assert!(config.fuel_metering_enabled);
-        assert!(config.notes.iter().any(|note| note.contains("execution wiring remains pending")));
+        assert!(config.notes.iter().any(|note| note.contains("experimental guest lane")));
         assert!(validate_host_config(&config).is_ok());
     }
 

@@ -30,7 +30,7 @@ impl PoolingProfile {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PoolingConfig {
     pub profile: PoolingProfile,
     pub max_instances: u32,

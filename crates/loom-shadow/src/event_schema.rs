@@ -369,6 +369,54 @@ impl RuntimeEventV1 {
         out
     }
 
+    pub fn render_json_line(&self) -> String {
+        let fields = [
+            ("schema_version", self.schema_version.as_str()),
+            ("event_id", self.event_id.as_str()),
+            ("truth_class", self.truth_class.as_str()),
+            ("org_id", self.org_id.as_str()),
+            ("agent_id", self.agent_id.as_str()),
+            ("action_type", self.action_type.as_str()),
+            ("resource", self.resource.as_str()),
+            ("outcome", self.outcome.as_str()),
+            ("stage", self.stage.as_str()),
+            ("source", self.source.as_str()),
+            ("subject_kind", self.subject_kind.as_str()),
+            ("subject_id", self.subject_id.as_str()),
+            ("job_id", self.job_id.as_str()),
+            ("execution_id", self.execution_id.as_str()),
+            ("decision_id", self.decision_id.as_str()),
+            ("parity_id", self.parity_id.as_str()),
+            ("audit_id", self.audit_id.as_str()),
+            ("note", self.note.as_str()),
+        ];
+        let head = fields
+            .iter()
+            .map(|(key, value)| format!("\"{}\":\"{}\"", key, json_escape(value)))
+            .collect::<Vec<_>>()
+            .join(",");
+        let artifacts = self
+            .artifact_refs
+            .iter()
+            .map(|artifact| {
+                format!(
+                    "{{\"artifact_id\":\"{}\",\"artifact_kind\":\"{}\",\"label\":\"{}\",\"path\":\"{}\",\"source_event_id\":\"{}\",\"job_id\":\"{}\",\"execution_id\":\"{}\",\"content_sha256\":\"{}\",\"note\":\"{}\"}}",
+                    json_escape(&artifact.artifact_id),
+                    json_escape(&artifact.artifact_kind),
+                    json_escape(&artifact.label),
+                    json_escape(&artifact.path),
+                    json_escape(&artifact.source_event_id),
+                    json_escape(&artifact.job_id),
+                    json_escape(&artifact.execution_id),
+                    json_escape(&artifact.content_sha256),
+                    json_escape(&artifact.note),
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        format!("{{{},\"artifact_refs\":[{}]}}", head, artifacts)
+    }
+
     pub fn render_human(&self) -> String {
         let mut out = String::new();
         let _ = writeln!(
@@ -517,5 +565,6 @@ mod tests {
         assert_eq!(event.schema_version, EVENT_SCHEMA_VERSION);
         assert_eq!(event.artifact_refs.len(), 1);
         assert!(render_artifact_refs_json(&event.artifact_refs).contains("execution_receipt"));
+        assert!(event.render_json_line().contains("\"schema_version\":\"loom.runtime.v1\""));
     }
 }

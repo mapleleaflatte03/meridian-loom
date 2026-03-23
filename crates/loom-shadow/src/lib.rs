@@ -98,6 +98,8 @@ pub struct DecisionCapture {
 #[derive(Clone, Debug, PartialEq)]
 pub struct RuntimeExecutionCapture {
     pub execution_path: PathBuf,
+    pub runtime_event_path: PathBuf,
+    pub runtime_event_stream_path: PathBuf,
     pub worker_request_path: PathBuf,
     pub worker_result_path: PathBuf,
     pub worker_log_path: PathBuf,
@@ -162,10 +164,15 @@ pub struct JobSnapshot {
     pub resource: String,
     pub estimated_cost_usd: String,
     pub runtime_outcome: String,
+    pub budget_reservation_id: String,
+    pub budget_reservation_status: String,
+    pub budget_reservation_reason: String,
     pub worker_status: String,
     pub queue_path: Option<PathBuf>,
     pub decision_path: Option<PathBuf>,
     pub execution_path: Option<PathBuf>,
+    pub event_path: Option<PathBuf>,
+    pub event_stream_path: Option<PathBuf>,
     pub audit_log_path: Option<PathBuf>,
     pub parity_report_path: Option<PathBuf>,
     pub note: String,
@@ -686,6 +693,8 @@ pub fn capture_runtime_execution(
     fs::create_dir_all(&jobs_dir).map_err(io_err)?;
     let audit_log_path = runtime_audit_log_path(root, Some(kernel_path.to_string_lossy().as_ref()));
     let execution_path = runtime_dir.join("last_execution.json");
+    let runtime_event_path = runtime_event_path(root, &decision.input_hash)?;
+    let runtime_event_stream_path = runtime_event_stream_path(root)?;
     let parity_stream_path = parity_dir.join("stream.jsonl");
     let parity_report_path = parity_dir.join("latest.json");
     let mut budget_capture = if decision.overall_decision == "allow" {
@@ -693,8 +702,11 @@ pub fn capture_runtime_execution(
     } else {
         BudgetReservationCapture {
             reservation_id: String::new(),
-            status: "not_requested".to_string(),
-            reason: "effective decision denied before runtime reservation".to_string(),
+            status: "decision_denied".to_string(),
+            reason: format!(
+                "effective decision denied before runtime reservation via {} ({})",
+                decision.effective_stage, decision.effective_reason
+            ),
         }
     };
     let worker_capture = if decision.overall_decision != "allow" {
@@ -730,6 +742,7 @@ pub fn capture_runtime_execution(
         openclaw_live_probe_status,
         openclaw_live_probe_note,
     ) = capture_openclaw_live_probe(root, &decision.input_hash)?;
+    write_reference_parity_artifacts(root, envelope, decision, reference)?;
     if budget_capture.status == "reserved" {
         budget_capture = if worker_capture.runtime_outcome == "worker_executed" {
             finalize_runtime_budget(
@@ -757,6 +770,7 @@ pub fn capture_runtime_execution(
         decision,
         &runtime_outcome,
         &worker_capture,
+        &budget_capture,
     )?;
     let reference_decision = if reference.allowed { "allow" } else { "deny" }.to_string();
     let effective_runtime_decision = if worker_capture.runtime_outcome == "budget_reservation_denied" {
@@ -853,6 +867,8 @@ pub fn capture_runtime_execution(
 
     let capture = RuntimeExecutionCapture {
         execution_path: execution_path.clone(),
+        runtime_event_path: runtime_event_path.clone(),
+        runtime_event_stream_path: runtime_event_stream_path.clone(),
         worker_request_path: worker_capture.worker_request_path.clone(),
         worker_result_path: worker_capture.worker_result_path.clone(),
         worker_log_path: worker_capture.worker_log_path.clone(),
@@ -886,6 +902,9 @@ pub fn capture_runtime_execution(
         parity_status,
         parity_reason,
     };
+    let runtime_event = runtime_event_for_capture(&capture);
+    write_runtime_event_artifacts(root, &decision.input_hash, &runtime_event)?;
+    write_parity_comparison_artifacts(root, &capture, &runtime_event)?;
     fs::write(&execution_path, render_runtime_execution_json(&capture)).map_err(io_err)?;
     fs::write(&parity_report_path, render_parity_report_json(&capture)).map_err(io_err)?;
     let existing_job = read_job_snapshot(root, &decision.input_hash).ok();
@@ -934,10 +953,15 @@ pub fn capture_runtime_execution(
             resource: decision.resource.clone(),
             estimated_cost_usd: format!("{:.6}", decision.estimated_cost_usd),
             runtime_outcome: capture.runtime_outcome.clone(),
+            budget_reservation_id: capture.budget_reservation_id.clone(),
+            budget_reservation_status: capture.budget_reservation_status.clone(),
+            budget_reservation_reason: capture.budget_reservation_reason.clone(),
             worker_status: capture.worker_status.clone(),
             queue_path,
             decision_path: Some(capture.decision_path.clone()),
             execution_path: Some(capture.execution_path.clone()),
+            event_path: Some(capture.runtime_event_path.clone()),
+            event_stream_path: Some(capture.runtime_event_stream_path.clone()),
             audit_log_path: Some(capture.audit_log_path.clone()),
             parity_report_path: Some(capture.parity_report_path.clone()),
             note: if capture.worker_note.is_empty() {
@@ -1043,6 +1067,24 @@ fn runtime_event_for_capture(capture: &RuntimeExecutionCapture) -> RuntimeEventV
             &job_id,
             &execution_id,
             &capture.parity_reason,
+        ),
+        artifact_spec(
+            "runtime_event",
+            "runtime_event",
+            &capture.runtime_event_path,
+            &source_event_id,
+            &job_id,
+            &execution_id,
+            "canonical runtime event receipt",
+        ),
+        artifact_spec(
+            "runtime_event_stream",
+            "runtime_event_stream",
+            &capture.runtime_event_stream_path,
+            &source_event_id,
+            &job_id,
+            &execution_id,
+            "runtime event stream entry appended",
         ),
         artifact_spec(
             "worker_request",
@@ -1179,6 +1221,28 @@ fn runtime_event_for_job(job: &JobSnapshot) -> RuntimeEventV1 {
             "execution artifact linked from job ledger",
         ));
     }
+    if let Some(path) = job.event_path.as_ref() {
+        artifact_refs.push(artifact_spec(
+            "runtime_event",
+            "job_runtime_event",
+            path,
+            &source_event_id,
+            &job_id,
+            &execution_id,
+            "canonical runtime event linked from job ledger",
+        ));
+    }
+    if let Some(path) = job.event_stream_path.as_ref() {
+        artifact_refs.push(artifact_spec(
+            "runtime_event_stream",
+            "job_runtime_event_stream",
+            path,
+            &source_event_id,
+            &job_id,
+            &execution_id,
+            "runtime event stream linked from job ledger",
+        ));
+    }
     if let Some(path) = job.audit_log_path.as_ref() {
         artifact_refs.push(artifact_spec(
             "audit_log",
@@ -1217,7 +1281,14 @@ fn runtime_event_for_job(job: &JobSnapshot) -> RuntimeEventV1 {
         decision_id,
         parity_id,
         audit_id,
-        note: "job ledger view with canonical proof identifiers".to_string(),
+        note: if job.budget_reservation_status.is_empty() {
+            "job ledger view with canonical proof identifiers".to_string()
+        } else {
+            format!(
+                "job ledger view with canonical proof identifiers; budget reservation {}",
+                job.budget_reservation_status
+            )
+        },
         artifact_refs,
     }
     .into_event()
@@ -1301,10 +1372,15 @@ pub fn enqueue_action(
             resource: envelope.resource.clone(),
             estimated_cost_usd: format!("{:.6}", envelope.estimated_cost_usd),
             runtime_outcome: "not_started".to_string(),
+            budget_reservation_id: String::new(),
+            budget_reservation_status: "not_requested".to_string(),
+            budget_reservation_reason: "queue pending; runtime reservation not attempted yet".to_string(),
             worker_status: "queued".to_string(),
             queue_path: Some(queue_path.clone()),
             decision_path: None,
             execution_path: None,
+            event_path: None,
+            event_stream_path: None,
             audit_log_path: None,
             parity_report_path: None,
             note: format!(
@@ -1543,10 +1619,15 @@ pub fn run_supervisor(
                         resource: capture.resource.clone(),
                         estimated_cost_usd: format!("{:.6}", capture.estimated_cost_usd),
                         runtime_outcome: capture.runtime_outcome.clone(),
+                        budget_reservation_id: capture.budget_reservation_id.clone(),
+                        budget_reservation_status: capture.budget_reservation_status.clone(),
+                        budget_reservation_reason: capture.budget_reservation_reason.clone(),
                         worker_status: capture.worker_status.clone(),
                         queue_path: None,
                         decision_path: Some(capture.decision_path.clone()),
                         execution_path: Some(capture.execution_path.clone()),
+                        event_path: Some(capture.runtime_event_path.clone()),
+                        event_stream_path: Some(capture.runtime_event_stream_path.clone()),
                         audit_log_path: Some(capture.audit_log_path.clone()),
                         parity_report_path: Some(capture.parity_report_path.clone()),
                         note: capture.worker_note.clone(),
@@ -1557,9 +1638,14 @@ pub fn run_supervisor(
                 snapshot.queue_path = Some(destination);
                 snapshot.decision_path = Some(capture.decision_path.clone());
                 snapshot.execution_path = Some(capture.execution_path.clone());
+                snapshot.event_path = Some(capture.runtime_event_path.clone());
+                snapshot.event_stream_path = Some(capture.runtime_event_stream_path.clone());
                 snapshot.audit_log_path = Some(capture.audit_log_path.clone());
                 snapshot.parity_report_path = Some(capture.parity_report_path.clone());
                 snapshot.runtime_outcome = capture.runtime_outcome.clone();
+                snapshot.budget_reservation_id = capture.budget_reservation_id.clone();
+                snapshot.budget_reservation_status = capture.budget_reservation_status.clone();
+                snapshot.budget_reservation_reason = capture.budget_reservation_reason.clone();
                 snapshot.worker_status = capture.worker_status.clone();
                 snapshot.status = if capture.overall_decision == "allow" {
                     if capture.worker_status == "completed" {
@@ -1627,10 +1713,15 @@ pub fn run_supervisor(
                                 .map(|value| format!("{:.6}", value))
                                 .unwrap_or_else(|| "0.000000".to_string()),
                             runtime_outcome: "supervisor_failed".to_string(),
+                            budget_reservation_id: String::new(),
+                            budget_reservation_status: "reservation_failed".to_string(),
+                            budget_reservation_reason: "queue supervisor failed before runtime capture".to_string(),
                             worker_status: "failed_before_dispatch".to_string(),
                             queue_path: Some(destination),
                             decision_path: None,
                             execution_path: None,
+                            event_path: None,
+                            event_stream_path: None,
                             audit_log_path: None,
                             parity_report_path: None,
                             note: error,
@@ -2343,7 +2434,7 @@ pub fn render_runtime_execution_human(capture: &RuntimeExecutionCapture) -> Stri
         .unwrap_or_else(|| "(unknown)".to_string());
     let event = runtime_event_for_capture(capture);
     format!(
-        "Meridian Loom // RUNTIME EXECUTE\n=================================\nphase:       experimental runtime rehearsal\nboundary:    local governed supervisor path is real; hosted runtime replacement is not\n\nDecision\n========\nagent_id:            {}\norg_id:              {}\naction_type:         {}\nresource:            {}\ninput_hash:          {}\nestimated_cost_usd:  {:.4}\noverall_decision:    {}\neffective_source:    {}\neffective_stage:     {}\nreference_decision:  {}\nreference_stage:     {}\nruntime_outcome:     {}\nbudget_reservation:  {} {}\nworker_status:       {}\nworker_kind:         {}\nworker_note:         {}\nparity_status:       {}\nparity_reason:       {}\n\n{}\nArtifacts\n=========\n{}\nworker supervisor artifacts\n===========================\nworker_request:      {}\nworker_result:       {}\nworker_log:          {}\n\naudit / parity artifacts\n========================\nexecution_path:      {}\ndecision_path:       {}\naudit_log:           {} ({})\nparity_stream:       {}\nparity_report:       {}\nopenclaw_live_probe: {} ({})\nopenclaw_probe_log:  {}\n\nNext\n====\n1. loom job inspect --job-id {} --root {}\n2. loom parity report --root {}\n3. loom shadow report --root {}\n4. Inspect {} for worker execution details.\n5. Inspect {} for runtime-side audit details.\n",
+        "Meridian Loom // RUNTIME EXECUTE\n=================================\nphase:       experimental runtime rehearsal\nboundary:    local governed supervisor path is real; hosted runtime replacement is not\n\nDecision\n========\nagent_id:            {}\norg_id:              {}\naction_type:         {}\nresource:            {}\ninput_hash:          {}\nestimated_cost_usd:  {:.4}\noverall_decision:    {}\neffective_source:    {}\neffective_stage:     {}\nreference_decision:  {}\nreference_stage:     {}\nruntime_outcome:     {}\nbudget_reservation:  {} {}\nworker_status:       {}\nworker_kind:         {}\nworker_note:         {}\nparity_status:       {}\nparity_reason:       {}\n\n{}\nArtifacts\n=========\n{}\nworker supervisor artifacts\n===========================\nworker_request:      {}\nworker_result:       {}\nworker_log:          {}\n\nproof / audit / parity artifacts\n================================\nexecution_path:      {}\nruntime_event:       {}\nruntime_event_stream:{}\ndecision_path:       {}\naudit_log:           {} ({})\nparity_stream:       {}\nparity_report:       {}\nopenclaw_live_probe: {} ({})\nopenclaw_probe_log:  {}\n\nNext\n====\n1. loom job inspect --job-id {} --root {}\n2. loom parity report --root {}\n3. loom shadow report --root {}\n4. Inspect {} for worker execution details.\n5. Inspect {} for runtime-side audit details.\n",
         capture.agent_id,
         capture.org_id,
         capture.action_type,
@@ -2373,6 +2464,8 @@ pub fn render_runtime_execution_human(capture: &RuntimeExecutionCapture) -> Stri
         capture.worker_result_path.display(),
         capture.worker_log_path.display(),
         capture.execution_path.display(),
+        capture.runtime_event_path.display(),
+        capture.runtime_event_stream_path.display(),
         capture.decision_path.display(),
         capture.audit_log_path.display(),
         capture.audit_emission_status,
@@ -2401,8 +2494,10 @@ pub fn render_runtime_execution_human(capture: &RuntimeExecutionCapture) -> Stri
 pub fn render_runtime_execution_json(capture: &RuntimeExecutionCapture) -> String {
     let event = runtime_event_for_capture(capture);
     format!(
-        "{{\n  \"status\": \"runtime_execution_captured\",\n  \"execution_path\": {},\n  \"worker_request_path\": {},\n  \"worker_result_path\": {},\n  \"worker_log_path\": {},\n  \"decision_path\": {},\n  \"audit_log_path\": {},\n  \"parity_stream_path\": {},\n  \"parity_report_path\": {},\n  \"openclaw_live_probe_path\": {},\n  \"openclaw_live_probe_stream_path\": {},\n  \"agent_id\": {},\n  \"org_id\": {},\n  \"action_type\": {},\n  \"resource\": {},\n  \"input_hash\": {},\n  \"estimated_cost_usd\": {:.6},\n  \"runtime_outcome\": {},\n  \"budget_reservation_id\": {},\n  \"budget_reservation_status\": {},\n  \"budget_reservation_reason\": {},\n  \"worker_status\": {},\n  \"worker_kind\": {},\n  \"worker_note\": {},\n  \"overall_decision\": {},\n  \"effective_source\": {},\n  \"effective_stage\": {},\n  \"reference_decision\": {},\n  \"reference_stage\": {},\n  \"audit_emission_status\": {},\n  \"openclaw_live_probe_status\": {},\n  \"openclaw_live_probe_note\": {},\n  \"parity_status\": {},\n  \"parity_reason\": {},\n  \"event_schema_version\": {},\n  \"event_id\": {},\n  \"job_id\": {},\n  \"execution_id\": {},\n  \"decision_id\": {},\n  \"parity_id\": {},\n  \"audit_id\": {},\n  \"artifact_refs\": {},\n  \"note\": \"experimental local supervisor path exists for allow decisions; governed hosted supervisor remains future work\"\n}}\n",
+        "{{\n  \"status\": \"runtime_execution_captured\",\n  \"execution_path\": {},\n  \"runtime_event_path\": {},\n  \"runtime_event_stream_path\": {},\n  \"worker_request_path\": {},\n  \"worker_result_path\": {},\n  \"worker_log_path\": {},\n  \"decision_path\": {},\n  \"audit_log_path\": {},\n  \"parity_stream_path\": {},\n  \"parity_report_path\": {},\n  \"openclaw_live_probe_path\": {},\n  \"openclaw_live_probe_stream_path\": {},\n  \"agent_id\": {},\n  \"org_id\": {},\n  \"action_type\": {},\n  \"resource\": {},\n  \"input_hash\": {},\n  \"estimated_cost_usd\": {:.6},\n  \"runtime_outcome\": {},\n  \"budget_reservation_id\": {},\n  \"budget_reservation_status\": {},\n  \"budget_reservation_reason\": {},\n  \"worker_status\": {},\n  \"worker_kind\": {},\n  \"worker_note\": {},\n  \"overall_decision\": {},\n  \"effective_source\": {},\n  \"effective_stage\": {},\n  \"reference_decision\": {},\n  \"reference_stage\": {},\n  \"audit_emission_status\": {},\n  \"openclaw_live_probe_status\": {},\n  \"openclaw_live_probe_note\": {},\n  \"parity_status\": {},\n  \"parity_reason\": {},\n  \"event_schema_version\": {},\n  \"event_id\": {},\n  \"job_id\": {},\n  \"execution_id\": {},\n  \"decision_id\": {},\n  \"parity_id\": {},\n  \"audit_id\": {},\n  \"artifact_refs\": {},\n  \"note\": \"experimental local supervisor path exists for allow decisions; governed hosted supervisor remains future work\"\n}}\n",
         json_string(&capture.execution_path.display().to_string()),
+        json_string(&capture.runtime_event_path.display().to_string()),
+        json_string(&capture.runtime_event_stream_path.display().to_string()),
         json_string(&capture.worker_request_path.display().to_string()),
         json_string(&capture.worker_result_path.display().to_string()),
         json_string(&capture.worker_log_path.display().to_string()),
@@ -2539,7 +2634,7 @@ pub fn render_job_list_json(jobs: &[JobSnapshot]) -> String {
 pub fn render_job_inspect_human(job: &JobSnapshot) -> String {
     let event = runtime_event_for_job(job);
     format!(
-        "Meridian Loom // JOB INSPECT\n=============================\nphase:       experimental runtime-owned job ledger\nboundary:    job lifecycle is locally inspectable; hosted scheduler remains future work\n\nCurrent state\n=============\njob_id:              {}\nstatus:              {}\nstage:               {}\nqueue_bucket:        {}\nqueued_at:           {}\nupdated_at:          {}\nagent_id:            {}\norg_id:              {}\naction_type:         {}\nresource:            {}\nestimated_cost_usd:  {}\nruntime_outcome:     {}\nworker_status:       {}\nnote:                {}\n\n{}\nArtifacts\n=========\n{}\njob_path:            {}\nqueue_path:          {}\ndecision_path:       {}\nexecution_path:      {}\naudit_log_path:      {}\nparity_report_path:  {}\n\nNext\n====\n1. loom parity report --root {}\n2. loom shadow report --root {}\n3. Inspect {} for the latest persisted job state.\n",
+        "Meridian Loom // JOB INSPECT\n=============================\nphase:       experimental runtime-owned job ledger\nboundary:    job lifecycle is locally inspectable; hosted scheduler remains future work\n\nCurrent state\n=============\njob_id:              {}\nstatus:              {}\nstage:               {}\nqueue_bucket:        {}\nqueued_at:           {}\nupdated_at:          {}\nagent_id:            {}\norg_id:              {}\naction_type:         {}\nresource:            {}\nestimated_cost_usd:  {}\nruntime_outcome:     {}\nbudget_reservation:  {} {}\nworker_status:       {}\nnote:                {}\n\n{}\nArtifacts\n=========\n{}\njob_path:            {}\nqueue_path:          {}\ndecision_path:       {}\nexecution_path:      {}\nevent_path:          {}\nevent_stream_path:   {}\naudit_log_path:      {}\nparity_report_path:  {}\n\nNext\n====\n1. loom parity report --root {}\n2. loom shadow report --root {}\n3. Inspect {} for the latest persisted job state.\n",
         job.job_id,
         job.status,
         job.stage,
@@ -2552,6 +2647,12 @@ pub fn render_job_inspect_human(job: &JobSnapshot) -> String {
         job.resource,
         job.estimated_cost_usd,
         job.runtime_outcome,
+        job.budget_reservation_status,
+        if job.budget_reservation_reason.is_empty() {
+            String::new()
+        } else {
+            format!("({})", job.budget_reservation_reason)
+        },
         job.worker_status,
         job.note,
         render_proof_first_status_human("Proof-first status", &event),
@@ -2560,6 +2661,8 @@ pub fn render_job_inspect_human(job: &JobSnapshot) -> String {
         display_optional_path(job.queue_path.as_ref()),
         display_optional_path(job.decision_path.as_ref()),
         display_optional_path(job.execution_path.as_ref()),
+        display_optional_path(job.event_path.as_ref()),
+        display_optional_path(job.event_stream_path.as_ref()),
         display_optional_path(job.audit_log_path.as_ref()),
         display_optional_path(job.parity_report_path.as_ref()),
         job.root.display(),
@@ -2979,9 +3082,17 @@ pub fn render_shadow_report(root: &Path) -> ShadowResult<String> {
     let decision = fs::read_to_string(&decision_path).ok();
     let runtime_path = root.join(".loom/runtime/last_execution.json");
     let runtime = fs::read_to_string(&runtime_path).ok();
+    let runtime_event_path = root.join(".loom/runtime/events/latest.json");
+    let runtime_event = fs::read_to_string(&runtime_event_path).ok();
     let parity_path = root.join(".loom/parity/latest.json");
     let parity = fs::read_to_string(&parity_path).ok();
-    if contents.is_none() && reference.is_none() && decision.is_none() && runtime.is_none() && parity.is_none() {
+    if contents.is_none()
+        && reference.is_none()
+        && decision.is_none()
+        && runtime.is_none()
+        && runtime_event.is_none()
+        && parity.is_none()
+    {
         return Err(format!(
             "could not read any shadow artifacts under {}",
             root.join(".loom/shadow").display()
@@ -3013,6 +3124,13 @@ pub fn render_shadow_report(root: &Path) -> ShadowResult<String> {
             "Runtime execution\n=================\nsource: {}\n\n{}\n",
             runtime_path.display(),
             runtime
+        ));
+    }
+    if let Some(runtime_event) = runtime_event.as_ref() {
+        out.push_str(&format!(
+            "\nRuntime event latest\n====================\nsource: {}\n\n{}\n",
+            runtime_event_path.display(),
+            runtime_event
         ));
     }
     if let Some(parity) = parity.as_ref() {
@@ -3065,47 +3183,220 @@ pub fn render_parity_report(root: &Path) -> ShadowResult<String> {
     let contents = fs::read_to_string(&report_path).ok();
     let stream_path = root.join(".loom/parity/stream.jsonl");
     let stream = fs::read_to_string(&stream_path).ok();
+    let reference_latest_path = root.join(".loom/parity/reference_latest.json");
+    let reference_latest = fs::read_to_string(&reference_latest_path).ok();
+    let reference_stream_path = root.join(".loom/parity/reference_stream.jsonl");
+    let reference_stream = fs::read_to_string(&reference_stream_path).ok();
+    let comparison_latest_path = root.join(".loom/parity/comparison_latest.json");
+    let comparison_latest = fs::read_to_string(&comparison_latest_path).ok();
+    let comparison_stream_path = root.join(".loom/parity/comparison_stream.jsonl");
+    let comparison_stream = fs::read_to_string(&comparison_stream_path).ok();
+    let event_latest_path = root.join(".loom/runtime/events/latest.json");
+    let event_latest = fs::read_to_string(&event_latest_path).ok();
+    let event_stream_path = root.join(".loom/runtime/events/stream.jsonl");
+    let event_stream = fs::read_to_string(&event_stream_path).ok();
     let openclaw_live_path = root.join(".loom/parity/openclaw_live.json");
     let openclaw_live = fs::read_to_string(&openclaw_live_path).ok();
     let openclaw_stream_path = root.join(".loom/parity/openclaw_live_stream.jsonl");
     let openclaw_stream = fs::read_to_string(&openclaw_stream_path).ok();
-    if contents.is_none() && stream.is_none() && openclaw_live.is_none() && openclaw_stream.is_none() {
+    if contents.is_none()
+        && stream.is_none()
+        && reference_latest.is_none()
+        && reference_stream.is_none()
+        && comparison_latest.is_none()
+        && comparison_stream.is_none()
+        && event_latest.is_none()
+        && event_stream.is_none()
+        && openclaw_live.is_none()
+        && openclaw_stream.is_none()
+    {
         return Ok(format!(
             "Meridian Loom // PARITY REPORT\n===============================\nphase:       runtime-side parity surface\nboundary:    parity artifacts appear only after runtime rehearsal\n\nCurrent state\n=============\nstatus:      not_started\nmeaning:     no parity stream, parity report, or live OpenClaw probe has been captured yet\n\nRecommended next step\n=====================\n1. loom action execute --agent-id agent_atlas --action-type research --resource web_search --kernel-path /tmp/meridian-kernel --root {}\n2. loom shadow report --root {}\n3. Re-run loom parity report after runtime rehearsal artifacts exist.\n",
             root.display(),
             root.display(),
         ));
     }
-    Ok(format!(
-        "Meridian Loom // PARITY REPORT\n===============================\nphase:       runtime-side parity surface\nboundary:    parity report is real; per-action live runtime parity is still future work\n\nParity latest\n=============\nsource: {}\n\n{}\nParity stream\n=============\nsource: {}\n\n{}\n{}\n{}\n",
+    let mut out = format!(
+        "Meridian Loom // PARITY REPORT\n===============================\nphase:       runtime-side parity surface\nboundary:    action-level parity now compares Loom runtime events to the OpenClaw-compatible reference adapter; live host probe remains supplementary\n\nParity latest\n=============\nsource: {}\n\n{}\nParity stream\n=============\nsource: {}\n\n{}\n",
         report_path.display(),
         contents.unwrap_or_else(|| "{\n  \"status\": \"missing\",\n  \"note\": \"latest parity report has not been captured yet\"\n}\n".to_string()),
         stream_path.display(),
         stream.unwrap_or_else(|| "# parity stream not captured yet\n".to_string()),
-        openclaw_live
+    );
+
+    out.push_str(
+        &reference_latest
+            .as_ref()
+            .map(|contents| format!(
+                "Reference action latest\n=======================\nsource: {}\n\n{}\n",
+                reference_latest_path.display(),
+                contents
+            ))
+            .unwrap_or_else(|| "Reference action latest\n=======================\nsource: (not captured)\n\n".to_string()),
+    );
+    out.push_str(
+        &reference_stream
+            .as_ref()
+            .map(|contents| format!(
+                "Reference action stream\n=======================\nsource: {}\n\n{}\n",
+                reference_stream_path.display(),
+                contents
+            ))
+            .unwrap_or_else(|| "Reference action stream\n=======================\nsource: (not captured)\n\n".to_string()),
+    );
+    out.push_str(
+        &comparison_latest
+            .as_ref()
+            .map(|contents| format!(
+                "Action parity latest\n====================\nsource: {}\n\n{}\n",
+                comparison_latest_path.display(),
+                contents
+            ))
+            .unwrap_or_else(|| "Action parity latest\n====================\nsource: (not captured)\n\n".to_string()),
+    );
+    out.push_str(
+        &comparison_stream
+            .as_ref()
+            .map(|contents| format!(
+                "Action parity stream\n====================\nsource: {}\n\n{}\n",
+                comparison_stream_path.display(),
+                contents
+            ))
+            .unwrap_or_else(|| "Action parity stream\n====================\nsource: (not captured)\n\n".to_string()),
+    );
+    out.push_str(&render_action_parity_summary(
+        event_latest.as_deref(),
+        reference_latest.as_deref(),
+        openclaw_live.as_deref(),
+    ));
+    out.push('\n');
+    out.push_str(
+        &event_latest
+            .as_ref()
+            .map(|contents| format!(
+                "Runtime event latest\n====================\nsource: {}\n\n{}\n",
+                event_latest_path.display(),
+                contents
+            ))
+            .unwrap_or_else(|| "Runtime event latest\n====================\nsource: (not captured)\n\n".to_string()),
+    );
+    out.push_str(
+        &event_stream
+            .as_ref()
+            .map(|contents| format!(
+                "Runtime event stream\n====================\nsource: {}\n\n{}\n",
+                event_stream_path.display(),
+                contents
+            ))
+            .unwrap_or_else(|| "Runtime event stream\n====================\nsource: (not captured)\n\n".to_string()),
+    );
+    out.push_str(
+        &openclaw_live
+            .as_ref()
             .map(|contents| format!(
                 "OpenClaw live probe\n===================\nsource: {}\n\n{}\n",
                 openclaw_live_path.display(),
                 contents
             ))
             .unwrap_or_else(|| "OpenClaw live probe\n===================\nsource: (not captured)\n\n".to_string()),
-        openclaw_stream
+    );
+    out.push_str(
+        &openclaw_stream
+            .as_ref()
             .map(|contents| format!(
                 "OpenClaw live probe stream\n==========================\nsource: {}\n\n{}\n",
                 openclaw_stream_path.display(),
                 contents
             ))
             .unwrap_or_else(|| "OpenClaw live probe stream\n==========================\nsource: (not captured)\n\n".to_string()),
-    ))
+    );
+
+    Ok(out)
+}
+
+fn render_action_parity_summary(
+    runtime_event: Option<&str>,
+    reference_latest: Option<&str>,
+    openclaw_live: Option<&str>,
+) -> String {
+    let mut out = String::from("Action parity summary\n=====================\n");
+    let Some(reference_latest) = reference_latest else {
+        out.push_str("status:      not_started\nmeaning:     no action-level OpenClaw-compatible reference artifact has been captured yet\n\n");
+        return out;
+    };
+
+    let reference_decision = extract_json_bool(reference_latest, "\"reference_allowed\"")
+        .map(|allowed| if allowed { "allow" } else { "deny" }.to_string())
+        .or_else(|| extract_json_string(reference_latest, "\"reference_decision\""))
+        .unwrap_or_else(|| "unknown".to_string());
+    let reference_stage =
+        extract_json_string(reference_latest, "\"reference_stage\"").unwrap_or_else(|| "unknown".to_string());
+    let action_type =
+        extract_json_string(reference_latest, "\"action_type\"").unwrap_or_else(|| "unknown".to_string());
+    let resource =
+        extract_json_string(reference_latest, "\"resource\"").unwrap_or_else(|| "unknown".to_string());
+
+    let runtime_status = if let Some(runtime_event) = runtime_event {
+        let runtime_outcome =
+            extract_json_string(runtime_event, "\"outcome\"").unwrap_or_else(|| "unknown".to_string());
+        let runtime_stage =
+            extract_json_string(runtime_event, "\"stage\"").unwrap_or_else(|| "unknown".to_string());
+        let runtime_decision = if runtime_outcome == "worker_executed" {
+            "allow".to_string()
+        } else {
+            "deny".to_string()
+        };
+        let status = if runtime_decision == reference_decision {
+            "match"
+        } else {
+            "divergence"
+        };
+        out.push_str(&format!(
+            "status:      {}\nexpected:    {} via {}\nactual:      {} via {}\naction_type: {}\nresource:    {}\n",
+            status, reference_decision, reference_stage, runtime_decision, runtime_stage, action_type, resource
+        ));
+        status.to_string()
+    } else {
+        out.push_str(&format!(
+            "status:      pending_runtime_event\nexpected:    {} via {}\naction_type: {}\nresource:    {}\n",
+            reference_decision, reference_stage, action_type, resource
+        ));
+        "pending_runtime_event".to_string()
+    };
+
+    if let Some(openclaw_live) = openclaw_live {
+        let proof_level =
+            extract_json_string(openclaw_live, "\"proof_level\"").unwrap_or_else(|| "unknown".to_string());
+        let deployment_mode =
+            extract_json_string(openclaw_live, "\"deployment_mode\"").unwrap_or_else(|| "unknown".to_string());
+        let health_ok = extract_json_bool(openclaw_live, "\"health_ok\"").unwrap_or(false);
+        out.push_str(&format!(
+            "live_probe:  {} (proof_level={} deployment_mode={})\n",
+            if health_ok { "healthy" } else { "degraded" },
+            proof_level,
+            deployment_mode
+        ));
+    } else {
+        out.push_str("live_probe:  not_captured\n");
+    }
+    out.push_str(&format!(
+        "note:        action-level parity is {} against the OpenClaw-compatible reference adapter; live OpenClaw proof remains supplementary\n\n",
+        runtime_status
+    ));
+    out
 }
 
 fn render_parity_report_json(capture: &RuntimeExecutionCapture) -> String {
     format!(
-        "{{\n  \"status\": \"parity_report_captured\",\n  \"execution_path\": {},\n  \"decision_path\": {},\n  \"audit_log_path\": {},\n  \"parity_stream_path\": {},\n  \"openclaw_live_probe_path\": {},\n  \"openclaw_live_probe_stream_path\": {},\n  \"reference_decision\": {},\n  \"reference_stage\": {},\n  \"overall_decision\": {},\n  \"effective_stage\": {},\n  \"openclaw_live_probe_status\": {},\n  \"openclaw_live_probe_note\": {},\n  \"parity_status\": {},\n  \"parity_reason\": {},\n  \"note\": \"runtime-side parity stream now captures Loom execution plus a per-action OpenClaw live probe artifact when available; hosted per-action parity remains future work\"\n}}\n",
+        "{{\n  \"status\": \"parity_report_captured\",\n  \"execution_path\": {},\n  \"runtime_event_path\": {},\n  \"runtime_event_stream_path\": {},\n  \"decision_path\": {},\n  \"audit_log_path\": {},\n  \"parity_stream_path\": {},\n  \"comparison_latest_path\": {},\n  \"comparison_stream_path\": {},\n  \"openclaw_live_probe_path\": {},\n  \"openclaw_live_probe_stream_path\": {},\n  \"reference_decision\": {},\n  \"reference_stage\": {},\n  \"overall_decision\": {},\n  \"effective_stage\": {},\n  \"openclaw_live_probe_status\": {},\n  \"openclaw_live_probe_note\": {},\n  \"parity_status\": {},\n  \"parity_reason\": {},\n  \"note\": \"runtime-side parity stream now captures Loom execution plus a per-action OpenClaw live probe artifact when available; hosted per-action parity remains future work\"\n}}\n",
         json_string(&capture.execution_path.display().to_string()),
+        json_string(&capture.runtime_event_path.display().to_string()),
+        json_string(&capture.runtime_event_stream_path.display().to_string()),
         json_string(&capture.decision_path.display().to_string()),
         json_string(&capture.audit_log_path.display().to_string()),
         json_string(&capture.parity_stream_path.display().to_string()),
+        json_string(&format!(".loom/parity/comparison_latest.json")),
+        json_string(&format!(".loom/parity/comparison_stream.jsonl")),
         capture
             .openclaw_live_probe_path
             .as_ref()
@@ -3145,6 +3436,12 @@ fn ensure_runtime_jobs_dir(root: &Path) -> ShadowResult<PathBuf> {
     Ok(jobs_dir)
 }
 
+fn ensure_runtime_events_dir(root: &Path) -> ShadowResult<PathBuf> {
+    let events_dir = ensure_runtime_dir(root)?.join("events");
+    fs::create_dir_all(&events_dir).map_err(io_err)?;
+    Ok(events_dir)
+}
+
 fn ensure_runtime_scheduler_dir(root: &Path) -> ShadowResult<PathBuf> {
     let scheduler_dir = ensure_runtime_dir(root)?.join("scheduler");
     fs::create_dir_all(&scheduler_dir).map_err(io_err)?;
@@ -3155,6 +3452,18 @@ fn ensure_audit_dir(root: &Path) -> ShadowResult<PathBuf> {
     let audit_dir = root.join(".loom/audit");
     fs::create_dir_all(&audit_dir).map_err(io_err)?;
     Ok(audit_dir)
+}
+
+fn runtime_event_path(root: &Path, input_hash: &str) -> ShadowResult<PathBuf> {
+    Ok(ensure_runtime_events_dir(root)?.join(format!("{}.json", input_hash)))
+}
+
+fn runtime_event_latest_path(root: &Path) -> ShadowResult<PathBuf> {
+    Ok(ensure_runtime_events_dir(root)?.join("latest.json"))
+}
+
+fn runtime_event_stream_path(root: &Path) -> ShadowResult<PathBuf> {
+    Ok(ensure_runtime_events_dir(root)?.join("stream.jsonl"))
 }
 
 fn runtime_audit_log_path(root: &Path, override_kernel_path: Option<&str>) -> PathBuf {
@@ -3323,6 +3632,140 @@ fn ensure_parity_dir(root: &Path) -> ShadowResult<PathBuf> {
     let parity_dir = root.join(".loom/parity");
     fs::create_dir_all(&parity_dir).map_err(io_err)?;
     Ok(parity_dir)
+}
+
+fn ensure_parity_reference_dir(root: &Path) -> ShadowResult<PathBuf> {
+    let path = ensure_parity_dir(root)?.join("reference");
+    fs::create_dir_all(&path).map_err(io_err)?;
+    Ok(path)
+}
+
+fn ensure_parity_comparison_dir(root: &Path) -> ShadowResult<PathBuf> {
+    let path = ensure_parity_dir(root)?.join("comparisons");
+    fs::create_dir_all(&path).map_err(io_err)?;
+    Ok(path)
+}
+
+fn parity_reference_action_path(root: &Path, input_hash: &str) -> ShadowResult<PathBuf> {
+    Ok(ensure_parity_reference_dir(root)?.join(format!("{}.json", input_hash)))
+}
+
+fn parity_reference_latest_path(root: &Path) -> ShadowResult<PathBuf> {
+    Ok(ensure_parity_dir(root)?.join("reference_latest.json"))
+}
+
+fn parity_reference_stream_path(root: &Path) -> ShadowResult<PathBuf> {
+    Ok(ensure_parity_dir(root)?.join("reference_stream.jsonl"))
+}
+
+fn parity_comparison_action_path(root: &Path, input_hash: &str) -> ShadowResult<PathBuf> {
+    Ok(ensure_parity_comparison_dir(root)?.join(format!("{}.json", input_hash)))
+}
+
+fn parity_comparison_latest_path(root: &Path) -> ShadowResult<PathBuf> {
+    Ok(ensure_parity_dir(root)?.join("comparison_latest.json"))
+}
+
+fn parity_comparison_stream_path(root: &Path) -> ShadowResult<PathBuf> {
+    Ok(ensure_parity_dir(root)?.join("comparison_stream.jsonl"))
+}
+
+fn write_reference_parity_artifacts(
+    root: &Path,
+    envelope: &ActionEnvelope,
+    decision: &DecisionCapture,
+    reference: &ReferenceGateCheck,
+) -> ShadowResult<()> {
+    let action_path = parity_reference_action_path(root, &decision.input_hash)?;
+    let latest_path = parity_reference_latest_path(root)?;
+    let stream_path = parity_reference_stream_path(root)?;
+    let decision_status = if reference.allowed { "allow" } else { "deny" };
+    let rendered = format!(
+        "{{\n  \"status\": \"reference_action_captured\",\n  \"source\": \"openclaw_compatible_reference_adapter\",\n  \"input_hash\": {},\n  \"agent_id\": {},\n  \"org_id\": {},\n  \"action_type\": {},\n  \"resource\": {},\n  \"estimated_cost_usd\": {:.6},\n  \"reference_allowed\": {},\n  \"reference_decision\": {},\n  \"reference_stage\": {},\n  \"reference_reason\": {},\n  \"effective_source\": {},\n  \"effective_stage\": {},\n  \"overall_decision\": {},\n  \"note\": \"action-level OpenClaw-compatible reference snapshot for parity comparison\"\n}}\n",
+        json_string(&decision.input_hash),
+        json_string(&envelope.agent_id),
+        json_string(&envelope.org_id),
+        json_string(&envelope.action_type),
+        json_string(&envelope.resource),
+        envelope.estimated_cost_usd,
+        if reference.allowed { "true".to_string() } else { "false".to_string() },
+        json_string(decision_status),
+        json_string(&reference.stage),
+        json_string(&reference.reason),
+        json_string(&decision.effective_source),
+        json_string(&decision.effective_stage),
+        json_string(&decision.overall_decision),
+    );
+    fs::write(&action_path, &rendered).map_err(io_err)?;
+    fs::write(&latest_path, &rendered).map_err(io_err)?;
+    append_line(
+        &stream_path,
+        &format!(
+            "{{\"timestamp\":{},\"input_hash\":{},\"status\":\"reference_action_captured\",\"reference_decision\":{},\"reference_stage\":{},\"action_type\":{},\"resource\":{},\"artifact_path\":{}}}\n",
+            json_string(&timestamp_now()),
+            json_string(&decision.input_hash),
+            json_string(decision_status),
+            json_string(&reference.stage),
+            json_string(&envelope.action_type),
+            json_string(&envelope.resource),
+            json_string(&action_path.display().to_string()),
+        ),
+    )?;
+    Ok(())
+}
+
+fn write_parity_comparison_artifacts(
+    root: &Path,
+    capture: &RuntimeExecutionCapture,
+    runtime_event: &RuntimeEventV1,
+) -> ShadowResult<()> {
+    let action_path = parity_comparison_action_path(root, &capture.input_hash)?;
+    let latest_path = parity_comparison_latest_path(root)?;
+    let stream_path = parity_comparison_stream_path(root)?;
+    let rendered = format!(
+        "{{\n  \"status\": \"action_parity_compared\",\n  \"comparison_id\": {},\n  \"event_schema_version\": {},\n  \"input_hash\": {},\n  \"job_id\": {},\n  \"execution_id\": {},\n  \"decision_id\": {},\n  \"parity_id\": {},\n  \"audit_id\": {},\n  \"runtime_event_id\": {},\n  \"action_type\": {},\n  \"resource\": {},\n  \"reference_decision\": {},\n  \"reference_stage\": {},\n  \"runtime_decision\": {},\n  \"runtime_stage\": {},\n  \"runtime_outcome\": {},\n  \"comparison_status\": {},\n  \"openclaw_live_probe_status\": {},\n  \"execution_path\": {},\n  \"runtime_event_path\": {},\n  \"audit_log_path\": {},\n  \"note\": \"action-level parity comparison between Loom runtime execution and the OpenClaw-compatible reference adapter; live probe remains supplementary\"\n}}\n",
+        json_string(&runtime_event.parity_id),
+        json_string(runtime_event.schema_version.as_str()),
+        json_string(&capture.input_hash),
+        json_string(&runtime_event.job_id),
+        json_string(&runtime_event.execution_id),
+        json_string(&runtime_event.decision_id),
+        json_string(&runtime_event.parity_id),
+        json_string(&runtime_event.audit_id),
+        json_string(&runtime_event.event_id),
+        json_string(&capture.action_type),
+        json_string(&capture.resource),
+        json_string(&capture.reference_decision),
+        json_string(&capture.reference_stage),
+        json_string(&capture.overall_decision),
+        json_string(&capture.effective_stage),
+        json_string(&capture.runtime_outcome),
+        json_string(&capture.parity_status),
+        json_string(&capture.openclaw_live_probe_status),
+        json_string(&capture.execution_path.display().to_string()),
+        json_string(&capture.runtime_event_path.display().to_string()),
+        json_string(&capture.audit_log_path.display().to_string()),
+    );
+    fs::write(&action_path, &rendered).map_err(io_err)?;
+    fs::write(&latest_path, &rendered).map_err(io_err)?;
+    append_line(
+        &stream_path,
+        &format!(
+            "{{\"timestamp\":{},\"comparison_id\":{},\"input_hash\":{},\"job_id\":{},\"execution_id\":{},\"runtime_event_id\":{},\"reference_decision\":{},\"runtime_decision\":{},\"comparison_status\":{},\"openclaw_live_probe_status\":{},\"artifact_path\":{}}}\n",
+            json_string(&timestamp_now()),
+            json_string(&runtime_event.parity_id),
+            json_string(&capture.input_hash),
+            json_string(&runtime_event.job_id),
+            json_string(&runtime_event.execution_id),
+            json_string(&runtime_event.event_id),
+            json_string(&capture.reference_decision),
+            json_string(&capture.overall_decision),
+            json_string(&capture.parity_status),
+            json_string(&capture.openclaw_live_probe_status),
+            json_string(&action_path.display().to_string()),
+        ),
+    )?;
+    Ok(())
 }
 
 fn supervisor_config(root: &Path) -> ShadowResult<Config> {
@@ -3778,6 +4221,7 @@ fn emit_runtime_audit(
     decision: &DecisionCapture,
     outcome: &str,
     worker: &WorkerExecutionCapture,
+    budget: &BudgetReservationCapture,
 ) -> ShadowResult<String> {
     let kernel_dir = kernel_path.join("kernel");
     let job_id = canonical_job_id(&envelope.org_id, &envelope.agent_id, &envelope.action_type, &decision.input_hash);
@@ -3789,6 +4233,16 @@ fn emit_runtime_audit(
         if decision.effective_source == "reference_gate" { "match" } else { "divergence" },
     );
     let audit_id = canonical_audit_id(&job_id, &execution_id, &envelope.action_type);
+    let runtime_event_id = canonical_event_id(
+        &envelope.org_id,
+        &envelope.agent_id,
+        &envelope.action_type,
+        &envelope.resource,
+        outcome,
+        &decision.effective_stage,
+        &job_id,
+        &execution_id,
+    );
     if let Some(parent) = audit_log_path.parent() {
         fs::create_dir_all(parent).map_err(io_err)?;
     }
@@ -3828,6 +4282,8 @@ fn emit_runtime_audit(
             } else {
                 "unknown"
             })
+            .arg("--runtime_event_id")
+            .arg(&runtime_event_id)
             .arg("--event_schema_version")
             .arg("loom.runtime.v1")
             .arg("--job_id")
@@ -3840,6 +4296,12 @@ fn emit_runtime_audit(
             .arg(&parity_id)
             .arg("--audit_id")
             .arg(&audit_id)
+            .arg("--budget_reservation_id")
+            .arg(&budget.reservation_id)
+            .arg("--budget_reservation_status")
+            .arg(&budget.status)
+            .arg("--budget_reservation_reason")
+            .arg(&budget.reason)
             .arg("--session_id")
             .arg(&envelope.session_id)
             .output()
@@ -3852,7 +4314,7 @@ fn emit_runtime_audit(
     append_line(
         audit_log_path,
         &format!(
-            "{{\"id\":{},\"timestamp\":{},\"org_id\":{},\"agent_id\":{},\"actor_type\":\"agent\",\"action\":{},\"resource\":{},\"outcome\":{},\"details\":{{\"source\":\"loom_runtime_execute\",\"event_schema_version\":\"loom.runtime.v1\",\"job_id\":{},\"execution_id\":{},\"decision_id\":{},\"parity_id\":{},\"audit_id\":{},\"input_hash\":{},\"estimated_cost_usd\":{:.6},\"effective_source\":{},\"effective_stage\":{},\"reference_stage\":{},\"runtime_outcome\":{},\"worker_status\":{},\"worker_kind\":{},\"experimental\":true}},\"policy_ref\":\"experimental_runtime_rehearsal\"}}\n",
+            "{{\"id\":{},\"timestamp\":{},\"org_id\":{},\"agent_id\":{},\"actor_type\":\"agent\",\"action\":{},\"resource\":{},\"outcome\":{},\"details\":{{\"source\":\"loom_runtime_execute\",\"runtime_event_id\":{},\"event_schema_version\":\"loom.runtime.v1\",\"job_id\":{},\"execution_id\":{},\"decision_id\":{},\"parity_id\":{},\"audit_id\":{},\"budget_reservation_id\":{},\"budget_reservation_status\":{},\"budget_reservation_reason\":{},\"input_hash\":{},\"estimated_cost_usd\":{:.6},\"effective_source\":{},\"effective_stage\":{},\"reference_stage\":{},\"runtime_outcome\":{},\"worker_status\":{},\"worker_kind\":{},\"experimental\":true}},\"policy_ref\":\"experimental_runtime_rehearsal\"}}\n",
             json_string(&audit_id),
             json_string(&timestamp_now()),
             json_string(&envelope.org_id),
@@ -3860,11 +4322,19 @@ fn emit_runtime_audit(
             json_string(&envelope.action_type),
             json_string(&envelope.resource),
             json_string(outcome),
+            json_string(&runtime_event_id),
             json_string(&job_id),
             json_string(&execution_id),
             json_string(&decision_id),
             json_string(&parity_id),
             json_string(&audit_id),
+            if budget.reservation_id.is_empty() {
+                "null".to_string()
+            } else {
+                json_string(&budget.reservation_id)
+            },
+            json_string(&budget.status),
+            json_string(&budget.reason),
             json_string(&decision.input_hash),
             envelope.estimated_cost_usd,
             json_string(&decision.effective_source),
@@ -3887,6 +4357,21 @@ fn append_line(path: &Path, line: &str) -> ShadowResult<()> {
     existing.push_str(line);
     fs::write(path, existing).map_err(io_err)?;
     Ok(())
+}
+
+fn write_runtime_event_artifacts(
+    root: &Path,
+    input_hash: &str,
+    event: &RuntimeEventV1,
+) -> ShadowResult<(PathBuf, PathBuf)> {
+    let event_path = runtime_event_path(root, input_hash)?;
+    let latest_path = runtime_event_latest_path(root)?;
+    let stream_path = runtime_event_stream_path(root)?;
+    let rendered = event.render_json();
+    fs::write(&event_path, &rendered).map_err(io_err)?;
+    fs::write(&latest_path, &rendered).map_err(io_err)?;
+    append_line(&stream_path, &format!("{}\n", event.render_json_line()))?;
+    Ok((event_path, stream_path))
 }
 
 fn job_snapshot_path(root: &Path, job_id: &str) -> PathBuf {
@@ -3941,11 +4426,19 @@ fn read_job_snapshot(root: &Path, job_id: &str) -> ShadowResult<JobSnapshot> {
             .unwrap_or_else(|| "0.000000".to_string()),
         runtime_outcome: extract_json_string(&contents, "\"runtime_outcome\"")
             .unwrap_or_else(|| "not_started".to_string()),
+        budget_reservation_id: extract_json_string(&contents, "\"budget_reservation_id\"")
+            .unwrap_or_default(),
+        budget_reservation_status: extract_json_string(&contents, "\"budget_reservation_status\"")
+            .unwrap_or_else(|| "not_requested".to_string()),
+        budget_reservation_reason: extract_json_string(&contents, "\"budget_reservation_reason\"")
+            .unwrap_or_default(),
         worker_status: extract_json_string(&contents, "\"worker_status\"")
             .unwrap_or_else(|| "not_started".to_string()),
         queue_path: extract_optional_path(&contents, "\"queue_path\""),
         decision_path: extract_optional_path(&contents, "\"decision_path\""),
         execution_path: extract_optional_path(&contents, "\"execution_path\""),
+        event_path: extract_optional_path(&contents, "\"event_path\""),
+        event_stream_path: extract_optional_path(&contents, "\"event_stream_path\""),
         audit_log_path: extract_optional_path(&contents, "\"audit_log_path\""),
         parity_report_path: extract_optional_path(&contents, "\"parity_report_path\""),
         note: extract_json_string(&contents, "\"note\"").unwrap_or_default(),
@@ -4066,7 +4559,7 @@ fn display_optional_path(path: Option<&PathBuf>) -> String {
 
 fn render_job_snapshot_json(snapshot: &JobSnapshot) -> String {
     format!(
-        "    {{\n      \"job_id\": {},\n      \"job_path\": {},\n      \"job_status\": {},\n      \"job_stage\": {},\n      \"queue_bucket\": {},\n      \"queued_at\": {},\n      \"updated_at\": {},\n      \"agent_id\": {},\n      \"org_id\": {},\n      \"action_type\": {},\n      \"resource\": {},\n      \"estimated_cost_usd\": {},\n      \"runtime_outcome\": {},\n      \"worker_status\": {},\n      \"queue_path\": {},\n      \"decision_path\": {},\n      \"execution_path\": {},\n      \"audit_log_path\": {},\n      \"parity_report_path\": {},\n      \"note\": {}\n    }}",
+        "    {{\n      \"job_id\": {},\n      \"job_path\": {},\n      \"job_status\": {},\n      \"job_stage\": {},\n      \"queue_bucket\": {},\n      \"queued_at\": {},\n      \"updated_at\": {},\n      \"agent_id\": {},\n      \"org_id\": {},\n      \"action_type\": {},\n      \"resource\": {},\n      \"estimated_cost_usd\": {},\n      \"runtime_outcome\": {},\n      \"budget_reservation_id\": {},\n      \"budget_reservation_status\": {},\n      \"budget_reservation_reason\": {},\n      \"worker_status\": {},\n      \"queue_path\": {},\n      \"decision_path\": {},\n      \"execution_path\": {},\n      \"event_path\": {},\n      \"event_stream_path\": {},\n      \"audit_log_path\": {},\n      \"parity_report_path\": {},\n      \"note\": {}\n    }}",
         json_string(&snapshot.job_id),
         json_string(&snapshot.job_path.display().to_string()),
         json_string(&snapshot.status),
@@ -4080,6 +4573,13 @@ fn render_job_snapshot_json(snapshot: &JobSnapshot) -> String {
         json_string(&snapshot.resource),
         json_string(&snapshot.estimated_cost_usd),
         json_string(&snapshot.runtime_outcome),
+        if snapshot.budget_reservation_id.is_empty() {
+            "null".to_string()
+        } else {
+            json_string(&snapshot.budget_reservation_id)
+        },
+        json_string(&snapshot.budget_reservation_status),
+        json_string(&snapshot.budget_reservation_reason),
         json_string(&snapshot.worker_status),
         snapshot
             .queue_path
@@ -4093,6 +4593,16 @@ fn render_job_snapshot_json(snapshot: &JobSnapshot) -> String {
             .unwrap_or_else(|| "null".to_string()),
         snapshot
             .execution_path
+            .as_ref()
+            .map(|path| json_string(&path.display().to_string()))
+            .unwrap_or_else(|| "null".to_string()),
+        snapshot
+            .event_path
+            .as_ref()
+            .map(|path| json_string(&path.display().to_string()))
+            .unwrap_or_else(|| "null".to_string()),
+        snapshot
+            .event_stream_path
             .as_ref()
             .map(|path| json_string(&path.display().to_string()))
             .unwrap_or_else(|| "null".to_string()),
@@ -4317,6 +4827,8 @@ mod tests {
         assert!(capture.worker_result_path.exists());
         assert!(capture.worker_log_path.exists());
         assert!(capture.audit_log_path.exists());
+        assert!(capture.runtime_event_path.exists());
+        assert!(capture.runtime_event_stream_path.exists());
         assert!(capture.parity_stream_path.exists());
         assert!(capture.parity_report_path.exists());
         assert_eq!(capture.runtime_outcome, "worker_executed");
@@ -4328,16 +4840,56 @@ mod tests {
         assert!(human.contains("Meridian Loom // RUNTIME EXECUTE"));
         assert!(human.contains("phase:       experimental runtime rehearsal"));
         assert!(human.contains("worker supervisor artifacts"));
-        assert!(human.contains("audit / parity artifacts"));
+        assert!(human.contains("proof / audit / parity artifacts"));
+        assert!(human.contains("runtime_event:"));
         assert!(human.contains("loom parity report --root"));
         let json = render_runtime_execution_json(&capture);
         assert!(json.contains("\"status\": \"runtime_execution_captured\""));
+        assert!(json.contains("\"runtime_event_path\":"));
         assert!(json.contains("\"worker_status\": \"completed\""));
         assert!(json.contains("\"openclaw_live_probe_status\":"));
         let parity = render_parity_report(&root).expect("parity report");
         assert!(parity.contains("Meridian Loom // PARITY REPORT"));
+        assert!(parity.contains("Reference action latest"));
+        assert!(parity.contains("Action parity latest"));
+        assert!(parity.contains("Action parity stream"));
+        assert!(parity.contains("Action parity summary"));
+        assert!(parity.contains("Runtime event latest"));
         assert!(parity.contains("OpenClaw live probe stream"));
         assert!(parity.contains("\"parity_status\": \"match\""));
+    }
+
+    #[test]
+    fn runtime_execution_respects_sanction_deny_without_dispatch() {
+        let root = temp_path("loom-shadow-runtime-sanction-deny");
+        fs::create_dir_all(root.join(".loom/shadow")).expect("shadow dir");
+        let mut identity = sample_identity();
+        identity.restrictions = vec!["execute".to_string()];
+        identity.sanction_decision = "restricted_execute".to_string();
+        let envelope = sample_envelope();
+        let reference = ReferenceGateCheck {
+            allowed: true,
+            stage: "ok".to_string(),
+            reason: "ok".to_string(),
+            restrictions: vec!["execute".to_string()],
+            sanction_gate_decision: "allow".to_string(),
+            approval_gate_decision: "allow".to_string(),
+            budget_gate_decision: "allow".to_string(),
+            source: "kernel_reference_adapter_read_only".to_string(),
+        };
+
+        let decision = capture_decision(&root, &identity, &envelope, &reference).expect("decision");
+        let capture =
+            capture_runtime_execution(&root, &root, &envelope, &reference, &decision).expect("runtime capture");
+
+        assert_eq!(capture.runtime_outcome, "denied");
+        assert_eq!(capture.worker_status, "not_dispatched");
+        assert_eq!(capture.effective_stage, "sanction_controls_preview");
+        assert_eq!(capture.budget_reservation_status, "decision_denied");
+        let human = render_runtime_execution_human(&capture);
+        assert!(human.contains("runtime_outcome:     denied"));
+        assert!(human.contains("budget_reservation:  decision_denied"));
+        assert!(human.contains("effective_stage:     sanction_controls_preview"));
     }
 
     #[test]

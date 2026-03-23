@@ -46,6 +46,7 @@ to inspect honestly.
 | `./scripts/bootstrap_embedded.sh` | local bootstrap, build, doctor, health | runtime replacement |
 | `./scripts/rehearse_first_governed_cell.sh` | governed identity, queue, supervisor, audit, parity | hosted scheduler |
 | `./scripts/rehearse_local_sanction_preview.sh` | deny path when local sanctions override reference allow | real hosted enforcement |
+| `./scripts/rehearse_allow_execute.sh` | allow path, budget reservation commit, runtime event receipt, action parity comparison | hosted replacement |
 | `./scripts/rehearse_supervisor_queue.sh` | queue-backed supervisor and job ledger | long-running hosted daemon |
 | `./scripts/rehearse_supervisor_watch.sh` | bounded watch-loop state and heartbeat history | daemonized service |
 | `./scripts/rehearse_supervisor_daemon.sh` | local daemon lifecycle shell | hosted runtime supervisor |
@@ -91,6 +92,9 @@ The rehearsal verifies:
 22. `loom supervisor daemon start/status/stop` now wrap that same queue
     supervisor in a real local lifecycle shell with `runtime_state.json`,
     background logging, and stop-request handling.
+23. `loom wasm run` now executes a local Wasmtime guest under the configured
+    store limits and pooling profile, so the Wasm resource lane is runnable
+    instead of documentation-only.
 
 ## What the rehearsal does not prove
 
@@ -98,7 +102,7 @@ The rehearsal verifies:
 - It does not upgrade registry compliance beyond 0/7.
 - It does not prove transport adapters exist.
 - It does not prove OpenClaw replacement.
-- It does not prove per-action OpenClaw parity.
+- It does not prove hosted per-action OpenClaw parity.
 - It does not prove a hosted daemon supervisor or long-running scheduler.
 - It does not prove a hosted long-running scheduler or worker pool.
 - The live OpenClaw probe is a runtime health/proof snapshot, not a replayed

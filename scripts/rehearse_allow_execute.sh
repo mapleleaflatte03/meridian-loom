@@ -85,8 +85,83 @@ def check_authority(agent_id, action, org_id=None):
 EOF
 
 cat > "${KERNEL_PATH}/kernel/treasury.py" <<'EOF'
+import json
+import os
+import uuid
+
+STORE = os.path.join(os.path.dirname(__file__), 'runtime_budget_reservations.json')
+
+def _load():
+    if os.path.exists(STORE):
+        with open(STORE, 'r', encoding='utf-8') as handle:
+            return json.load(handle)
+    return {'reservations': {}}
+
+def _save(payload):
+    with open(STORE, 'w', encoding='utf-8') as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True)
+
 def check_budget(agent_id, cost_usd, org_id=None):
     return True, 'ok'
+
+def reserve_runtime_budget(agent_id, estimated_cost_usd, org_id=None, action='', resource='', context=None, policy_ref=''):
+    payload = _load()
+    reservation_id = f"res_{uuid.uuid4().hex[:10]}"
+    payload['reservations'][reservation_id] = {
+        'reservation_id': reservation_id,
+        'agent_id': agent_id,
+        'org_id': org_id or 'org_demo',
+        'estimated_cost_usd': float(estimated_cost_usd),
+        'actual_cost_usd': None,
+        'action': action,
+        'resource': resource,
+        'context': context or {},
+        'policy_ref': policy_ref,
+        'status': 'reserved',
+    }
+    _save(payload)
+    return {
+        'allowed': True,
+        'reservation_id': reservation_id,
+        'reason': 'ok',
+        'status': 'reserved',
+    }
+
+def commit_runtime_budget(reservation_id, actual_cost_usd, note=''):
+    payload = _load()
+    row = payload['reservations'][reservation_id]
+    row['status'] = 'committed'
+    row['actual_cost_usd'] = float(actual_cost_usd)
+    row['commit_reason'] = note or 'worker_executed'
+    _save(payload)
+    return row
+
+def release_runtime_budget(reservation_id, reason=''):
+    payload = _load()
+    row = payload['reservations'][reservation_id]
+    row['status'] = 'released'
+    row['release_reason'] = reason or 'released'
+    _save(payload)
+    return row
+
+def expire_runtime_budget_reservations(org_id=None, now=None):
+    return _load()
+
+def budget_reservation_summary(org_id=None, agent_id=None):
+    payload = _load()
+    rows = list(payload['reservations'].values())
+    return {
+        'org_id': org_id,
+        'agent_id': agent_id,
+        'reservation_count': len(rows),
+        'status_counts': {
+            'reserved': sum(1 for row in rows if row.get('status') == 'reserved'),
+            'committed': sum(1 for row in rows if row.get('status') == 'committed'),
+            'released': sum(1 for row in rows if row.get('status') == 'released'),
+        },
+        'active_reserved_usd': round(sum(float(row.get('estimated_cost_usd', 0.0) or 0.0) for row in rows if row.get('status') == 'reserved'), 4),
+        'committed_usd': round(sum(float((row.get('actual_cost_usd') if row.get('actual_cost_usd') is not None else row.get('estimated_cost_usd', 0.0)) or 0.0) for row in rows if row.get('status') == 'committed'), 4),
+    }
 EOF
 
 cp "${SOURCE_KERNEL}/kernel/audit.py" "${KERNEL_PATH}/kernel/audit.py"
@@ -132,6 +207,8 @@ export MERIDIAN_OPENCLAW_PROOF_SCRIPT="${KERNEL_PATH}/kernel/missing_openclaw_ru
 ./target/debug/loom init --mode embedded --kernel-path "${KERNEL_PATH}" --root "${ROOT_DIR}" --org-id org_demo
 ./target/debug/loom doctor --root "${ROOT_DIR}" --format human
 ./target/debug/loom action execute --root "${ROOT_DIR}" --agent-id agent_allow --org-id org_demo --action-type research --resource web_search --estimated-cost-usd 0.05 --format human
+JOB_ID="$(basename "$(find "${ROOT_DIR}/.loom/runtime/jobs" -mindepth 1 -maxdepth 1 -type d | head -n1)")"
+./target/debug/loom job inspect --root "${ROOT_DIR}" --job-id "${JOB_ID}" --format human
 ./target/debug/loom parity report --root "${ROOT_DIR}"
 ./target/debug/loom shadow report --root "${ROOT_DIR}"
 

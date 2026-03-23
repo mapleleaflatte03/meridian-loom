@@ -119,12 +119,15 @@ That path gives you a real local lifecycle:
 - `loom capability shim`
 - `loom wasm limits`
 - `loom wasm profile show`
+- `loom wasm host show`
+- `loom wasm run`
 - `loom supervisor lanes`
 
 Checked-in transcripts:
 
 - `examples/bootstrap-output.txt`
 - `examples/first-governed-cell-output.txt`
+- `examples/allow-execute-output.txt`
 
 There is also a second rehearsal for local sanction denial:
 
@@ -137,6 +140,13 @@ And a third rehearsal for the allow path:
 ```bash
 ./scripts/rehearse_allow_execute.sh
 ```
+
+That allow-path rehearsal now proves three concrete things together:
+- the runtime budget reservation is captured and finalized through the
+  kernel-facing reservation lifecycle
+- `loom action execute` writes a canonical runtime event plus kernel-owned audit receipt
+- parity now includes a stable-ID action comparison receipt in addition to the
+  OpenClaw-compatible reference stream
 
 And a fourth rehearsal for the queue-backed supervisor path:
 
@@ -159,6 +169,16 @@ And a sixth rehearsal for bounded daemon lifecycle:
 ```
 
 Its checked-in transcript lives at `examples/supervisor-daemon-output.txt`.
+
+The local Wasm lane is runnable too:
+
+```bash
+cargo run -- wasm run --module builtin:minimal --profile minimal --backend wasmtime_ready --format human
+```
+
+That command proves a local Wasmtime guest can execute under Loom's configured
+store limits and pooling profile without pretending the hosted capability
+runtime already exists.
 
 Bootstrap and operator profiles live here:
 

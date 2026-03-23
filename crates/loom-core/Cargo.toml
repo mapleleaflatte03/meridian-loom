@@ -13,3 +13,6 @@ categories = ["command-line-utilities", "development-tools"]
 
 [lib]
 path = "src/lib.rs"
+
+[dependencies]
+wasmtime = { version = "14.0.4", default-features = false, features = ["cranelift", "pooling-allocator", "component-model"] }
