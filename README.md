@@ -29,6 +29,7 @@ Experimental public scaffold for the planned Meridian-native runtime.
   - `loom envelope build`
   - `loom capsule inspect`
   - `loom shadow preflight`
+  - `loom shadow decide`
   - `loom shadow compare`
   - `loom shadow report`
 - A local setup rehearsal script:
@@ -60,6 +61,7 @@ cargo build
 ./target/debug/loom envelope build --root /tmp/loom-rehearsal --agent-id agent_atlas --action-type research --resource web_search --estimated-cost-usd 0.05 --format human
 ./target/debug/loom capsule inspect --root /tmp/loom-rehearsal
 ./target/debug/loom shadow preflight --root /tmp/loom-rehearsal --agent-id agent_atlas --action-type research --resource web_search --estimated-cost-usd 0.05 --format human
+./target/debug/loom shadow decide --root /tmp/loom-rehearsal --agent-id agent_atlas --action-type research --resource web_search --estimated-cost-usd 0.05 --format human
 ./target/debug/loom shadow compare --root /tmp/loom-rehearsal --primary /tmp/loom-rehearsal/.loom/shadow/reference_events.jsonl --shadow /tmp/loom-rehearsal/.loom/shadow/events.jsonl --format human
 ./target/debug/loom shadow report --root /tmp/loom-rehearsal
 ```
@@ -111,6 +113,11 @@ reference adapter events. `loom shadow compare` and `loom shadow report` now
 surface `hook_results` / divergence details per hook so the current mismatch is
 explicit instead of buried in a single aggregate rate. It is still not enough
 to claim Loom exists as a governed execution runtime.
+
+`loom shadow decide` now writes an explicit decision artifact backed by the same
+reference gate evaluation used during preflight. That makes the deny/allow path
+inspectable for operators without pretending Loom already enforces those gates
+as a native runtime.
 
 ## Publication readiness
 

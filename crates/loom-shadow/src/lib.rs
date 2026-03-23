@@ -45,6 +45,26 @@ pub struct ComparisonSummary {
     pub note: String,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct DecisionCapture {
+    pub decision_path: PathBuf,
+    pub input_hash: String,
+    pub agent_id: String,
+    pub org_id: String,
+    pub action_type: String,
+    pub resource: String,
+    pub estimated_cost_usd: f64,
+    pub restrictions: Vec<String>,
+    pub sanction_gate_decision: String,
+    pub approval_gate_decision: String,
+    pub budget_limit_usd: Option<f64>,
+    pub budget_gate_decision: String,
+    pub overall_decision: String,
+    pub reference_stage: String,
+    pub reference_reason: String,
+    pub source: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HookComparison {
     pub pair_index: usize,
@@ -387,6 +407,39 @@ pub fn compare_logs(
     Ok(summary)
 }
 
+pub fn capture_decision(
+    root: &Path,
+    identity: &AgentIdentityResolution,
+    envelope: &ActionEnvelope,
+    reference: &ReferenceGateCheck,
+) -> ShadowResult<DecisionCapture> {
+    let decision_path = ensure_shadow_dir(root)?.join("decision.json");
+    let capture = DecisionCapture {
+        decision_path: decision_path.clone(),
+        input_hash: envelope_input_hash(envelope),
+        agent_id: identity.agent_id.clone(),
+        org_id: identity.org_id.clone(),
+        action_type: envelope.action_type.clone(),
+        resource: envelope.resource.clone(),
+        estimated_cost_usd: envelope.estimated_cost_usd,
+        restrictions: reference.restrictions.clone(),
+        sanction_gate_decision: reference.sanction_gate_decision.clone(),
+        approval_gate_decision: reference.approval_gate_decision.clone(),
+        budget_limit_usd: identity.max_per_run_usd,
+        budget_gate_decision: reference.budget_gate_decision.clone(),
+        overall_decision: if reference.allowed {
+            "allow".to_string()
+        } else {
+            "deny".to_string()
+        },
+        reference_stage: reference.stage.clone(),
+        reference_reason: reference.reason.clone(),
+        source: "experimental_preflight_gate".to_string(),
+    };
+    fs::write(&decision_path, render_decision_json(&capture)).map_err(io_err)?;
+    Ok(capture)
+}
+
 pub fn render_preflight_human(capture: &PreflightCapture) -> String {
     format!(
         "Shadow preflight capture\n========================\nevent_log:           {}\naudit_preview_log:   {}\nreference_report:    {}\nreference_event_log: {}\nlatest_report:       {}\ninput_hash:          {}\nestimated_cost_usd:  {:.4}\nrestrictions:        {}\nsanction_controls:   {} (snapshot: {})\nbudget_limit_usd:    {}\nbudget_gate:         {}\napproval_hook:       {} (policy: {})\naudit_emission:      {}\noverall_decision:    {}\nreference_stage:     {}\nreference_reason:    {}\ncaptured_hooks:      {}\n",
@@ -444,6 +497,64 @@ pub fn render_preflight_json(capture: &PreflightCapture) -> String {
         json_string(&capture.approval_decision),
         json_string(&capture.approval_gate_decision),
         json_string(&capture.audit_emission_decision),
+        json_string(&capture.overall_decision),
+        json_string(&capture.reference_stage),
+        json_string(&capture.reference_reason),
+    )
+}
+
+pub fn render_decision_human(capture: &DecisionCapture) -> String {
+    format!(
+        "Shadow decision\n===============\ndecision_path:     {}\nsource:            {}\nagent_id:          {}\norg_id:            {}\naction_type:       {}\nresource:          {}\ninput_hash:        {}\nestimated_cost_usd:{:>12.4}\nrestrictions:      {}\nsanction_gate:     {}\napproval_gate:     {}\nbudget_limit_usd:  {}\nbudget_gate:       {}\noverall_decision:  {}\nreference_stage:   {}\nreference_reason:  {}\n",
+        capture.decision_path.display(),
+        capture.source,
+        capture.agent_id,
+        capture.org_id,
+        capture.action_type,
+        capture.resource,
+        capture.input_hash,
+        capture.estimated_cost_usd,
+        if capture.restrictions.is_empty() {
+            "(none)".to_string()
+        } else {
+            capture.restrictions.join(", ")
+        },
+        capture.sanction_gate_decision,
+        capture.approval_gate_decision,
+        capture
+            .budget_limit_usd
+            .map(|value| format!("{:.4}", value))
+            .unwrap_or_else(|| "(unknown)".to_string()),
+        capture.budget_gate_decision,
+        capture.overall_decision,
+        capture.reference_stage,
+        if capture.reference_reason.is_empty() {
+            "(none)"
+        } else {
+            &capture.reference_reason
+        },
+    )
+}
+
+pub fn render_decision_json(capture: &DecisionCapture) -> String {
+    format!(
+        "{{\n  \"status\": \"decision_captured\",\n  \"decision_path\": {},\n  \"source\": {},\n  \"agent_id\": {},\n  \"org_id\": {},\n  \"action_type\": {},\n  \"resource\": {},\n  \"input_hash\": {},\n  \"estimated_cost_usd\": {:.6},\n  \"restrictions\": {},\n  \"sanction_gate_decision\": {},\n  \"approval_gate_decision\": {},\n  \"budget_limit_usd\": {},\n  \"budget_gate_decision\": {},\n  \"overall_decision\": {},\n  \"reference_stage\": {},\n  \"reference_reason\": {},\n  \"note\": \"experimental preflight decision only; not governed runtime enforcement\"\n}}\n",
+        json_string(&capture.decision_path.display().to_string()),
+        json_string(&capture.source),
+        json_string(&capture.agent_id),
+        json_string(&capture.org_id),
+        json_string(&capture.action_type),
+        json_string(&capture.resource),
+        json_string(&capture.input_hash),
+        capture.estimated_cost_usd,
+        render_json_string_array(&capture.restrictions),
+        json_string(&capture.sanction_gate_decision),
+        json_string(&capture.approval_gate_decision),
+        capture
+            .budget_limit_usd
+            .map(|value| format!("{:.6}", value))
+            .unwrap_or_else(|| "null".to_string()),
+        json_string(&capture.budget_gate_decision),
         json_string(&capture.overall_decision),
         json_string(&capture.reference_stage),
         json_string(&capture.reference_reason),
@@ -527,20 +638,35 @@ pub fn render_compare_json(summary: &ComparisonSummary) -> String {
 
 pub fn render_shadow_report(root: &Path) -> ShadowResult<String> {
     let report_path = root.join(".loom/shadow/latest.json");
-    let contents = fs::read_to_string(&report_path)
-        .map_err(|error| format!("could not read {}: {}", report_path.display(), error))?;
+    let contents = fs::read_to_string(&report_path).ok();
     let reference_path = root.join(".loom/shadow/reference.json");
     let reference = fs::read_to_string(&reference_path).ok();
-    let mut out = format!(
-        "Shadow report\n=============\nsource: {}\n\n{}\n",
-        report_path.display(),
-        contents
-    );
+    let decision_path = root.join(".loom/shadow/decision.json");
+    let decision = fs::read_to_string(&decision_path).ok();
+    if contents.is_none() && reference.is_none() && decision.is_none() {
+        return Err(format!(
+            "could not read any shadow artifacts under {}",
+            root.join(".loom/shadow").display()
+        ));
+    }
+    let mut out = String::from("Shadow report\n=============\n");
+    if let Some(contents) = contents {
+        out.push_str(&format!("source: {}\n\n{}\n", report_path.display(), contents));
+    } else {
+        out.push_str("source: (latest report not present)\n\n");
+    }
     if let Some(reference) = reference {
         out.push_str(&format!(
             "\nReference gates\n===============\nsource: {}\n\n{}\n",
             reference_path.display(),
             reference
+        ));
+    }
+    if let Some(decision) = decision {
+        out.push_str(&format!(
+            "\nDecision artifact\n=================\nsource: {}\n\n{}\n",
+            decision_path.display(),
+            decision
         ));
     }
     Ok(out)
@@ -741,6 +867,39 @@ mod tests {
         assert!(report.contains("budget_gate"));
         assert!(report.contains("audit_preview_log"));
         assert!(report.contains("reference_report"));
+    }
+
+    #[test]
+    fn decision_capture_surfaces_gate_outcome() {
+        let root = temp_path("loom-shadow-decision");
+        fs::create_dir_all(root.join(".loom/shadow")).expect("shadow dir");
+        let identity = sample_identity();
+        let envelope = sample_envelope();
+        let reference = ReferenceGateCheck {
+            allowed: false,
+            stage: "budget_gate".to_string(),
+            reason: "runway below reserve floor".to_string(),
+            restrictions: vec!["execute".to_string()],
+            sanction_gate_decision: "allow".to_string(),
+            approval_gate_decision: "allow".to_string(),
+            budget_gate_decision: "deny".to_string(),
+            source: "kernel_reference_adapter_read_only".to_string(),
+        };
+
+        let capture = capture_decision(&root, &identity, &envelope, &reference).expect("decision");
+        assert!(capture.decision_path.exists());
+        assert_eq!(capture.overall_decision, "deny");
+        assert_eq!(capture.reference_stage, "budget_gate");
+        let human = render_decision_human(&capture);
+        assert!(human.contains("overall_decision:  deny"));
+        assert!(human.contains("reference_stage:   budget_gate"));
+        let json = render_decision_json(&capture);
+        assert!(json.contains("\"status\": \"decision_captured\""));
+        assert!(json.contains("\"overall_decision\": \"deny\""));
+        assert!(json.contains("\"note\": \"experimental preflight decision only; not governed runtime enforcement\""));
+        let report = render_shadow_report(&root).expect("render report");
+        assert!(report.contains("Decision artifact"));
+        assert!(report.contains("\"overall_decision\": \"deny\""));
     }
 
     #[test]
