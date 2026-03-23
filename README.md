@@ -1,93 +1,212 @@
 # Meridian Loom
 
-Experimental public scaffold for the planned Meridian-native runtime.
+Experimental runtime rehearsal for Meridian-native governed execution.
 
-## Truth first
+Meridian Loom is the planned execution fabric for Meridian. It is not the live
+runtime today. OpenClaw still runs the live host. This repository exists to
+make the next runtime concrete now, before any false maturity claims:
 
-- This repo is an **experimental scaffold**, not a production runtime.
-- Contract compliance remains **0/7 proven hooks**.
-- OpenClaw is still the live runtime today.
+- a real `loom` binary
+- a real setup path
+- real operator surfaces
+- real fail-closed rehearsal
+- real runtime-side audit artifacts
+- a real parity stream
+- honest proof boundaries
+
+## Truth boundary
+
+- This repo is a **public experimental scaffold**, not a production runtime.
+- Registry compliance remains **0/7 proven hooks**.
+- Loom does **not** replace OpenClaw today.
 - Meridian remains the governance kernel above runtimes.
-- This repo exists to make the Loom product lane tangible: CLI shape, setup path,
-  local state layout, contract inspection, doctor/health surfaces, and setup
-  rehearsal.
+- The current value of this repo is product shape, operator shape, and runtime
+  rehearsal, not benchmark theater.
 
-## What exists in this scaffold
+## Why Loom exists
 
-- A Rust workspace with:
-  - `loom-core` — config/state helpers, identity resolution, contract inspection, envelope build
-  - `loom-cli` — `loom` binary
-- `loom-shadow` — shadow event capture, comparison, and report surfaces
-- Working commands:
-  - `loom init`
-  - `loom doctor`
-  - `loom health`
-  - `loom status`
-  - `loom config show`
-  - `loom contract show`
-  - `loom agent resolve`
-  - `loom envelope build`
-  - `loom capsule inspect`
-  - `loom shadow preflight`
-  - `loom shadow decide`
-  - `loom shadow enforce`
-  - `loom shadow compare`
-  - `loom shadow report`
-- A local setup rehearsal script:
-  - `scripts/rehearse_setup.sh` (auto-discovers a governed agent from the
-    current kernel registry before running the experimental preflight flow)
-  - `scripts/rehearse_local_sanction_preview.sh` (uses a synthetic kernel
-    fixture to prove that a local execute/remediation restriction can deny the
-    action even when the read-only reference gate would otherwise allow it)
-  - the compare/report surfaces now emit per-hook divergence details so the
-    remaining gap is inspectable without pretending runtime parity
+Meridian Kernel governs digital labor. It does not execute it.
 
-## What does not exist yet
+That split is deliberate:
 
-- No governed execution runtime
-- No worker supervisor
-- No MCP / Telegram / HTTP transport
-- No proven runtime hook implementation beyond the experimental preflight path for
-  `agent_identity`, `action_envelope`, `cost_attribution`, `approval_hook`,
-  `audit_emission`, `sanction_controls`, and `budget_gate`
-- No runtime-side shadow parity engine
-- No public benchmark claims
+- **Kernel** owns institution, authority, treasury, court, and runtime contract
+- **Loom** will own lifecycle, execution, worker orchestration, transport, and
+  native enforcement
+
+OpenClaw is the current live runtime. Loom exists because Meridian should not
+stay adapter-defined forever. It needs its own execution fabric, its own
+operator language, and its own fail-closed runtime path.
 
 ## Quick start
 
+If you want to evaluate Loom today, do this first:
+
 ```bash
+git clone https://github.com/mapleleaflatte03/meridian-loom.git
+cd meridian-loom
 cargo build
-./target/debug/loom init --mode embedded --kernel-path /tmp/meridian-kernel --root /tmp/loom-rehearsal
-./target/debug/loom doctor --root /tmp/loom-rehearsal --format human
-./target/debug/loom health --root /tmp/loom-rehearsal --format json
-./target/debug/loom contract show --root /tmp/loom-rehearsal
-./target/debug/loom agent resolve --root /tmp/loom-rehearsal --agent-id agent_atlas --format human
-./target/debug/loom envelope build --root /tmp/loom-rehearsal --agent-id agent_atlas --action-type research --resource web_search --estimated-cost-usd 0.05 --format human
-./target/debug/loom capsule inspect --root /tmp/loom-rehearsal
-./target/debug/loom shadow preflight --root /tmp/loom-rehearsal --agent-id agent_atlas --action-type research --resource web_search --estimated-cost-usd 0.05 --format human
-./target/debug/loom shadow decide --root /tmp/loom-rehearsal --agent-id agent_atlas --action-type research --resource web_search --estimated-cost-usd 0.05 --format human
-./target/debug/loom shadow enforce --root /tmp/loom-rehearsal --agent-id agent_atlas --action-type research --resource web_search --estimated-cost-usd 0.05 --format human; echo $?
-./target/debug/loom shadow compare --root /tmp/loom-rehearsal --primary /tmp/loom-rehearsal/.loom/shadow/reference_events.jsonl --shadow /tmp/loom-rehearsal/.loom/shadow/events.jsonl --format human
-./target/debug/loom shadow report --root /tmp/loom-rehearsal
-```
-
-If your kernel registry constrains agent lookup by organization, pass the bound
-org explicitly with `--org-id <bound-org-id>`. The bundled rehearsal script
-auto-discovers both the agent id and org id from the current kernel registry.
-
-Or run the bundled rehearsal:
-
-```bash
 ./scripts/rehearse_setup.sh
 ```
 
-Run the publication/readiness check:
+That one rehearsal gives you:
+
+- `loom init`
+- `loom doctor`
+- `loom health`
+- `loom status`
+- `loom contract show`
+- `loom agent resolve`
+- `loom envelope build`
+- `loom capsule inspect`
+- `loom shadow preflight`
+- `loom shadow decide`
+- `loom shadow enforce`
+- `loom action execute`
+- `loom shadow compare`
+- `loom shadow report`
+- `loom parity report`
+
+There is also a second rehearsal for local sanction denial:
 
 ```bash
-./scripts/check_publication_readiness.sh
+./scripts/rehearse_local_sanction_preview.sh
 ```
 
-## Layout
+## What exists today
+
+### Product surfaces
+
+- `loom-core`
+  - config and local state
+  - governed identity resolution
+  - contract inspection
+  - action envelope construction
+  - capsule inspection
+- `loom-shadow`
+  - shadow preflight capture
+  - decision capture
+  - fail-closed shell gate
+  - runtime execution rehearsal receipt
+  - parity stream
+  - report surfaces
+- `loom-cli`
+  - the public `loom` command that drives all of the above
+
+### Operator surfaces
+
+Current human-mode output uses a single grammar:
+
+- `Meridian Loom // DOCTOR`
+- `Meridian Loom // STATUS`
+- `Meridian Loom // CONTRACT`
+- `Meridian Loom // AGENT IDENTITY`
+- `Meridian Loom // ACTION ENVELOPE`
+- `Meridian Loom // CAPSULE INSPECT`
+- `Meridian Loom // SHADOW PREFLIGHT`
+- `Meridian Loom // SHADOW DECISION`
+- `Meridian Loom // RUNTIME EXECUTE`
+- `Meridian Loom // SHADOW REPORT`
+- `Meridian Loom // PARITY REPORT`
+
+This matters. Loom is not just a crate layout. It is also a future operator
+surface, and that surface has to be designed now, not after the runtime exists.
+
+## Current runtime rehearsal status
+
+The important question is not “does Loom have commands?” The important question
+is “what parts of a real runtime path are already tangible?”
+
+| Surface | Current truth |
+|---|---|
+| Native sanction enforcement | `loom action execute` now enforces the current effective allow/deny decision and fails closed with exit code `2` when denied. This is still an experimental runtime rehearsal, not a governed worker supervisor. |
+| Runtime-side audit emission | `loom action execute` now writes a runtime audit artifact under `.loom/audit/runtime_events.jsonl`, using the kernel serializer when available and a local fallback otherwise. This is not the kernel's canonical audit log. |
+| Parity stream | `loom action execute` now emits `.loom/parity/stream.jsonl` and `.loom/parity/latest.json`. The stream records reference-gate truth, Loom runtime rehearsal truth, audit emission, and an optional live OpenClaw proof snapshot when available. |
+| Live OpenClaw reference | On the founder host, Loom now captures a real OpenClaw proof snapshot through `openclaw_runtime_proof.py --json` and stores it under `.loom/parity/openclaw_live.json`. This is live runtime evidence, but not per-action OpenClaw parity yet. |
+| Shadow compare | `loom shadow compare` still exists, but it is now explicitly an offline event-log diff, not the main parity story. |
+
+## What does not exist yet
+
+Loom is still missing the things that would make it a real runtime:
+
+- no governed worker supervisor
+- no native transport adapters
+- no long-running scheduler/runtime loop
+- no native sanction enforcement inside a live worker runtime
+- no kernel-owned canonical audit trail
+- no per-action live OpenClaw parity stream
+- no proven 7/7 contract compliance
+
+That is why the registry stays at `0/7`. The scaffold has become more real, but
+the proof boundary is still strict.
+
+## Command surface
+
+### Current scaffold commands
+
+```text
+loom init
+loom doctor
+loom health
+loom status
+loom config show
+loom contract show
+loom agent resolve
+loom envelope build
+loom capsule inspect
+loom action execute
+loom shadow preflight
+loom shadow decide
+loom shadow enforce
+loom shadow compare
+loom shadow report
+loom parity report
+```
+
+### The most important current command
+
+If you only run one thing after setup, run this:
+
+```bash
+./target/debug/loom action execute \
+  --root /tmp/loom-rehearsal \
+  --agent-id agent_atlas \
+  --org-id org_b7d95bae \
+  --action-type research \
+  --resource web_search \
+  --estimated-cost-usd 0.05 \
+  --format human
+```
+
+That one command does four useful things:
+
+1. resolves the governed identity
+2. evaluates the current effective decision surface
+3. writes a runtime execution receipt and audit artifact
+4. updates the parity stream and parity report
+
+If the effective decision is deny, the command exits `2` fail-closed.
+
+## What “user only needs Loom” means right now
+
+Today it means:
+
+- you can clone this repo
+- you can build the binary
+- you can initialize a local boundary
+- you can inspect the kernel contract
+- you can rehearse the operator path
+- you can observe how Loom would fail closed under governance pressure
+
+It does **not** mean:
+
+- you get a replacement for OpenClaw
+- you get a supervised worker runtime
+- you get native transport ingress
+- you get independent institutional deployment
+
+This is still Phase 0: product lane, operator lane, and runtime rehearsal.
+
+## Repository layout
 
 ```text
 meridian-loom/
@@ -98,47 +217,29 @@ meridian-loom/
     loom-core/
     loom-shadow/
   docs/
+  examples/
   scripts/
 ```
 
-## Current status
+## Read this next
 
-This repo is enough to rehearse the install/setup/operator path honestly, and
-it now includes an experimental preflight path for all seven governance
-surfaces. Two of those remain preview-only surfaces:
-- `audit_emission` now uses the kernel audit serializer to write a local preview file,
-  not the kernel's canonical audit log
-- `sanction_controls`, `approval_hook`, and `budget_gate` now read the kernel's
-  reference adapter decisions in a read-only preflight path, but they still do
-  not provide native runtime enforcement
+- [docs/SETUP_REHEARSAL.md](docs/SETUP_REHEARSAL.md)
+- [docs/PUBLICATION_CHECKLIST.md](docs/PUBLICATION_CHECKLIST.md)
+- [`meridian-kernel` README](https://github.com/mapleleaflatte03/meridian-kernel)
+- [`docs/LOOM_SPEC.md` in meridian-kernel](https://github.com/mapleleaflatte03/meridian-kernel/blob/main/docs/LOOM_SPEC.md)
 
-The scaffold also captures experimental paths for `agent_identity`,
-`action_envelope`, `cost_attribution`, and shadow divergence reporting against
-reference adapter events. `loom shadow compare` and `loom shadow report` now
-surface `hook_results` / divergence details per hook so the current mismatch is
-explicit instead of buried in a single aggregate rate. It is still not enough
-to claim Loom exists as a governed execution runtime.
+## Bottom line
 
-`loom shadow decide` now writes an explicit decision artifact backed by the same
-effective decision surface used during preflight. That surface unions:
-- a local sanction preview derived from the resolved agent identity restrictions
-- the read-only reference gate result for sanction/approval/budget
+Meridian Loom is no longer “just a name in a spec.” It is now a public runtime
+rehearsal surface with:
 
-If the local preview sees `execute` or `remediation_only`, the overall decision
-fails closed even when the reference gate would otherwise allow the action.
-That makes the deny/allow path inspectable for operators without pretending
-Loom already enforces those gates as a native runtime.
+- a buildable binary
+- a real setup path
+- a real operator grammar
+- a fail-closed decision path
+- runtime-side audit artifacts
+- a parity stream
+- honest boundaries about what is still missing
 
-`loom shadow enforce` now reuses that same decision path but returns a fail-closed
-exit code for automation: `0` for allow, `2` for deny. It is still an
-experimental preflight command, not a governed execution runtime. The founder-host
-rehearsal currently denies through the reference budget gate; the fixture-backed
-local sanction rehearsal proves the local sanction override path separately.
-
-## Publication readiness
-
-This scaffold is now public at
-`https://github.com/mapleleaflatte03/meridian-loom`. The publication checklist lives in
-[`docs/PUBLICATION_CHECKLIST.md`](docs/PUBLICATION_CHECKLIST.md), and the
-bundled readiness script verifies the local prerequisites, remote wiring, and
-public repository visibility.
+That is enough to start shaping the real runtime without lying about what
+already exists.

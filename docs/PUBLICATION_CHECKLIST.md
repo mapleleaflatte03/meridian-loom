@@ -11,6 +11,7 @@ strict so the repo does not overclaim maturity.
 - [x] GitHub Actions workflow exists for `cargo test` and `cargo build`
 - [x] `loom.toml.example` exists
 - [x] Setup rehearsal script exists
+- [x] Runtime rehearsal surface exists (`loom action execute` + `loom parity report`)
 - [x] Setup rehearsal transcript is committed
 - [x] Cargo workspace builds locally
 - [x] Cargo workspace tests pass locally

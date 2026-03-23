@@ -1,7 +1,13 @@
-# Setup Rehearsal
+# Meridian Loom // Setup Rehearsal
 
-This repository includes a local setup rehearsal so the Loom install path can be
-tested before any public release claims are made.
+This repository includes two rehearsals:
+
+- a founder-host rehearsal against the current kernel truth
+- a fixture-backed rehearsal for local sanction denial
+
+The point is not to pretend Loom is already a runtime. The point is to make the
+install path, operator path, and fail-closed runtime rehearsal concrete enough
+to inspect honestly.
 
 ## Current rehearsal scope
 
@@ -18,22 +24,21 @@ The rehearsal verifies:
 9. `loom capsule inspect` surfaces the local capsule state boundary.
 10. `loom shadow preflight` captures experimental shadow events for all seven
     contract surfaces.
-11. `audit_emission` now uses the kernel audit serializer to write a local
-    preview file, not the kernel's canonical audit log.
-12. `sanction_controls`, `approval_hook`, and `budget_gate` are now evaluated
-    through the kernel reference adapter in a read-only preflight path, but not
-    through a native Loom runtime.
-13. `loom shadow compare` now compares reference-adapter event decisions
-    against Loom's captured shadow events.
-14. `loom shadow report` surfaces the latest shadow capture or comparison report honestly.
-15. The compare/report surfaces now include hook-level divergence details so
-    each mismatch can be reviewed without inflating the result into a runtime
-    parity claim.
-16. `loom shadow decide` now writes a standalone decision artifact that makes
-    the current deny/allow outcome auditable for operators.
-17. `loom shadow enforce` now returns a fail-closed exit code (`0` allow, `2`
-    deny) using the same experimental decision surface.
-18. The decision surface now unions a local sanction preview derived from the
+11. `loom shadow decide` writes a standalone decision artifact for the current
+    effective allow/deny result.
+12. `loom shadow enforce` reuses that same decision surface and exits fail-closed
+    (`0` allow, `2` deny).
+13. `loom action execute` now materializes a runtime execution receipt instead
+    of stopping at a shell preflight gate.
+14. `audit_emission` now writes a runtime-side audit artifact at
+    `.loom/audit/runtime_events.jsonl`, using the kernel serializer when
+    available and a local fallback otherwise.
+15. `loom shadow compare` still exists for offline diffing of event logs.
+16. `loom parity report` is now the stronger surface: it reads the runtime-side
+    parity stream and the latest parity report produced by `loom action execute`.
+17. When available on the founder host, the parity stream also captures a real
+    OpenClaw proof snapshot via `openclaw_runtime_proof.py --json`.
+18. The decision surface still unions a local sanction preview derived from the
     resolved identity snapshot with the read-only reference gate result.
 19. A fixture-backed rehearsal proves that `execute` / `remediation_only`
     restrictions deny locally even when the reference gate would otherwise allow.
@@ -44,8 +49,10 @@ The rehearsal verifies:
 - It does not upgrade registry compliance beyond 0/7.
 - It does not prove transport adapters exist.
 - It does not prove OpenClaw replacement.
-- It does not prove runtime parity.
-- The comparison surface is still file-level and adapter-backed, not live runtime parity.
+- It does not prove per-action OpenClaw parity.
+- The live OpenClaw probe is a runtime health/proof snapshot, not a replayed
+  gate-by-gate execution stream.
+- The canonical kernel audit log is still not owned by Loom.
 
 ## Run
 
@@ -79,22 +86,31 @@ That fresh-clone run passed and confirmed:
 3. The bundled rehearsal still succeeds against the current kernel truth.
 4. The scaffold still reports `planned` runtime status and `0/7` proven hooks.
 
-The current rehearsal now also exercises `loom shadow compare` against a
-reference event log generated from the kernel-side OpenClaw-compatible adapter.
-That makes the divergence surface more useful without turning it into a live
-runtime parity claim. The current rehearsal still exposes a single honest
-remaining mismatch: `audit_emission` is `not_exercised` on the reference side
-and `kernel_preview_written` on the Loom side, which is now surfaced as a
-hook-level divergence instead of only as an aggregate count.
+The current founder-host rehearsal now exercises both the old and new surfaces:
+
+- `loom shadow compare` still compares reference-adapter event logs against
+  Loom's shadow log for offline inspection
+- `loom action execute` writes a runtime execution receipt, a runtime-side
+  audit artifact, and a parity stream
+- `loom parity report` surfaces that parity stream plus a live OpenClaw proof
+  snapshot when the founder-host proof script is available
+
+That is still not a claim of per-action runtime parity. It is a stronger,
+runtime-side rehearsal surface than the previous file-only diff.
 
 The rehearsal also emits `.loom/shadow/decision.json`, which records the
 current gate outcome using the same reference stage and reason that drove the
 preflight result. That decision artifact is still experimental and adapter-
 backed; it does not make Loom a governed execution runtime.
 
-The rehearsal now also proves `loom shadow enforce` fails closed against the
-current kernel truth. On the founder host it returns exit code `2` because the
-reference budget gate denies the action.
+The rehearsal now also proves both fail-closed surfaces against the current
+kernel truth:
+
+- `loom shadow enforce` returns exit code `2`
+- `loom action execute` also returns exit code `2`
+
+On the founder host, both deny because the reference budget gate denies the
+action.
 
 ## Fixture-backed local sanction preview verification
 
@@ -111,7 +127,11 @@ That script creates a synthetic kernel fixture where:
 2. The read-only reference adapter still returns `allow`.
 3. `loom shadow decide` reports `effective_source: local_sanction_preview`.
 4. `loom shadow enforce` returns exit code `2`.
+5. `loom action execute` also returns exit code `2` and writes a runtime
+   execution receipt plus parity artifacts.
 
 This is intentionally a fixture-backed proof surface, not a claim about the
-founder host's current kernel state. Its transcript lives at
+founder host's current kernel state. The fixture rehearsal explicitly disables
+the founder-host OpenClaw probe so the transcript stays synthetic. Its
+transcript lives at
 `examples/local-sanction-preview.txt`.

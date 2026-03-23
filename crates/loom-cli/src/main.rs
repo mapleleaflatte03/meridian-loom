@@ -1,15 +1,15 @@
 use loom_core::{
     build_action_envelope, capsule_inspect, contract_show, doctor, health, init_workspace,
-    kernel_path_for,
-    read_config, render_capsule_human, render_contract_human, render_contract_json, render_doctor_human,
-    render_doctor_json, render_envelope_human, render_envelope_json, render_identity_human,
-    render_identity_json, resolve_agent_identity, root_from, status_human, evaluate_reference_gates,
-    LoomResult,
+    kernel_path_for, read_config, render_capsule_human, render_contract_human,
+    render_contract_json, render_doctor_human, render_doctor_json, render_envelope_human,
+    render_envelope_json, render_identity_human, render_identity_json, resolve_agent_identity,
+    root_from, status_human, evaluate_reference_gates, LoomResult,
 };
 use loom_shadow::{
-    capture_decision, capture_preflight, compare_logs, decision_exit_code, render_compare_human,
-    render_compare_json, render_decision_human, render_decision_json, render_preflight_human,
-    render_preflight_json, render_shadow_report,
+    capture_decision, capture_preflight, capture_runtime_execution, compare_logs,
+    decision_exit_code, render_compare_human, render_compare_json, render_decision_human,
+    render_decision_json, render_parity_report, render_preflight_human, render_preflight_json,
+    render_runtime_execution_human, render_runtime_execution_json, render_shadow_report,
 };
 use std::env;
 use std::path::PathBuf;
@@ -42,7 +42,9 @@ fn run() -> LoomResult<()> {
         "capsule" => handle_capsule(&args[1..]),
         "agent" => handle_agent(&args[1..]),
         "envelope" => handle_envelope(&args[1..]),
+        "action" => handle_action(&args[1..]),
         "shadow" => handle_shadow(&args[1..]),
+        "parity" => handle_parity(&args[1..]),
         "-h" | "--help" | "help" => {
             print_help();
             Ok(())
@@ -338,6 +340,72 @@ fn handle_shadow(args: &[String]) -> LoomResult<()> {
     }
 }
 
+fn handle_action(args: &[String]) -> LoomResult<()> {
+    match args.first().map(String::as_str) {
+        Some("execute") => {
+            let root = root_from(take_value(args, "--root").as_deref())?;
+            let agent_id = required_flag(args, "--agent-id")?;
+            let action_type = required_flag(args, "--action-type")?;
+            let resource = required_flag(args, "--resource")?;
+            let estimated_cost_usd = parse_f64_flag(args, "--estimated-cost-usd").unwrap_or(0.0);
+            let kernel_path = take_value(args, "--kernel-path");
+            let org_id = take_value(args, "--org-id");
+            let run_id = take_value(args, "--run-id");
+            let session_id = take_value(args, "--session-id");
+            let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+
+            let identity =
+                resolve_agent_identity(&root, kernel_path.as_deref(), &agent_id, org_id.as_deref())?;
+            let envelope = build_action_envelope(
+                &root,
+                kernel_path.as_deref(),
+                &agent_id,
+                org_id.as_deref(),
+                &action_type,
+                &resource,
+                estimated_cost_usd,
+                run_id.as_deref(),
+                session_id.as_deref(),
+            )?;
+            let reference =
+                evaluate_reference_gates(&root, kernel_path.as_deref(), &identity, &envelope)?;
+            let decision = capture_decision(&root, &identity, &envelope, &reference)?;
+            let effective_kernel_path = kernel_path_for(&root, kernel_path.as_deref())?;
+            let capture = capture_runtime_execution(
+                &root,
+                &effective_kernel_path,
+                &envelope,
+                &reference,
+                &decision,
+            )?;
+            if format == "json" {
+                print!("{}", render_runtime_execution_json(&capture));
+            } else {
+                print!("{}", render_identity_human(&identity));
+                println!();
+                print!("{}", render_envelope_human(&envelope));
+                println!();
+                print!("{}", render_decision_human(&decision));
+                println!();
+                print!("{}", render_runtime_execution_human(&capture));
+            }
+            std::process::exit(decision_exit_code(&decision, 0, 2));
+        }
+        _ => Err("action supports 'execute'".to_string()),
+    }
+}
+
+fn handle_parity(args: &[String]) -> LoomResult<()> {
+    match args.first().map(String::as_str) {
+        Some("report") => {
+            let root = root_from(take_value(args, "--root").as_deref())?;
+            print!("{}", render_parity_report(&root)?);
+            Ok(())
+        }
+        _ => Err("parity supports 'report'".to_string()),
+    }
+}
+
 fn take_value(args: &[String], flag: &str) -> Option<String> {
     args.windows(2)
         .find(|pair| pair[0] == flag)
@@ -366,10 +434,12 @@ fn print_help() {
            loom capsule inspect [--root PATH]\n\
            loom agent resolve --agent-id ID [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
            loom envelope build --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
+           loom action execute --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
            loom shadow preflight --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
            loom shadow decide --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
            loom shadow enforce --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
            loom shadow compare --primary FILE [--shadow FILE] [--root PATH] [--format human|json]\n\
-           loom shadow report [--root PATH]\n"
+           loom shadow report [--root PATH]\n\
+           loom parity report [--root PATH]\n"
     );
 }

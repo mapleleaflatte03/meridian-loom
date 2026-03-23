@@ -74,6 +74,33 @@ pub struct DecisionCapture {
     pub source: String,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct RuntimeExecutionCapture {
+    pub execution_path: PathBuf,
+    pub audit_log_path: PathBuf,
+    pub parity_stream_path: PathBuf,
+    pub parity_report_path: PathBuf,
+    pub openclaw_live_probe_path: Option<PathBuf>,
+    pub decision_path: PathBuf,
+    pub input_hash: String,
+    pub agent_id: String,
+    pub org_id: String,
+    pub action_type: String,
+    pub resource: String,
+    pub estimated_cost_usd: f64,
+    pub runtime_outcome: String,
+    pub overall_decision: String,
+    pub effective_source: String,
+    pub effective_stage: String,
+    pub reference_decision: String,
+    pub reference_stage: String,
+    pub audit_emission_status: String,
+    pub openclaw_live_probe_status: String,
+    pub openclaw_live_probe_note: String,
+    pub parity_status: String,
+    pub parity_reason: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HookComparison {
     pub pair_index: usize,
@@ -406,7 +433,7 @@ pub fn compare_logs(
         divergences,
         divergence_rate,
         hook_results,
-        note: "file-level comparison only; not proof of runtime parity".to_string(),
+        note: "offline event-log diff only; use `loom action execute` plus `loom parity report` for runtime-side rehearsal and optional live OpenClaw probe".to_string(),
     };
 
     if let Some(root) = root {
@@ -477,6 +504,142 @@ pub fn capture_decision(
     Ok(capture)
 }
 
+pub fn capture_runtime_execution(
+    root: &Path,
+    kernel_path: &Path,
+    envelope: &ActionEnvelope,
+    reference: &ReferenceGateCheck,
+    decision: &DecisionCapture,
+) -> ShadowResult<RuntimeExecutionCapture> {
+    let runtime_dir = ensure_runtime_dir(root)?;
+    let parity_dir = ensure_parity_dir(root)?;
+    let audit_log_path = ensure_audit_dir(root)?.join("runtime_events.jsonl");
+    let execution_path = runtime_dir.join("last_execution.json");
+    let parity_stream_path = parity_dir.join("stream.jsonl");
+    let parity_report_path = parity_dir.join("latest.json");
+    let (openclaw_live_probe_path, openclaw_live_probe_status, openclaw_live_probe_note) =
+        capture_openclaw_live_probe(root)?;
+    let runtime_outcome = if decision.overall_decision == "allow" {
+        "simulated_success".to_string()
+    } else {
+        "denied".to_string()
+    };
+    let audit_emission_status = emit_runtime_audit(
+        kernel_path,
+        &audit_log_path,
+        envelope,
+        decision,
+        &runtime_outcome,
+    )?;
+    let reference_decision = if reference.allowed { "allow" } else { "deny" }.to_string();
+    let parity_status = if reference_decision == decision.overall_decision {
+        "match".to_string()
+    } else {
+        "divergence".to_string()
+    };
+    let parity_reason = if parity_status == "match" {
+        format!(
+            "reference and loom agreed on {} at stage {}",
+            decision.overall_decision, decision.reference_stage
+        )
+    } else {
+        format!(
+            "reference returned {} at stage {} while loom enforced {} via {}",
+            reference_decision, decision.reference_stage, decision.overall_decision, decision.effective_stage
+        )
+    };
+
+    let stream_timestamp = timestamp_now();
+    append_line(
+        &parity_stream_path,
+        &format!(
+            "{{\"timestamp\":{},\"source\":\"openclaw_reference_stream\",\"phase\":\"reference_gate\",\"hook_name\":{},\"decision\":{},\"stage\":{},\"agent_id\":{},\"org_id\":{},\"input_hash\":{},\"reason\":{}}}\n",
+            json_string(&stream_timestamp),
+            json_string(&decision.reference_stage),
+            json_string(&reference_decision),
+            json_string(&decision.reference_stage),
+            json_string(&decision.agent_id),
+            json_string(&decision.org_id),
+            json_string(&decision.input_hash),
+            json_string(&decision.reference_reason),
+        ),
+    )?;
+    append_line(
+        &parity_stream_path,
+        &format!(
+            "{{\"timestamp\":{},\"source\":\"loom_runtime_stream\",\"phase\":\"native_enforcement\",\"hook_name\":{},\"decision\":{},\"stage\":{},\"agent_id\":{},\"org_id\":{},\"input_hash\":{},\"reason\":{}}}\n",
+            json_string(&stream_timestamp),
+            json_string(&decision.effective_stage),
+            json_string(&decision.overall_decision),
+            json_string(&decision.effective_stage),
+            json_string(&decision.agent_id),
+            json_string(&decision.org_id),
+            json_string(&decision.input_hash),
+            json_string(&decision.effective_reason),
+        ),
+    )?;
+    append_line(
+        &parity_stream_path,
+        &format!(
+            "{{\"timestamp\":{},\"source\":\"loom_runtime_stream\",\"phase\":\"audit_emission\",\"hook_name\":\"audit_emission\",\"decision\":{},\"stage\":\"runtime_audit\",\"agent_id\":{},\"org_id\":{},\"input_hash\":{},\"reason\":{},\"audit_log\":{}}}\n",
+            json_string(&stream_timestamp),
+            json_string(&audit_emission_status),
+            json_string(&decision.agent_id),
+            json_string(&decision.org_id),
+            json_string(&decision.input_hash),
+            json_string(&runtime_outcome),
+            json_string(&audit_log_path.display().to_string()),
+        ),
+    )?;
+    append_line(
+        &parity_stream_path,
+        &format!(
+            "{{\"timestamp\":{},\"source\":\"openclaw_live_probe\",\"phase\":\"live_runtime_probe\",\"hook_name\":\"runtime_health\",\"decision\":{},\"stage\":\"live_single_host_openclaw\",\"agent_id\":{},\"org_id\":{},\"input_hash\":{},\"reason\":{},\"probe_path\":{}}}\n",
+            json_string(&stream_timestamp),
+            json_string(&openclaw_live_probe_status),
+            json_string(&decision.agent_id),
+            json_string(&decision.org_id),
+            json_string(&decision.input_hash),
+            json_string(&openclaw_live_probe_note),
+            json_string(
+                &openclaw_live_probe_path
+                    .as_ref()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_default()
+            ),
+        ),
+    )?;
+
+    let capture = RuntimeExecutionCapture {
+        execution_path: execution_path.clone(),
+        audit_log_path: audit_log_path.clone(),
+        parity_stream_path: parity_stream_path.clone(),
+        parity_report_path: parity_report_path.clone(),
+        openclaw_live_probe_path,
+        decision_path: decision.decision_path.clone(),
+        input_hash: decision.input_hash.clone(),
+        agent_id: decision.agent_id.clone(),
+        org_id: decision.org_id.clone(),
+        action_type: decision.action_type.clone(),
+        resource: decision.resource.clone(),
+        estimated_cost_usd: decision.estimated_cost_usd,
+        runtime_outcome,
+        overall_decision: decision.overall_decision.clone(),
+        effective_source: decision.effective_source.clone(),
+        effective_stage: decision.effective_stage.clone(),
+        reference_decision,
+        reference_stage: decision.reference_stage.clone(),
+        audit_emission_status,
+        openclaw_live_probe_status,
+        openclaw_live_probe_note,
+        parity_status,
+        parity_reason,
+    };
+    fs::write(&execution_path, render_runtime_execution_json(&capture)).map_err(io_err)?;
+    fs::write(&parity_report_path, render_parity_report_json(&capture)).map_err(io_err)?;
+    Ok(capture)
+}
+
 pub fn decision_exit_code(capture: &DecisionCapture, allow_code: i32, deny_code: i32) -> i32 {
     if capture.overall_decision == "allow" {
         allow_code
@@ -487,7 +650,7 @@ pub fn decision_exit_code(capture: &DecisionCapture, allow_code: i32, deny_code:
 
 pub fn render_preflight_human(capture: &PreflightCapture) -> String {
     format!(
-        "Shadow preflight capture\n========================\nevent_log:              {}\naudit_preview_log:      {}\nreference_report:       {}\nreference_event_log:    {}\nlatest_report:          {}\ninput_hash:             {}\nestimated_cost_usd:     {:.4}\nidentity_restrictions:  {}\nreference_restrictions: {}\nsanction_controls:      {} (snapshot: {})\nbudget_limit_usd:       {}\nbudget_gate:            {}\napproval_hook:          {} (policy: {})\naudit_emission:         {}\noverall_decision:       {}\nreference_stage:        {}\nreference_reason:       {}\ncaptured_hooks:         {}\n",
+        "Meridian Loom // SHADOW PREFLIGHT\n===================================\nevent_log:              {}\naudit_preview_log:      {}\nreference_report:       {}\nreference_event_log:    {}\nlatest_report:          {}\ninput_hash:             {}\nestimated_cost_usd:     {:.4}\nidentity_restrictions:  {}\nreference_restrictions: {}\nsanction_controls:      {} (snapshot: {})\nbudget_limit_usd:       {}\nbudget_gate:            {}\napproval_hook:          {} (policy: {})\naudit_emission:         {}\noverall_decision:       {}\nreference_stage:        {}\nreference_reason:       {}\ncaptured_hooks:         {}\n",
         capture.event_log.display(),
         capture.audit_preview_log.display(),
         capture.reference_report.display(),
@@ -556,7 +719,7 @@ pub fn render_preflight_json(capture: &PreflightCapture) -> String {
 
 pub fn render_decision_human(capture: &DecisionCapture) -> String {
     format!(
-        "Shadow decision\n===============\ndecision_path:          {}\nsource:                 {}\nagent_id:               {}\norg_id:                 {}\naction_type:            {}\nresource:               {}\ninput_hash:             {}\nestimated_cost_usd:{:>12.4}\nidentity_restrictions:  {}\nreference_restrictions: {}\nlocal_sanction:         {} ({})\nsanction_gate:          {}\napproval_gate:          {}\nbudget_limit_usd:       {}\nbudget_gate:            {}\noverall_decision:       {}\neffective_source:       {}\neffective_stage:        {}\neffective_reason:       {}\nreference_stage:        {}\nreference_reason:       {}\n",
+        "Meridian Loom // SHADOW DECISION\n==================================\ndecision_path:          {}\nsource:                 {}\nagent_id:               {}\norg_id:                 {}\naction_type:            {}\nresource:               {}\ninput_hash:             {}\nestimated_cost_usd:{:>12.4}\nidentity_restrictions:  {}\nreference_restrictions: {}\nlocal_sanction:         {} ({})\nsanction_gate:          {}\napproval_gate:          {}\nbudget_limit_usd:       {}\nbudget_gate:            {}\noverall_decision:       {}\neffective_source:       {}\neffective_stage:        {}\neffective_reason:       {}\nreference_stage:        {}\nreference_reason:       {}\n",
         capture.decision_path.display(),
         capture.source,
         capture.agent_id,
@@ -633,6 +796,72 @@ pub fn render_decision_json(capture: &DecisionCapture) -> String {
     )
 }
 
+pub fn render_runtime_execution_human(capture: &RuntimeExecutionCapture) -> String {
+    format!(
+        "Meridian Loom // RUNTIME EXECUTE\n=================================\nexecution_path:         {}\ndecision_path:          {}\naudit_log:              {}\nparity_stream:          {}\nparity_report:          {}\nopenclaw_live_probe:    {}\nagent_id:               {}\norg_id:                 {}\naction_type:            {}\nresource:               {}\ninput_hash:             {}\nestimated_cost_usd:{:>12.4}\nruntime_outcome:        {}\noverall_decision:       {}\neffective_source:       {}\neffective_stage:        {}\nreference_decision:     {}\nreference_stage:        {}\naudit_emission:         {}\nopenclaw_probe:         {} ({})\nparity_status:          {}\nparity_reason:          {}\n",
+        capture.execution_path.display(),
+        capture.decision_path.display(),
+        capture.audit_log_path.display(),
+        capture.parity_stream_path.display(),
+        capture.parity_report_path.display(),
+        capture
+            .openclaw_live_probe_path
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "(not captured)".to_string()),
+        capture.agent_id,
+        capture.org_id,
+        capture.action_type,
+        capture.resource,
+        capture.input_hash,
+        capture.estimated_cost_usd,
+        capture.runtime_outcome,
+        capture.overall_decision,
+        capture.effective_source,
+        capture.effective_stage,
+        capture.reference_decision,
+        capture.reference_stage,
+        capture.audit_emission_status,
+        capture.openclaw_live_probe_status,
+        capture.openclaw_live_probe_note,
+        capture.parity_status,
+        capture.parity_reason,
+    )
+}
+
+pub fn render_runtime_execution_json(capture: &RuntimeExecutionCapture) -> String {
+    format!(
+        "{{\n  \"status\": \"runtime_execution_captured\",\n  \"execution_path\": {},\n  \"decision_path\": {},\n  \"audit_log_path\": {},\n  \"parity_stream_path\": {},\n  \"parity_report_path\": {},\n  \"openclaw_live_probe_path\": {},\n  \"agent_id\": {},\n  \"org_id\": {},\n  \"action_type\": {},\n  \"resource\": {},\n  \"input_hash\": {},\n  \"estimated_cost_usd\": {:.6},\n  \"runtime_outcome\": {},\n  \"overall_decision\": {},\n  \"effective_source\": {},\n  \"effective_stage\": {},\n  \"reference_decision\": {},\n  \"reference_stage\": {},\n  \"audit_emission_status\": {},\n  \"openclaw_live_probe_status\": {},\n  \"openclaw_live_probe_note\": {},\n  \"parity_status\": {},\n  \"parity_reason\": {},\n  \"note\": \"experimental runtime rehearsal only; no governed worker supervisor yet\"\n}}\n",
+        json_string(&capture.execution_path.display().to_string()),
+        json_string(&capture.decision_path.display().to_string()),
+        json_string(&capture.audit_log_path.display().to_string()),
+        json_string(&capture.parity_stream_path.display().to_string()),
+        json_string(&capture.parity_report_path.display().to_string()),
+        capture
+            .openclaw_live_probe_path
+            .as_ref()
+            .map(|path| json_string(&path.display().to_string()))
+            .unwrap_or_else(|| "null".to_string()),
+        json_string(&capture.agent_id),
+        json_string(&capture.org_id),
+        json_string(&capture.action_type),
+        json_string(&capture.resource),
+        json_string(&capture.input_hash),
+        capture.estimated_cost_usd,
+        json_string(&capture.runtime_outcome),
+        json_string(&capture.overall_decision),
+        json_string(&capture.effective_source),
+        json_string(&capture.effective_stage),
+        json_string(&capture.reference_decision),
+        json_string(&capture.reference_stage),
+        json_string(&capture.audit_emission_status),
+        json_string(&capture.openclaw_live_probe_status),
+        json_string(&capture.openclaw_live_probe_note),
+        json_string(&capture.parity_status),
+        json_string(&capture.parity_reason),
+    )
+}
+
 pub fn render_compare_human(summary: &ComparisonSummary) -> String {
     let divergence_lines = {
         let rendered = summary
@@ -658,7 +887,7 @@ pub fn render_compare_human(summary: &ComparisonSummary) -> String {
         }
     };
     format!(
-        "Shadow comparison\n=================\nprimary_log:     {}\nshadow_log:      {}\nprimary_events:  {}\nshadow_events:   {}\npairs_compared:  {}\nmatches:         {}\ndivergences:     {}\ndivergence_rate: {:.4}\n\nDivergence details\n------------------\n{}note:            {}\n",
+        "Meridian Loom // SHADOW COMPARE\n================================\nprimary_log:     {}\nshadow_log:      {}\nprimary_events:  {}\nshadow_events:   {}\npairs_compared:  {}\nmatches:         {}\ndivergences:     {}\ndivergence_rate: {:.4}\n\nDivergence details\n------------------\n{}note:            {}\n",
         summary.primary_log.display(),
         summary.shadow_log.display(),
         summary.primary_events,
@@ -715,13 +944,17 @@ pub fn render_shadow_report(root: &Path) -> ShadowResult<String> {
     let reference = fs::read_to_string(&reference_path).ok();
     let decision_path = root.join(".loom/shadow/decision.json");
     let decision = fs::read_to_string(&decision_path).ok();
-    if contents.is_none() && reference.is_none() && decision.is_none() {
+    let runtime_path = root.join(".loom/runtime/last_execution.json");
+    let runtime = fs::read_to_string(&runtime_path).ok();
+    let parity_path = root.join(".loom/parity/latest.json");
+    let parity = fs::read_to_string(&parity_path).ok();
+    if contents.is_none() && reference.is_none() && decision.is_none() && runtime.is_none() && parity.is_none() {
         return Err(format!(
             "could not read any shadow artifacts under {}",
             root.join(".loom/shadow").display()
         ));
     }
-    let mut out = String::from("Shadow report\n=============\n");
+    let mut out = String::from("Meridian Loom // SHADOW REPORT\n==============================\n");
     if let Some(contents) = contents {
         out.push_str(&format!("source: {}\n\n{}\n", report_path.display(), contents));
     } else {
@@ -741,7 +974,69 @@ pub fn render_shadow_report(root: &Path) -> ShadowResult<String> {
             decision
         ));
     }
+    if let Some(runtime) = runtime {
+        out.push_str(&format!(
+            "\nRuntime execution\n=================\nsource: {}\n\n{}\n",
+            runtime_path.display(),
+            runtime
+        ));
+    }
+    if let Some(parity) = parity {
+        out.push_str(&format!(
+            "\nParity latest\n=============\nsource: {}\n\n{}\n",
+            parity_path.display(),
+            parity
+        ));
+    }
     Ok(out)
+}
+
+pub fn render_parity_report(root: &Path) -> ShadowResult<String> {
+    let report_path = root.join(".loom/parity/latest.json");
+    let contents = fs::read_to_string(&report_path)
+        .map_err(|_| format!("could not read parity report at {}", report_path.display()))?;
+    let stream_path = root.join(".loom/parity/stream.jsonl");
+    let stream = fs::read_to_string(&stream_path)
+        .map_err(|_| format!("could not read parity stream at {}", stream_path.display()))?;
+    let openclaw_live_path = root.join(".loom/parity/openclaw_live.json");
+    let openclaw_live = fs::read_to_string(&openclaw_live_path).ok();
+    Ok(format!(
+        "Meridian Loom // PARITY REPORT\n===============================\nsource: {}\n\n{}\nParity stream\n-------------\nsource: {}\n\n{}\n{}\n",
+        report_path.display(),
+        contents,
+        stream_path.display(),
+        stream,
+        openclaw_live
+            .map(|contents| format!(
+                "OpenClaw live probe\n-------------------\nsource: {}\n\n{}\n",
+                openclaw_live_path.display(),
+                contents
+            ))
+            .unwrap_or_else(|| "OpenClaw live probe\n-------------------\nsource: (not captured)\n\n".to_string()),
+    ))
+}
+
+fn render_parity_report_json(capture: &RuntimeExecutionCapture) -> String {
+    format!(
+        "{{\n  \"status\": \"parity_report_captured\",\n  \"execution_path\": {},\n  \"decision_path\": {},\n  \"audit_log_path\": {},\n  \"parity_stream_path\": {},\n  \"openclaw_live_probe_path\": {},\n  \"reference_decision\": {},\n  \"reference_stage\": {},\n  \"overall_decision\": {},\n  \"effective_stage\": {},\n  \"openclaw_live_probe_status\": {},\n  \"openclaw_live_probe_note\": {},\n  \"parity_status\": {},\n  \"parity_reason\": {},\n  \"note\": \"runtime-side parity stream now captures Loom execution plus an OpenClaw live proof snapshot when available; per-action live parity remains future work\"\n}}\n",
+        json_string(&capture.execution_path.display().to_string()),
+        json_string(&capture.decision_path.display().to_string()),
+        json_string(&capture.audit_log_path.display().to_string()),
+        json_string(&capture.parity_stream_path.display().to_string()),
+        capture
+            .openclaw_live_probe_path
+            .as_ref()
+            .map(|path| json_string(&path.display().to_string()))
+            .unwrap_or_else(|| "null".to_string()),
+        json_string(&capture.reference_decision),
+        json_string(&capture.reference_stage),
+        json_string(&capture.overall_decision),
+        json_string(&capture.effective_stage),
+        json_string(&capture.openclaw_live_probe_status),
+        json_string(&capture.openclaw_live_probe_note),
+        json_string(&capture.parity_status),
+        json_string(&capture.parity_reason),
+    )
 }
 
 fn ensure_shadow_dir(root: &Path) -> ShadowResult<PathBuf> {
@@ -750,10 +1045,78 @@ fn ensure_shadow_dir(root: &Path) -> ShadowResult<PathBuf> {
     Ok(shadow_dir)
 }
 
+fn ensure_runtime_dir(root: &Path) -> ShadowResult<PathBuf> {
+    let runtime_dir = root.join(".loom/runtime");
+    fs::create_dir_all(&runtime_dir).map_err(io_err)?;
+    Ok(runtime_dir)
+}
+
 fn ensure_audit_dir(root: &Path) -> ShadowResult<PathBuf> {
     let audit_dir = root.join(".loom/audit");
     fs::create_dir_all(&audit_dir).map_err(io_err)?;
     Ok(audit_dir)
+}
+
+fn ensure_parity_dir(root: &Path) -> ShadowResult<PathBuf> {
+    let parity_dir = root.join(".loom/parity");
+    fs::create_dir_all(&parity_dir).map_err(io_err)?;
+    Ok(parity_dir)
+}
+
+fn capture_openclaw_live_probe(root: &Path) -> ShadowResult<(Option<PathBuf>, String, String)> {
+    let parity_dir = ensure_parity_dir(root)?;
+    let probe_path = parity_dir.join("openclaw_live.json");
+    let proof_script = std::env::var("MERIDIAN_OPENCLAW_PROOF_SCRIPT")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from("/root/.openclaw/workspace/company/meridian_platform/openclaw_runtime_proof.py")
+        });
+    if !proof_script.exists() {
+        return Ok((
+            None,
+            "not_available".to_string(),
+            format!("live OpenClaw proof script not found at {}", proof_script.display()),
+        ));
+    }
+
+    let output = Command::new("python3")
+        .arg(&proof_script)
+        .arg("--json")
+        .output()
+        .map_err(io_err)?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Ok((
+            None,
+            "probe_failed".to_string(),
+            if stderr.is_empty() {
+                "openclaw live proof command failed".to_string()
+            } else {
+                stderr
+            },
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    fs::write(&probe_path, format!("{}\n", stdout)).map_err(io_err)?;
+    let health_ok = extract_json_bool(&stdout, "\"health_ok\"").unwrap_or(false);
+    let proof_level =
+        extract_json_string(&stdout, "\"proof_level\"").unwrap_or_else(|| "unknown".to_string());
+    let deployment_mode =
+        extract_json_string(&stdout, "\"deployment_mode\"").unwrap_or_else(|| "unknown".to_string());
+    let note = format!(
+        "live OpenClaw probe {} with proof_level={} deployment_mode={}",
+        if health_ok { "healthy" } else { "degraded" },
+        proof_level,
+        deployment_mode,
+    );
+    Ok((
+        Some(probe_path),
+        if health_ok { "ok" } else { "degraded" }.to_string(),
+        note,
+    ))
 }
 
 fn emit_kernel_audit_preview(
@@ -829,6 +1192,95 @@ print(event_id)
     Ok("local_preview_written".to_string())
 }
 
+fn emit_runtime_audit(
+    kernel_path: &Path,
+    audit_log_path: &Path,
+    envelope: &ActionEnvelope,
+    decision: &DecisionCapture,
+    outcome: &str,
+) -> ShadowResult<String> {
+    let kernel_dir = kernel_path.join("kernel");
+    if kernel_dir.join("audit.py").exists() {
+        let script = r#"import sys
+kernel_dir = sys.argv[1]
+org_id = sys.argv[2]
+agent_id = sys.argv[3]
+action = sys.argv[4]
+resource = sys.argv[5]
+input_hash = sys.argv[6]
+estimated_cost = float(sys.argv[7])
+session_id = sys.argv[8]
+outcome = sys.argv[9]
+effective_source = sys.argv[10]
+effective_stage = sys.argv[11]
+reference_stage = sys.argv[12]
+sys.path.insert(0, kernel_dir)
+import audit
+event_id = audit.log_event(
+    org_id,
+    agent_id,
+    action,
+    resource=resource,
+    outcome=outcome,
+    actor_type='agent',
+    details={
+        'source': 'loom_runtime_execute',
+        'input_hash': input_hash,
+        'estimated_cost_usd': estimated_cost,
+        'effective_source': effective_source,
+        'effective_stage': effective_stage,
+        'reference_stage': reference_stage,
+        'experimental': True,
+    },
+    policy_ref='experimental_runtime_rehearsal',
+    session_id=session_id or None,
+)
+print(event_id)
+"#;
+        let output = Command::new("python3")
+            .arg("-c")
+            .arg(script)
+            .arg(&kernel_dir)
+            .arg(&envelope.org_id)
+            .arg(&envelope.agent_id)
+            .arg(&envelope.action_type)
+            .arg(&envelope.resource)
+            .arg(&decision.input_hash)
+            .arg(format!("{:.6}", envelope.estimated_cost_usd))
+            .arg(&envelope.session_id)
+            .arg(outcome)
+            .arg(&decision.effective_source)
+            .arg(&decision.effective_stage)
+            .arg(&decision.reference_stage)
+            .env("MERIDIAN_AUDIT_FILE", audit_log_path)
+            .output()
+            .map_err(io_err)?;
+        if output.status.success() {
+            return Ok("runtime_event_written".to_string());
+        }
+    }
+
+    append_line(
+        audit_log_path,
+        &format!(
+            "{{\"id\":{},\"timestamp\":{},\"org_id\":{},\"agent_id\":{},\"actor_type\":\"agent\",\"action\":{},\"resource\":{},\"outcome\":{},\"details\":{{\"source\":\"loom_runtime_execute\",\"input_hash\":{},\"estimated_cost_usd\":{:.6},\"effective_source\":{},\"effective_stage\":{},\"reference_stage\":{},\"experimental\":true}},\"policy_ref\":\"experimental_runtime_rehearsal\"}}\n",
+            json_string(&format!("runtime_{}", &decision.input_hash[..8])),
+            json_string(&timestamp_now()),
+            json_string(&envelope.org_id),
+            json_string(&envelope.agent_id),
+            json_string(&envelope.action_type),
+            json_string(&envelope.resource),
+            json_string(outcome),
+            json_string(&decision.input_hash),
+            envelope.estimated_cost_usd,
+            json_string(&decision.effective_source),
+            json_string(&decision.effective_stage),
+            json_string(&decision.reference_stage),
+        ),
+    )?;
+    Ok("runtime_event_written_local_fallback".to_string())
+}
+
 fn append_line(path: &Path, line: &str) -> ShadowResult<()> {
     let mut existing = if path.exists() {
         fs::read_to_string(path).map_err(io_err)?
@@ -871,6 +1323,18 @@ fn extract_json_string(section: &str, key: &str) -> Option<String> {
     let rest = &after[first_quote + 1..];
     let end_quote = rest.find('"')?;
     Some(rest[..end_quote].to_string())
+}
+
+fn extract_json_bool(section: &str, key: &str) -> Option<bool> {
+    let idx = section.find(key)?;
+    let after = &section[idx + key.len()..];
+    if after.contains("true") {
+        Some(true)
+    } else if after.contains("false") {
+        Some(false)
+    } else {
+        None
+    }
 }
 
 fn json_string(input: &str) -> String {
@@ -1069,6 +1533,46 @@ mod tests {
         let json = render_compare_json(&summary);
         assert!(json.contains("\"hook_results\""));
         assert!(json.contains("\"shadow_decision\":\"kernel_preview_written\""));
+    }
+
+    #[test]
+    fn runtime_execution_capture_writes_runtime_and_parity_artifacts() {
+        let root = temp_path("loom-shadow-runtime");
+        fs::create_dir_all(root.join(".loom/shadow")).expect("shadow dir");
+        let identity = sample_identity();
+        let envelope = sample_envelope();
+        let reference = ReferenceGateCheck {
+            allowed: true,
+            stage: "ok".to_string(),
+            reason: "ok".to_string(),
+            restrictions: vec![],
+            sanction_gate_decision: "allow".to_string(),
+            approval_gate_decision: "allow".to_string(),
+            budget_gate_decision: "allow".to_string(),
+            source: "kernel_reference_adapter_read_only".to_string(),
+        };
+
+        let decision = capture_decision(&root, &identity, &envelope, &reference).expect("decision");
+        let capture =
+            capture_runtime_execution(&root, &root, &envelope, &reference, &decision).expect("runtime capture");
+
+        assert!(capture.execution_path.exists());
+        assert!(capture.audit_log_path.exists());
+        assert!(capture.parity_stream_path.exists());
+        assert!(capture.parity_report_path.exists());
+        assert_eq!(capture.runtime_outcome, "simulated_success");
+        assert_eq!(capture.reference_decision, "allow");
+        assert_eq!(capture.parity_status, "match");
+
+        let human = render_runtime_execution_human(&capture);
+        assert!(human.contains("Meridian Loom // RUNTIME EXECUTE"));
+        assert!(human.contains("openclaw_probe:"));
+        let json = render_runtime_execution_json(&capture);
+        assert!(json.contains("\"status\": \"runtime_execution_captured\""));
+        assert!(json.contains("\"openclaw_live_probe_status\":"));
+        let parity = render_parity_report(&root).expect("parity report");
+        assert!(parity.contains("Meridian Loom // PARITY REPORT"));
+        assert!(parity.contains("\"parity_status\": \"match\""));
     }
 
     fn temp_path(prefix: &str) -> PathBuf {

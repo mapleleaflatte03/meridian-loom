@@ -39,7 +39,17 @@ if [[ "${ENFORCE_CODE}" -ne 2 ]]; then
   echo "expected shadow enforce to fail closed with exit code 2"
   exit 1
 fi
+set +e
+./target/debug/loom action execute --root "${ROOT_DIR}" --agent-id "${AGENT_ID}" --org-id "${AGENT_ORG_ID}" --action-type research --resource web_search --estimated-cost-usd 0.05 --format human
+EXECUTE_CODE=$?
+set -e
+echo "action_execute_exit_code: ${EXECUTE_CODE}"
+if [[ "${EXECUTE_CODE}" -ne 2 ]]; then
+  echo "expected action execute to fail closed with exit code 2"
+  exit 1
+fi
 ./target/debug/loom shadow compare --root "${ROOT_DIR}" --primary "${ROOT_DIR}/.loom/shadow/reference_events.jsonl" --shadow "${ROOT_DIR}/.loom/shadow/events.jsonl" --format human
 ./target/debug/loom shadow report --root "${ROOT_DIR}"
+./target/debug/loom parity report --root "${ROOT_DIR}"
 
 echo "== Rehearsal complete =="

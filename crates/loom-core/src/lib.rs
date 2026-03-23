@@ -337,7 +337,7 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
 }
 
 pub fn render_doctor_human(checks: &[Check]) -> String {
-    let mut out = String::from("Meridian Loom doctor\n====================\n");
+    let mut out = String::from("Meridian Loom // DOCTOR\n=======================\n");
     for check in checks {
         out.push_str(&format!("[{:<8}] {:<18} {}\n", check.level, check.label, check.detail));
     }
@@ -386,7 +386,7 @@ pub fn status_human(root: &Path) -> LoomResult<String> {
         .join(&config.org_id)
         .join("manifest.json");
     Ok(format!(
-        "Meridian Loom status\n====================\nmode:        {}\norg_id:      {}\nstate_dir:   {}\nkernel_path: {}\ncapsule:     {}\nshadow:      {}\nexperimental_hooks: {}\n",
+        "Meridian Loom // STATUS\n=======================\nmode:        {}\norg_id:      {}\nstate_dir:   {}\nkernel_path: {}\ncapsule:     {}\nshadow:      {}\nexperimental_hooks: {}\n",
         config.mode,
         config.org_id,
         state_dir.display(),
@@ -445,7 +445,7 @@ pub fn contract_show(root: &Path, override_kernel_path: Option<&str>) -> LoomRes
 
 pub fn render_contract_human(snapshot: &ContractSnapshot) -> String {
     let mut out = format!(
-        "Meridian Loom contract state\n============================\nkernel: {}\nstatus: {}\nlocal_scaffold: {}\n\nregistry_declared_hooks\n----------------------\n",
+        "Meridian Loom // CONTRACT\n=========================\nkernel: {}\nstatus: {}\nlocal_scaffold: {}\n\nregistry_declared_hooks\n----------------------\n",
         snapshot.kernel_path.display(),
         snapshot.runtime_status,
         snapshot.local_scaffold,
@@ -647,7 +647,7 @@ fn derive_sanction_decision(restrictions: &[String]) -> &'static str {
 
 pub fn render_identity_human(identity: &AgentIdentityResolution) -> String {
     format!(
-        "Meridian Loom agent identity\n============================\nagent_id:            {}\nagent_name:          {}\norg_id:              {}\nrole:                {}\neconomy_key:         {}\napproval_required:   {}\nmax_per_run_usd:     {}\nrestrictions:        {}\nsanction_decision:   {}\nruntime_id:          {}\nruntime_label:       {}\nbound_org_id:        {}\nboundary_name:       {}\nidentity_model:      {}\nruntime_registered:  {}\nregistration_status: {}\nsource:              {}\n",
+        "Meridian Loom // AGENT IDENTITY\n================================\nagent_id:            {}\nagent_name:          {}\norg_id:              {}\nrole:                {}\neconomy_key:         {}\napproval_required:   {}\nmax_per_run_usd:     {}\nrestrictions:        {}\nsanction_decision:   {}\nruntime_id:          {}\nruntime_label:       {}\nbound_org_id:        {}\nboundary_name:       {}\nidentity_model:      {}\nruntime_registered:  {}\nregistration_status: {}\nsource:              {}\n",
         identity.agent_id,
         identity.agent_name,
         identity.org_id,
@@ -876,7 +876,7 @@ pub fn envelope_input_hash(envelope: &ActionEnvelope) -> String {
 
 pub fn render_envelope_human(envelope: &ActionEnvelope) -> String {
     format!(
-        "Meridian Loom action envelope\n==============================\nagent_id:            {}\nagent_name:          {}\norg_id:              {}\nruntime_id:          {}\nruntime_label:       {}\naction_type:         {}\nresource:            {}\nestimated_cost_usd:  {:.4}\nrun_id:              {}\nsession_id:          {}\nsource:              {}\ninput_hash:          {}\n",
+        "Meridian Loom // ACTION ENVELOPE\n=================================\nagent_id:            {}\nagent_name:          {}\norg_id:              {}\nruntime_id:          {}\nruntime_label:       {}\naction_type:         {}\nresource:            {}\nestimated_cost_usd:  {:.4}\nrun_id:              {}\nsession_id:          {}\nsource:              {}\ninput_hash:          {}\n",
         envelope.agent_id,
         envelope.agent_name,
         envelope.org_id,
@@ -931,7 +931,7 @@ pub fn capsule_inspect(root: &Path) -> LoomResult<CapsuleInspection> {
 
 pub fn render_capsule_human(inspection: &CapsuleInspection) -> String {
     format!(
-        "Capsule inspection\n==================\norg_id:       {}\nstate_dir:    {}\nmanifest:     {}\nfiles:        {}\n",
+        "Meridian Loom // CAPSULE INSPECT\n=================================\norg_id:       {}\nstate_dir:    {}\nmanifest:     {}\nfiles:        {}\n",
         inspection.org_id,
         inspection.state_dir.display(),
         inspection.manifest_path.display(),

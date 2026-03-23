@@ -131,6 +131,7 @@ def pre_action_check(org_id, envelope):
 EOF
 
 cargo build --workspace
+export MERIDIAN_OPENCLAW_PROOF_SCRIPT="${KERNEL_PATH}/kernel/missing_openclaw_runtime_proof.py"
 
 ./target/debug/loom init --mode embedded --kernel-path "${KERNEL_PATH}" --root "${ROOT_DIR}" --org-id org_demo
 ./target/debug/loom agent resolve --root "${ROOT_DIR}" --agent-id agent_sanction --org-id org_demo --format human
@@ -144,6 +145,16 @@ if [[ "${ENFORCE_CODE}" -ne 2 ]]; then
   echo "expected local sanction preview to fail closed with exit code 2"
   exit 1
 fi
+set +e
+./target/debug/loom action execute --root "${ROOT_DIR}" --agent-id agent_sanction --org-id org_demo --action-type research --resource web_search --estimated-cost-usd 0.05 --format human
+EXECUTE_CODE=$?
+set -e
+echo "action_execute_exit_code: ${EXECUTE_CODE}"
+if [[ "${EXECUTE_CODE}" -ne 2 ]]; then
+  echo "expected local sanction action execute to fail closed with exit code 2"
+  exit 1
+fi
 ./target/debug/loom shadow report --root "${ROOT_DIR}"
+./target/debug/loom parity report --root "${ROOT_DIR}"
 
 echo "== Local sanction preview rehearsal complete =="
