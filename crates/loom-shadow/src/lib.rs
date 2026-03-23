@@ -955,38 +955,59 @@ pub fn render_shadow_report(root: &Path) -> ShadowResult<String> {
         ));
     }
     let mut out = String::from("Meridian Loom // SHADOW REPORT\n==============================\n");
-    if let Some(contents) = contents {
-        out.push_str(&format!("source: {}\n\n{}\n", report_path.display(), contents));
-    } else {
-        out.push_str("source: (latest report not present)\n\n");
-    }
-    if let Some(reference) = reference {
+    let stale_latest = contents
+        .as_ref()
+        .map(|value| value.contains("\"status\": \"not_started\""))
+        .unwrap_or(false);
+
+    if let Some(runtime) = runtime.as_ref() {
         out.push_str(&format!(
-            "\nReference gates\n===============\nsource: {}\n\n{}\n",
-            reference_path.display(),
-            reference
+            "Runtime execution\n=================\nsource: {}\n\n{}\n",
+            runtime_path.display(),
+            runtime
         ));
     }
-    if let Some(decision) = decision {
+    if let Some(parity) = parity.as_ref() {
+        out.push_str(&format!(
+            "\nParity latest\n=============\nsource: {}\n\n{}\n",
+            parity_path.display(),
+            parity
+        ));
+    }
+    if let Some(decision) = decision.as_ref() {
         out.push_str(&format!(
             "\nDecision artifact\n=================\nsource: {}\n\n{}\n",
             decision_path.display(),
             decision
         ));
     }
-    if let Some(runtime) = runtime {
+    if let Some(reference) = reference.as_ref() {
         out.push_str(&format!(
-            "\nRuntime execution\n=================\nsource: {}\n\n{}\n",
-            runtime_path.display(),
-            runtime
+            "\nReference gates\n===============\nsource: {}\n\n{}\n",
+            reference_path.display(),
+            reference
         ));
     }
-    if let Some(parity) = parity {
+    if let Some(contents) = contents.as_ref() {
+        let label = if stale_latest && (runtime.is_some() || parity.is_some()) {
+            "Legacy shadow marker"
+        } else {
+            "Shadow latest"
+        };
         out.push_str(&format!(
-            "\nParity latest\n=============\nsource: {}\n\n{}\n",
-            parity_path.display(),
-            parity
+            "\n{}\n{}\nsource: {}\n\n{}\n",
+            label,
+            "=".repeat(label.len()),
+            report_path.display(),
+            contents
         ));
+    } else {
+        out.push_str("\nShadow latest\n=============\nsource: (latest report not present)\n\n");
+    }
+    if stale_latest && runtime.is_some() {
+        out.push_str(
+            "Note\n----\nlatest shadow marker still says `not_started`; the runtime execution and parity sections above are the newer operator surfaces for this flow.\n",
+        );
     }
     Ok(out)
 }
@@ -1573,6 +1594,35 @@ mod tests {
         let parity = render_parity_report(&root).expect("parity report");
         assert!(parity.contains("Meridian Loom // PARITY REPORT"));
         assert!(parity.contains("\"parity_status\": \"match\""));
+    }
+
+    #[test]
+    fn shadow_report_deprioritizes_stale_not_started_marker_when_runtime_exists() {
+        let root = temp_path("loom-shadow-stale-latest");
+        fs::create_dir_all(root.join(".loom/shadow")).expect("shadow dir");
+        fs::create_dir_all(root.join(".loom/runtime")).expect("runtime dir");
+        fs::create_dir_all(root.join(".loom/parity")).expect("parity dir");
+        fs::write(
+            root.join(".loom/shadow/latest.json"),
+            "{\n  \"status\": \"not_started\",\n  \"note\": \"shadow mode is not implemented in this scaffold\"\n}\n",
+        )
+        .expect("write latest");
+        fs::write(
+            root.join(".loom/runtime/last_execution.json"),
+            "{\n  \"status\": \"runtime_execution_captured\"\n}\n",
+        )
+        .expect("write runtime");
+        fs::write(
+            root.join(".loom/parity/latest.json"),
+            "{\n  \"status\": \"parity_report_captured\"\n}\n",
+        )
+        .expect("write parity");
+
+        let report = render_shadow_report(&root).expect("render report");
+        let runtime_index = report.find("Runtime execution").expect("runtime section");
+        let legacy_index = report.find("Legacy shadow marker").expect("legacy section");
+        assert!(runtime_index < legacy_index);
+        assert!(report.contains("the runtime execution and parity sections above are the newer operator surfaces"));
     }
 
     fn temp_path(prefix: &str) -> PathBuf {

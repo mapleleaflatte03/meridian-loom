@@ -5,11 +5,11 @@ agent:  agent_atlas
 org:    org_b7d95bae
 
 running 9 tests
+test tests::local_sanction_preview_allows_non_execute_restrictions ... ok
 test tests::local_sanction_preview_denies_execute_and_remediation_only ... ok
 test tests::init_refuses_overwrite ... ok
-test tests::local_sanction_preview_allows_non_execute_restrictions ... ok
-test tests::build_envelope_rejects_negative_cost ... ok
 test tests::init_and_read_config_round_trip ... ok
+test tests::build_envelope_rejects_negative_cost ... ok
 test tests::resolve_identity_prefers_snapshot_restrictions_when_present ... ok
 test tests::resolve_identity_does_not_force_workspace_org_hint ... ok
 test tests::resolve_identity_and_build_envelope_against_fake_kernel ... ok
@@ -18,15 +18,16 @@ test tests::evaluate_reference_gates_uses_kernel_reference_adapter ... ok
 test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
 
 
-running 6 tests
-test tests::compare_report_surfaces_hook_level_divergence_details ... ok
+running 7 tests
 test tests::compares_identical_logs_without_divergence ... ok
-test tests::decision_capture_surfaces_gate_outcome ... ok
 test tests::decision_capture_prefers_local_sanction_preview_when_execute_is_restricted ... ok
+test tests::compare_report_surfaces_hook_level_divergence_details ... ok
+test tests::decision_capture_surfaces_gate_outcome ... ok
+test tests::shadow_report_deprioritizes_stale_not_started_marker_when_runtime_exists ... ok
 test tests::records_preflight_and_renders_report ... ok
 test tests::runtime_execution_capture_writes_runtime_and_parity_artifacts ... ok
 
-test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.48s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.77s
 
 
 running 0 tests
@@ -43,11 +44,15 @@ running 0 tests
 
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
-initialized Loom scaffold at /tmp/loom-rehearsal
-mode: embedded
-org_id: org_b7d95bae
-state_dir: .loom
+Meridian Loom // INIT
+====================
+root:        /tmp/loom-rehearsal
+mode:        embedded
+org_id:      org_b7d95bae
+state_dir:   .loom
 kernel_path: /tmp/meridian-kernel
+status:      initialized experimental scaffold
+
 Meridian Loom // DOCTOR
 =======================
 [OK      ] config             loaded /tmp/loom-rehearsal/loom.toml
@@ -59,13 +64,13 @@ Meridian Loom // DOCTOR
 [OK      ] kernel_path        kernel path present (/tmp/meridian-kernel)
 [OK      ] runtime_registry   Meridian runtime registry available (/tmp/meridian-kernel/kernel/runtimes.json)
 [OK      ] agent_registry     Meridian agent registry CLI available (/tmp/meridian-kernel/kernel/agent_registry.py)
-{
-  "status": "healthy",
-  "mode": "embedded",
-  "org_id": "org_b7d95bae",
-  "checks": [{"level":"OK","label":"config","detail":"loaded /tmp/loom-rehearsal/loom.toml"},{"level":"OK","label":"state_dir","detail":"state directory present (/tmp/loom-rehearsal/.loom)"},{"level":"OK","label":"python_workers","detail":"python worker path present (/tmp/loom-rehearsal/workers/python)"},{"level":"OK","label":"typescript_workers","detail":"typescript worker path present (/tmp/loom-rehearsal/workers/typescript)"},{"level":"OK","label":"wasm_modules","detail":"wasm module path present (/tmp/loom-rehearsal/workers/wasm)"},{"level":"OK","label":"capsule_manifest","detail":"capsule manifest present (/tmp/loom-rehearsal/.loom/capsules/org_b7d95bae/manifest.json)"},{"level":"OK","label":"kernel_path","detail":"kernel path present (/tmp/meridian-kernel)"},{"level":"OK","label":"runtime_registry","detail":"Meridian runtime registry available (/tmp/meridian-kernel/kernel/runtimes.json)"},{"level":"OK","label":"agent_registry","detail":"Meridian agent registry CLI available (/tmp/meridian-kernel/kernel/agent_registry.py)"}],
-  "experimental_hooks": ["agent_identity", "action_envelope", "cost_attribution", "approval_hook", "audit_emission", "sanction_controls", "budget_gate"]
-}
+Meridian Loom // HEALTH
+=======================
+status:      healthy
+mode:        embedded
+org_id:      org_b7d95bae
+checks:      0
+source:      doctor-derived health summary
 Meridian Loom // STATUS
 =======================
 mode:        embedded
@@ -75,6 +80,16 @@ kernel_path: /tmp/meridian-kernel
 capsule:     /tmp/loom-rehearsal/.loom/capsules/org_b7d95bae/manifest.json
 shadow:      /tmp/loom-rehearsal/.loom/shadow/latest.json
 experimental_hooks: agent_identity, action_envelope, cost_attribution, approval_hook, audit_emission, sanction_controls, budget_gate
+Meridian Loom // CONFIG
+=======================
+root:        /tmp/loom-rehearsal
+mode:        embedded
+org_id:      org_b7d95bae
+state_dir:   .loom
+kernel_path: /tmp/meridian-kernel
+python_path: workers/python
+typescript:  workers/typescript
+wasm_dir:    workers/wasm
 Meridian Loom // CONTRACT
 =========================
 kernel: /tmp/meridian-kernel
@@ -344,80 +359,6 @@ Divergence details
 note:            offline event-log diff only; use `loom action execute` plus `loom parity report` for runtime-side rehearsal and optional live OpenClaw probe
 Meridian Loom // SHADOW REPORT
 ==============================
-source: /tmp/loom-rehearsal/.loom/shadow/latest.json
-
-{
-  "status": "comparison_complete",
-  "primary_log": "/tmp/loom-rehearsal/.loom/shadow/reference_events.jsonl",
-  "shadow_log": "/tmp/loom-rehearsal/.loom/shadow/events.jsonl",
-  "primary_events": 7,
-  "shadow_events": 7,
-  "pairs_compared": 7,
-  "matches": 6,
-  "divergences": 1,
-  "divergence_rate": 0.142857,
-  "hook_results": [
-    {"pair_index":0,"hook_name":"agent_identity","input_hash":"bba40f20f386cb46","primary_decision":"resolved","shadow_decision":"resolved","matched":true,"primary_agent_id":"agent_atlas","shadow_agent_id":"agent_atlas","primary_org_id":"org_b7d95bae","shadow_org_id":"org_b7d95bae"},
-    {"pair_index":1,"hook_name":"action_envelope","input_hash":"bba40f20f386cb46","primary_decision":"constructed","shadow_decision":"constructed","matched":true,"primary_agent_id":"agent_atlas","shadow_agent_id":"agent_atlas","primary_org_id":"org_b7d95bae","shadow_org_id":"org_b7d95bae"},
-    {"pair_index":2,"hook_name":"sanction_controls","input_hash":"bba40f20f386cb46","primary_decision":"allow","shadow_decision":"allow","matched":true,"primary_agent_id":"agent_atlas","shadow_agent_id":"agent_atlas","primary_org_id":"org_b7d95bae","shadow_org_id":"org_b7d95bae"},
-    {"pair_index":3,"hook_name":"cost_attribution","input_hash":"bba40f20f386cb46","primary_decision":"estimated","shadow_decision":"estimated","matched":true,"primary_agent_id":"agent_atlas","shadow_agent_id":"agent_atlas","primary_org_id":"org_b7d95bae","shadow_org_id":"org_b7d95bae"},
-    {"pair_index":4,"hook_name":"approval_hook","input_hash":"bba40f20f386cb46","primary_decision":"allow","shadow_decision":"allow","matched":true,"primary_agent_id":"agent_atlas","shadow_agent_id":"agent_atlas","primary_org_id":"org_b7d95bae","shadow_org_id":"org_b7d95bae"},
-    {"pair_index":5,"hook_name":"budget_gate","input_hash":"bba40f20f386cb46","primary_decision":"deny","shadow_decision":"deny","matched":true,"primary_agent_id":"agent_atlas","shadow_agent_id":"agent_atlas","primary_org_id":"org_b7d95bae","shadow_org_id":"org_b7d95bae"},
-    {"pair_index":6,"hook_name":"audit_emission","input_hash":"bba40f20f386cb46","primary_decision":"not_exercised","shadow_decision":"kernel_preview_written","matched":false,"primary_agent_id":"agent_atlas","shadow_agent_id":"agent_atlas","primary_org_id":"org_b7d95bae","shadow_org_id":"org_b7d95bae"}
-  ],
-  "note": "offline event-log diff only; use `loom action execute` plus `loom parity report` for runtime-side rehearsal and optional live OpenClaw probe"
-}
-
-
-Reference gates
-===============
-source: /tmp/loom-rehearsal/.loom/shadow/reference.json
-
-{
-  "source": "kernel_reference_adapter_read_only",
-  "allowed": false,
-  "stage": "budget_gate",
-  "reason": "Treasury below reserve floor (runway $-50.00). Recapitalize before spending.",
-  "restrictions": [],
-  "sanction_gate_decision": "allow",
-  "approval_gate_decision": "allow",
-  "budget_gate_decision": "deny"
-}
-
-
-Decision artifact
-=================
-source: /tmp/loom-rehearsal/.loom/shadow/decision.json
-
-{
-  "status": "decision_captured",
-  "decision_path": "/tmp/loom-rehearsal/.loom/shadow/decision.json",
-  "source": "experimental_preflight_gate",
-  "agent_id": "agent_atlas",
-  "org_id": "org_b7d95bae",
-  "action_type": "research",
-  "resource": "web_search",
-  "input_hash": "bba40f20f386cb46",
-  "estimated_cost_usd": 0.050000,
-  "identity_restrictions": [],
-  "reference_restrictions": [],
-  "local_sanction_allowed": true,
-  "local_sanction_decision": "allow",
-  "local_sanction_reason": "no execute restriction",
-  "sanction_gate_decision": "allow",
-  "approval_gate_decision": "allow",
-  "budget_limit_usd": 0.500000,
-  "budget_gate_decision": "deny",
-  "overall_decision": "deny",
-  "effective_source": "reference_gate",
-  "effective_stage": "budget_gate",
-  "effective_reason": "Treasury below reserve floor (runway $-50.00). Recapitalize before spending.",
-  "reference_stage": "budget_gate",
-  "reference_reason": "Treasury below reserve floor (runway $-50.00). Recapitalize before spending.",
-  "note": "experimental preflight decision only; not governed runtime enforcement"
-}
-
-
 Runtime execution
 =================
 source: /tmp/loom-rehearsal/.loom/runtime/last_execution.json
@@ -473,6 +414,82 @@ source: /tmp/loom-rehearsal/.loom/parity/latest.json
   "note": "runtime-side parity stream now captures Loom execution plus an OpenClaw live proof snapshot when available; per-action live parity remains future work"
 }
 
+
+Decision artifact
+=================
+source: /tmp/loom-rehearsal/.loom/shadow/decision.json
+
+{
+  "status": "decision_captured",
+  "decision_path": "/tmp/loom-rehearsal/.loom/shadow/decision.json",
+  "source": "experimental_preflight_gate",
+  "agent_id": "agent_atlas",
+  "org_id": "org_b7d95bae",
+  "action_type": "research",
+  "resource": "web_search",
+  "input_hash": "bba40f20f386cb46",
+  "estimated_cost_usd": 0.050000,
+  "identity_restrictions": [],
+  "reference_restrictions": [],
+  "local_sanction_allowed": true,
+  "local_sanction_decision": "allow",
+  "local_sanction_reason": "no execute restriction",
+  "sanction_gate_decision": "allow",
+  "approval_gate_decision": "allow",
+  "budget_limit_usd": 0.500000,
+  "budget_gate_decision": "deny",
+  "overall_decision": "deny",
+  "effective_source": "reference_gate",
+  "effective_stage": "budget_gate",
+  "effective_reason": "Treasury below reserve floor (runway $-50.00). Recapitalize before spending.",
+  "reference_stage": "budget_gate",
+  "reference_reason": "Treasury below reserve floor (runway $-50.00). Recapitalize before spending.",
+  "note": "experimental preflight decision only; not governed runtime enforcement"
+}
+
+
+Reference gates
+===============
+source: /tmp/loom-rehearsal/.loom/shadow/reference.json
+
+{
+  "source": "kernel_reference_adapter_read_only",
+  "allowed": false,
+  "stage": "budget_gate",
+  "reason": "Treasury below reserve floor (runway $-50.00). Recapitalize before spending.",
+  "restrictions": [],
+  "sanction_gate_decision": "allow",
+  "approval_gate_decision": "allow",
+  "budget_gate_decision": "deny"
+}
+
+
+Shadow latest
+=============
+source: /tmp/loom-rehearsal/.loom/shadow/latest.json
+
+{
+  "status": "comparison_complete",
+  "primary_log": "/tmp/loom-rehearsal/.loom/shadow/reference_events.jsonl",
+  "shadow_log": "/tmp/loom-rehearsal/.loom/shadow/events.jsonl",
+  "primary_events": 7,
+  "shadow_events": 7,
+  "pairs_compared": 7,
+  "matches": 6,
+  "divergences": 1,
+  "divergence_rate": 0.142857,
+  "hook_results": [
+    {"pair_index":0,"hook_name":"agent_identity","input_hash":"bba40f20f386cb46","primary_decision":"resolved","shadow_decision":"resolved","matched":true,"primary_agent_id":"agent_atlas","shadow_agent_id":"agent_atlas","primary_org_id":"org_b7d95bae","shadow_org_id":"org_b7d95bae"},
+    {"pair_index":1,"hook_name":"action_envelope","input_hash":"bba40f20f386cb46","primary_decision":"constructed","shadow_decision":"constructed","matched":true,"primary_agent_id":"agent_atlas","shadow_agent_id":"agent_atlas","primary_org_id":"org_b7d95bae","shadow_org_id":"org_b7d95bae"},
+    {"pair_index":2,"hook_name":"sanction_controls","input_hash":"bba40f20f386cb46","primary_decision":"allow","shadow_decision":"allow","matched":true,"primary_agent_id":"agent_atlas","shadow_agent_id":"agent_atlas","primary_org_id":"org_b7d95bae","shadow_org_id":"org_b7d95bae"},
+    {"pair_index":3,"hook_name":"cost_attribution","input_hash":"bba40f20f386cb46","primary_decision":"estimated","shadow_decision":"estimated","matched":true,"primary_agent_id":"agent_atlas","shadow_agent_id":"agent_atlas","primary_org_id":"org_b7d95bae","shadow_org_id":"org_b7d95bae"},
+    {"pair_index":4,"hook_name":"approval_hook","input_hash":"bba40f20f386cb46","primary_decision":"allow","shadow_decision":"allow","matched":true,"primary_agent_id":"agent_atlas","shadow_agent_id":"agent_atlas","primary_org_id":"org_b7d95bae","shadow_org_id":"org_b7d95bae"},
+    {"pair_index":5,"hook_name":"budget_gate","input_hash":"bba40f20f386cb46","primary_decision":"deny","shadow_decision":"deny","matched":true,"primary_agent_id":"agent_atlas","shadow_agent_id":"agent_atlas","primary_org_id":"org_b7d95bae","shadow_org_id":"org_b7d95bae"},
+    {"pair_index":6,"hook_name":"audit_emission","input_hash":"bba40f20f386cb46","primary_decision":"not_exercised","shadow_decision":"kernel_preview_written","matched":false,"primary_agent_id":"agent_atlas","shadow_agent_id":"agent_atlas","primary_org_id":"org_b7d95bae","shadow_org_id":"org_b7d95bae"}
+  ],
+  "note": "offline event-log diff only; use `loom action execute` plus `loom parity report` for runtime-side rehearsal and optional live OpenClaw probe"
+}
+
 Meridian Loom // PARITY REPORT
 ===============================
 source: /tmp/loom-rehearsal/.loom/parity/latest.json
@@ -499,17 +516,17 @@ Parity stream
 -------------
 source: /tmp/loom-rehearsal/.loom/parity/stream.jsonl
 
-{"timestamp":"1774275225","source":"openclaw_reference_stream","phase":"reference_gate","hook_name":"budget_gate","decision":"deny","stage":"budget_gate","agent_id":"agent_atlas","org_id":"org_b7d95bae","input_hash":"bba40f20f386cb46","reason":"Treasury below reserve floor (runway $-50.00). Recapitalize before spending."}
-{"timestamp":"1774275225","source":"loom_runtime_stream","phase":"native_enforcement","hook_name":"budget_gate","decision":"deny","stage":"budget_gate","agent_id":"agent_atlas","org_id":"org_b7d95bae","input_hash":"bba40f20f386cb46","reason":"Treasury below reserve floor (runway $-50.00). Recapitalize before spending."}
-{"timestamp":"1774275225","source":"loom_runtime_stream","phase":"audit_emission","hook_name":"audit_emission","decision":"runtime_event_written","stage":"runtime_audit","agent_id":"agent_atlas","org_id":"org_b7d95bae","input_hash":"bba40f20f386cb46","reason":"denied","audit_log":"/tmp/loom-rehearsal/.loom/audit/runtime_events.jsonl"}
-{"timestamp":"1774275225","source":"openclaw_live_probe","phase":"live_runtime_probe","hook_name":"runtime_health","decision":"ok","stage":"live_single_host_openclaw","agent_id":"agent_atlas","org_id":"org_b7d95bae","input_hash":"bba40f20f386cb46","reason":"live OpenClaw probe healthy with proof_level=read_only deployment_mode=live","probe_path":"/tmp/loom-rehearsal/.loom/parity/openclaw_live.json"}
+{"timestamp":"1774276300","source":"openclaw_reference_stream","phase":"reference_gate","hook_name":"budget_gate","decision":"deny","stage":"budget_gate","agent_id":"agent_atlas","org_id":"org_b7d95bae","input_hash":"bba40f20f386cb46","reason":"Treasury below reserve floor (runway $-50.00). Recapitalize before spending."}
+{"timestamp":"1774276300","source":"loom_runtime_stream","phase":"native_enforcement","hook_name":"budget_gate","decision":"deny","stage":"budget_gate","agent_id":"agent_atlas","org_id":"org_b7d95bae","input_hash":"bba40f20f386cb46","reason":"Treasury below reserve floor (runway $-50.00). Recapitalize before spending."}
+{"timestamp":"1774276300","source":"loom_runtime_stream","phase":"audit_emission","hook_name":"audit_emission","decision":"runtime_event_written","stage":"runtime_audit","agent_id":"agent_atlas","org_id":"org_b7d95bae","input_hash":"bba40f20f386cb46","reason":"denied","audit_log":"/tmp/loom-rehearsal/.loom/audit/runtime_events.jsonl"}
+{"timestamp":"1774276300","source":"openclaw_live_probe","phase":"live_runtime_probe","hook_name":"runtime_health","decision":"ok","stage":"live_single_host_openclaw","agent_id":"agent_atlas","org_id":"org_b7d95bae","input_hash":"bba40f20f386cb46","reason":"live OpenClaw probe healthy with proof_level=read_only deployment_mode=live","probe_path":"/tmp/loom-rehearsal/.loom/parity/openclaw_live.json"}
 
 OpenClaw live probe
 -------------------
 source: /tmp/loom-rehearsal/.loom/parity/openclaw_live.json
 
 {
-  "checked_at": "2026-03-23T14:13:44Z",
+  "checked_at": "2026-03-23T14:31:40Z",
   "deployment_truth": {
     "deployment_mode": "live",
     "generic_runtime_claim": false,
@@ -671,7 +688,7 @@ source: /tmp/loom-rehearsal/.loom/parity/openclaw_live.json
   "health": {
     "agent_count": 0,
     "agents": [],
-    "checked_at": "2026-03-23T14:13:44Z",
+    "checked_at": "2026-03-23T14:31:40Z",
     "health_ok": false,
     "heartbeat": {
       "interval": null,

@@ -5,7 +5,11 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
+description = "Core config and contract surfaces for the Meridian Loom scaffold"
+repository.workspace = true
+homepage.workspace = true
+keywords = ["meridian", "runtime", "governance"]
+categories = ["command-line-utilities", "development-tools"]
 
 [lib]
 path = "src/lib.rs"
-

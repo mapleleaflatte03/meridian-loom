@@ -10,6 +10,8 @@ required_files=(
   "LICENSE"
   "loom.toml.example"
   ".github/workflows/rust.yml"
+  "docs/assets/meridian_loom_lockup.svg"
+  "docs/assets/loom_runtime_panels.svg"
   "docs/SETUP_REHEARSAL.md"
   "docs/PUBLICATION_CHECKLIST.md"
   "examples/rehearsal-output.txt"

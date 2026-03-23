@@ -1,9 +1,10 @@
 use loom_core::{
     build_action_envelope, capsule_inspect, contract_show, doctor, health, init_workspace,
     kernel_path_for, read_config, render_capsule_human, render_contract_human,
-    render_contract_json, render_doctor_human, render_doctor_json, render_envelope_human,
-    render_envelope_json, render_identity_human, render_identity_json, resolve_agent_identity,
-    root_from, status_human, evaluate_reference_gates, LoomResult,
+    render_config_human, render_contract_json, render_doctor_human, render_doctor_json,
+    render_envelope_human, render_envelope_json, render_health_human, render_identity_human,
+    render_identity_json, resolve_agent_identity, root_from, status_human,
+    evaluate_reference_gates, LoomResult,
 };
 use loom_shadow::{
     capture_decision, capture_preflight, capture_runtime_execution, compare_logs,
@@ -60,16 +61,12 @@ fn handle_init(args: &[String]) -> LoomResult<()> {
     let org_id = take_value(args, "--org-id").unwrap_or_else(|| "local_foundry".to_string());
     let config = init_workspace(&root, &mode, kernel_path.as_deref(), &org_id)?;
     println!(
-        "initialized Loom scaffold at {}\nmode: {}\norg_id: {}\nstate_dir: {}\nkernel_path: {}",
+        "Meridian Loom // INIT\n====================\nroot:        {}\nmode:        {}\norg_id:      {}\nstate_dir:   {}\nkernel_path: {}\nstatus:      initialized experimental scaffold\n",
         root.display(),
         config.mode,
         config.org_id,
         config.state_dir,
-        if config.kernel_path.is_empty() {
-            "(not set)"
-        } else {
-            &config.kernel_path
-        }
+        if config.kernel_path.is_empty() { "(not set)" } else { &config.kernel_path }
     );
     Ok(())
 }
@@ -90,11 +87,7 @@ fn handle_health(args: &[String]) -> LoomResult<()> {
     let format = take_value(args, "--format").unwrap_or_else(|| "json".to_string());
     let (healthy, json) = health(&root)?;
     if format == "human" {
-        println!(
-            "[{}] loom: {}",
-            if healthy { "OK" } else { "WARN" },
-            if healthy { "healthy" } else { "degraded" }
-        );
+        print!("{}", render_health_human(healthy, &json));
     } else {
         print!("{}", json);
     }
@@ -113,16 +106,7 @@ fn handle_config(args: &[String]) -> LoomResult<()> {
     }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let config = read_config(&root)?;
-    println!(
-        "[runtime]\nmode = {:?}\nkernel_path = {:?}\norg_id = {:?}\nstate_dir = {:?}\n\n[workers]\npython_path = {:?}\ntypescript_path = {:?}\nwasm_dir = {:?}",
-        config.mode,
-        config.kernel_path,
-        config.org_id,
-        config.state_dir,
-        config.python_path,
-        config.typescript_path,
-        config.wasm_dir,
-    );
+    print!("{}", render_config_human(&config, &root));
     Ok(())
 }
 
@@ -422,24 +406,6 @@ fn parse_f64_flag(args: &[String], flag: &str) -> Option<f64> {
 
 fn print_help() {
     println!(
-        "Meridian Loom experimental scaffold\n\
-         \n\
-         Commands:\n\
-           loom init --mode <embedded|shadow|standalone> [--kernel-path PATH] [--root PATH] [--org-id ID]\n\
-           loom doctor [--root PATH] [--format json|human]\n\
-           loom health [--root PATH] [--format json|human]\n\
-           loom status [--root PATH]\n\
-           loom config show [--root PATH]\n\
-           loom contract show [--root PATH] [--kernel-path PATH] [--format human|json]\n\
-           loom capsule inspect [--root PATH]\n\
-           loom agent resolve --agent-id ID [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
-           loom envelope build --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
-           loom action execute --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
-           loom shadow preflight --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
-           loom shadow decide --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
-           loom shadow enforce --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
-           loom shadow compare --primary FILE [--shadow FILE] [--root PATH] [--format human|json]\n\
-           loom shadow report [--root PATH]\n\
-           loom parity report [--root PATH]\n"
+        "Meridian Loom // HELP\n======================\nexperimental runtime rehearsal scaffold\n\nBootstrap\n---------\n  loom init --mode <embedded|shadow|standalone> [--kernel-path PATH] [--root PATH] [--org-id ID]\n  loom doctor [--root PATH] [--format json|human]\n  loom health [--root PATH] [--format json|human]\n  loom status [--root PATH]\n  loom config show [--root PATH]\n\nGovernance surfaces\n-------------------\n  loom contract show [--root PATH] [--kernel-path PATH] [--format human|json]\n  loom capsule inspect [--root PATH]\n  loom agent resolve --agent-id ID [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom envelope build --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\nRuntime rehearsal\n-----------------\n  loom action execute --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom shadow preflight --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom shadow decide --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom shadow enforce --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom shadow compare --primary FILE [--shadow FILE] [--root PATH] [--format human|json]\n  loom shadow report [--root PATH]\n  loom parity report [--root PATH]\n"
     );
 }

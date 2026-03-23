@@ -22,8 +22,9 @@ cargo build --workspace
 
 ./target/debug/loom init --mode embedded --kernel-path "${KERNEL_PATH}" --root "${ROOT_DIR}" --org-id "${AGENT_ORG_ID}"
 ./target/debug/loom doctor --root "${ROOT_DIR}" --format human
-./target/debug/loom health --root "${ROOT_DIR}" --format json
+./target/debug/loom health --root "${ROOT_DIR}" --format human
 ./target/debug/loom status --root "${ROOT_DIR}"
+./target/debug/loom config show --root "${ROOT_DIR}"
 ./target/debug/loom contract show --root "${ROOT_DIR}"
 ./target/debug/loom agent resolve --root "${ROOT_DIR}" --agent-id "${AGENT_ID}" --org-id "${AGENT_ORG_ID}" --format human
 ./target/debug/loom envelope build --root "${ROOT_DIR}" --agent-id "${AGENT_ID}" --org-id "${AGENT_ORG_ID}" --action-type research --resource web_search --estimated-cost-usd 0.05 --format human

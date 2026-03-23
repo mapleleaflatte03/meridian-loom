@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/meridian_loom_lockup.svg" alt="Meridian Loom" width="720">
+</p>
+
 # Meridian Loom Publication Checklist
 
 This checklist now records the conditions that were required for the first
@@ -8,6 +12,7 @@ strict so the repo does not overclaim maturity.
 
 - [x] `README.md` explicitly says this is an experimental scaffold
 - [x] `LICENSE` is present
+- [x] docs hero assets exist (`meridian_loom_lockup.svg`, `loom_runtime_panels.svg`)
 - [x] GitHub Actions workflow exists for `cargo test` and `cargo build`
 - [x] `loom.toml.example` exists
 - [x] Setup rehearsal script exists

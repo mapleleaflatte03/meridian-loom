@@ -5,6 +5,11 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
+description = "Shadow, decision, and parity rehearsal surfaces for Meridian Loom"
+repository.workspace = true
+homepage.workspace = true
+keywords = ["meridian", "shadow", "runtime", "governance"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 loom-core = { path = "../loom-core" }

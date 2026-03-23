@@ -377,6 +377,21 @@ pub fn health(root: &Path) -> LoomResult<(bool, String)> {
     Ok((!degraded, json))
 }
 
+pub fn render_health_human(healthy: bool, json: &str) -> String {
+    let status = if healthy { "healthy" } else { "degraded" };
+    let mode = extract_json_string(json, "\"mode\"").unwrap_or_else(|| "unknown".to_string());
+    let org_id = extract_json_string(json, "\"org_id\"").unwrap_or_else(|| "unknown".to_string());
+    let checks = extract_json_literal(json, "\"checks\"").unwrap_or_else(|| "[]".to_string());
+    let check_count = checks.matches("\"label\"").count();
+    format!(
+        "Meridian Loom // HEALTH\n=======================\nstatus:      {}\nmode:        {}\norg_id:      {}\nchecks:      {}\nsource:      doctor-derived health summary\n",
+        status,
+        mode,
+        org_id,
+        check_count
+    )
+}
+
 pub fn status_human(root: &Path) -> LoomResult<String> {
     let root = ensure_root(root)?;
     let config = read_config(&root)?;
@@ -395,6 +410,24 @@ pub fn status_human(root: &Path) -> LoomResult<String> {
         state_dir.join("shadow/latest.json").display(),
         EXPERIMENTAL_PRELIGHT_HOOKS.join(", ")
     ))
+}
+
+pub fn render_config_human(config: &Config, root: &Path) -> String {
+    format!(
+        "Meridian Loom // CONFIG\n=======================\nroot:        {}\nmode:        {}\norg_id:      {}\nstate_dir:   {}\nkernel_path: {}\npython_path: {}\ntypescript:  {}\nwasm_dir:    {}\n",
+        root.display(),
+        config.mode,
+        config.org_id,
+        config.state_dir,
+        if config.kernel_path.is_empty() {
+            "(not set)"
+        } else {
+            &config.kernel_path
+        },
+        config.python_path,
+        config.typescript_path,
+        config.wasm_dir,
+    )
 }
 
 pub fn contract_show(root: &Path, override_kernel_path: Option<&str>) -> LoomResult<ContractSnapshot> {

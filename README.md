@@ -1,6 +1,33 @@
-# Meridian Loom
+<p align="center">
+  <img src="docs/assets/meridian_loom_lockup.svg" alt="Meridian Loom" width="720">
+</p>
 
-Experimental runtime rehearsal for Meridian-native governed execution.
+<p align="center">
+  Experimental runtime rehearsal for Meridian-native governed execution.
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/phase-0%20%2F%20runtime%20rehearsal-0c1117?style=flat-square" alt="Phase 0 runtime rehearsal">
+  <img src="https://img.shields.io/badge/contract-0%2F7%20proven-8b0000?style=flat-square" alt="0/7 proven hooks">
+  <img src="https://img.shields.io/github/actions/workflow/status/mapleleaflatte03/meridian-loom/rust.yml?branch=main&style=flat-square" alt="Rust CI">
+  <img src="https://img.shields.io/badge/license-MIT-1f6feb?style=flat-square" alt="MIT license">
+  <img src="https://img.shields.io/badge/repo-public-0f766e?style=flat-square" alt="Public repository">
+</p>
+
+<p align="center">
+  <a href="docs/SETUP_REHEARSAL.md">Setup Rehearsal</a> ·
+  <a href="docs/PUBLICATION_CHECKLIST.md">Publication Checklist</a> ·
+  <a href="https://github.com/mapleleaflatte03/meridian-kernel">Meridian Kernel</a> ·
+  <a href="https://github.com/mapleleaflatte03/meridian-kernel/blob/main/docs/LOOM_SPEC.md">Loom Spec</a>
+</p>
+
+<p align="center">
+  <img src="docs/assets/loom_runtime_panels.svg" alt="Meridian Loom runtime rehearsal surfaces" width="960">
+</p>
+
+> Phase 0 today is not “a runtime is done.” It is “the runtime surface has become inspectable”: buildable binary, real setup path, real operator grammar, fail-closed rehearsal, runtime-side audit artifacts, and parity surfaces with honest limits.
+
+# Meridian Loom
 
 Meridian Loom is the planned execution fabric for Meridian. It is not the live
 runtime today. OpenClaw still runs the live host. This repository exists to
@@ -54,6 +81,7 @@ That one rehearsal gives you:
 - `loom doctor`
 - `loom health`
 - `loom status`
+- `loom config show`
 - `loom contract show`
 - `loom agent resolve`
 - `loom envelope build`
@@ -96,8 +124,11 @@ There is also a second rehearsal for local sanction denial:
 
 Current human-mode output uses a single grammar:
 
+- `Meridian Loom // INIT`
 - `Meridian Loom // DOCTOR`
+- `Meridian Loom // HEALTH`
 - `Meridian Loom // STATUS`
+- `Meridian Loom // CONFIG`
 - `Meridian Loom // CONTRACT`
 - `Meridian Loom // AGENT IDENTITY`
 - `Meridian Loom // ACTION ENVELOPE`
@@ -107,6 +138,7 @@ Current human-mode output uses a single grammar:
 - `Meridian Loom // RUNTIME EXECUTE`
 - `Meridian Loom // SHADOW REPORT`
 - `Meridian Loom // PARITY REPORT`
+- `Meridian Loom // HELP`
 
 This matters. Loom is not just a crate layout. It is also a future operator
 surface, and that surface has to be designed now, not after the runtime exists.

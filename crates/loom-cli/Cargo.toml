@@ -5,6 +5,12 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
+description = "Experimental Meridian Loom CLI scaffold for governed runtime rehearsal"
+repository.workspace = true
+homepage.workspace = true
+readme = "../../README.md"
+keywords = ["meridian", "runtime", "governance", "cli", "loom"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 loom-core = { path = "../loom-core" }
@@ -13,4 +19,3 @@ loom-shadow = { path = "../loom-shadow" }
 [[bin]]
 name = "loom"
 path = "src/main.rs"
-

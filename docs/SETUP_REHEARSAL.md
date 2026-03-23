@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/meridian_loom_lockup.svg" alt="Meridian Loom" width="720">
+</p>
+
 # Meridian Loom // Setup Rehearsal
 
 This repository includes two rehearsals:
@@ -9,6 +13,10 @@ The point is not to pretend Loom is already a runtime. The point is to make the
 install path, operator path, and fail-closed runtime rehearsal concrete enough
 to inspect honestly.
 
+<p align="center">
+  <img src="assets/loom_runtime_panels.svg" alt="Meridian Loom rehearsal surfaces" width="960">
+</p>
+
 ## Current rehearsal scope
 
 The rehearsal verifies:
@@ -17,30 +25,31 @@ The rehearsal verifies:
 2. The Rust workspace tests pass.
 3. `loom init` creates config and local state.
 4. `loom doctor` reports configuration and filesystem health.
-5. `loom health` returns a structured summary.
-6. `loom contract show` can read the current kernel runtime registry.
-7. `loom agent resolve` resolves a governed agent identity against the kernel registry.
-8. `loom envelope build` constructs a normalized action envelope.
-9. `loom capsule inspect` surfaces the local capsule state boundary.
-10. `loom shadow preflight` captures experimental shadow events for all seven
+5. `loom health` returns a structured summary in the canonical operator grammar.
+6. `loom config show` renders the resolved local boundary and worker paths.
+7. `loom contract show` can read the current kernel runtime registry.
+8. `loom agent resolve` resolves a governed agent identity against the kernel registry.
+9. `loom envelope build` constructs a normalized action envelope.
+10. `loom capsule inspect` surfaces the local capsule state boundary.
+11. `loom shadow preflight` captures experimental shadow events for all seven
     contract surfaces.
-11. `loom shadow decide` writes a standalone decision artifact for the current
+12. `loom shadow decide` writes a standalone decision artifact for the current
     effective allow/deny result.
-12. `loom shadow enforce` reuses that same decision surface and exits fail-closed
+13. `loom shadow enforce` reuses that same decision surface and exits fail-closed
     (`0` allow, `2` deny).
-13. `loom action execute` now materializes a runtime execution receipt instead
+14. `loom action execute` now materializes a runtime execution receipt instead
     of stopping at a shell preflight gate.
-14. `audit_emission` now writes a runtime-side audit artifact at
+15. `audit_emission` now writes a runtime-side audit artifact at
     `.loom/audit/runtime_events.jsonl`, using the kernel serializer when
     available and a local fallback otherwise.
-15. `loom shadow compare` still exists for offline diffing of event logs.
-16. `loom parity report` is now the stronger surface: it reads the runtime-side
+16. `loom shadow compare` still exists for offline diffing of event logs.
+17. `loom parity report` is now the stronger surface: it reads the runtime-side
     parity stream and the latest parity report produced by `loom action execute`.
-17. When available on the founder host, the parity stream also captures a real
+18. When available on the founder host, the parity stream also captures a real
     OpenClaw proof snapshot via `openclaw_runtime_proof.py --json`.
-18. The decision surface still unions a local sanction preview derived from the
+19. The decision surface still unions a local sanction preview derived from the
     resolved identity snapshot with the read-only reference gate result.
-19. A fixture-backed rehearsal proves that `execute` / `remediation_only`
+20. A fixture-backed rehearsal proves that `execute` / `remediation_only`
     restrictions deny locally even when the reference gate would otherwise allow.
 
 ## What the rehearsal does not prove
