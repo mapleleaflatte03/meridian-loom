@@ -41,7 +41,8 @@ Experimental public scaffold for the planned Meridian-native runtime.
 - No worker supervisor
 - No MCP / Telegram / HTTP transport
 - No proven runtime hook implementation beyond the experimental preflight path for
-  `agent_identity` and `action_envelope`
+  `agent_identity`, `action_envelope`, `cost_attribution`, `approval_hook`, and
+  `budget_gate`
 - No shadow-mode parity engine
 - No public benchmark claims
 
@@ -94,8 +95,9 @@ meridian-loom/
 ## Current status
 
 This repo is enough to rehearse the install/setup/operator path honestly, and
-it now includes an experimental preflight path for `agent_identity` and
-`action_envelope`.
+it now includes an experimental preflight path for five governance surfaces:
+`agent_identity`, `action_envelope`, `cost_attribution`, `approval_hook`, and
+`budget_gate`.
 It is still not enough to claim Loom exists as a governed execution runtime.
 
 ## Publication readiness

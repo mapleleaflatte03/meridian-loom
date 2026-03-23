@@ -7,7 +7,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub type LoomResult<T> = Result<T, String>;
 
 const DEFAULT_STATE_DIR: &str = ".loom";
-const EXPERIMENTAL_PRELIGHT_HOOKS: [&str; 2] = ["agent_identity", "action_envelope"];
+const EXPERIMENTAL_PRELIGHT_HOOKS: [&str; 5] = [
+    "agent_identity",
+    "action_envelope",
+    "cost_attribution",
+    "approval_hook",
+    "budget_gate",
+];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
@@ -45,13 +51,15 @@ pub struct CapsuleInspection {
     pub files: Vec<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct AgentIdentityResolution {
     pub agent_id: String,
     pub agent_name: String,
     pub org_id: String,
     pub role: String,
     pub economy_key: String,
+    pub approval_required: bool,
+    pub max_per_run_usd: Option<f64>,
     pub runtime_id: String,
     pub runtime_label: String,
     pub bound_org_id: String,
@@ -489,6 +497,9 @@ pub fn resolve_agent_identity(
             .ok_or_else(|| "org_id missing".to_string())?,
         role: extract_json_string(&stdout, "\"role\"").unwrap_or_default(),
         economy_key: extract_json_string(&stdout, "\"economy_key\"").unwrap_or_default(),
+        approval_required: extract_json_bool(&stdout, "\"approval_required\"").unwrap_or(false),
+        max_per_run_usd: find_named_object(&stdout, "\"budget\"")
+            .and_then(|budget| extract_json_f64(&budget, "\"max_per_run_usd\"")),
         runtime_id: extract_json_string(&runtime_binding, "\"runtime_id\"")
             .ok_or_else(|| "runtime_id missing".to_string())?,
         runtime_label: extract_json_string(&runtime_binding, "\"runtime_label\"").unwrap_or_default(),
@@ -536,12 +547,17 @@ fn run_agent_registry_lookup(
 
 pub fn render_identity_human(identity: &AgentIdentityResolution) -> String {
     format!(
-        "Meridian Loom agent identity\n============================\nagent_id:            {}\nagent_name:          {}\norg_id:              {}\nrole:                {}\neconomy_key:         {}\nruntime_id:          {}\nruntime_label:       {}\nbound_org_id:        {}\nboundary_name:       {}\nidentity_model:      {}\nruntime_registered:  {}\nregistration_status: {}\nsource:              {}\n",
+        "Meridian Loom agent identity\n============================\nagent_id:            {}\nagent_name:          {}\norg_id:              {}\nrole:                {}\neconomy_key:         {}\napproval_required:   {}\nmax_per_run_usd:     {}\nruntime_id:          {}\nruntime_label:       {}\nbound_org_id:        {}\nboundary_name:       {}\nidentity_model:      {}\nruntime_registered:  {}\nregistration_status: {}\nsource:              {}\n",
         identity.agent_id,
         identity.agent_name,
         identity.org_id,
         identity.role,
         if identity.economy_key.is_empty() { "(none)" } else { &identity.economy_key },
+        identity.approval_required,
+        identity
+            .max_per_run_usd
+            .map(|value| format!("{:.4}", value))
+            .unwrap_or_else(|| "(unknown)".to_string()),
         identity.runtime_id,
         identity.runtime_label,
         identity.bound_org_id,
@@ -555,12 +571,17 @@ pub fn render_identity_human(identity: &AgentIdentityResolution) -> String {
 
 pub fn render_identity_json(identity: &AgentIdentityResolution) -> String {
     format!(
-        "{{\n  \"agent_id\": {},\n  \"agent_name\": {},\n  \"org_id\": {},\n  \"role\": {},\n  \"economy_key\": {},\n  \"runtime_id\": {},\n  \"runtime_label\": {},\n  \"bound_org_id\": {},\n  \"boundary_name\": {},\n  \"identity_model\": {},\n  \"runtime_registered\": {},\n  \"registration_status\": {},\n  \"source\": {}\n}}\n",
+        "{{\n  \"agent_id\": {},\n  \"agent_name\": {},\n  \"org_id\": {},\n  \"role\": {},\n  \"economy_key\": {},\n  \"approval_required\": {},\n  \"max_per_run_usd\": {},\n  \"runtime_id\": {},\n  \"runtime_label\": {},\n  \"bound_org_id\": {},\n  \"boundary_name\": {},\n  \"identity_model\": {},\n  \"runtime_registered\": {},\n  \"registration_status\": {},\n  \"source\": {}\n}}\n",
         json_string(&identity.agent_id),
         json_string(&identity.agent_name),
         json_string(&identity.org_id),
         json_string(&identity.role),
         json_string(&identity.economy_key),
+        if identity.approval_required { "true" } else { "false" },
+        identity
+            .max_per_run_usd
+            .map(|value| format!("{:.6}", value))
+            .unwrap_or_else(|| "null".to_string()),
         json_string(&identity.runtime_id),
         json_string(&identity.runtime_label),
         json_string(&identity.bound_org_id),
@@ -829,6 +850,10 @@ fn extract_json_bool(section: &str, key: &str) -> Option<bool> {
     }
 }
 
+fn extract_json_f64(section: &str, key: &str) -> Option<f64> {
+    extract_json_literal(section, key)?.parse::<f64>().ok()
+}
+
 fn extract_json_literal(section: &str, key: &str) -> Option<String> {
     let idx = section.find(key)?;
     let after = &section[idx + key.len()..];
@@ -908,6 +933,8 @@ mod tests {
 
         let identity = resolve_agent_identity(&root, None, "atlas", None).expect("resolve identity");
         assert_eq!(identity.agent_id, "agent_atlas");
+        assert_eq!(identity.max_per_run_usd, Some(0.5));
+        assert!(!identity.approval_required);
         assert_eq!(identity.runtime_id, "local_kernel");
         assert!(identity.runtime_registered);
 
@@ -960,6 +987,7 @@ mod tests {
         let identity = resolve_agent_identity(&root, None, "atlas", None).expect("resolve identity");
         assert_eq!(identity.agent_id, "agent_atlas");
         assert_eq!(identity.org_id, "org_demo");
+        assert_eq!(identity.max_per_run_usd, Some(0.5));
     }
 
     fn temp_path(prefix: &str) -> PathBuf {
@@ -987,7 +1015,7 @@ mod tests {
         fs::write(
             kernel_dir.join("agent_registry.py"),
             format!(
-                "import json, sys\nagent_id = sys.argv[sys.argv.index('--agent_id') + 1]\norg_id = 'org_demo'\nif '--org_id' in sys.argv:\n    org_id = sys.argv[sys.argv.index('--org_id') + 1]\nif agent_id in ('{lookup}', 'agent_atlas', 'Atlas'):\n    print(json.dumps({{'id': 'agent_atlas', 'name': 'Atlas', 'org_id': org_id, 'role': 'analyst', 'economy_key': '{lookup}', 'runtime_binding': {{'runtime_id': 'local_kernel', 'runtime_label': 'Local Kernel Runtime', 'bound_org_id': org_id, 'boundary_name': 'workspace', 'identity_model': 'session', 'runtime_registered': True, 'registration_status': 'registered'}}}}, indent=2))\nelse:\n    print(f'Not found: {{agent_id}}')\n",
+                "import json, sys\nagent_id = sys.argv[sys.argv.index('--agent_id') + 1]\norg_id = 'org_demo'\nif '--org_id' in sys.argv:\n    org_id = sys.argv[sys.argv.index('--org_id') + 1]\nif agent_id in ('{lookup}', 'agent_atlas', 'Atlas'):\n    print(json.dumps({{'id': 'agent_atlas', 'name': 'Atlas', 'org_id': org_id, 'role': 'analyst', 'economy_key': '{lookup}', 'approval_required': False, 'budget': {{'max_per_run_usd': 0.5}}, 'runtime_binding': {{'runtime_id': 'local_kernel', 'runtime_label': 'Local Kernel Runtime', 'bound_org_id': org_id, 'boundary_name': 'workspace', 'identity_model': 'session', 'runtime_registered': True, 'registration_status': 'registered'}}}}, indent=2))\nelse:\n    print(f'Not found: {{agent_id}}')\n",
                 lookup = agent_lookup
             ),
         )

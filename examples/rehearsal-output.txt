@@ -6,8 +6,8 @@ org:    org_b7d95bae
 
 running 5 tests
 test tests::init_refuses_overwrite ... ok
-test tests::build_envelope_rejects_negative_cost ... ok
 test tests::init_and_read_config_round_trip ... ok
+test tests::build_envelope_rejects_negative_cost ... ok
 test tests::resolve_identity_does_not_force_workspace_org_hint ... ok
 test tests::resolve_identity_and_build_envelope_against_fake_kernel ... ok
 
@@ -56,7 +56,7 @@ Meridian Loom doctor
   "mode": "embedded",
   "org_id": "org_b7d95bae",
   "checks": [{"level":"OK","label":"config","detail":"loaded /tmp/loom-rehearsal/loom.toml"},{"level":"OK","label":"state_dir","detail":"state directory present (/tmp/loom-rehearsal/.loom)"},{"level":"OK","label":"python_workers","detail":"python worker path present (/tmp/loom-rehearsal/workers/python)"},{"level":"OK","label":"typescript_workers","detail":"typescript worker path present (/tmp/loom-rehearsal/workers/typescript)"},{"level":"OK","label":"wasm_modules","detail":"wasm module path present (/tmp/loom-rehearsal/workers/wasm)"},{"level":"OK","label":"capsule_manifest","detail":"capsule manifest present (/tmp/loom-rehearsal/.loom/capsules/org_b7d95bae/manifest.json)"},{"level":"OK","label":"kernel_path","detail":"kernel path present (/tmp/meridian-kernel)"},{"level":"OK","label":"runtime_registry","detail":"Meridian runtime registry available (/tmp/meridian-kernel/kernel/runtimes.json)"},{"level":"OK","label":"agent_registry","detail":"Meridian agent registry CLI available (/tmp/meridian-kernel/kernel/agent_registry.py)"}],
-  "experimental_hooks": ["agent_identity", "action_envelope"]
+  "experimental_hooks": ["agent_identity", "action_envelope", "cost_attribution", "approval_hook", "budget_gate"]
 }
 Meridian Loom status
 ====================
@@ -66,7 +66,7 @@ state_dir:   /tmp/loom-rehearsal/.loom
 kernel_path: /tmp/meridian-kernel
 capsule:     /tmp/loom-rehearsal/.loom/capsules/org_b7d95bae/manifest.json
 shadow:      /tmp/loom-rehearsal/.loom/shadow/latest.json
-experimental_hooks: agent_identity, action_envelope
+experimental_hooks: agent_identity, action_envelope, cost_attribution, approval_hook, budget_gate
 Meridian Loom contract state
 ============================
 kernel: /tmp/meridian-kernel
@@ -87,8 +87,11 @@ experimental_hook_paths
 -----------------------
 agent_identity     experimental_preflight_path
 action_envelope    experimental_preflight_path
+cost_attribution   experimental_preflight_path
+approval_hook      experimental_preflight_path
+budget_gate        experimental_preflight_path
 
-notes: Experimental public scaffold exists for CLI/setup rehearsal, but no governed execution runtime or proven hooks exist yet. Polyglot architecture: Rust supervisor core, Python/TypeScript workers, WASM capability modules. Directional targets: <50MB memory, <500ms cold start, native 7/7 contract compliance (all unproven). See docs/LOOM_SPEC.md for spec, docs/loom/ for productization strategy.
+notes: Experimental public scaffold exists for CLI/setup rehearsal and 5-hook preflight capture (agent_identity, action_envelope, cost_attribution, approval_hook, budget_gate), but no governed execution runtime or proven hooks exist yet. Polyglot architecture: Rust supervisor core, Python/TypeScript workers, WASM capability modules. Directional targets: <50MB memory, <500ms cold start, native 7/7 contract compliance (all unproven). See docs/LOOM_SPEC.md for spec, docs/loom/ for productization strategy.
 Meridian Loom agent identity
 ============================
 agent_id:            agent_atlas
@@ -96,6 +99,8 @@ agent_name:          Atlas
 org_id:              org_b7d95bae
 role:                analyst
 economy_key:         atlas
+approval_required:   false
+max_per_run_usd:     0.5000
 runtime_id:          local_kernel
 runtime_label:       Local Kernel Runtime
 bound_org_id:        org_b7d95bae
@@ -131,6 +136,8 @@ agent_name:          Atlas
 org_id:              org_b7d95bae
 role:                analyst
 economy_key:         atlas
+approval_required:   false
+max_per_run_usd:     0.5000
 runtime_id:          local_kernel
 runtime_label:       Local Kernel Runtime
 bound_org_id:        org_b7d95bae
@@ -157,18 +164,22 @@ input_hash:          bba40f20f386cb46
 
 Shadow preflight capture
 ========================
-event_log:      /tmp/loom-rehearsal/.loom/shadow/events.jsonl
-latest_report:  /tmp/loom-rehearsal/.loom/shadow/latest.json
-input_hash:     bba40f20f386cb46
-captured_hooks: agent_identity, action_envelope
+event_log:           /tmp/loom-rehearsal/.loom/shadow/events.jsonl
+latest_report:       /tmp/loom-rehearsal/.loom/shadow/latest.json
+input_hash:          bba40f20f386cb46
+estimated_cost_usd:  0.0500
+budget_limit_usd:    0.5000
+budget_gate:         allow
+approval_hook:       not_required
+captured_hooks:      agent_identity, action_envelope, cost_attribution, approval_hook, budget_gate
 Shadow comparison
 =================
 primary_log:     /tmp/loom-rehearsal/.loom/shadow/events.jsonl
 shadow_log:      /tmp/loom-rehearsal/.loom/shadow/events.jsonl
-primary_events:  2
-shadow_events:   2
-pairs_compared:  2
-matches:         2
+primary_events:  5
+shadow_events:   5
+pairs_compared:  5
+matches:         5
 divergences:     0
 divergence_rate: 0.0000
 note:            file-level comparison only; not proof of runtime parity
@@ -180,10 +191,10 @@ source: /tmp/loom-rehearsal/.loom/shadow/latest.json
   "status": "comparison_complete",
   "primary_log": "/tmp/loom-rehearsal/.loom/shadow/events.jsonl",
   "shadow_log": "/tmp/loom-rehearsal/.loom/shadow/events.jsonl",
-  "primary_events": 2,
-  "shadow_events": 2,
-  "pairs_compared": 2,
-  "matches": 2,
+  "primary_events": 5,
+  "shadow_events": 5,
+  "pairs_compared": 5,
+  "matches": 5,
   "divergences": 0,
   "divergence_rate": 0.000000,
   "note": "file-level comparison only; not proof of runtime parity"
