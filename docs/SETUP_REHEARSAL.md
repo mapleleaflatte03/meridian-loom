@@ -2,6 +2,23 @@
   <img src="assets/meridian_loom_lockup.svg" alt="Meridian Loom" width="720">
 </p>
 
+<p align="center">
+  Rehearsal transcripts for the public scaffold: install path, operator path, fail-closed path, and current parity path.
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/rehearsal-founder%20host%20plus%20fixture-0c1117?style=flat-square" alt="Founder host plus fixture">
+  <img src="https://img.shields.io/badge/parity-live%20snapshot%20not%20replacement-8b0000?style=flat-square" alt="Parity not replacement">
+  <img src="https://img.shields.io/badge/operator-path-real-0f766e?style=flat-square" alt="Operator path real">
+</p>
+
+<p align="center">
+  <a href="../README.md">Loom README</a> ·
+  <a href="PUBLICATION_CHECKLIST.md">Publication Checklist</a> ·
+  <a href="https://github.com/mapleleaflatte03/meridian-kernel/blob/main/docs/LOOM_SPEC.md">Loom Spec</a> ·
+  <a href="https://app.welliam.codes">Live Host</a>
+</p>
+
 # Meridian Loom // Setup Rehearsal
 
 This repository includes two rehearsals:

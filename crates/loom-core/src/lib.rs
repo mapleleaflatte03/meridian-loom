@@ -337,7 +337,9 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
 }
 
 pub fn render_doctor_human(checks: &[Check]) -> String {
-    let mut out = String::from("Meridian Loom // DOCTOR\n=======================\n");
+    let mut out = String::from(
+        "Meridian Loom // DOCTOR\n=======================\nphase:       experimental runtime rehearsal\nboundary:    public scaffold, not governed runtime\n\nChecks\n------\n",
+    );
     for check in checks {
         out.push_str(&format!("[{:<8}] {:<18} {}\n", check.level, check.label, check.detail));
     }
@@ -384,7 +386,7 @@ pub fn render_health_human(healthy: bool, json: &str) -> String {
     let checks = extract_json_literal(json, "\"checks\"").unwrap_or_else(|| "[]".to_string());
     let check_count = checks.matches("\"label\"").count();
     format!(
-        "Meridian Loom // HEALTH\n=======================\nstatus:      {}\nmode:        {}\norg_id:      {}\nchecks:      {}\nsource:      doctor-derived health summary\n",
+        "Meridian Loom // HEALTH\n=======================\nstatus:      {}\nmode:        {}\norg_id:      {}\nchecks:      {}\nsource:      doctor-derived health summary\nnext_step:   loom doctor --root <path> --format human\n",
         status,
         mode,
         org_id,
@@ -401,7 +403,7 @@ pub fn status_human(root: &Path) -> LoomResult<String> {
         .join(&config.org_id)
         .join("manifest.json");
     Ok(format!(
-        "Meridian Loom // STATUS\n=======================\nmode:        {}\norg_id:      {}\nstate_dir:   {}\nkernel_path: {}\ncapsule:     {}\nshadow:      {}\nexperimental_hooks: {}\n",
+        "Meridian Loom // STATUS\n=======================\nmode:        {}\norg_id:      {}\nstate_dir:   {}\nkernel_path: {}\ncapsule:     {}\nshadow:      {}\nruntime:     experimental rehearsal only\nexperimental_hooks: {}\n",
         config.mode,
         config.org_id,
         state_dir.display(),
@@ -414,7 +416,7 @@ pub fn status_human(root: &Path) -> LoomResult<String> {
 
 pub fn render_config_human(config: &Config, root: &Path) -> String {
     format!(
-        "Meridian Loom // CONFIG\n=======================\nroot:        {}\nmode:        {}\norg_id:      {}\nstate_dir:   {}\nkernel_path: {}\npython_path: {}\ntypescript:  {}\nwasm_dir:    {}\n",
+        "Meridian Loom // CONFIG\n=======================\nroot:        {}\nmode:        {}\norg_id:      {}\nstate_dir:   {}\nkernel_path: {}\npython_path: {}\ntypescript:  {}\nwasm_dir:    {}\nboundary:    local config only; no worker supervisor yet\n",
         root.display(),
         config.mode,
         config.org_id,

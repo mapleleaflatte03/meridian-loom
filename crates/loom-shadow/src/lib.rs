@@ -954,11 +954,26 @@ pub fn render_shadow_report(root: &Path) -> ShadowResult<String> {
             root.join(".loom/shadow").display()
         ));
     }
-    let mut out = String::from("Meridian Loom // SHADOW REPORT\n==============================\n");
+    let mut out = String::from(
+        "Meridian Loom // SHADOW REPORT\n==============================\nphase:       experimental shadow + parity surface\nboundary:    report artifacts are real; governed runtime is not\n",
+    );
     let stale_latest = contents
         .as_ref()
         .map(|value| value.contains("\"status\": \"not_started\""))
         .unwrap_or(false);
+    let no_newer_artifacts =
+        runtime.is_none() && parity.is_none() && decision.is_none() && reference.is_none();
+
+    if stale_latest && no_newer_artifacts {
+        out.push_str(&format!(
+            "\nCurrent state\n=============\nsource: {}\nstatus:      not_started\nmeaning:     no shadow or runtime rehearsal artifacts have been captured yet\n\nRecommended next step\n=====================\n  loom shadow preflight --agent-id agent_atlas --action-type research --resource web_search --kernel-path /tmp/meridian-kernel --root {}\n  loom shadow decide --agent-id agent_atlas --action-type research --resource web_search --kernel-path /tmp/meridian-kernel --root {}\n  loom action execute --agent-id agent_atlas --action-type research --resource web_search --kernel-path /tmp/meridian-kernel --root {}\n",
+            report_path.display(),
+            root.display(),
+            root.display(),
+            root.display(),
+        ));
+        return Ok(out);
+    }
 
     if let Some(runtime) = runtime.as_ref() {
         out.push_str(&format!(
@@ -1623,6 +1638,23 @@ mod tests {
         let legacy_index = report.find("Legacy shadow marker").expect("legacy section");
         assert!(runtime_index < legacy_index);
         assert!(report.contains("the runtime execution and parity sections above are the newer operator surfaces"));
+    }
+
+    #[test]
+    fn shadow_report_guides_next_steps_when_only_legacy_marker_exists() {
+        let root = temp_path("loom-shadow-guidance");
+        fs::create_dir_all(root.join(".loom/shadow")).expect("shadow dir");
+        fs::write(
+            root.join(".loom/shadow/latest.json"),
+            "{\n  \"status\": \"not_started\",\n  \"note\": \"shadow mode is not implemented in this scaffold\"\n}\n",
+        )
+        .expect("write latest");
+
+        let report = render_shadow_report(&root).expect("render report");
+        assert!(report.contains("Current state"));
+        assert!(report.contains("Recommended next step"));
+        assert!(report.contains("loom shadow preflight"));
+        assert!(report.contains("meaning:     no shadow or runtime rehearsal artifacts have been captured yet"));
     }
 
     fn temp_path(prefix: &str) -> PathBuf {
