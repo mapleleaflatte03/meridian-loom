@@ -31,6 +31,8 @@ The rehearsal verifies:
     parity claim.
 16. `loom shadow decide` now writes a standalone decision artifact that makes
     the current deny/allow outcome auditable for operators.
+17. `loom shadow enforce` now returns a fail-closed exit code (`0` allow, `2`
+    deny) using the same experimental decision surface.
 
 ## What the rehearsal does not prove
 
@@ -85,3 +87,7 @@ The rehearsal also emits `.loom/shadow/decision.json`, which records the
 current gate outcome using the same reference stage and reason that drove the
 preflight result. That decision artifact is still experimental and adapter-
 backed; it does not make Loom a governed execution runtime.
+
+The rehearsal now also proves `loom shadow enforce` fails closed against the
+current kernel truth. On the founder host it returns exit code `2` because the
+reference budget gate denies the action.

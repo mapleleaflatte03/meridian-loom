@@ -440,6 +440,14 @@ pub fn capture_decision(
     Ok(capture)
 }
 
+pub fn decision_exit_code(capture: &DecisionCapture, allow_code: i32, deny_code: i32) -> i32 {
+    if capture.overall_decision == "allow" {
+        allow_code
+    } else {
+        deny_code
+    }
+}
+
 pub fn render_preflight_human(capture: &PreflightCapture) -> String {
     format!(
         "Shadow preflight capture\n========================\nevent_log:           {}\naudit_preview_log:   {}\nreference_report:    {}\nreference_event_log: {}\nlatest_report:       {}\ninput_hash:          {}\nestimated_cost_usd:  {:.4}\nrestrictions:        {}\nsanction_controls:   {} (snapshot: {})\nbudget_limit_usd:    {}\nbudget_gate:         {}\napproval_hook:       {} (policy: {})\naudit_emission:      {}\noverall_decision:    {}\nreference_stage:     {}\nreference_reason:    {}\ncaptured_hooks:      {}\n",
@@ -897,6 +905,7 @@ mod tests {
         assert!(json.contains("\"status\": \"decision_captured\""));
         assert!(json.contains("\"overall_decision\": \"deny\""));
         assert!(json.contains("\"note\": \"experimental preflight decision only; not governed runtime enforcement\""));
+        assert_eq!(decision_exit_code(&capture, 0, 2), 2);
         let report = render_shadow_report(&root).expect("render report");
         assert!(report.contains("Decision artifact"));
         assert!(report.contains("\"overall_decision\": \"deny\""));

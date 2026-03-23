@@ -208,6 +208,25 @@ budget_gate:       deny
 overall_decision:  deny
 reference_stage:   budget_gate
 reference_reason:  Treasury below reserve floor (runway $-50.00). Recapitalize before spending.
+Shadow decision
+===============
+decision_path:     /tmp/loom-rehearsal/.loom/shadow/decision.json
+source:            experimental_preflight_gate
+agent_id:          agent_atlas
+org_id:            org_b7d95bae
+action_type:       research
+resource:          web_search
+input_hash:        bba40f20f386cb46
+estimated_cost_usd:      0.0500
+restrictions:      (none)
+sanction_gate:     allow
+approval_gate:     allow
+budget_limit_usd:  0.5000
+budget_gate:       deny
+overall_decision:  deny
+reference_stage:   budget_gate
+reference_reason:  Treasury below reserve floor (runway $-50.00). Recapitalize before spending.
+shadow_enforce_exit_code: 2
 Shadow comparison
 =================
 primary_log:     /tmp/loom-rehearsal/.loom/shadow/reference_events.jsonl

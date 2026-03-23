@@ -7,9 +7,9 @@ use loom_core::{
     LoomResult,
 };
 use loom_shadow::{
-    capture_decision, capture_preflight, compare_logs, render_compare_human, render_compare_json,
-    render_decision_human, render_decision_json, render_preflight_human, render_preflight_json,
-    render_shadow_report,
+    capture_decision, capture_preflight, compare_logs, decision_exit_code, render_compare_human,
+    render_compare_json, render_decision_human, render_decision_json, render_preflight_human,
+    render_preflight_json, render_shadow_report,
 };
 use std::env;
 use std::path::PathBuf;
@@ -284,6 +284,41 @@ fn handle_shadow(args: &[String]) -> LoomResult<()> {
             }
             Ok(())
         }
+        Some("enforce") => {
+            let root = root_from(take_value(args, "--root").as_deref())?;
+            let agent_id = required_flag(args, "--agent-id")?;
+            let action_type = required_flag(args, "--action-type")?;
+            let resource = required_flag(args, "--resource")?;
+            let estimated_cost_usd = parse_f64_flag(args, "--estimated-cost-usd").unwrap_or(0.0);
+            let kernel_path = take_value(args, "--kernel-path");
+            let org_id = take_value(args, "--org-id");
+            let run_id = take_value(args, "--run-id");
+            let session_id = take_value(args, "--session-id");
+            let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+
+            let identity =
+                resolve_agent_identity(&root, kernel_path.as_deref(), &agent_id, org_id.as_deref())?;
+            let envelope = build_action_envelope(
+                &root,
+                kernel_path.as_deref(),
+                &agent_id,
+                org_id.as_deref(),
+                &action_type,
+                &resource,
+                estimated_cost_usd,
+                run_id.as_deref(),
+                session_id.as_deref(),
+            )?;
+            let reference =
+                evaluate_reference_gates(&root, kernel_path.as_deref(), &identity, &envelope)?;
+            let capture = capture_decision(&root, &identity, &envelope, &reference)?;
+            if format == "json" {
+                print!("{}", render_decision_json(&capture));
+            } else {
+                print!("{}", render_decision_human(&capture));
+            }
+            std::process::exit(decision_exit_code(&capture, 0, 2));
+        }
         Some("compare") => {
             let root = root_from(take_value(args, "--root").as_deref())?;
             let primary = PathBuf::from(required_flag(args, "--primary")?);
@@ -299,7 +334,7 @@ fn handle_shadow(args: &[String]) -> LoomResult<()> {
             }
             Ok(())
         }
-        _ => Err("shadow supports 'preflight', 'decide', 'compare', and 'report'".to_string()),
+        _ => Err("shadow supports 'preflight', 'decide', 'enforce', 'compare', and 'report'".to_string()),
     }
 }
 
@@ -333,6 +368,7 @@ fn print_help() {
            loom envelope build --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
            loom shadow preflight --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
            loom shadow decide --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
+           loom shadow enforce --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
            loom shadow compare --primary FILE [--shadow FILE] [--root PATH] [--format human|json]\n\
            loom shadow report [--root PATH]\n"
     );
