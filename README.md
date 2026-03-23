@@ -172,6 +172,8 @@ Current human-mode output uses a single grammar:
 - `Meridian Loom // AGENT IDENTITY`
 - `Meridian Loom // ACTION ENVELOPE`
 - `Meridian Loom // CAPSULE INSPECT`
+- `Meridian Loom // JOB LIST`
+- `Meridian Loom // JOB INSPECT`
 - `Meridian Loom // SUPERVISOR STATUS`
 - `Meridian Loom // SUPERVISOR DAEMON`
 - `Meridian Loom // SHADOW PREFLIGHT`
