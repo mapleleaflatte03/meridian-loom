@@ -21,12 +21,13 @@
 
 # Meridian Loom // Setup Rehearsal
 
-This repository includes four rehearsals:
+This repository includes five rehearsals:
 
 - a founder-host rehearsal against the current kernel truth
 - a fixture-backed rehearsal for local sanction denial
 - a fixture-backed allow-path rehearsal
 - a fixture-backed queue supervisor rehearsal
+- a fixture-backed bounded supervisor watch rehearsal
 
 The point is not to pretend Loom is already a runtime. The point is to make the
 install path, operator path, and fail-closed runtime rehearsal concrete enough
@@ -71,6 +72,9 @@ The rehearsal verifies:
     resolved identity snapshot with the read-only reference gate result.
 20. A fixture-backed rehearsal proves that `execute` / `remediation_only`
     restrictions deny locally even when the reference gate would otherwise allow.
+21. `loom supervisor watch` now drives the queue supervisor through a bounded
+    polling loop, writes `.loom/runtime/supervisor/status.json`, and appends
+    heartbeat history into `.loom/runtime/supervisor/heartbeat.jsonl`.
 
 ## What the rehearsal does not prove
 
@@ -79,6 +83,7 @@ The rehearsal verifies:
 - It does not prove transport adapters exist.
 - It does not prove OpenClaw replacement.
 - It does not prove per-action OpenClaw parity.
+- It does not prove a daemonized or hosted supervisor loop.
 - The live OpenClaw probe is a runtime health/proof snapshot, not a replayed
   gate-by-gate execution stream.
 - The hosted kernel's global audit trail is still not owned by Loom.
@@ -162,6 +167,27 @@ That script proves the current queue supervisor path:
 - the processed queue entry moves to `.loom/runtime/queue/processed/`
 - the runtime audit lands in `kernel/runtime_audit/loom_runtime_events.jsonl`
 - parity and shadow reports stay consistent with the supervisor-processed action
+
+There is now a separate bounded supervisor watch rehearsal:
+
+```bash
+./scripts/rehearse_supervisor_watch.sh
+```
+
+That script proves the current watch-loop surface:
+- `loom supervisor watch` repeatedly invokes the same queue supervisor boundary
+  for a fixed number of iterations
+- `loom supervisor status` reads that stored loop state back as an operator surface
+- the loop writes `.loom/runtime/supervisor/status.json`
+- the loop appends per-iteration state into
+  `.loom/runtime/supervisor/heartbeat.jsonl`
+- queue counts, allow/deny counts, and processed counts stay inspectable across
+  iterations
+- the result is still a bounded local rehearsal loop, not a hosted or daemonized
+  scheduler
+
+Its checked-in transcript lives at
+`examples/supervisor-watch-output.txt`.
 
 The rehearsal now also proves both fail-closed surfaces against the current
 kernel truth:

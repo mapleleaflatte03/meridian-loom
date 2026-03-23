@@ -7,7 +7,8 @@ use loom_core::{
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub type ShadowResult<T> = Result<T, String>;
 
@@ -133,6 +134,43 @@ pub struct SupervisorRunSummary {
     pub last_input_hash: String,
     pub last_execution_path: PathBuf,
     pub audit_log_path: PathBuf,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SupervisorWatchSummary {
+    pub root: PathBuf,
+    pub supervisor_dir: PathBuf,
+    pub iterations: usize,
+    pub poll_seconds: u64,
+    pub processed: usize,
+    pub allowed: usize,
+    pub denied: usize,
+    pub failed: usize,
+    pub heartbeat_log_path: PathBuf,
+    pub status_path: PathBuf,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SupervisorStatusSnapshot {
+    pub root: PathBuf,
+    pub supervisor_dir: PathBuf,
+    pub status_path: PathBuf,
+    pub heartbeat_log_path: PathBuf,
+    pub available: bool,
+    pub updated_at: String,
+    pub iterations: usize,
+    pub poll_seconds: u64,
+    pub processed: usize,
+    pub allowed: usize,
+    pub denied: usize,
+    pub failed: usize,
+    pub pending_jobs: usize,
+    pub processed_jobs: usize,
+    pub failed_jobs: usize,
+    pub heartbeat_entries: usize,
+    pub last_heartbeat_timestamp: String,
     pub note: String,
 }
 
@@ -879,6 +917,181 @@ pub fn run_supervisor(
     Ok(summary)
 }
 
+pub fn watch_supervisor(
+    root: &Path,
+    override_kernel_path: Option<&str>,
+    max_jobs: usize,
+    iterations: usize,
+    poll_seconds: u64,
+) -> ShadowResult<SupervisorWatchSummary> {
+    let runtime_dir = ensure_runtime_dir(root)?;
+    let supervisor_dir = runtime_dir.join("supervisor");
+    fs::create_dir_all(&supervisor_dir).map_err(io_err)?;
+    let heartbeat_log_path = supervisor_dir.join("heartbeat.jsonl");
+    let status_path = supervisor_dir.join("status.json");
+
+    let mut summary = SupervisorWatchSummary {
+        root: root.to_path_buf(),
+        supervisor_dir,
+        iterations,
+        poll_seconds,
+        processed: 0,
+        allowed: 0,
+        denied: 0,
+        failed: 0,
+        heartbeat_log_path: heartbeat_log_path.clone(),
+        status_path: status_path.clone(),
+        note: "no iterations executed".to_string(),
+    };
+
+    for iteration in 0..iterations.max(1) {
+        let run = run_supervisor(root, override_kernel_path, max_jobs)?;
+        summary.processed += run.processed;
+        summary.allowed += run.allowed;
+        summary.denied += run.denied;
+        summary.failed += run.failed;
+        summary.note = format!(
+            "iterations={} processed={} allowed={} denied={} failed={}",
+            iteration + 1,
+            summary.processed,
+            summary.allowed,
+            summary.denied,
+            summary.failed,
+        );
+
+        let pending_jobs = count_runtime_queue_entries(root, "pending")?;
+        let processed_jobs = count_runtime_queue_entries(root, "processed")?;
+        let failed_jobs = count_runtime_queue_entries(root, "failed")?;
+        append_line(
+            &heartbeat_log_path,
+            &format!(
+                "{{\"timestamp\":{},\"iteration\":{},\"processed\":{},\"allowed\":{},\"denied\":{},\"failed\":{},\"pending_jobs\":{},\"processed_jobs\":{},\"failed_jobs\":{},\"note\":{}}}\n",
+                json_string(&timestamp_now()),
+                iteration + 1,
+                run.processed,
+                run.allowed,
+                run.denied,
+                run.failed,
+                pending_jobs,
+                processed_jobs,
+                failed_jobs,
+                json_string(&run.note),
+            ),
+        )?;
+        fs::write(
+            &status_path,
+            format!(
+                "{{\n  \"status\": \"watch_complete\",\n  \"updated_at\": {},\n  \"iterations\": {},\n  \"poll_seconds\": {},\n  \"processed\": {},\n  \"allowed\": {},\n  \"denied\": {},\n  \"failed\": {},\n  \"pending_jobs\": {},\n  \"processed_jobs\": {},\n  \"failed_jobs\": {},\n  \"note\": {}\n}}\n",
+                json_string(&timestamp_now()),
+                iteration + 1,
+                poll_seconds,
+                summary.processed,
+                summary.allowed,
+                summary.denied,
+                summary.failed,
+                pending_jobs,
+                processed_jobs,
+                failed_jobs,
+                json_string(&summary.note),
+            ),
+        )
+        .map_err(io_err)?;
+
+        if iteration + 1 < iterations.max(1) {
+            thread::sleep(Duration::from_secs(poll_seconds));
+        }
+    }
+
+    Ok(summary)
+}
+
+pub fn supervisor_status(root: &Path) -> ShadowResult<SupervisorStatusSnapshot> {
+    let runtime_dir = ensure_runtime_dir(root)?;
+    let supervisor_dir = runtime_dir.join("supervisor");
+    fs::create_dir_all(&supervisor_dir).map_err(io_err)?;
+    let status_path = supervisor_dir.join("status.json");
+    let heartbeat_log_path = supervisor_dir.join("heartbeat.jsonl");
+
+    if !status_path.exists() {
+        return Ok(SupervisorStatusSnapshot {
+            root: root.to_path_buf(),
+            supervisor_dir,
+            status_path,
+            heartbeat_log_path,
+            available: false,
+            updated_at: "not_started".to_string(),
+            iterations: 0,
+            poll_seconds: 0,
+            processed: 0,
+            allowed: 0,
+            denied: 0,
+            failed: 0,
+            pending_jobs: count_runtime_queue_entries(root, "pending")?,
+            processed_jobs: count_runtime_queue_entries(root, "processed")?,
+            failed_jobs: count_runtime_queue_entries(root, "failed")?,
+            heartbeat_entries: 0,
+            last_heartbeat_timestamp: "not_started".to_string(),
+            note: "no supervisor status captured yet; run `loom supervisor watch` or `loom supervisor run` first".to_string(),
+        });
+    }
+
+    let status_contents = fs::read_to_string(&status_path).map_err(io_err)?;
+    let (heartbeat_entries, last_heartbeat_timestamp) = if heartbeat_log_path.exists() {
+        let contents = fs::read_to_string(&heartbeat_log_path).map_err(io_err)?;
+        let entries = contents
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .collect::<Vec<_>>();
+        let last_timestamp = entries
+            .last()
+            .and_then(|line| extract_json_string(line, "\"timestamp\""))
+            .unwrap_or_else(|| "unknown".to_string());
+        (entries.len(), last_timestamp)
+    } else {
+        (0, "not_started".to_string())
+    };
+
+    Ok(SupervisorStatusSnapshot {
+        root: root.to_path_buf(),
+        supervisor_dir,
+        status_path,
+        heartbeat_log_path,
+        available: true,
+        updated_at: extract_json_string(&status_contents, "\"updated_at\"")
+            .unwrap_or_else(|| "unknown".to_string()),
+        iterations: extract_json_number(&status_contents, "\"iterations\"")
+            .map(|value| value as usize)
+            .unwrap_or(0),
+        poll_seconds: extract_json_number(&status_contents, "\"poll_seconds\"")
+            .map(|value| value as u64)
+            .unwrap_or(0),
+        processed: extract_json_number(&status_contents, "\"processed\"")
+            .map(|value| value as usize)
+            .unwrap_or(0),
+        allowed: extract_json_number(&status_contents, "\"allowed\"")
+            .map(|value| value as usize)
+            .unwrap_or(0),
+        denied: extract_json_number(&status_contents, "\"denied\"")
+            .map(|value| value as usize)
+            .unwrap_or(0),
+        failed: extract_json_number(&status_contents, "\"failed\"")
+            .map(|value| value as usize)
+            .unwrap_or(0),
+        pending_jobs: extract_json_number(&status_contents, "\"pending_jobs\"")
+            .map(|value| value as usize)
+            .unwrap_or(0),
+        processed_jobs: extract_json_number(&status_contents, "\"processed_jobs\"")
+            .map(|value| value as usize)
+            .unwrap_or(0),
+        failed_jobs: extract_json_number(&status_contents, "\"failed_jobs\"")
+            .map(|value| value as usize)
+            .unwrap_or(0),
+        heartbeat_entries,
+        last_heartbeat_timestamp,
+        note: extract_json_string(&status_contents, "\"note\"").unwrap_or_default(),
+    })
+}
+
 pub fn decision_exit_code(capture: &DecisionCapture, allow_code: i32, deny_code: i32) -> i32 {
     if capture.overall_decision == "allow" {
         allow_code
@@ -1200,6 +1413,116 @@ pub fn render_supervisor_run_json(summary: &SupervisorRunSummary) -> String {
     )
 }
 
+pub fn render_supervisor_watch_human(summary: &SupervisorWatchSummary) -> String {
+    format!(
+        "Meridian Loom // SUPERVISOR WATCH\n==================================\nphase:       experimental local queue supervisor loop\nboundary:    heartbeat and queue watch are real; hosted scheduler remains future work\n\nCurrent state\n=============\nroot:                {}\nsupervisor_dir:      {}\niterations:          {}\npoll_seconds:        {}\nprocessed:           {}\nallowed:             {}\ndenied:              {}\nfailed:              {}\nheartbeat_log:       {}\nstatus_path:         {}\nnote:                {}\n\nNext\n====\n1. loom supervisor run --root {} --max-jobs 1\n2. loom parity report --root {}\n3. inspect {} for supervisor heartbeat history.\n",
+        summary.root.display(),
+        summary.supervisor_dir.display(),
+        summary.iterations,
+        summary.poll_seconds,
+        summary.processed,
+        summary.allowed,
+        summary.denied,
+        summary.failed,
+        summary.heartbeat_log_path.display(),
+        summary.status_path.display(),
+        summary.note,
+        summary.root.display(),
+        summary.root.display(),
+        summary.heartbeat_log_path.display(),
+    )
+}
+
+pub fn render_supervisor_watch_json(summary: &SupervisorWatchSummary) -> String {
+    format!(
+        "{{\n  \"status\": \"supervisor_watch_complete\",\n  \"root\": {},\n  \"supervisor_dir\": {},\n  \"iterations\": {},\n  \"poll_seconds\": {},\n  \"processed\": {},\n  \"allowed\": {},\n  \"denied\": {},\n  \"failed\": {},\n  \"heartbeat_log_path\": {},\n  \"status_path\": {},\n  \"note\": {}\n}}\n",
+        json_string(&summary.root.display().to_string()),
+        json_string(&summary.supervisor_dir.display().to_string()),
+        summary.iterations,
+        summary.poll_seconds,
+        summary.processed,
+        summary.allowed,
+        summary.denied,
+        summary.failed,
+        json_string(&summary.heartbeat_log_path.display().to_string()),
+        json_string(&summary.status_path.display().to_string()),
+        json_string(&summary.note),
+    )
+}
+
+pub fn render_supervisor_status_human(snapshot: &SupervisorStatusSnapshot) -> String {
+    if !snapshot.available {
+        return format!(
+            "Meridian Loom // SUPERVISOR STATUS\n===================================\nphase:       experimental local queue supervisor loop\nboundary:    no watch status captured yet; hosted scheduler remains future work\n\nCurrent state\n=============\nroot:                {}\nsupervisor_dir:      {}\nstatus_path:         {}\nheartbeat_log:       {}\npending_jobs:        {}\nprocessed_jobs:      {}\nfailed_jobs:         {}\nheartbeat_entries:   {}\nnote:                {}\n\nNext\n====\n1. loom supervisor watch --root {} --max-jobs 1 --iterations 2 --poll-seconds 0\n2. loom supervisor run --root {} --max-jobs 1\n3. inspect {} after a watch loop has executed.\n",
+            snapshot.root.display(),
+            snapshot.supervisor_dir.display(),
+            snapshot.status_path.display(),
+            snapshot.heartbeat_log_path.display(),
+            snapshot.pending_jobs,
+            snapshot.processed_jobs,
+            snapshot.failed_jobs,
+            snapshot.heartbeat_entries,
+            snapshot.note,
+            snapshot.root.display(),
+            snapshot.root.display(),
+            snapshot.status_path.display(),
+        );
+    }
+
+    format!(
+        "Meridian Loom // SUPERVISOR STATUS\n===================================\nphase:       experimental local queue supervisor loop\nboundary:    bounded local loop state is real; hosted scheduler remains future work\n\nCurrent state\n=============\nroot:                {}\nsupervisor_dir:      {}\nupdated_at:          {}\niterations:          {}\npoll_seconds:        {}\nprocessed:           {}\nallowed:             {}\ndenied:              {}\nfailed:              {}\npending_jobs:        {}\nprocessed_jobs:      {}\nfailed_jobs:         {}\nheartbeat_entries:   {}\nlast_heartbeat:      {}\nstatus_path:         {}\nheartbeat_log:       {}\nnote:                {}\n\nNext\n====\n1. loom parity report --root {}\n2. loom shadow report --root {}\n3. inspect {} for the latest heartbeat history.\n",
+        snapshot.root.display(),
+        snapshot.supervisor_dir.display(),
+        snapshot.updated_at,
+        snapshot.iterations,
+        snapshot.poll_seconds,
+        snapshot.processed,
+        snapshot.allowed,
+        snapshot.denied,
+        snapshot.failed,
+        snapshot.pending_jobs,
+        snapshot.processed_jobs,
+        snapshot.failed_jobs,
+        snapshot.heartbeat_entries,
+        snapshot.last_heartbeat_timestamp,
+        snapshot.status_path.display(),
+        snapshot.heartbeat_log_path.display(),
+        snapshot.note,
+        snapshot.root.display(),
+        snapshot.root.display(),
+        snapshot.heartbeat_log_path.display(),
+    )
+}
+
+pub fn render_supervisor_status_json(snapshot: &SupervisorStatusSnapshot) -> String {
+    format!(
+        "{{\n  \"status\": {},\n  \"root\": {},\n  \"supervisor_dir\": {},\n  \"status_path\": {},\n  \"heartbeat_log_path\": {},\n  \"available\": {},\n  \"updated_at\": {},\n  \"iterations\": {},\n  \"poll_seconds\": {},\n  \"processed\": {},\n  \"allowed\": {},\n  \"denied\": {},\n  \"failed\": {},\n  \"pending_jobs\": {},\n  \"processed_jobs\": {},\n  \"failed_jobs\": {},\n  \"heartbeat_entries\": {},\n  \"last_heartbeat_timestamp\": {},\n  \"note\": {}\n}}\n",
+        json_string(if snapshot.available {
+            "supervisor_status_available"
+        } else {
+            "supervisor_status_not_started"
+        }),
+        json_string(&snapshot.root.display().to_string()),
+        json_string(&snapshot.supervisor_dir.display().to_string()),
+        json_string(&snapshot.status_path.display().to_string()),
+        json_string(&snapshot.heartbeat_log_path.display().to_string()),
+        if snapshot.available { "true" } else { "false" },
+        json_string(&snapshot.updated_at),
+        snapshot.iterations,
+        snapshot.poll_seconds,
+        snapshot.processed,
+        snapshot.allowed,
+        snapshot.denied,
+        snapshot.failed,
+        snapshot.pending_jobs,
+        snapshot.processed_jobs,
+        snapshot.failed_jobs,
+        snapshot.heartbeat_entries,
+        json_string(&snapshot.last_heartbeat_timestamp),
+        json_string(&snapshot.note),
+    )
+}
+
 pub fn render_compare_human(summary: &ComparisonSummary) -> String {
     let divergence_lines = {
         let rendered = summary
@@ -1458,6 +1781,18 @@ fn runtime_audit_log_path(root: &Path, override_kernel_path: Option<&str>) -> Pa
             .join("loom_runtime_events.jsonl"),
         Err(_) => root.join(".loom/audit/runtime_events.jsonl"),
     }
+}
+
+fn count_runtime_queue_entries(root: &Path, bucket: &str) -> ShadowResult<usize> {
+    let path = ensure_runtime_dir(root)?.join("queue").join(bucket);
+    if !path.exists() {
+        return Ok(0);
+    }
+    Ok(fs::read_dir(path)
+        .map_err(io_err)?
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.path().is_file())
+        .count())
 }
 
 fn ensure_parity_dir(root: &Path) -> ShadowResult<PathBuf> {
@@ -2399,6 +2734,146 @@ if __name__ == '__main__':
         );
         let human = render_supervisor_run_human(&summary);
         assert!(human.contains("experimental local queue supervisor"));
+    }
+
+    #[test]
+    fn supervisor_watch_writes_heartbeat_and_status() {
+        let root = temp_path("loom-shadow-watch");
+        fs::create_dir_all(&root).expect("root");
+        let kernel = temp_path("loom-shadow-watch-kernel");
+        let kernel_dir = kernel.join("kernel");
+        fs::create_dir_all(kernel_dir.join("adapters")).expect("kernel dirs");
+        fs::write(
+            kernel_dir.join("runtimes.json"),
+            "{\n  \"runtimes\": {\n    \"local_kernel\": {\"id\": \"local_kernel\", \"label\": \"Local Kernel Runtime\"},\n    \"meridian_loom\": {\"status\": \"experimental\", \"notes\": \"watch fixture\", \"contract_compliance\": {\"agent_identity\": null, \"action_envelope\": null, \"cost_attribution\": null, \"approval_hook\": null, \"audit_emission\": null, \"sanction_controls\": null, \"budget_gate\": null}}\n  }\n}\n",
+        )
+        .expect("write runtimes");
+        fs::write(
+            kernel_dir.join("agent_registry.py"),
+            "import json, sys\nagent_id = sys.argv[sys.argv.index('--agent_id') + 1]\norg_id = sys.argv[sys.argv.index('--org_id') + 1] if '--org_id' in sys.argv else 'org_demo'\nprint(json.dumps({'id': agent_id, 'name': 'Atlas', 'org_id': org_id, 'role': 'analyst', 'economy_key': 'atlas', 'approval_required': False, 'budget': {'max_per_run_usd': 0.5}, 'runtime_binding': {'runtime_id': 'local_kernel', 'runtime_label': 'Local Kernel Runtime', 'bound_org_id': org_id, 'boundary_name': 'workspace', 'identity_model': 'session', 'runtime_registered': True, 'registration_status': 'registered'}}, indent=2))\n",
+        )
+        .expect("write registry");
+        fs::write(
+            kernel_dir.join("court.py"),
+            "def get_restrictions(agent_id, org_id=None):\n    return []\n",
+        )
+        .expect("write court");
+        fs::write(
+            kernel_dir.join("authority.py"),
+            "def check_authority(agent_id, action, org_id=None):\n    return True, 'ok'\n",
+        )
+        .expect("write authority");
+        fs::write(
+            kernel_dir.join("treasury.py"),
+            "def check_budget(agent_id, cost_usd, org_id=None):\n    return True, 'ok'\n",
+        )
+        .expect("write treasury");
+        fs::write(
+            kernel_dir.join("audit.py"),
+            "def log_event(*args, **kwargs):\n    return 'evt_watch'\n",
+        )
+        .expect("write audit");
+        fs::write(kernel_dir.join("adapters/__init__.py"), "").expect("write adapter init");
+        fs::write(
+            kernel_dir.join("adapters/openclaw_compatible.py"),
+            "def pre_action_check(org_id, envelope):\n    return {'allowed': True, 'stage': 'ok', 'reason': 'ok', 'restrictions': []}\n",
+        )
+        .expect("write adapter");
+        init_workspace(
+            &root,
+            "embedded",
+            Some(kernel.to_string_lossy().as_ref()),
+            "org_demo",
+        )
+        .expect("init workspace");
+        let envelope = sample_envelope();
+        enqueue_action(&root, &kernel, &envelope).expect("enqueue");
+
+        let summary = watch_supervisor(
+            &root,
+            Some(kernel.to_string_lossy().as_ref()),
+            1,
+            2,
+            0,
+        )
+        .expect("watch supervisor");
+        assert_eq!(summary.iterations, 2);
+        assert_eq!(summary.processed, 1);
+        assert!(summary.heartbeat_log_path.exists());
+        assert!(summary.status_path.exists());
+        let status = fs::read_to_string(&summary.status_path).expect("status");
+        assert!(status.contains("\"status\": \"watch_complete\""));
+        let heartbeat = fs::read_to_string(&summary.heartbeat_log_path).expect("heartbeat");
+        assert!(heartbeat.contains("\"iteration\":1"));
+        assert!(heartbeat.contains("\"iteration\":2"));
+        let human = render_supervisor_watch_human(&summary);
+        assert!(human.contains("experimental local queue supervisor loop"));
+    }
+
+    #[test]
+    fn supervisor_status_reads_written_artifacts() {
+        let root = temp_path("loom-shadow-supervisor-status");
+        fs::create_dir_all(&root).expect("root");
+        let kernel = temp_path("loom-shadow-supervisor-status-kernel");
+        let kernel_dir = kernel.join("kernel");
+        fs::create_dir_all(kernel_dir.join("adapters")).expect("kernel dirs");
+        fs::write(
+            kernel_dir.join("runtimes.json"),
+            "{\n  \"runtimes\": {\n    \"local_kernel\": {\"id\": \"local_kernel\", \"label\": \"Local Kernel Runtime\"},\n    \"meridian_loom\": {\"status\": \"experimental\", \"notes\": \"status fixture\", \"contract_compliance\": {\"agent_identity\": null, \"action_envelope\": null, \"cost_attribution\": null, \"approval_hook\": null, \"audit_emission\": null, \"sanction_controls\": null, \"budget_gate\": null}}\n  }\n}\n",
+        )
+        .expect("write runtimes");
+        fs::write(
+            kernel_dir.join("agent_registry.py"),
+            "import json, sys\nagent_id = sys.argv[sys.argv.index('--agent_id') + 1]\norg_id = sys.argv[sys.argv.index('--org_id') + 1] if '--org_id' in sys.argv else 'org_demo'\nprint(json.dumps({'id': agent_id, 'name': 'Atlas', 'org_id': org_id, 'role': 'analyst', 'economy_key': 'atlas', 'approval_required': False, 'budget': {'max_per_run_usd': 0.5}, 'runtime_binding': {'runtime_id': 'local_kernel', 'runtime_label': 'Local Kernel Runtime', 'bound_org_id': org_id, 'boundary_name': 'workspace', 'identity_model': 'session', 'runtime_registered': True, 'registration_status': 'registered'}}, indent=2))\n",
+        )
+        .expect("write registry");
+        fs::write(
+            kernel_dir.join("court.py"),
+            "def get_restrictions(agent_id, org_id=None):\n    return []\n",
+        )
+        .expect("write court");
+        fs::write(
+            kernel_dir.join("authority.py"),
+            "def check_authority(agent_id, action, org_id=None):\n    return True, 'ok'\n",
+        )
+        .expect("write authority");
+        fs::write(
+            kernel_dir.join("treasury.py"),
+            "def check_budget(agent_id, cost_usd, org_id=None):\n    return True, 'ok'\n",
+        )
+        .expect("write treasury");
+        fs::write(
+            kernel_dir.join("audit.py"),
+            "def log_event(*args, **kwargs):\n    return 'evt_status'\n",
+        )
+        .expect("write audit");
+        fs::write(kernel_dir.join("adapters/__init__.py"), "").expect("write adapter init");
+        fs::write(
+            kernel_dir.join("adapters/openclaw_compatible.py"),
+            "def pre_action_check(org_id, envelope):\n    return {'allowed': True, 'stage': 'ok', 'reason': 'ok', 'restrictions': []}\n",
+        )
+        .expect("write adapter");
+        init_workspace(
+            &root,
+            "embedded",
+            Some(kernel.to_string_lossy().as_ref()),
+            "org_demo",
+        )
+        .expect("init workspace");
+        let envelope = sample_envelope();
+        enqueue_action(&root, &kernel, &envelope).expect("enqueue");
+        watch_supervisor(&root, Some(kernel.to_string_lossy().as_ref()), 1, 2, 0)
+            .expect("watch supervisor");
+
+        let snapshot = supervisor_status(&root).expect("status");
+        assert!(snapshot.available);
+        assert_eq!(snapshot.processed, 1);
+        assert_eq!(snapshot.allowed, 1);
+        assert_eq!(snapshot.heartbeat_entries, 2);
+        assert_eq!(snapshot.pending_jobs, 0);
+        let human = render_supervisor_status_human(&snapshot);
+        assert!(human.contains("SUPERVISOR STATUS"));
+        assert!(human.contains("bounded local loop state is real"));
     }
 
     fn temp_path(prefix: &str) -> PathBuf {

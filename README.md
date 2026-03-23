@@ -93,6 +93,8 @@ That one rehearsal gives you:
 - `loom shadow enforce`
 - `loom action execute`
 - `loom supervisor run`
+- `loom supervisor watch`
+- `loom supervisor status`
 - `loom shadow compare`
 - `loom shadow report`
 - `loom parity report`
@@ -114,6 +116,14 @@ And a fourth rehearsal for the queue-backed supervisor path:
 ```bash
 ./scripts/rehearse_supervisor_queue.sh
 ```
+
+And a fifth rehearsal for the bounded supervisor watch loop:
+
+```bash
+./scripts/rehearse_supervisor_watch.sh
+```
+
+Its checked-in transcript lives at `examples/supervisor-watch-output.txt`.
 
 ## What exists today
 
@@ -171,6 +181,7 @@ is “what parts of a real runtime path are already tangible?”
 |---|---|
 | Governed local supervisor | `loom action execute` now dispatches an experimental local Python worker when the effective decision is `allow`, and still fails closed with exit code `2` when denied. This is a real local supervisor path, not a hosted runtime replacement. |
 | Queue-backed supervisor lane | `loom action enqueue` and `loom supervisor run` now provide a real local queue boundary. A queued action is materialized under `.loom/runtime/queue/`, then processed through the same decision surface and worker dispatch path when the supervisor runs. |
+| Supervisor watch loop | `loom supervisor watch` now runs that same queue supervisor in a bounded polling loop, writes `.loom/runtime/supervisor/status.json`, and appends heartbeat history into `.loom/runtime/supervisor/heartbeat.jsonl`. This makes local supervisor state inspectable, but it is still not a daemonized or hosted scheduler. |
 | Runtime-side audit emission | `loom action execute` and `loom supervisor run` now write runtime audit entries through the kernel-owned `audit.py log-runtime` path into `kernel/runtime_audit/loom_runtime_events.jsonl` when a kernel is present. This is a canonical kernel-owned file for the current rehearsal boundary, but still not the hosted kernel's global audit trail. |
 | Parity stream | `loom action execute` now emits `.loom/parity/stream.jsonl` and `.loom/parity/latest.json`. The stream records reference-gate truth, Loom runtime execution truth, worker status, audit emission, and live-probe status. |
 | Live OpenClaw reference | On the founder host, Loom now captures a per-action OpenClaw proof artifact under `.loom/parity/openclaw/<input_hash>.json` plus `.loom/parity/openclaw_live_stream.jsonl`. This is live runtime evidence, but still not hosted per-action parity against an OpenClaw execution action. |
@@ -180,8 +191,8 @@ is “what parts of a real runtime path are already tangible?”
 
 Loom is still missing the things that would make it a real runtime:
 
-- no long-running governed worker supervisor
-- no daemonized or hosted supervisor loop
+- no unbounded or daemonized governed worker supervisor
+- no hosted supervisor loop or scheduler
 - no native transport adapters
 - no long-running scheduler/runtime loop
 - no native sanction enforcement inside a hosted worker runtime
@@ -209,6 +220,8 @@ loom capsule inspect
 loom action enqueue
 loom action execute
 loom supervisor run
+loom supervisor watch
+loom supervisor status
 loom shadow preflight
 loom shadow decide
 loom shadow enforce
@@ -296,6 +309,7 @@ rehearsal surface with:
 - a real setup path
 - a real operator grammar
 - a fail-closed decision path
+- a bounded local supervisor watch loop with heartbeat and status artifacts
 - runtime-side audit artifacts
 - a parity stream
 - honest boundaries about what is still missing

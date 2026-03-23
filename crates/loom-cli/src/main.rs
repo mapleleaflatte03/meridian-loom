@@ -12,7 +12,10 @@ use loom_shadow::{
     render_decision_human, render_decision_json, render_enqueued_action_human,
     render_enqueued_action_json, render_parity_report, render_preflight_human,
     render_preflight_json, render_runtime_execution_human, render_runtime_execution_json,
-    render_shadow_report, render_supervisor_run_human, render_supervisor_run_json, run_supervisor,
+    render_shadow_report, render_supervisor_run_human, render_supervisor_run_json,
+    render_supervisor_status_human, render_supervisor_status_json,
+    render_supervisor_watch_human, render_supervisor_watch_json, run_supervisor,
+    supervisor_status, watch_supervisor,
 };
 use std::env;
 use std::io::{self, IsTerminal};
@@ -446,7 +449,45 @@ fn handle_supervisor(args: &[String]) -> LoomResult<()> {
             }
             Ok(())
         }
-        _ => Err("supervisor supports 'run'".to_string()),
+        Some("watch") => {
+            let root = root_from(take_value(args, "--root").as_deref())?;
+            let kernel_path = take_value(args, "--kernel-path");
+            let max_jobs = take_value(args, "--max-jobs")
+                .and_then(|raw| raw.parse::<usize>().ok())
+                .unwrap_or(1);
+            let iterations = take_value(args, "--iterations")
+                .and_then(|raw| raw.parse::<usize>().ok())
+                .unwrap_or(2);
+            let poll_seconds = take_value(args, "--poll-seconds")
+                .and_then(|raw| raw.parse::<u64>().ok())
+                .unwrap_or(1);
+            let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+            let summary = watch_supervisor(
+                &root,
+                kernel_path.as_deref(),
+                max_jobs,
+                iterations,
+                poll_seconds,
+            )?;
+            if format == "json" {
+                print!("{}", render_supervisor_watch_json(&summary));
+            } else {
+                print_human(&render_supervisor_watch_human(&summary));
+            }
+            Ok(())
+        }
+        Some("status") => {
+            let root = root_from(take_value(args, "--root").as_deref())?;
+            let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+            let snapshot = supervisor_status(&root)?;
+            if format == "json" {
+                print!("{}", render_supervisor_status_json(&snapshot));
+            } else {
+                print_human(&render_supervisor_status_human(&snapshot));
+            }
+            Ok(())
+        }
+        _ => Err("supervisor supports 'run', 'watch', and 'status'".to_string()),
     }
 }
 
@@ -466,7 +507,7 @@ fn parse_f64_flag(args: &[String], flag: &str) -> Option<f64> {
 
 fn print_help() {
     print_human(
-        "Meridian Loom // HELP\n======================\nphase:       public experimental scaffold\nboundary:    operator shape is real; governed runtime is not\n\nBootstrap\n---------\n  loom init --mode <embedded|shadow|standalone> [--kernel-path PATH] [--root PATH] [--org-id ID]\n  loom doctor [--root PATH] [--format json|human]\n  loom health [--root PATH] [--format json|human]\n  loom status [--root PATH]\n  loom config show [--root PATH]\n\nGovernance surfaces\n-------------------\n  loom contract show [--root PATH] [--kernel-path PATH] [--format human|json]\n  loom capsule inspect [--root PATH]\n  loom agent resolve --agent-id ID [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom envelope build --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\nRuntime rehearsal\n-----------------\n  loom action enqueue --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom action execute --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom supervisor run [--root PATH] [--kernel-path PATH] [--max-jobs N] [--format human|json]\n  loom shadow preflight --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom shadow decide --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom shadow enforce --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom shadow compare --primary FILE [--shadow FILE] [--root PATH] [--format human|json]\n  loom shadow report [--root PATH]\n  loom parity report [--root PATH]\n\nNext\n----\n  1. loom init --mode embedded --root /tmp/loom-rehearsal --kernel-path /tmp/meridian-kernel\n  2. loom action enqueue --agent-id agent_atlas --action-type research --resource web_search --root /tmp/loom-rehearsal\n  3. loom supervisor run --root /tmp/loom-rehearsal --max-jobs 1\n"
+        "Meridian Loom // HELP\n======================\nphase:       public experimental scaffold\nboundary:    operator shape is real; governed runtime is not\n\nBootstrap\n---------\n  loom init --mode <embedded|shadow|standalone> [--kernel-path PATH] [--root PATH] [--org-id ID]\n  loom doctor [--root PATH] [--format json|human]\n  loom health [--root PATH] [--format json|human]\n  loom status [--root PATH]\n  loom config show [--root PATH]\n\nGovernance surfaces\n-------------------\n  loom contract show [--root PATH] [--kernel-path PATH] [--format human|json]\n  loom capsule inspect [--root PATH]\n  loom agent resolve --agent-id ID [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom envelope build --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\nRuntime rehearsal\n-----------------\n  loom action enqueue --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom action execute --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom supervisor run [--root PATH] [--kernel-path PATH] [--max-jobs N] [--format human|json]\n  loom supervisor watch [--root PATH] [--kernel-path PATH] [--max-jobs N] [--iterations N] [--poll-seconds N] [--format human|json]\n  loom supervisor status [--root PATH] [--format human|json]\n  loom shadow preflight --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom shadow decide --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom shadow enforce --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom shadow compare --primary FILE [--shadow FILE] [--root PATH] [--format human|json]\n  loom shadow report [--root PATH]\n  loom parity report [--root PATH]\n\nNext\n----\n  1. loom init --mode embedded --root /tmp/loom-rehearsal --kernel-path /tmp/meridian-kernel\n  2. loom action enqueue --agent-id agent_atlas --action-type research --resource web_search --root /tmp/loom-rehearsal\n  3. loom supervisor watch --root /tmp/loom-rehearsal --max-jobs 1 --iterations 2 --poll-seconds 1\n  4. loom supervisor status --root /tmp/loom-rehearsal --format human\n"
     );
 }
 
