@@ -114,6 +114,7 @@ pub struct RuntimeExecutionCapture {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EnqueuedAction {
     pub queue_path: PathBuf,
+    pub job_path: PathBuf,
     pub input_hash: String,
     pub agent_id: String,
     pub org_id: String,
@@ -121,6 +122,31 @@ pub struct EnqueuedAction {
     pub resource: String,
     pub estimated_cost_usd: String,
     pub kernel_path: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct JobSnapshot {
+    pub root: PathBuf,
+    pub job_id: String,
+    pub job_path: PathBuf,
+    pub status: String,
+    pub stage: String,
+    pub queue_bucket: String,
+    pub queued_at: String,
+    pub updated_at: String,
+    pub agent_id: String,
+    pub org_id: String,
+    pub action_type: String,
+    pub resource: String,
+    pub estimated_cost_usd: String,
+    pub runtime_outcome: String,
+    pub worker_status: String,
+    pub queue_path: Option<PathBuf>,
+    pub decision_path: Option<PathBuf>,
+    pub execution_path: Option<PathBuf>,
+    pub audit_log_path: Option<PathBuf>,
+    pub parity_report_path: Option<PathBuf>,
+    pub note: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -769,6 +795,65 @@ pub fn capture_runtime_execution(
     };
     fs::write(&execution_path, render_runtime_execution_json(&capture)).map_err(io_err)?;
     fs::write(&parity_report_path, render_parity_report_json(&capture)).map_err(io_err)?;
+    let existing_job = read_job_snapshot(root, &decision.input_hash).ok();
+    let queue_path = existing_job
+        .as_ref()
+        .and_then(|snapshot| snapshot.queue_path.clone());
+    let queue_bucket = existing_job
+        .as_ref()
+        .map(|snapshot| snapshot.queue_bucket.clone())
+        .unwrap_or_else(|| "(none)".to_string());
+    let queued_at = existing_job
+        .as_ref()
+        .map(|snapshot| snapshot.queued_at.clone())
+        .unwrap_or_else(timestamp_now);
+    let status = if capture.overall_decision == "allow"
+        && capture.worker_status == "completed"
+        && capture.runtime_outcome == "worker_executed"
+    {
+        "completed".to_string()
+    } else if capture.overall_decision == "deny" {
+        "denied".to_string()
+    } else if capture.worker_status == "failed" {
+        "failed".to_string()
+    } else {
+        "runtime_rehearsed".to_string()
+    };
+    let stage = if queue_bucket == "processed" || queue_bucket == "failed" {
+        "local_queue_supervisor".to_string()
+    } else {
+        "runtime_execute".to_string()
+    };
+    write_job_snapshot(
+        root,
+        JobSnapshot {
+            root: root.to_path_buf(),
+            job_id: decision.input_hash.clone(),
+            job_path: job_snapshot_path(root, &decision.input_hash),
+            status,
+            stage,
+            queue_bucket,
+            queued_at,
+            updated_at: timestamp_now(),
+            agent_id: decision.agent_id.clone(),
+            org_id: decision.org_id.clone(),
+            action_type: decision.action_type.clone(),
+            resource: decision.resource.clone(),
+            estimated_cost_usd: format!("{:.6}", decision.estimated_cost_usd),
+            runtime_outcome: capture.runtime_outcome.clone(),
+            worker_status: capture.worker_status.clone(),
+            queue_path,
+            decision_path: Some(capture.decision_path.clone()),
+            execution_path: Some(capture.execution_path.clone()),
+            audit_log_path: Some(capture.audit_log_path.clone()),
+            parity_report_path: Some(capture.parity_report_path.clone()),
+            note: if capture.worker_note.is_empty() {
+                format!("runtime execution {} via {}", capture.runtime_outcome, capture.effective_stage)
+            } else {
+                capture.worker_note.clone()
+            },
+        },
+    )?;
     Ok(capture)
 }
 
@@ -803,8 +888,36 @@ pub fn enqueue_action(
         ),
     )
     .map_err(io_err)?;
+    let job_path = job_snapshot_path(root, &input_hash);
+    write_job_snapshot(
+        root,
+        JobSnapshot {
+            root: root.to_path_buf(),
+            job_id: input_hash.clone(),
+            job_path: job_path.clone(),
+            status: "queued".to_string(),
+            stage: "queue_pending".to_string(),
+            queue_bucket: "pending".to_string(),
+            queued_at: timestamp_now(),
+            updated_at: timestamp_now(),
+            agent_id: envelope.agent_id.clone(),
+            org_id: envelope.org_id.clone(),
+            action_type: envelope.action_type.clone(),
+            resource: envelope.resource.clone(),
+            estimated_cost_usd: format!("{:.6}", envelope.estimated_cost_usd),
+            runtime_outcome: "not_started".to_string(),
+            worker_status: "queued".to_string(),
+            queue_path: Some(queue_path.clone()),
+            decision_path: None,
+            execution_path: None,
+            audit_log_path: None,
+            parity_report_path: None,
+            note: "queued for local supervisor rehearsal".to_string(),
+        },
+    )?;
     Ok(EnqueuedAction {
         queue_path,
+        job_path,
         input_hash,
         agent_id: envelope.agent_id.clone(),
         org_id: envelope.org_id.clone(),
@@ -917,7 +1030,52 @@ pub fn run_supervisor(
                     path.file_name()
                         .ok_or_else(|| format!("invalid queue file {}", path.display()))?,
                 );
-                fs::rename(&path, destination).map_err(io_err)?;
+                fs::rename(&path, destination.clone()).map_err(io_err)?;
+                let mut snapshot = read_job_snapshot(root, &capture.input_hash)
+                    .unwrap_or_else(|_| JobSnapshot {
+                        root: root.to_path_buf(),
+                        job_id: capture.input_hash.clone(),
+                        job_path: job_snapshot_path(root, &capture.input_hash),
+                        status: "runtime_rehearsed".to_string(),
+                        stage: "local_queue_supervisor".to_string(),
+                        queue_bucket: "processed".to_string(),
+                        queued_at: timestamp_now(),
+                        updated_at: timestamp_now(),
+                        agent_id: capture.agent_id.clone(),
+                        org_id: capture.org_id.clone(),
+                        action_type: capture.action_type.clone(),
+                        resource: capture.resource.clone(),
+                        estimated_cost_usd: format!("{:.6}", capture.estimated_cost_usd),
+                        runtime_outcome: capture.runtime_outcome.clone(),
+                        worker_status: capture.worker_status.clone(),
+                        queue_path: None,
+                        decision_path: Some(capture.decision_path.clone()),
+                        execution_path: Some(capture.execution_path.clone()),
+                        audit_log_path: Some(capture.audit_log_path.clone()),
+                        parity_report_path: Some(capture.parity_report_path.clone()),
+                        note: capture.worker_note.clone(),
+                    });
+                snapshot.queue_bucket = "processed".to_string();
+                snapshot.stage = "local_queue_supervisor".to_string();
+                snapshot.updated_at = timestamp_now();
+                snapshot.queue_path = Some(destination);
+                snapshot.decision_path = Some(capture.decision_path.clone());
+                snapshot.execution_path = Some(capture.execution_path.clone());
+                snapshot.audit_log_path = Some(capture.audit_log_path.clone());
+                snapshot.parity_report_path = Some(capture.parity_report_path.clone());
+                snapshot.runtime_outcome = capture.runtime_outcome.clone();
+                snapshot.worker_status = capture.worker_status.clone();
+                snapshot.status = if capture.overall_decision == "allow" {
+                    if capture.worker_status == "completed" {
+                        "completed".to_string()
+                    } else {
+                        "failed".to_string()
+                    }
+                } else {
+                    "denied".to_string()
+                };
+                snapshot.note = capture.worker_note.clone();
+                write_job_snapshot(root, snapshot)?;
             }
             Err(error) => {
                 summary.failed += 1;
@@ -934,6 +1092,37 @@ pub fn run_supervisor(
                 );
                 fs::write(&destination, failure_payload).map_err(io_err)?;
                 fs::remove_file(&path).map_err(io_err)?;
+                if let Some(input_hash) = extract_json_string(&contents, "\"input_hash\"") {
+                    write_job_snapshot(
+                        root,
+                        JobSnapshot {
+                            root: root.to_path_buf(),
+                            job_id: input_hash.clone(),
+                            job_path: job_snapshot_path(root, &input_hash),
+                            status: "failed".to_string(),
+                            stage: "local_queue_supervisor".to_string(),
+                            queue_bucket: "failed".to_string(),
+                            queued_at: extract_json_string(&contents, "\"queued_at\"")
+                                .unwrap_or_else(timestamp_now),
+                            updated_at: timestamp_now(),
+                            agent_id: extract_json_string(&contents, "\"agent_id\"").unwrap_or_default(),
+                            org_id: extract_json_string(&contents, "\"org_id\"").unwrap_or_default(),
+                            action_type: extract_json_string(&contents, "\"action_type\"").unwrap_or_default(),
+                            resource: extract_json_string(&contents, "\"resource\"").unwrap_or_default(),
+                            estimated_cost_usd: extract_json_number(&contents, "\"estimated_cost_usd\"")
+                                .map(|value| format!("{:.6}", value))
+                                .unwrap_or_else(|| "0.000000".to_string()),
+                            runtime_outcome: "supervisor_failed".to_string(),
+                            worker_status: "failed_before_dispatch".to_string(),
+                            queue_path: Some(destination),
+                            decision_path: None,
+                            execution_path: None,
+                            audit_log_path: None,
+                            parity_report_path: None,
+                            note: error,
+                        },
+                    )?;
+                }
             }
         }
     }
@@ -945,6 +1134,40 @@ pub fn run_supervisor(
         );
     }
     Ok(summary)
+}
+
+pub fn list_jobs(
+    root: &Path,
+    status_filter: Option<&str>,
+    limit: usize,
+) -> ShadowResult<Vec<JobSnapshot>> {
+    let jobs_dir = ensure_runtime_jobs_dir(root)?;
+    let mut jobs = fs::read_dir(&jobs_dir)
+        .map_err(io_err)?
+        .filter_map(|entry| entry.ok().map(|item| item.path()))
+        .filter(|path| path.is_dir())
+        .filter_map(|path| {
+            let job_id = path.file_name()?.to_string_lossy().to_string();
+            read_job_snapshot(root, &job_id).ok()
+        })
+        .collect::<Vec<_>>();
+    jobs.sort_by(|left, right| {
+        right
+            .updated_at
+            .cmp(&left.updated_at)
+            .then_with(|| right.job_id.cmp(&left.job_id))
+    });
+    if let Some(filter) = status_filter {
+        jobs.retain(|job| job.status == filter);
+    }
+    if limit > 0 {
+        jobs.truncate(limit);
+    }
+    Ok(jobs)
+}
+
+pub fn inspect_job(root: &Path, job_id: &str) -> ShadowResult<JobSnapshot> {
+    read_job_snapshot(root, job_id)
 }
 
 pub fn watch_supervisor(
@@ -1605,7 +1828,7 @@ pub fn render_runtime_execution_human(capture: &RuntimeExecutionCapture) -> Stri
         .map(|path| path.display().to_string())
         .unwrap_or_else(|| "(unknown)".to_string());
     format!(
-        "Meridian Loom // RUNTIME EXECUTE\n=================================\nphase:       experimental runtime rehearsal\nboundary:    local governed supervisor path is real; hosted runtime replacement is not\n\nDecision\n========\nagent_id:            {}\norg_id:              {}\naction_type:         {}\nresource:            {}\ninput_hash:          {}\nestimated_cost_usd:  {:.4}\noverall_decision:    {}\neffective_source:    {}\neffective_stage:     {}\nreference_decision:  {}\nreference_stage:     {}\nruntime_outcome:     {}\nworker_status:       {}\nworker_kind:         {}\nworker_note:         {}\nparity_status:       {}\nparity_reason:       {}\n\nworker supervisor artifacts\n===========================\nworker_request:      {}\nworker_result:       {}\nworker_log:          {}\n\naudit / parity artifacts\n========================\nexecution_path:      {}\ndecision_path:       {}\naudit_log:           {} ({})\nparity_stream:       {}\nparity_report:       {}\nopenclaw_live_probe: {} ({})\nopenclaw_probe_log:  {}\n\nNext\n====\n1. loom parity report --root {}\n2. loom shadow report --root {}\n3. Inspect {} for worker execution details.\n4. Inspect {} for runtime-side audit details.\n",
+        "Meridian Loom // RUNTIME EXECUTE\n=================================\nphase:       experimental runtime rehearsal\nboundary:    local governed supervisor path is real; hosted runtime replacement is not\n\nDecision\n========\nagent_id:            {}\norg_id:              {}\naction_type:         {}\nresource:            {}\ninput_hash:          {}\nestimated_cost_usd:  {:.4}\noverall_decision:    {}\neffective_source:    {}\neffective_stage:     {}\nreference_decision:  {}\nreference_stage:     {}\nruntime_outcome:     {}\nworker_status:       {}\nworker_kind:         {}\nworker_note:         {}\nparity_status:       {}\nparity_reason:       {}\n\nworker supervisor artifacts\n===========================\nworker_request:      {}\nworker_result:       {}\nworker_log:          {}\n\naudit / parity artifacts\n========================\nexecution_path:      {}\ndecision_path:       {}\naudit_log:           {} ({})\nparity_stream:       {}\nparity_report:       {}\nopenclaw_live_probe: {} ({})\nopenclaw_probe_log:  {}\n\nNext\n====\n1. loom job inspect --job-id {} --root {}\n2. loom parity report --root {}\n3. loom shadow report --root {}\n4. Inspect {} for worker execution details.\n5. Inspect {} for runtime-side audit details.\n",
         capture.agent_id,
         capture.org_id,
         capture.action_type,
@@ -1643,6 +1866,8 @@ pub fn render_runtime_execution_human(capture: &RuntimeExecutionCapture) -> Stri
             .as_ref()
             .map(|path| path.display().to_string())
             .unwrap_or_else(|| "(not captured)".to_string()),
+        capture.input_hash,
+        root,
         root,
         root,
         capture.worker_log_path.display(),
@@ -1696,8 +1921,9 @@ pub fn render_runtime_execution_json(capture: &RuntimeExecutionCapture) -> Strin
 
 pub fn render_enqueued_action_human(capture: &EnqueuedAction) -> String {
     format!(
-        "Meridian Loom // ACTION ENQUEUED\n=================================\nqueue_path:           {}\ninput_hash:           {}\nagent_id:             {}\norg_id:               {}\naction_type:          {}\nresource:             {}\nestimated_cost_usd:   {}\nkernel_path:          {}\nnext_step:            loom supervisor run --root <path> --max-jobs 1\n",
+        "Meridian Loom // ACTION ENQUEUED\n=================================\nqueue_path:           {}\njob_path:             {}\ninput_hash:           {}\nagent_id:             {}\norg_id:               {}\naction_type:          {}\nresource:             {}\nestimated_cost_usd:   {}\nkernel_path:          {}\nnext_step:            loom job inspect --job-id {} --root <path>\nthen:                 loom supervisor run --root <path> --max-jobs 1\n",
         capture.queue_path.display(),
+        capture.job_path.display(),
         capture.input_hash,
         capture.agent_id,
         capture.org_id,
@@ -1705,13 +1931,15 @@ pub fn render_enqueued_action_human(capture: &EnqueuedAction) -> String {
         capture.resource,
         capture.estimated_cost_usd,
         capture.kernel_path,
+        capture.input_hash,
     )
 }
 
 pub fn render_enqueued_action_json(capture: &EnqueuedAction) -> String {
     format!(
-        "{{\n  \"status\": \"queued\",\n  \"queue_path\": {},\n  \"input_hash\": {},\n  \"agent_id\": {},\n  \"org_id\": {},\n  \"action_type\": {},\n  \"resource\": {},\n  \"estimated_cost_usd\": {},\n  \"kernel_path\": {}\n}}\n",
+        "{{\n  \"status\": \"queued\",\n  \"queue_path\": {},\n  \"job_path\": {},\n  \"input_hash\": {},\n  \"agent_id\": {},\n  \"org_id\": {},\n  \"action_type\": {},\n  \"resource\": {},\n  \"estimated_cost_usd\": {},\n  \"kernel_path\": {}\n}}\n",
         json_string(&capture.queue_path.display().to_string()),
+        json_string(&capture.job_path.display().to_string()),
         json_string(&capture.input_hash),
         json_string(&capture.agent_id),
         json_string(&capture.org_id),
@@ -1719,6 +1947,90 @@ pub fn render_enqueued_action_json(capture: &EnqueuedAction) -> String {
         json_string(&capture.resource),
         capture.estimated_cost_usd,
         json_string(&capture.kernel_path),
+    )
+}
+
+pub fn render_job_list_human(root: &Path, jobs: &[JobSnapshot], status_filter: Option<&str>) -> String {
+    let entries = if jobs.is_empty() {
+        "  (none)\n".to_string()
+    } else {
+        jobs.iter()
+            .map(|job| {
+                format!(
+                    "  {} | status={} | stage={} | bucket={} | agent={} | action={}::{} | updated_at={}\n",
+                    job.job_id,
+                    job.status,
+                    job.stage,
+                    job.queue_bucket,
+                    job.agent_id,
+                    job.action_type,
+                    job.resource,
+                    job.updated_at
+                )
+            })
+            .collect::<String>()
+    };
+    format!(
+        "Meridian Loom // JOB LIST\n==========================\nphase:       experimental runtime-owned job ledger\nboundary:    local job state is real; hosted scheduler remains future work\n\nCurrent state\n=============\nroot:                {}\nstatus_filter:       {}\njobs_found:          {}\n\nEntries\n-------\n{}\
+\nNext\n====\n1. loom job inspect --job-id <input_hash> --root {}\n2. loom supervisor daemon status --root {}\n3. loom parity report --root {}\n",
+        root.display(),
+        status_filter.unwrap_or("(none)"),
+        jobs.len(),
+        entries,
+        root.display(),
+        root.display(),
+        root.display(),
+    )
+}
+
+pub fn render_job_list_json(jobs: &[JobSnapshot]) -> String {
+    let rendered = jobs
+        .iter()
+        .map(render_job_snapshot_json)
+        .collect::<Vec<_>>()
+        .join(",\n");
+    format!(
+        "{{\n  \"status\": \"job_list\",\n  \"jobs\": [\n{}\n  ]\n}}\n",
+        rendered
+    )
+}
+
+pub fn render_job_inspect_human(job: &JobSnapshot) -> String {
+    format!(
+        "Meridian Loom // JOB INSPECT\n=============================\nphase:       experimental runtime-owned job ledger\nboundary:    job lifecycle is locally inspectable; hosted scheduler remains future work\n\nCurrent state\n=============\njob_id:              {}\nstatus:              {}\nstage:               {}\nqueue_bucket:        {}\nqueued_at:           {}\nupdated_at:          {}\nagent_id:            {}\norg_id:              {}\naction_type:         {}\nresource:            {}\nestimated_cost_usd:  {}\nruntime_outcome:     {}\nworker_status:       {}\nnote:                {}\n\nArtifacts\n=========\njob_path:            {}\nqueue_path:          {}\ndecision_path:       {}\nexecution_path:      {}\naudit_log_path:      {}\nparity_report_path:  {}\n\nNext\n====\n1. loom parity report --root {}\n2. loom shadow report --root {}\n3. Inspect {} for the latest persisted job state.\n",
+        job.job_id,
+        job.status,
+        job.stage,
+        job.queue_bucket,
+        job.queued_at,
+        job.updated_at,
+        job.agent_id,
+        job.org_id,
+        job.action_type,
+        job.resource,
+        job.estimated_cost_usd,
+        job.runtime_outcome,
+        job.worker_status,
+        job.note,
+        job.job_path.display(),
+        display_optional_path(job.queue_path.as_ref()),
+        display_optional_path(job.decision_path.as_ref()),
+        display_optional_path(job.execution_path.as_ref()),
+        display_optional_path(job.audit_log_path.as_ref()),
+        display_optional_path(job.parity_report_path.as_ref()),
+        job.root.display(),
+        job.root.display(),
+        job.job_path.display(),
+    )
+}
+
+pub fn render_job_inspect_json(job: &JobSnapshot) -> String {
+    format!(
+        "{{\n  \"status\": \"job_snapshot\",\n  {}\n}}\n",
+        render_job_snapshot_json(job)
+            .trim()
+            .trim_start_matches('{')
+            .trim_end_matches('}')
     )
 }
 
@@ -2204,6 +2516,12 @@ fn ensure_runtime_dir(root: &Path) -> ShadowResult<PathBuf> {
     Ok(runtime_dir)
 }
 
+fn ensure_runtime_jobs_dir(root: &Path) -> ShadowResult<PathBuf> {
+    let jobs_dir = ensure_runtime_dir(root)?.join("jobs");
+    fs::create_dir_all(&jobs_dir).map_err(io_err)?;
+    Ok(jobs_dir)
+}
+
 fn ensure_audit_dir(root: &Path) -> ShadowResult<PathBuf> {
     let audit_dir = root.join(".loom/audit");
     fs::create_dir_all(&audit_dir).map_err(io_err)?;
@@ -2674,6 +2992,69 @@ fn append_line(path: &Path, line: &str) -> ShadowResult<()> {
     Ok(())
 }
 
+fn job_snapshot_path(root: &Path, job_id: &str) -> PathBuf {
+    root.join(".loom/runtime/jobs").join(job_id).join("job.json")
+}
+
+fn write_job_snapshot(root: &Path, snapshot: JobSnapshot) -> ShadowResult<()> {
+    let jobs_dir = ensure_runtime_jobs_dir(root)?;
+    let job_dir = jobs_dir.join(&snapshot.job_id);
+    fs::create_dir_all(&job_dir).map_err(io_err)?;
+    let job_path = job_dir.join("job.json");
+    fs::write(&job_path, render_job_snapshot_json(&snapshot)).map_err(io_err)?;
+    let ledger_path = jobs_dir.join("ledger.jsonl");
+    append_line(
+        &ledger_path,
+        &format!(
+            "{{\"timestamp\":{},\"job_id\":{},\"status\":{},\"stage\":{},\"queue_bucket\":{},\"agent_id\":{},\"org_id\":{},\"action_type\":{},\"resource\":{},\"updated_at\":{},\"job_path\":{}}}\n",
+            json_string(&snapshot.updated_at),
+            json_string(&snapshot.job_id),
+            json_string(&snapshot.status),
+            json_string(&snapshot.stage),
+            json_string(&snapshot.queue_bucket),
+            json_string(&snapshot.agent_id),
+            json_string(&snapshot.org_id),
+            json_string(&snapshot.action_type),
+            json_string(&snapshot.resource),
+            json_string(&snapshot.updated_at),
+            json_string(&job_path.display().to_string()),
+        ),
+    )?;
+    Ok(())
+}
+
+fn read_job_snapshot(root: &Path, job_id: &str) -> ShadowResult<JobSnapshot> {
+    let job_path = job_snapshot_path(root, job_id);
+    let contents = fs::read_to_string(&job_path).map_err(io_err)?;
+    Ok(JobSnapshot {
+        root: root.to_path_buf(),
+        job_id: extract_json_string(&contents, "\"job_id\"")
+            .unwrap_or_else(|| job_id.to_string()),
+        job_path,
+        status: extract_json_string(&contents, "\"job_status\"").unwrap_or_default(),
+        stage: extract_json_string(&contents, "\"job_stage\"").unwrap_or_default(),
+        queue_bucket: extract_json_string(&contents, "\"queue_bucket\"").unwrap_or_else(|| "(none)".to_string()),
+        queued_at: extract_json_string(&contents, "\"queued_at\"").unwrap_or_default(),
+        updated_at: extract_json_string(&contents, "\"updated_at\"").unwrap_or_default(),
+        agent_id: extract_json_string(&contents, "\"agent_id\"").unwrap_or_default(),
+        org_id: extract_json_string(&contents, "\"org_id\"").unwrap_or_default(),
+        action_type: extract_json_string(&contents, "\"action_type\"").unwrap_or_default(),
+        resource: extract_json_string(&contents, "\"resource\"").unwrap_or_default(),
+        estimated_cost_usd: extract_json_string(&contents, "\"estimated_cost_usd\"")
+            .unwrap_or_else(|| "0.000000".to_string()),
+        runtime_outcome: extract_json_string(&contents, "\"runtime_outcome\"")
+            .unwrap_or_else(|| "not_started".to_string()),
+        worker_status: extract_json_string(&contents, "\"worker_status\"")
+            .unwrap_or_else(|| "not_started".to_string()),
+        queue_path: extract_optional_path(&contents, "\"queue_path\""),
+        decision_path: extract_optional_path(&contents, "\"decision_path\""),
+        execution_path: extract_optional_path(&contents, "\"execution_path\""),
+        audit_log_path: extract_optional_path(&contents, "\"audit_log_path\""),
+        parity_report_path: extract_optional_path(&contents, "\"parity_report_path\""),
+        note: extract_json_string(&contents, "\"note\"").unwrap_or_default(),
+    })
+}
+
 fn sanitize_filename(input: &str) -> String {
     input
         .chars()
@@ -2743,6 +3124,12 @@ fn extract_json_number(section: &str, key: &str) -> Option<f64> {
     rest[..end].trim().parse::<f64>().ok()
 }
 
+fn extract_optional_path(section: &str, key: &str) -> Option<PathBuf> {
+    extract_json_string(section, key)
+        .filter(|value| !value.trim().is_empty())
+        .map(PathBuf::from)
+}
+
 fn json_string(input: &str) -> String {
     format!("{:?}", input)
 }
@@ -2758,6 +3145,57 @@ fn render_json_string_array(values: &[String]) -> String {
 
 fn io_err(error: impl std::fmt::Display) -> String {
     error.to_string()
+}
+
+fn display_optional_path(path: Option<&PathBuf>) -> String {
+    path.map(|value| value.display().to_string())
+        .unwrap_or_else(|| "(not captured)".to_string())
+}
+
+fn render_job_snapshot_json(snapshot: &JobSnapshot) -> String {
+    format!(
+        "    {{\n      \"job_id\": {},\n      \"job_path\": {},\n      \"job_status\": {},\n      \"job_stage\": {},\n      \"queue_bucket\": {},\n      \"queued_at\": {},\n      \"updated_at\": {},\n      \"agent_id\": {},\n      \"org_id\": {},\n      \"action_type\": {},\n      \"resource\": {},\n      \"estimated_cost_usd\": {},\n      \"runtime_outcome\": {},\n      \"worker_status\": {},\n      \"queue_path\": {},\n      \"decision_path\": {},\n      \"execution_path\": {},\n      \"audit_log_path\": {},\n      \"parity_report_path\": {},\n      \"note\": {}\n    }}",
+        json_string(&snapshot.job_id),
+        json_string(&snapshot.job_path.display().to_string()),
+        json_string(&snapshot.status),
+        json_string(&snapshot.stage),
+        json_string(&snapshot.queue_bucket),
+        json_string(&snapshot.queued_at),
+        json_string(&snapshot.updated_at),
+        json_string(&snapshot.agent_id),
+        json_string(&snapshot.org_id),
+        json_string(&snapshot.action_type),
+        json_string(&snapshot.resource),
+        json_string(&snapshot.estimated_cost_usd),
+        json_string(&snapshot.runtime_outcome),
+        json_string(&snapshot.worker_status),
+        snapshot
+            .queue_path
+            .as_ref()
+            .map(|path| json_string(&path.display().to_string()))
+            .unwrap_or_else(|| "null".to_string()),
+        snapshot
+            .decision_path
+            .as_ref()
+            .map(|path| json_string(&path.display().to_string()))
+            .unwrap_or_else(|| "null".to_string()),
+        snapshot
+            .execution_path
+            .as_ref()
+            .map(|path| json_string(&path.display().to_string()))
+            .unwrap_or_else(|| "null".to_string()),
+        snapshot
+            .audit_log_path
+            .as_ref()
+            .map(|path| json_string(&path.display().to_string()))
+            .unwrap_or_else(|| "null".to_string()),
+        snapshot
+            .parity_report_path
+            .as_ref()
+            .map(|path| json_string(&path.display().to_string()))
+            .unwrap_or_else(|| "null".to_string()),
+        json_string(&snapshot.note),
+    )
 }
 
 fn timestamp_now() -> String {
@@ -3057,10 +3495,71 @@ mod tests {
         let capture = enqueue_action(&root, Path::new("/tmp/meridian-kernel"), &envelope)
             .expect("enqueue");
         assert!(capture.queue_path.exists());
+        assert!(capture.job_path.exists());
         let queued = fs::read_to_string(&capture.queue_path).expect("queued file");
         assert!(queued.contains("\"status\": \"queued\""));
         assert!(queued.contains("\"agent_id\": \"agent_atlas\""));
         assert!(queued.contains("\"kernel_path\": \"/tmp/meridian-kernel\""));
+        let job = fs::read_to_string(&capture.job_path).expect("job file");
+        assert!(job.contains("\"job_status\": \"queued\""));
+        assert!(job.contains("\"queue_bucket\": \"pending\""));
+    }
+
+    #[test]
+    fn job_list_and_inspect_surface_runtime_owned_state() {
+        let root = temp_path("loom-shadow-job-ledger");
+        fs::create_dir_all(&root).expect("root");
+        let kernel_root = temp_path("loom-shadow-job-ledger-kernel");
+        let kernel_dir = kernel_root.join("kernel");
+        fs::create_dir_all(kernel_dir.join("adapters")).expect("kernel dirs");
+        fs::write(
+            kernel_dir.join("runtimes.json"),
+            "{\n  \"runtimes\": {\n    \"local_kernel\": {\"id\": \"local_kernel\", \"label\": \"Local Kernel Runtime\"},\n    \"meridian_loom\": {\"status\": \"experimental\", \"notes\": \"job fixture\", \"contract_compliance\": {\"agent_identity\": null, \"action_envelope\": null, \"cost_attribution\": null, \"approval_hook\": null, \"audit_emission\": null, \"sanction_controls\": null, \"budget_gate\": null}}\n  }\n}\n",
+        )
+        .expect("write runtimes");
+        fs::write(
+            kernel_dir.join("agent_registry.py"),
+            "import json, sys\nagent_id = sys.argv[sys.argv.index('--agent_id') + 1]\norg_id = sys.argv[sys.argv.index('--org_id') + 1] if '--org_id' in sys.argv else 'org_demo'\nprint(json.dumps({'id': agent_id, 'name': 'Atlas', 'org_id': org_id, 'role': 'analyst', 'economy_key': 'atlas', 'approval_required': False, 'budget': {'max_per_run_usd': 0.5}, 'runtime_binding': {'runtime_id': 'local_kernel', 'runtime_label': 'Local Kernel Runtime', 'bound_org_id': org_id, 'boundary_name': 'workspace', 'identity_model': 'session', 'runtime_registered': True, 'registration_status': 'registered'}}, indent=2))\n",
+        )
+        .expect("write registry");
+        fs::write(kernel_dir.join("court.py"), "def get_restrictions(agent_id, org_id=None):\n    return []\n")
+            .expect("write court");
+        fs::write(kernel_dir.join("authority.py"), "def check_authority(agent_id, action, org_id=None):\n    return True, 'ok'\n")
+            .expect("write authority");
+        fs::write(kernel_dir.join("treasury.py"), "def check_budget(agent_id, cost_usd, org_id=None):\n    return True, 'ok'\n")
+            .expect("write treasury");
+        fs::write(kernel_dir.join("audit.py"), "def log_event(*args, **kwargs):\n    return 'evt_jobs'\n")
+            .expect("write audit");
+        fs::write(kernel_dir.join("adapters/__init__.py"), "").expect("write adapter init");
+        fs::write(
+            kernel_dir.join("adapters/openclaw_compatible.py"),
+            "def pre_action_check(org_id, envelope):\n    return {'allowed': True, 'stage': 'ok', 'reason': 'ok', 'restrictions': []}\n",
+        )
+        .expect("write adapter");
+        init_workspace(
+            &root,
+            "embedded",
+            Some(kernel_root.to_string_lossy().as_ref()),
+            "org_demo",
+        )
+        .expect("init workspace");
+        let envelope = sample_envelope();
+        let capture = enqueue_action(&root, &kernel_root, &envelope).expect("enqueue");
+        let queued = inspect_job(&root, &capture.input_hash).expect("queued job");
+        assert_eq!(queued.status, "queued");
+        assert_eq!(queued.queue_bucket, "pending");
+        let queued_human = render_job_inspect_human(&queued);
+        assert!(queued_human.contains("JOB INSPECT"));
+
+        run_supervisor(&root, Some(kernel_root.to_string_lossy().as_ref()), 1).expect("supervisor");
+        let jobs = list_jobs(&root, None, 10).expect("job list");
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].status, "completed");
+        assert_eq!(jobs[0].queue_bucket, "processed");
+        assert!(jobs[0].execution_path.is_some());
+        let list_human = render_job_list_human(&root, &jobs, None);
+        assert!(list_human.contains("experimental runtime-owned job ledger"));
+        assert!(list_human.contains("status=completed"));
     }
 
     #[test]

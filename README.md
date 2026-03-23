@@ -87,6 +87,8 @@ That one rehearsal gives you:
 - `loom agent resolve`
 - `loom envelope build`
 - `loom capsule inspect`
+- `loom job list`
+- `loom job inspect`
 - `loom action enqueue`
 - `loom shadow preflight`
 - `loom shadow decide`
@@ -146,6 +148,7 @@ Its checked-in transcript lives at `examples/supervisor-daemon-output.txt`.
   - contract inspection
   - action envelope construction
   - capsule inspection
+  - runtime-owned job ledger
 - `loom-shadow`
   - shadow preflight capture
   - decision capture
@@ -194,6 +197,7 @@ is “what parts of a real runtime path are already tangible?”
 |---|---|
 | Governed local supervisor | `loom action execute` now dispatches an experimental local Python worker when the effective decision is `allow`, and still fails closed with exit code `2` when denied. This is a real local supervisor path, not a hosted runtime replacement. |
 | Queue-backed supervisor lane | `loom action enqueue` and `loom supervisor run` now provide a real local queue boundary. A queued action is materialized under `.loom/runtime/queue/`, then processed through the same decision surface and worker dispatch path when the supervisor runs. |
+| Runtime-owned job ledger | `loom job list` and `loom job inspect` now surface persisted job state from `.loom/runtime/jobs/<input_hash>/job.json`. Queue, runtime, decision, parity, and audit artifact paths are now operator-readable without spelunking the runtime tree manually. |
 | Supervisor watch loop | `loom supervisor watch` now runs that same queue supervisor in a bounded polling loop, writes `.loom/runtime/supervisor/status.json`, and appends heartbeat history into `.loom/runtime/supervisor/heartbeat.jsonl`. This makes local supervisor state inspectable, but it is still not a daemonized or hosted scheduler. |
 | Daemon lifecycle rehearsal | `loom supervisor daemon start/status/stop` now wrap the same queue supervisor with a real local lifecycle shell. A background child writes `.loom/runtime/supervisor/runtime_state.json`, appends heartbeat history, and honors a local stop request. This is still a bounded local daemon rehearsal, not a hosted supervisor service. |
 | Runtime-side audit emission | `loom action execute` and `loom supervisor run` now write runtime audit entries through the kernel-owned `audit.py log-runtime` path into `kernel/runtime_audit/loom_runtime_events.jsonl` when a kernel is present. This is a canonical kernel-owned file for the current rehearsal boundary, but still not the hosted kernel's global audit trail. |
@@ -231,6 +235,8 @@ loom contract show
 loom agent resolve
 loom envelope build
 loom capsule inspect
+loom job list
+loom job inspect
 loom action enqueue
 loom action execute
 loom supervisor run

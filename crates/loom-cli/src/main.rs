@@ -8,13 +8,14 @@ use loom_core::{
 };
 use loom_shadow::{
     capture_decision, capture_preflight, capture_runtime_execution, compare_logs,
-    decision_exit_code, enqueue_action, render_compare_human, render_compare_json,
-    render_decision_human, render_decision_json, render_enqueued_action_human,
-    render_enqueued_action_json, render_parity_report, render_preflight_human,
-    render_preflight_json, render_runtime_execution_human, render_runtime_execution_json,
-    render_supervisor_daemon_human, render_supervisor_daemon_json,
-    render_shadow_report, render_supervisor_run_human, render_supervisor_run_json,
-    render_supervisor_status_human, render_supervisor_status_json,
+    decision_exit_code, enqueue_action, inspect_job, list_jobs, render_compare_human,
+    render_compare_json, render_decision_human, render_decision_json,
+    render_enqueued_action_human, render_enqueued_action_json, render_job_inspect_human,
+    render_job_inspect_json, render_job_list_human, render_job_list_json, render_parity_report,
+    render_preflight_human, render_preflight_json, render_runtime_execution_human,
+    render_runtime_execution_json, render_supervisor_daemon_human,
+    render_supervisor_daemon_json, render_shadow_report, render_supervisor_run_human,
+    render_supervisor_run_json, render_supervisor_status_human, render_supervisor_status_json,
     render_supervisor_watch_human, render_supervisor_watch_json, run_supervisor,
     run_supervisor_daemon_loop, request_supervisor_daemon_stop, supervisor_daemon_status,
     supervisor_status, watch_supervisor,
@@ -49,6 +50,7 @@ fn run() -> LoomResult<()> {
         "config" => handle_config(&args[1..]),
         "contract" => handle_contract(&args[1..]),
         "capsule" => handle_capsule(&args[1..]),
+        "job" => handle_job(&args[1..]),
         "agent" => handle_agent(&args[1..]),
         "envelope" => handle_envelope(&args[1..]),
         "action" => handle_action(&args[1..]),
@@ -144,6 +146,39 @@ fn handle_capsule(args: &[String]) -> LoomResult<()> {
     let inspection = capsule_inspect(&root)?;
     print_human(&render_capsule_human(&inspection));
     Ok(())
+}
+
+fn handle_job(args: &[String]) -> LoomResult<()> {
+    match args.first().map(String::as_str) {
+        Some("list") => {
+            let root = root_from(take_value(args, "--root").as_deref())?;
+            let status_filter = take_value(args, "--status");
+            let limit = take_value(args, "--limit")
+                .and_then(|raw| raw.parse::<usize>().ok())
+                .unwrap_or(20);
+            let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+            let jobs = list_jobs(&root, status_filter.as_deref(), limit)?;
+            if format == "json" {
+                print!("{}", render_job_list_json(&jobs));
+            } else {
+                print_human(&render_job_list_human(&root, &jobs, status_filter.as_deref()));
+            }
+            Ok(())
+        }
+        Some("inspect") => {
+            let root = root_from(take_value(args, "--root").as_deref())?;
+            let job_id = required_flag(args, "--job-id")?;
+            let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+            let snapshot = inspect_job(&root, &job_id)?;
+            if format == "json" {
+                print!("{}", render_job_inspect_json(&snapshot));
+            } else {
+                print_human(&render_job_inspect_human(&snapshot));
+            }
+            Ok(())
+        }
+        _ => Err("job supports 'list' and 'inspect'".to_string()),
+    }
 }
 
 fn handle_agent(args: &[String]) -> LoomResult<()> {
@@ -677,7 +712,52 @@ fn chrono_like_timestamp() -> String {
 
 fn print_help() {
     print_human(
-        "Meridian Loom // HELP\n======================\nphase:       public experimental scaffold\nboundary:    operator shape is real; governed runtime is not\n\nBootstrap\n---------\n  loom init --mode <embedded|shadow|standalone> [--kernel-path PATH] [--root PATH] [--org-id ID]\n  loom doctor [--root PATH] [--format json|human]\n  loom health [--root PATH] [--format json|human]\n  loom status [--root PATH]\n  loom config show [--root PATH]\n\nGovernance surfaces\n-------------------\n  loom contract show [--root PATH] [--kernel-path PATH] [--format human|json]\n  loom capsule inspect [--root PATH]\n  loom agent resolve --agent-id ID [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom envelope build --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\nRuntime rehearsal\n-----------------\n  loom action enqueue --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom action execute --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom supervisor run [--root PATH] [--kernel-path PATH] [--max-jobs N] [--format human|json]\n  loom supervisor watch [--root PATH] [--kernel-path PATH] [--max-jobs N] [--iterations N] [--poll-seconds N] [--format human|json]\n  loom supervisor status [--root PATH] [--format human|json]\n  loom supervisor daemon start [--root PATH] [--kernel-path PATH] [--max-jobs N] [--poll-seconds N] [--iterations N] [--format human|json]\n  loom supervisor daemon status [--root PATH] [--format human|json]\n  loom supervisor daemon stop [--root PATH] [--format human|json]\n  loom shadow preflight --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom shadow decide --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom shadow enforce --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom shadow compare --primary FILE [--shadow FILE] [--root PATH] [--format human|json]\n  loom shadow report [--root PATH]\n  loom parity report [--root PATH]\n\nNext\n----\n  1. loom init --mode embedded --root /tmp/loom-rehearsal --kernel-path /tmp/meridian-kernel\n  2. loom action enqueue --agent-id agent_atlas --action-type research --resource web_search --root /tmp/loom-rehearsal\n  3. loom supervisor daemon start --root /tmp/loom-rehearsal --max-jobs 1 --poll-seconds 1 --iterations 10\n  4. loom supervisor daemon status --root /tmp/loom-rehearsal --format human\n"
+        "Meridian Loom // HELP\n\
+======================\n\
+phase:       public experimental scaffold\n\
+boundary:    operator shape is real; governed runtime is not\n\
+\n\
+Bootstrap\n\
+---------\n\
+  loom init --mode <embedded|shadow|standalone> [--kernel-path PATH] [--root PATH] [--org-id ID]\n\
+  loom doctor [--root PATH] [--format json|human]\n\
+  loom health [--root PATH] [--format json|human]\n\
+  loom status [--root PATH]\n\
+  loom config show [--root PATH]\n\
+\n\
+Governance surfaces\n\
+-------------------\n\
+  loom contract show [--root PATH] [--kernel-path PATH] [--format human|json]\n\
+  loom capsule inspect [--root PATH]\n\
+  loom job list [--root PATH] [--status STATUS] [--limit N] [--format human|json]\n\
+  loom job inspect --job-id HASH [--root PATH] [--format human|json]\n\
+  loom agent resolve --agent-id ID [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
+  loom envelope build --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
+\n\
+Runtime rehearsal\n\
+-----------------\n\
+  loom action enqueue --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
+  loom action execute --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
+  loom supervisor run [--root PATH] [--kernel-path PATH] [--max-jobs N] [--format human|json]\n\
+  loom supervisor watch [--root PATH] [--kernel-path PATH] [--max-jobs N] [--iterations N] [--poll-seconds N] [--format human|json]\n\
+  loom supervisor status [--root PATH] [--format human|json]\n\
+  loom supervisor daemon start [--root PATH] [--kernel-path PATH] [--max-jobs N] [--poll-seconds N] [--iterations N] [--format human|json]\n\
+  loom supervisor daemon status [--root PATH] [--format human|json]\n\
+  loom supervisor daemon stop [--root PATH] [--format human|json]\n\
+  loom shadow preflight --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
+  loom shadow decide --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
+  loom shadow enforce --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
+  loom shadow compare --primary FILE [--shadow FILE] [--root PATH] [--format human|json]\n\
+  loom shadow report [--root PATH]\n\
+  loom parity report [--root PATH]\n\
+\n\
+Next\n\
+----\n\
+  1. loom init --mode embedded --root /tmp/loom-rehearsal --kernel-path /tmp/meridian-kernel\n\
+  2. loom action enqueue --agent-id agent_atlas --action-type research --resource web_search --root /tmp/loom-rehearsal\n\
+  3. loom supervisor daemon start --root /tmp/loom-rehearsal --max-jobs 1 --poll-seconds 1 --iterations 10\n\
+  4. loom job list --root /tmp/loom-rehearsal --format human\n\
+  5. loom supervisor daemon status --root /tmp/loom-rehearsal --format human\n",
     );
 }
 

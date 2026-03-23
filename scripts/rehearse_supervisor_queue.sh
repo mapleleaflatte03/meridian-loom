@@ -131,12 +131,26 @@ export MERIDIAN_OPENCLAW_PROOF_SCRIPT="${KERNEL_PATH}/kernel/missing_openclaw_ru
 
 ./target/debug/loom init --mode embedded --kernel-path "${KERNEL_PATH}" --root "${ROOT_DIR}" --org-id org_demo
 ./target/debug/loom action enqueue --root "${ROOT_DIR}" --agent-id agent_allow --org-id org_demo --action-type research --resource web_search --estimated-cost-usd 0.05 --format human
+./target/debug/loom job list --root "${ROOT_DIR}" --format human
 ./target/debug/loom supervisor run --root "${ROOT_DIR}" --kernel-path "${KERNEL_PATH}" --max-jobs 1 --format human
+JOB_ID="$(python3 - <<'PY' "${ROOT_DIR}"
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+payload = json.loads((root / ".loom" / "runtime" / "last_execution.json").read_text())
+print(payload["input_hash"])
+PY
+)"
+./target/debug/loom job inspect --root "${ROOT_DIR}" --job-id "${JOB_ID}" --format human
 ./target/debug/loom parity report --root "${ROOT_DIR}"
 ./target/debug/loom shadow report --root "${ROOT_DIR}"
 
 echo "processed_queue_files:"
 find "${ROOT_DIR}/.loom/runtime/queue" -maxdepth 2 -type f | sort
+echo "job_state:"
+find "${ROOT_DIR}/.loom/runtime/jobs" -maxdepth 2 -type f | sort
 echo "canonical_runtime_audit:"
 cat "${KERNEL_PATH}/kernel/runtime_audit/loom_runtime_events.jsonl"
 

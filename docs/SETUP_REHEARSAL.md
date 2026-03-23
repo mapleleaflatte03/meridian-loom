@@ -167,9 +167,13 @@ There is now a separate queue-backed supervisor rehearsal:
 That script proves the current queue supervisor path:
 - `loom action enqueue` materializes a pending queue artifact under
   `.loom/runtime/queue/pending/`
+- `loom job list` surfaces that queued action through the runtime-owned job
+  ledger before the supervisor runs
 - `loom supervisor run` processes the queued action through the same effective
   decision surface used by `loom action execute`
 - the processed queue entry moves to `.loom/runtime/queue/processed/`
+- `loom job inspect --job-id <input_hash>` then surfaces the persisted job
+  snapshot with queue, decision, execution, parity, and audit artifact paths
 - the runtime audit lands in `kernel/runtime_audit/loom_runtime_events.jsonl`
 - parity and shadow reports stay consistent with the supervisor-processed action
 
