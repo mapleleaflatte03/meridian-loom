@@ -167,7 +167,7 @@ There is now a separate queue-backed supervisor rehearsal:
 
 That script proves the current queue supervisor path:
 - `loom action enqueue` materializes a pending queue artifact under
-  `.loom/runtime/queue/pending/`
+  `.loom/runtime/queue/pending/<policy_class>/`
 - `loom job list` surfaces that queued action through the runtime-owned job
   ledger before the supervisor runs
 - `loom supervisor run` processes the queued action through the same effective

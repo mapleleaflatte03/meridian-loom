@@ -4,7 +4,9 @@ use loom_core::{
     render_config_human, render_contract_json, render_doctor_human, render_doctor_json,
     render_envelope_human, render_envelope_json, render_health_human, render_identity_human,
     render_identity_json, resolve_agent_identity, root_from, status_human,
-    evaluate_reference_gates, LoomResult,
+    evaluate_reference_gates, LoomResult, capability_shims::{generate_shim, render_shim_human, render_shim_json, validate_shim, LegacyToolSpec},
+    wasm_limits::{default_limits, from_toml as parse_wasm_limits_toml, render_limits_human, render_limits_json, validate_limits},
+    wasm_profiles::{profile_defaults_map, render_pooling_config_human, render_pooling_config_json},
 };
 use loom_shadow::{
     capture_decision, capture_preflight, capture_runtime_execution, compare_logs,
@@ -12,6 +14,7 @@ use loom_shadow::{
     render_compare_json, render_decision_human, render_decision_json,
     render_enqueued_action_human, render_enqueued_action_json, render_job_inspect_human,
     render_job_inspect_json, render_job_list_human, render_job_list_json, render_parity_report,
+    render_supervisor_lanes_human, render_supervisor_lanes_json,
     render_preflight_human, render_preflight_json, render_runtime_execution_human,
     render_runtime_execution_json, render_supervisor_daemon_human,
     render_supervisor_daemon_json, render_shadow_report, render_supervisor_run_human,
@@ -50,6 +53,7 @@ fn run() -> LoomResult<()> {
         "config" => handle_config(&args[1..]),
         "contract" => handle_contract(&args[1..]),
         "capsule" => handle_capsule(&args[1..]),
+        "capability" => handle_capability(&args[1..]),
         "job" => handle_job(&args[1..]),
         "agent" => handle_agent(&args[1..]),
         "envelope" => handle_envelope(&args[1..]),
@@ -57,6 +61,7 @@ fn run() -> LoomResult<()> {
         "supervisor" => handle_supervisor(&args[1..]),
         "shadow" => handle_shadow(&args[1..]),
         "parity" => handle_parity(&args[1..]),
+        "wasm" => handle_wasm(&args[1..]),
         "-h" | "--help" | "help" => {
             print_help();
             Ok(())
@@ -146,6 +151,35 @@ fn handle_capsule(args: &[String]) -> LoomResult<()> {
     let inspection = capsule_inspect(&root)?;
     print_human(&render_capsule_human(&inspection));
     Ok(())
+}
+
+fn handle_capability(args: &[String]) -> LoomResult<()> {
+    match args.first().map(String::as_str) {
+        Some("shim") => {
+            let tool_name = required_flag(args, "--tool-name")?;
+            let input_schema = required_flag(args, "--input-schema")?;
+            let output_schema = required_flag(args, "--output-schema")?;
+            let version = take_value(args, "--version");
+            let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+            let spec = LegacyToolSpec {
+                name: tool_name,
+                version,
+                input_schema,
+                output_schema,
+            };
+            let shim = generate_shim(&spec);
+            if let Err(errors) = validate_shim(&shim) {
+                return Err(format!("generated invalid shim: {}", errors.join("; ")));
+            }
+            if format == "json" {
+                print!("{}", render_shim_json(&shim));
+            } else {
+                print_human(&render_shim_human(&shim));
+            }
+            Ok(())
+        }
+        _ => Err("capability supports 'shim'".to_string()),
+    }
 }
 
 fn handle_job(args: &[String]) -> LoomResult<()> {
@@ -469,6 +503,51 @@ fn handle_parity(args: &[String]) -> LoomResult<()> {
     }
 }
 
+fn handle_wasm(args: &[String]) -> LoomResult<()> {
+    match args.first().map(String::as_str) {
+        Some("limits") => {
+            let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+            let raw = if let Some(config_path) = take_value(args, "--config-file") {
+                std::fs::read_to_string(&config_path)
+                    .map_err(|error| format!("failed to read {}: {}", config_path, error))?
+            } else {
+                String::new()
+            };
+            let limits = if raw.is_empty() {
+                default_limits()
+            } else {
+                parse_wasm_limits_toml(&raw)?
+            };
+            if let Err(errors) = validate_limits(&limits) {
+                return Err(format!("invalid wasm limits: {}", errors.join("; ")));
+            }
+            if format == "json" {
+                print!("{}", render_limits_json(&limits));
+            } else {
+                print_human(&render_limits_human(&limits));
+            }
+            Ok(())
+        }
+        Some("profile") => {
+            if args.get(1).map(String::as_str) != Some("show") {
+                return Err("wasm profile supports 'show'".to_string());
+            }
+            let profile_name = take_value(args, "--profile").unwrap_or_else(|| "standard".to_string());
+            let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+            let profile = profile_defaults_map()
+                .remove(&profile_name)
+                .ok_or_else(|| format!("unknown wasm profile '{}'", profile_name))?;
+            if format == "json" {
+                print!("{}", render_pooling_config_json(&profile));
+            } else {
+                print_human(&render_pooling_config_human(&profile));
+            }
+            Ok(())
+        }
+        _ => Err("wasm supports 'limits' and 'profile show'".to_string()),
+    }
+}
+
 fn handle_supervisor(args: &[String]) -> LoomResult<()> {
     match args.first().map(String::as_str) {
         Some("daemon") => handle_supervisor_daemon(&args[1..]),
@@ -525,7 +604,17 @@ fn handle_supervisor(args: &[String]) -> LoomResult<()> {
             }
             Ok(())
         }
-        _ => Err("supervisor supports 'run', 'watch', 'status', and 'daemon'".to_string()),
+        Some("lanes") => {
+            let root = root_from(take_value(args, "--root").as_deref())?;
+            let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+            if format == "json" {
+                print!("{}", render_supervisor_lanes_json(&root)?);
+            } else {
+                print_human(&render_supervisor_lanes_human(&root)?);
+            }
+            Ok(())
+        }
+        _ => Err("supervisor supports 'run', 'watch', 'status', 'lanes', and 'daemon'".to_string()),
     }
 }
 
@@ -729,10 +818,13 @@ Governance surfaces\n\
 -------------------\n\
   loom contract show [--root PATH] [--kernel-path PATH] [--format human|json]\n\
   loom capsule inspect [--root PATH]\n\
+  loom capability shim --tool-name NAME --input-schema JSON --output-schema JSON [--version SEMVER] [--format human|json]\n\
   loom job list [--root PATH] [--status STATUS] [--limit N] [--format human|json]\n\
   loom job inspect --job-id HASH [--root PATH] [--format human|json]\n\
   loom agent resolve --agent-id ID [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
   loom envelope build --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
+  loom wasm limits [--config-file loom.toml.example] [--format human|json]\n\
+  loom wasm profile show [--profile minimal|standard|heavy] [--format human|json]\n\
 \n\
 Runtime rehearsal\n\
 -----------------\n\
@@ -741,6 +833,7 @@ Runtime rehearsal\n\
   loom supervisor run [--root PATH] [--kernel-path PATH] [--max-jobs N] [--format human|json]\n\
   loom supervisor watch [--root PATH] [--kernel-path PATH] [--max-jobs N] [--iterations N] [--poll-seconds N] [--format human|json]\n\
   loom supervisor status [--root PATH] [--format human|json]\n\
+  loom supervisor lanes [--root PATH] [--format human|json]\n\
   loom supervisor daemon start [--root PATH] [--kernel-path PATH] [--max-jobs N] [--poll-seconds N] [--iterations N] [--format human|json]\n\
   loom supervisor daemon status [--root PATH] [--format human|json]\n\
   loom supervisor daemon stop [--root PATH] [--format human|json]\n\

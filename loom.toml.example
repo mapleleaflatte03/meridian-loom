@@ -9,3 +9,14 @@ python_path = "workers/python"
 typescript_path = "workers/typescript"
 wasm_dir = "workers/wasm"
 
+[operator]
+profile = "solo"
+
+[wasm]
+profile = "standard"
+max_memory_bytes = 67108864
+max_table_elements = 10000
+max_instances = 10
+max_tables = 10
+max_memories = 10
+fuel_limit = 1000000

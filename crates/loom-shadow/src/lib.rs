@@ -4,6 +4,16 @@ use loom_core::{
     resolve_agent_identity, runtime_worker_entry, ActionEnvelope, AgentIdentityResolution, Config,
     ReferenceGateCheck,
 };
+mod policy_queue;
+mod reservations;
+mod scheduler_state;
+
+use policy_queue::{classify_action, PolicyClass};
+use reservations::{ack_job, expire_stale, load_ledger, nack_job, reserve_job, save_ledger, ReservationLedger};
+use scheduler_state::{
+    append_job_with_id, load_state as load_scheduler_state, save_state as save_scheduler_state,
+    transition_job, update_job_metadata, JobStatus, SchedulerState,
+};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -116,6 +126,7 @@ pub struct EnqueuedAction {
     pub queue_path: PathBuf,
     pub job_path: PathBuf,
     pub input_hash: String,
+    pub policy_class: String,
     pub agent_id: String,
     pub org_id: String,
     pub action_type: String,
@@ -819,7 +830,7 @@ pub fn capture_runtime_execution(
     } else {
         "runtime_rehearsed".to_string()
     };
-    let stage = if queue_bucket == "processed" || queue_bucket == "failed" {
+    let stage = if queue_bucket.starts_with("processed") || queue_bucket.starts_with("failed") {
         "local_queue_supervisor".to_string()
     } else {
         "runtime_execute".to_string()
@@ -862,9 +873,25 @@ pub fn enqueue_action(
     kernel_path: &Path,
     envelope: &ActionEnvelope,
 ) -> ShadowResult<EnqueuedAction> {
-    let pending_dir = ensure_runtime_dir(root)?.join("queue").join("pending");
-    fs::create_dir_all(&pending_dir).map_err(io_err)?;
     let input_hash = envelope_input_hash(envelope);
+    let has_sanctions = resolve_agent_identity(
+        root,
+        Some(kernel_path.to_string_lossy().as_ref()),
+        &envelope.agent_id,
+        Some(&envelope.org_id),
+    )
+    .map(|identity| {
+        let preview = preview_local_sanction_controls(&identity);
+        !preview.allowed || !identity.restrictions.is_empty()
+    })
+    .unwrap_or(false);
+    let policy_class = classify_action(
+        &envelope.action_type,
+        envelope.estimated_cost_usd,
+        has_sanctions,
+    );
+    let queue_bucket = format!("pending:{}", policy_class.label());
+    let pending_dir = pending_queue_dir(root, policy_class)?;
     let queue_path = pending_dir.join(format!(
         "{}-{}-{}.json",
         timestamp_now(),
@@ -874,9 +901,10 @@ pub fn enqueue_action(
     fs::write(
         &queue_path,
         format!(
-            "{{\n  \"status\": \"queued\",\n  \"queued_at\": {},\n  \"input_hash\": {},\n  \"agent_id\": {},\n  \"org_id\": {},\n  \"action_type\": {},\n  \"resource\": {},\n  \"estimated_cost_usd\": {:.6},\n  \"run_id\": {},\n  \"session_id\": {},\n  \"kernel_path\": {}\n}}\n",
+            "{{\n  \"status\": \"queued\",\n  \"queued_at\": {},\n  \"input_hash\": {},\n  \"policy_class\": {},\n  \"agent_id\": {},\n  \"org_id\": {},\n  \"action_type\": {},\n  \"resource\": {},\n  \"estimated_cost_usd\": {:.6},\n  \"run_id\": {},\n  \"session_id\": {},\n  \"kernel_path\": {}\n}}\n",
             json_string(&timestamp_now()),
             json_string(&input_hash),
+            json_string(policy_class.label()),
             json_string(&envelope.agent_id),
             json_string(&envelope.org_id),
             json_string(&envelope.action_type),
@@ -889,6 +917,18 @@ pub fn enqueue_action(
     )
     .map_err(io_err)?;
     let job_path = job_snapshot_path(root, &input_hash);
+    let mut scheduler_state = load_scheduler_state_or_default(root)?;
+    append_job_with_id(
+        &mut scheduler_state,
+        &input_hash,
+        &envelope.agent_id,
+        &envelope.org_id,
+        &envelope.action_type,
+        &envelope.resource,
+        policy_class.label(),
+        &queue_bucket,
+    );
+    save_scheduler_state_checked(root, &scheduler_state)?;
     write_job_snapshot(
         root,
         JobSnapshot {
@@ -897,7 +937,7 @@ pub fn enqueue_action(
             job_path: job_path.clone(),
             status: "queued".to_string(),
             stage: "queue_pending".to_string(),
-            queue_bucket: "pending".to_string(),
+            queue_bucket: queue_bucket.clone(),
             queued_at: timestamp_now(),
             updated_at: timestamp_now(),
             agent_id: envelope.agent_id.clone(),
@@ -912,13 +952,17 @@ pub fn enqueue_action(
             execution_path: None,
             audit_log_path: None,
             parity_report_path: None,
-            note: "queued for local supervisor rehearsal".to_string(),
+            note: format!(
+                "queued for local supervisor rehearsal in {} lane",
+                policy_class.label()
+            ),
         },
     )?;
     Ok(EnqueuedAction {
         queue_path,
         job_path,
         input_hash,
+        policy_class: policy_class.label().to_string(),
         agent_id: envelope.agent_id.clone(),
         org_id: envelope.org_id.clone(),
         action_type: envelope.action_type.clone(),
@@ -935,19 +979,32 @@ pub fn run_supervisor(
 ) -> ShadowResult<SupervisorRunSummary> {
     let runtime_dir = ensure_runtime_dir(root)?;
     let queue_dir = runtime_dir.join("queue");
-    let pending_dir = queue_dir.join("pending");
     let processed_dir = queue_dir.join("processed");
     let failed_dir = queue_dir.join("failed");
-    fs::create_dir_all(&pending_dir).map_err(io_err)?;
     fs::create_dir_all(&processed_dir).map_err(io_err)?;
     fs::create_dir_all(&failed_dir).map_err(io_err)?;
-
-    let mut pending = fs::read_dir(&pending_dir)
-        .map_err(io_err)?
-        .filter_map(|entry| entry.ok().map(|item| item.path()))
-        .filter(|path| path.extension().map(|ext| ext == "json").unwrap_or(false))
-        .collect::<Vec<_>>();
-    pending.sort();
+    let mut pending = collect_pending_queue_paths(root)?;
+    let mut scheduler_state = load_scheduler_state_or_default(root)?;
+    let mut reservation_ledger = load_reservation_ledger_or_default(root)?;
+    let expired_reservations = expire_stale(
+        &mut reservation_ledger,
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+    );
+    for job_id in expired_reservations {
+        let _ = transition_job(&mut scheduler_state, &job_id, JobStatus::Queued);
+        let _ = update_job_metadata(
+            &mut scheduler_state,
+            &job_id,
+            Some("pending:expired_recovered"),
+            Some(None),
+            Some(Some("expired reservation recovered for local supervisor")),
+        );
+    }
+    save_scheduler_state_checked(root, &scheduler_state)?;
+    save_reservation_ledger_checked(root, &reservation_ledger)?;
 
     let mut summary = SupervisorRunSummary {
         root: root.to_path_buf(),
@@ -962,7 +1019,7 @@ pub fn run_supervisor(
         note: "no queued actions were present".to_string(),
     };
 
-    for path in pending.into_iter().take(max_jobs.max(1)) {
+    for (policy_class, path) in pending.drain(..).take(max_jobs.max(1)) {
         let contents = fs::read_to_string(&path).map_err(io_err)?;
         let kernel_path_string = extract_json_string(&contents, "\"kernel_path\"")
             .filter(|value| !value.trim().is_empty())
@@ -974,6 +1031,8 @@ pub fn run_supervisor(
                 path.display()
             ));
         }
+        let input_hash = extract_json_string(&contents, "\"input_hash\"")
+            .ok_or_else(|| format!("input_hash missing in {}", path.display()))?;
         let agent_id = extract_json_string(&contents, "\"agent_id\"")
             .ok_or_else(|| format!("agent_id missing in {}", path.display()))?;
         let org_id = extract_json_string(&contents, "\"org_id\"")
@@ -986,6 +1045,51 @@ pub fn run_supervisor(
             .ok_or_else(|| format!("estimated_cost_usd missing in {}", path.display()))?;
         let run_id = extract_json_string(&contents, "\"run_id\"").unwrap_or_default();
         let session_id = extract_json_string(&contents, "\"session_id\"").unwrap_or_default();
+        let policy_label = extract_json_string(&contents, "\"policy_class\"")
+            .unwrap_or_else(|| policy_class.label().to_string());
+
+        if !scheduler_state.jobs.contains_key(&input_hash) {
+            append_job_with_id(
+                &mut scheduler_state,
+                &input_hash,
+                &agent_id,
+                &org_id,
+                &action_type,
+                &resource,
+                &policy_label,
+                &format!("pending:{}", policy_label),
+            );
+        }
+        let reservation = match reserve_job(&mut reservation_ledger, &input_hash, "local_supervisor", 60) {
+            Ok(reservation) => reservation,
+            Err(error) => {
+                let _ = update_job_metadata(
+                    &mut scheduler_state,
+                    &input_hash,
+                    Some(&format!("reserved:{}", policy_label)),
+                    Some(Some("local_supervisor")),
+                    Some(Some(&format!("reservation skipped: {}", error))),
+                );
+                save_scheduler_state_checked(root, &scheduler_state)?;
+                save_reservation_ledger_checked(root, &reservation_ledger)?;
+                continue;
+            }
+        };
+        transition_job(&mut scheduler_state, &input_hash, JobStatus::Reserved)
+            .map_err(|error| format!("failed to reserve scheduler job {}: {}", input_hash, error))?;
+        update_job_metadata(
+            &mut scheduler_state,
+            &input_hash,
+            Some(&format!("reserved:{}", policy_label)),
+            Some(Some("local_supervisor")),
+            Some(Some(&format!(
+                "reserved by local_supervisor via {} lane ({})",
+                policy_label, reservation.reservation_id
+            ))),
+        )
+        .map_err(|error| format!("failed to update reserved scheduler job {}: {}", input_hash, error))?;
+        save_scheduler_state_checked(root, &scheduler_state)?;
+        save_reservation_ledger_checked(root, &reservation_ledger)?;
 
         let process_result = (|| -> ShadowResult<RuntimeExecutionCapture> {
             let identity = resolve_agent_identity(
@@ -1009,6 +1113,17 @@ pub fn run_supervisor(
                     Some(session_id.as_str())
                 },
             )?;
+            transition_job(&mut scheduler_state, &input_hash, JobStatus::Running)
+                .map_err(|error| format!("failed to mark running for {}: {}", input_hash, error))?;
+            update_job_metadata(
+                &mut scheduler_state,
+                &input_hash,
+                Some(&format!("running:{}", policy_label)),
+                Some(Some("local_supervisor")),
+                None,
+            )
+            .map_err(|error| format!("failed to update running scheduler job {}: {}", input_hash, error))?;
+            save_scheduler_state_checked(root, &scheduler_state)?;
             let reference =
                 evaluate_reference_gates(root, Some(&kernel_path_string), &identity, &envelope)?;
             let decision = capture_decision(root, &identity, &envelope, &reference)?;
@@ -1026,6 +1141,32 @@ pub fn run_supervisor(
                 } else {
                     summary.denied += 1;
                 }
+                ack_job(&mut reservation_ledger, &capture.input_hash, "local_supervisor")
+                    .map_err(|error| format!("failed to ack reservation for {}: {}", capture.input_hash, error))?;
+                let terminal_status = if capture.overall_decision == "allow" {
+                    if capture.worker_status == "completed" {
+                        JobStatus::Completed
+                    } else {
+                        JobStatus::Failed
+                    }
+                } else {
+                    JobStatus::Cancelled
+                };
+                transition_job(&mut scheduler_state, &capture.input_hash, terminal_status.clone())
+                    .map_err(|error| format!("failed to update terminal state for {}: {}", capture.input_hash, error))?;
+                update_job_metadata(
+                    &mut scheduler_state,
+                    &capture.input_hash,
+                    Some(&format!("processed:{}", policy_label)),
+                    Some(None),
+                    Some(Some(&format!(
+                        "{} via {} (reference={})",
+                        capture.runtime_outcome, capture.effective_stage, capture.reference_stage
+                    ))),
+                )
+                .map_err(|error| format!("failed to update scheduler metadata for {}: {}", capture.input_hash, error))?;
+                save_scheduler_state_checked(root, &scheduler_state)?;
+                save_reservation_ledger_checked(root, &reservation_ledger)?;
                 let destination = processed_dir.join(
                     path.file_name()
                         .ok_or_else(|| format!("invalid queue file {}", path.display()))?,
@@ -1038,7 +1179,7 @@ pub fn run_supervisor(
                         job_path: job_snapshot_path(root, &capture.input_hash),
                         status: "runtime_rehearsed".to_string(),
                         stage: "local_queue_supervisor".to_string(),
-                        queue_bucket: "processed".to_string(),
+                        queue_bucket: format!("processed:{}", policy_label),
                         queued_at: timestamp_now(),
                         updated_at: timestamp_now(),
                         agent_id: capture.agent_id.clone(),
@@ -1055,7 +1196,7 @@ pub fn run_supervisor(
                         parity_report_path: Some(capture.parity_report_path.clone()),
                         note: capture.worker_note.clone(),
                     });
-                snapshot.queue_bucket = "processed".to_string();
+                snapshot.queue_bucket = format!("processed:{}", policy_label);
                 snapshot.stage = "local_queue_supervisor".to_string();
                 snapshot.updated_at = timestamp_now();
                 snapshot.queue_path = Some(destination);
@@ -1074,11 +1215,29 @@ pub fn run_supervisor(
                 } else {
                     "denied".to_string()
                 };
-                snapshot.note = capture.worker_note.clone();
+                snapshot.note = if capture.worker_note.is_empty() {
+                    format!(
+                        "processed in {} lane via {}",
+                        policy_label, capture.effective_stage
+                    )
+                } else {
+                    format!("{} [{} lane]", capture.worker_note, policy_label)
+                };
                 write_job_snapshot(root, snapshot)?;
             }
             Err(error) => {
                 summary.failed += 1;
+                let _ = nack_job(&mut reservation_ledger, &input_hash, "local_supervisor");
+                let _ = transition_job(&mut scheduler_state, &input_hash, JobStatus::Failed);
+                let _ = update_job_metadata(
+                    &mut scheduler_state,
+                    &input_hash,
+                    Some(&format!("failed:{}", policy_label)),
+                    Some(None),
+                    Some(Some(&error)),
+                );
+                save_scheduler_state_checked(root, &scheduler_state)?;
+                save_reservation_ledger_checked(root, &reservation_ledger)?;
                 let destination = failed_dir.join(
                     path.file_name()
                         .ok_or_else(|| format!("invalid queue file {}", path.display()))?,
@@ -1101,7 +1260,7 @@ pub fn run_supervisor(
                             job_path: job_snapshot_path(root, &input_hash),
                             status: "failed".to_string(),
                             stage: "local_queue_supervisor".to_string(),
-                            queue_bucket: "failed".to_string(),
+                            queue_bucket: format!("failed:{}", policy_label),
                             queued_at: extract_json_string(&contents, "\"queued_at\"")
                                 .unwrap_or_else(timestamp_now),
                             updated_at: timestamp_now(),
@@ -1921,10 +2080,11 @@ pub fn render_runtime_execution_json(capture: &RuntimeExecutionCapture) -> Strin
 
 pub fn render_enqueued_action_human(capture: &EnqueuedAction) -> String {
     format!(
-        "Meridian Loom // ACTION ENQUEUED\n=================================\nqueue_path:           {}\njob_path:             {}\ninput_hash:           {}\nagent_id:             {}\norg_id:               {}\naction_type:          {}\nresource:             {}\nestimated_cost_usd:   {}\nkernel_path:          {}\nnext_step:            loom job inspect --job-id {} --root <path>\nthen:                 loom supervisor run --root <path> --max-jobs 1\n",
+        "Meridian Loom // ACTION ENQUEUED\n=================================\nqueue_path:           {}\njob_path:             {}\ninput_hash:           {}\npolicy_class:         {}\nagent_id:             {}\norg_id:               {}\naction_type:          {}\nresource:             {}\nestimated_cost_usd:   {}\nkernel_path:          {}\nnext_step:            loom job inspect --job-id {} --root <path>\nthen:                 loom supervisor run --root <path> --max-jobs 1\n",
         capture.queue_path.display(),
         capture.job_path.display(),
         capture.input_hash,
+        capture.policy_class,
         capture.agent_id,
         capture.org_id,
         capture.action_type,
@@ -1937,10 +2097,11 @@ pub fn render_enqueued_action_human(capture: &EnqueuedAction) -> String {
 
 pub fn render_enqueued_action_json(capture: &EnqueuedAction) -> String {
     format!(
-        "{{\n  \"status\": \"queued\",\n  \"queue_path\": {},\n  \"job_path\": {},\n  \"input_hash\": {},\n  \"agent_id\": {},\n  \"org_id\": {},\n  \"action_type\": {},\n  \"resource\": {},\n  \"estimated_cost_usd\": {},\n  \"kernel_path\": {}\n}}\n",
+        "{{\n  \"status\": \"queued\",\n  \"queue_path\": {},\n  \"job_path\": {},\n  \"input_hash\": {},\n  \"policy_class\": {},\n  \"agent_id\": {},\n  \"org_id\": {},\n  \"action_type\": {},\n  \"resource\": {},\n  \"estimated_cost_usd\": {},\n  \"kernel_path\": {}\n}}\n",
         json_string(&capture.queue_path.display().to_string()),
         json_string(&capture.job_path.display().to_string()),
         json_string(&capture.input_hash),
+        json_string(&capture.policy_class),
         json_string(&capture.agent_id),
         json_string(&capture.org_id),
         json_string(&capture.action_type),
@@ -2181,6 +2342,76 @@ pub fn render_supervisor_status_json(snapshot: &SupervisorStatusSnapshot) -> Str
         json_string(&snapshot.last_heartbeat_timestamp),
         json_string(&snapshot.note),
     )
+}
+
+pub fn render_supervisor_lanes_human(root: &Path) -> ShadowResult<String> {
+    let queue_root = ensure_runtime_dir(root)?.join("queue").join("pending");
+    fs::create_dir_all(&queue_root).map_err(io_err)?;
+    let mut queue = policy_queue::PolicyQueue::new();
+    for class in PolicyClass::all() {
+        let class_dir = queue_root.join(class.label());
+        if !class_dir.exists() {
+            continue;
+        }
+        for entry in fs::read_dir(&class_dir).map_err(io_err)? {
+            let path = entry.map_err(io_err)?.path();
+            if !path.is_file()
+                || !path
+                    .extension()
+                    .map(|ext| ext == "json")
+                    .unwrap_or(false)
+            {
+                continue;
+            }
+            let job_id = path
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+            queue.enqueue(*class, job_id);
+        }
+    }
+    Ok(policy_queue::render_queue_depths_human(&queue))
+}
+
+pub fn render_supervisor_lanes_json(root: &Path) -> ShadowResult<String> {
+    let queue_root = ensure_runtime_dir(root)?.join("queue").join("pending");
+    fs::create_dir_all(&queue_root).map_err(io_err)?;
+    let mut queue = policy_queue::PolicyQueue::new();
+    for entry in fs::read_dir(&queue_root).map_err(io_err)? {
+        let path = entry.map_err(io_err)?.path();
+        if path.is_dir() {
+            if let Some(class_name) = path.file_name().map(|name| name.to_string_lossy().to_string())
+            {
+                if let Some(class) = PolicyClass::from_label(&class_name) {
+                    for inner in fs::read_dir(&path).map_err(io_err)? {
+                        let inner_path = inner.map_err(io_err)?.path();
+                        if inner_path
+                            .extension()
+                            .map(|ext| ext == "json")
+                            .unwrap_or(false)
+                        {
+                            let job_id = inner_path
+                                .file_stem()
+                                .map(|stem| stem.to_string_lossy().to_string())
+                                .unwrap_or_else(|| "unknown".to_string());
+                            queue.enqueue(class, job_id);
+                        }
+                    }
+                }
+            }
+        } else if path
+            .extension()
+            .map(|ext| ext == "json")
+            .unwrap_or(false)
+        {
+            let job_id = path
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+            queue.enqueue(PolicyClass::Standard, job_id);
+        }
+    }
+    Ok(policy_queue::render_queue_depths_json(&queue))
 }
 
 pub fn render_supervisor_daemon_human(snapshot: &SupervisorDaemonSnapshot) -> String {
@@ -2522,6 +2753,12 @@ fn ensure_runtime_jobs_dir(root: &Path) -> ShadowResult<PathBuf> {
     Ok(jobs_dir)
 }
 
+fn ensure_runtime_scheduler_dir(root: &Path) -> ShadowResult<PathBuf> {
+    let scheduler_dir = ensure_runtime_dir(root)?.join("scheduler");
+    fs::create_dir_all(&scheduler_dir).map_err(io_err)?;
+    Ok(scheduler_dir)
+}
+
 fn ensure_audit_dir(root: &Path) -> ShadowResult<PathBuf> {
     let audit_dir = root.join(".loom/audit");
     fs::create_dir_all(&audit_dir).map_err(io_err)?;
@@ -2592,11 +2829,102 @@ fn count_runtime_queue_entries(root: &Path, bucket: &str) -> ShadowResult<usize>
     if !path.exists() {
         return Ok(0);
     }
-    Ok(fs::read_dir(path)
+    count_json_files_recursive(&path)
+}
+
+fn count_json_files_recursive(path: &Path) -> ShadowResult<usize> {
+    let mut count = 0usize;
+    for entry in fs::read_dir(path).map_err(io_err)? {
+        let entry = entry.map_err(io_err)?;
+        let entry_path = entry.path();
+        if entry_path.is_dir() {
+            count += count_json_files_recursive(&entry_path)?;
+        } else if entry_path
+            .extension()
+            .map(|ext| ext == "json")
+            .unwrap_or(false)
+        {
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
+fn scheduler_state_path(root: &Path) -> ShadowResult<PathBuf> {
+    Ok(ensure_runtime_scheduler_dir(root)?.join("state.json"))
+}
+
+fn reservation_ledger_path(root: &Path) -> ShadowResult<PathBuf> {
+    Ok(ensure_runtime_scheduler_dir(root)?.join("reservations.json"))
+}
+
+fn load_scheduler_state_or_default(root: &Path) -> ShadowResult<SchedulerState> {
+    let path = scheduler_state_path(root)?;
+    if path.exists() {
+        load_scheduler_state(&path).map_err(|error| format!("failed to load scheduler state: {}", error))
+    } else {
+        Ok(SchedulerState::new())
+    }
+}
+
+fn save_scheduler_state_checked(root: &Path, state: &SchedulerState) -> ShadowResult<()> {
+    let path = scheduler_state_path(root)?;
+    save_scheduler_state(state, &path)
+        .map_err(|error| format!("failed to save scheduler state: {}", error))
+}
+
+fn load_reservation_ledger_or_default(root: &Path) -> ShadowResult<ReservationLedger> {
+    let path = reservation_ledger_path(root)?;
+    if path.exists() {
+        load_ledger(&path).map_err(|error| format!("failed to load reservation ledger: {}", error))
+    } else {
+        Ok(ReservationLedger::new())
+    }
+}
+
+fn save_reservation_ledger_checked(root: &Path, ledger: &ReservationLedger) -> ShadowResult<()> {
+    let path = reservation_ledger_path(root)?;
+    save_ledger(ledger, &path)
+        .map_err(|error| format!("failed to save reservation ledger: {}", error))
+}
+
+fn pending_queue_dir(root: &Path, class: PolicyClass) -> ShadowResult<PathBuf> {
+    let path = ensure_runtime_dir(root)?
+        .join("queue")
+        .join("pending")
+        .join(class.label());
+    fs::create_dir_all(&path).map_err(io_err)?;
+    Ok(path)
+}
+
+fn collect_pending_queue_paths(root: &Path) -> ShadowResult<Vec<(PolicyClass, PathBuf)>> {
+    let queue_root = ensure_runtime_dir(root)?.join("queue").join("pending");
+    fs::create_dir_all(&queue_root).map_err(io_err)?;
+    let mut pending = Vec::new();
+    for class in PolicyClass::all() {
+        let class_dir = queue_root.join(class.label());
+        if class_dir.exists() {
+            let mut class_entries = fs::read_dir(&class_dir)
+                .map_err(io_err)?
+                .filter_map(|entry| entry.ok().map(|item| item.path()))
+                .filter(|path| path.extension().map(|ext| ext == "json").unwrap_or(false))
+                .collect::<Vec<_>>();
+            class_entries.sort();
+            pending.extend(class_entries.into_iter().map(|path| (*class, path)));
+        }
+    }
+    let mut legacy_entries = fs::read_dir(&queue_root)
         .map_err(io_err)?
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| entry.path().is_file())
-        .count())
+        .filter_map(|entry| entry.ok().map(|item| item.path()))
+        .filter(|path| path.is_file() && path.extension().map(|ext| ext == "json").unwrap_or(false))
+        .collect::<Vec<_>>();
+    legacy_entries.sort();
+    pending.extend(
+        legacy_entries
+            .into_iter()
+            .map(|path| (PolicyClass::Standard, path)),
+    );
+    Ok(pending)
 }
 
 fn ensure_parity_dir(root: &Path) -> ShadowResult<PathBuf> {
@@ -3502,7 +3830,7 @@ mod tests {
         assert!(queued.contains("\"kernel_path\": \"/tmp/meridian-kernel\""));
         let job = fs::read_to_string(&capture.job_path).expect("job file");
         assert!(job.contains("\"job_status\": \"queued\""));
-        assert!(job.contains("\"queue_bucket\": \"pending\""));
+        assert!(job.contains("\"queue_bucket\": \"pending:standard\""));
     }
 
     #[test]
@@ -3547,7 +3875,7 @@ mod tests {
         let capture = enqueue_action(&root, &kernel_root, &envelope).expect("enqueue");
         let queued = inspect_job(&root, &capture.input_hash).expect("queued job");
         assert_eq!(queued.status, "queued");
-        assert_eq!(queued.queue_bucket, "pending");
+        assert_eq!(queued.queue_bucket, "pending:standard");
         let queued_human = render_job_inspect_human(&queued);
         assert!(queued_human.contains("JOB INSPECT"));
 
@@ -3555,7 +3883,7 @@ mod tests {
         let jobs = list_jobs(&root, None, 10).expect("job list");
         assert_eq!(jobs.len(), 1);
         assert_eq!(jobs[0].status, "completed");
-        assert_eq!(jobs[0].queue_bucket, "processed");
+        assert_eq!(jobs[0].queue_bucket, "processed:standard");
         assert!(jobs[0].execution_path.is_some());
         let list_human = render_job_list_human(&root, &jobs, None);
         assert!(list_human.contains("experimental runtime-owned job ledger"));
@@ -3709,10 +4037,7 @@ if __name__ == '__main__':
         assert!(summary.last_execution_path.exists());
         let pending_dir = root.join(".loom/runtime/queue/pending");
         let processed_dir = root.join(".loom/runtime/queue/processed");
-        assert_eq!(
-            fs::read_dir(&pending_dir).expect("pending dir").count(),
-            0
-        );
+        assert_eq!(count_json_files_recursive(&pending_dir).expect("pending dir"), 0);
         assert_eq!(
             fs::read_dir(&processed_dir).expect("processed dir").count(),
             1

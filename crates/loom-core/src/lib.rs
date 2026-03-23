@@ -4,6 +4,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub mod capability_shims;
+pub mod wasm_limits;
+pub mod wasm_profiles;
+
 pub type LoomResult<T> = Result<T, String>;
 
 const DEFAULT_STATE_DIR: &str = ".loom";

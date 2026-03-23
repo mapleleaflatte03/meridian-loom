@@ -16,6 +16,7 @@
 
 <p align="center">
   <a href="docs/SETUP_REHEARSAL.md">Setup Rehearsal</a> ·
+  <a href="docs/FIRST_GOVERNED_CELL.md">First Governed Cell</a> ·
   <a href="docs/PUBLICATION_CHECKLIST.md">Publication Checklist</a> ·
   <a href="docs/LOOM_100_IMPROVEMENTS.md">100 Improvements</a> ·
   <a href="https://github.com/mapleleaflatte03/meridian-kernel">Meridian Kernel</a> ·
@@ -68,16 +69,27 @@ operator language, and its own fail-closed runtime path.
 
 ## Quick start
 
-If you want to evaluate Loom today, do this first:
+If you want the shortest honest path into Loom today, do this first:
 
 ```bash
 git clone https://github.com/mapleleaflatte03/meridian-loom.git
 cd meridian-loom
-cargo build
-./scripts/rehearse_setup.sh
+./scripts/bootstrap_embedded.sh
 ```
 
-That one rehearsal gives you:
+That bootstrap does three useful things immediately:
+
+- builds the `loom` binary if needed
+- initializes a local workspace
+- runs `doctor` and `health` before you touch the heavier rehearsals
+
+Then take the first real operator path:
+
+```bash
+./scripts/rehearse_first_governed_cell.sh
+```
+
+That path gives you a real local lifecycle:
 
 - `loom init`
 - `loom doctor`
@@ -104,6 +116,15 @@ That one rehearsal gives you:
 - `loom shadow compare`
 - `loom shadow report`
 - `loom parity report`
+- `loom capability shim`
+- `loom wasm limits`
+- `loom wasm profile show`
+- `loom supervisor lanes`
+
+Checked-in transcripts:
+
+- `examples/bootstrap-output.txt`
+- `examples/first-governed-cell-output.txt`
 
 There is also a second rehearsal for local sanction denial:
 
@@ -138,6 +159,17 @@ And a sixth rehearsal for bounded daemon lifecycle:
 ```
 
 Its checked-in transcript lives at `examples/supervisor-daemon-output.txt`.
+
+Bootstrap and operator profiles live here:
+
+- `profiles/solo.toml`
+- `profiles/builder.toml`
+- `profiles/team.toml`
+- `profiles/institution.toml`
+
+Those profiles are not maturity claims. They are opinionated starting points
+for scheduler, governance, isolation, and audit defaults inside the current
+experimental boundary.
 
 ## Frontier runtime docket
 
