@@ -1,6 +1,6 @@
 == Meridian Loom local sanction preview ==
 root:   /tmp/loom-local-sanction-preview
-kernel: /tmp/loom-local-kernel.9Syp3O
+kernel: /tmp/loom-local-kernel.jxh47M
 agent:  agent_sanction
 org:    org_demo
 Meridian Loom // INIT
@@ -9,7 +9,7 @@ root:        /tmp/loom-local-sanction-preview
 mode:        embedded
 org_id:      org_demo
 state_dir:   .loom
-kernel_path: /tmp/loom-local-kernel.9Syp3O
+kernel_path: /tmp/loom-local-kernel.jxh47M
 status:      initialized experimental scaffold
 next_step:   loom doctor --root /tmp/loom-local-sanction-preview --format human
 Meridian Loom // AGENT IDENTITY
@@ -175,7 +175,7 @@ audit / parity artifacts
 ========================
 execution_path:      /tmp/loom-local-sanction-preview/.loom/runtime/last_execution.json
 decision_path:       /tmp/loom-local-sanction-preview/.loom/shadow/decision.json
-audit_log:           /tmp/loom-local-sanction-preview/.loom/audit/runtime_events.jsonl (kernel_cli_runtime_event_written)
+audit_log:           /tmp/loom-local-kernel.jxh47M/kernel/runtime_audit/loom_runtime_events.jsonl (kernel_cli_runtime_event_written)
 parity_stream:       /tmp/loom-local-sanction-preview/.loom/parity/stream.jsonl
 parity_report:       /tmp/loom-local-sanction-preview/.loom/parity/latest.json
 openclaw_live_probe: (not captured) (not_available)
@@ -186,7 +186,7 @@ Next
 1. loom parity report --root /tmp/loom-local-sanction-preview
 2. loom shadow report --root /tmp/loom-local-sanction-preview
 3. Inspect /tmp/loom-local-sanction-preview/.loom/runtime/jobs/b7d2387503716f98/worker.log for worker execution details.
-4. Inspect /tmp/loom-local-sanction-preview/.loom/audit/runtime_events.jsonl for runtime-side audit details.
+4. Inspect /tmp/loom-local-kernel.jxh47M/kernel/runtime_audit/loom_runtime_events.jsonl for runtime-side audit details.
 action_execute_exit_code: 2
 Meridian Loom // SHADOW REPORT
 ==============================
@@ -203,7 +203,7 @@ source: /tmp/loom-local-sanction-preview/.loom/runtime/last_execution.json
   "worker_result_path": "/tmp/loom-local-sanction-preview/.loom/runtime/jobs/b7d2387503716f98/result.json",
   "worker_log_path": "/tmp/loom-local-sanction-preview/.loom/runtime/jobs/b7d2387503716f98/worker.log",
   "decision_path": "/tmp/loom-local-sanction-preview/.loom/shadow/decision.json",
-  "audit_log_path": "/tmp/loom-local-sanction-preview/.loom/audit/runtime_events.jsonl",
+  "audit_log_path": "/tmp/loom-local-kernel.jxh47M/kernel/runtime_audit/loom_runtime_events.jsonl",
   "parity_stream_path": "/tmp/loom-local-sanction-preview/.loom/parity/stream.jsonl",
   "parity_report_path": "/tmp/loom-local-sanction-preview/.loom/parity/latest.json",
   "openclaw_live_probe_path": null,
@@ -225,7 +225,7 @@ source: /tmp/loom-local-sanction-preview/.loom/runtime/last_execution.json
   "reference_stage": "ok",
   "audit_emission_status": "kernel_cli_runtime_event_written",
   "openclaw_live_probe_status": "not_available",
-  "openclaw_live_probe_note": "live OpenClaw proof script not found at /tmp/loom-local-kernel.9Syp3O/kernel/missing_openclaw_runtime_proof.py",
+  "openclaw_live_probe_note": "live OpenClaw proof script not found at /tmp/loom-local-kernel.jxh47M/kernel/missing_openclaw_runtime_proof.py",
   "parity_status": "divergence",
   "parity_reason": "reference returned allow at stage ok while loom enforced deny via sanction_controls_preview",
   "note": "experimental local supervisor path exists for allow decisions; governed hosted supervisor remains future work"
@@ -240,7 +240,7 @@ source: /tmp/loom-local-sanction-preview/.loom/parity/latest.json
   "status": "parity_report_captured",
   "execution_path": "/tmp/loom-local-sanction-preview/.loom/runtime/last_execution.json",
   "decision_path": "/tmp/loom-local-sanction-preview/.loom/shadow/decision.json",
-  "audit_log_path": "/tmp/loom-local-sanction-preview/.loom/audit/runtime_events.jsonl",
+  "audit_log_path": "/tmp/loom-local-kernel.jxh47M/kernel/runtime_audit/loom_runtime_events.jsonl",
   "parity_stream_path": "/tmp/loom-local-sanction-preview/.loom/parity/stream.jsonl",
   "openclaw_live_probe_path": null,
   "openclaw_live_probe_stream_path": "/tmp/loom-local-sanction-preview/.loom/parity/openclaw_live_stream.jsonl",
@@ -249,7 +249,7 @@ source: /tmp/loom-local-sanction-preview/.loom/parity/latest.json
   "overall_decision": "deny",
   "effective_stage": "sanction_controls_preview",
   "openclaw_live_probe_status": "not_available",
-  "openclaw_live_probe_note": "live OpenClaw proof script not found at /tmp/loom-local-kernel.9Syp3O/kernel/missing_openclaw_runtime_proof.py",
+  "openclaw_live_probe_note": "live OpenClaw proof script not found at /tmp/loom-local-kernel.jxh47M/kernel/missing_openclaw_runtime_proof.py",
   "parity_status": "divergence",
   "parity_reason": "reference returned allow at stage ok while loom enforced deny via sanction_controls_preview",
   "note": "runtime-side parity stream now captures Loom execution plus a per-action OpenClaw live probe artifact when available; hosted per-action parity remains future work"
@@ -316,7 +316,7 @@ source: /tmp/loom-local-sanction-preview/.loom/parity/latest.json
   "status": "parity_report_captured",
   "execution_path": "/tmp/loom-local-sanction-preview/.loom/runtime/last_execution.json",
   "decision_path": "/tmp/loom-local-sanction-preview/.loom/shadow/decision.json",
-  "audit_log_path": "/tmp/loom-local-sanction-preview/.loom/audit/runtime_events.jsonl",
+  "audit_log_path": "/tmp/loom-local-kernel.jxh47M/kernel/runtime_audit/loom_runtime_events.jsonl",
   "parity_stream_path": "/tmp/loom-local-sanction-preview/.loom/parity/stream.jsonl",
   "openclaw_live_probe_path": null,
   "openclaw_live_probe_stream_path": "/tmp/loom-local-sanction-preview/.loom/parity/openclaw_live_stream.jsonl",
@@ -325,7 +325,7 @@ source: /tmp/loom-local-sanction-preview/.loom/parity/latest.json
   "overall_decision": "deny",
   "effective_stage": "sanction_controls_preview",
   "openclaw_live_probe_status": "not_available",
-  "openclaw_live_probe_note": "live OpenClaw proof script not found at /tmp/loom-local-kernel.9Syp3O/kernel/missing_openclaw_runtime_proof.py",
+  "openclaw_live_probe_note": "live OpenClaw proof script not found at /tmp/loom-local-kernel.jxh47M/kernel/missing_openclaw_runtime_proof.py",
   "parity_status": "divergence",
   "parity_reason": "reference returned allow at stage ok while loom enforced deny via sanction_controls_preview",
   "note": "runtime-side parity stream now captures Loom execution plus a per-action OpenClaw live probe artifact when available; hosted per-action parity remains future work"
@@ -335,10 +335,10 @@ Parity stream
 =============
 source: /tmp/loom-local-sanction-preview/.loom/parity/stream.jsonl
 
-{"timestamp":"1774279387","source":"openclaw_reference_stream","phase":"reference_gate","hook_name":"ok","decision":"allow","stage":"ok","agent_id":"agent_sanction","org_id":"org_demo","input_hash":"b7d2387503716f98","reason":"ok"}
-{"timestamp":"1774279387","source":"loom_runtime_stream","phase":"worker_supervisor","hook_name":"sanction_controls_preview","decision":"deny","stage":"sanction_controls_preview","agent_id":"agent_sanction","org_id":"org_demo","input_hash":"b7d2387503716f98","reason":"Agent agent_sanction is restricted from execute","worker_status":"not_dispatched","worker_kind":"python_reference_worker","worker_result_path":"/tmp/loom-local-sanction-preview/.loom/runtime/jobs/b7d2387503716f98/result.json"}
-{"timestamp":"1774279387","source":"loom_runtime_stream","phase":"audit_emission","hook_name":"audit_emission","decision":"kernel_cli_runtime_event_written","stage":"runtime_audit","agent_id":"agent_sanction","org_id":"org_demo","input_hash":"b7d2387503716f98","reason":"denied","audit_log":"/tmp/loom-local-sanction-preview/.loom/audit/runtime_events.jsonl"}
-{"timestamp":"1774279387","source":"openclaw_live_probe","phase":"live_runtime_probe","hook_name":"runtime_health","decision":"not_available","stage":"live_single_host_openclaw","agent_id":"agent_sanction","org_id":"org_demo","input_hash":"b7d2387503716f98","reason":"live OpenClaw proof script not found at /tmp/loom-local-kernel.9Syp3O/kernel/missing_openclaw_runtime_proof.py","probe_path":"","probe_stream_path":"/tmp/loom-local-sanction-preview/.loom/parity/openclaw_live_stream.jsonl"}
+{"timestamp":"1774280253","source":"openclaw_reference_stream","phase":"reference_gate","hook_name":"ok","decision":"allow","stage":"ok","agent_id":"agent_sanction","org_id":"org_demo","input_hash":"b7d2387503716f98","reason":"ok"}
+{"timestamp":"1774280253","source":"loom_runtime_stream","phase":"worker_supervisor","hook_name":"sanction_controls_preview","decision":"deny","stage":"sanction_controls_preview","agent_id":"agent_sanction","org_id":"org_demo","input_hash":"b7d2387503716f98","reason":"Agent agent_sanction is restricted from execute","worker_status":"not_dispatched","worker_kind":"python_reference_worker","worker_result_path":"/tmp/loom-local-sanction-preview/.loom/runtime/jobs/b7d2387503716f98/result.json"}
+{"timestamp":"1774280253","source":"loom_runtime_stream","phase":"audit_emission","hook_name":"audit_emission","decision":"kernel_cli_runtime_event_written","stage":"runtime_audit","agent_id":"agent_sanction","org_id":"org_demo","input_hash":"b7d2387503716f98","reason":"denied","audit_log":"/tmp/loom-local-kernel.jxh47M/kernel/runtime_audit/loom_runtime_events.jsonl"}
+{"timestamp":"1774280253","source":"openclaw_live_probe","phase":"live_runtime_probe","hook_name":"runtime_health","decision":"not_available","stage":"live_single_host_openclaw","agent_id":"agent_sanction","org_id":"org_demo","input_hash":"b7d2387503716f98","reason":"live OpenClaw proof script not found at /tmp/loom-local-kernel.jxh47M/kernel/missing_openclaw_runtime_proof.py","probe_path":"","probe_stream_path":"/tmp/loom-local-sanction-preview/.loom/parity/openclaw_live_stream.jsonl"}
 
 OpenClaw live probe
 ===================
@@ -349,7 +349,7 @@ OpenClaw live probe stream
 ==========================
 source: /tmp/loom-local-sanction-preview/.loom/parity/openclaw_live_stream.jsonl
 
-{"timestamp":"1774279387","input_hash":"b7d2387503716f98","status":"not_available","reason":"live OpenClaw proof script not found at /tmp/loom-local-kernel.9Syp3O/kernel/missing_openclaw_runtime_proof.py","probe_path":null}
+{"timestamp":"1774280253","input_hash":"b7d2387503716f98","status":"not_available","reason":"live OpenClaw proof script not found at /tmp/loom-local-kernel.jxh47M/kernel/missing_openclaw_runtime_proof.py","probe_path":null}
 
 
 == Local sanction preview rehearsal complete ==

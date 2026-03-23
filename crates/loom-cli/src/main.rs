@@ -8,9 +8,11 @@ use loom_core::{
 };
 use loom_shadow::{
     capture_decision, capture_preflight, capture_runtime_execution, compare_logs,
-    decision_exit_code, render_compare_human, render_compare_json, render_decision_human,
-    render_decision_json, render_parity_report, render_preflight_human, render_preflight_json,
-    render_runtime_execution_human, render_runtime_execution_json, render_shadow_report,
+    decision_exit_code, enqueue_action, render_compare_human, render_compare_json,
+    render_decision_human, render_decision_json, render_enqueued_action_human,
+    render_enqueued_action_json, render_parity_report, render_preflight_human,
+    render_preflight_json, render_runtime_execution_human, render_runtime_execution_json,
+    render_shadow_report, render_supervisor_run_human, render_supervisor_run_json, run_supervisor,
 };
 use std::env;
 use std::io::{self, IsTerminal};
@@ -45,6 +47,7 @@ fn run() -> LoomResult<()> {
         "agent" => handle_agent(&args[1..]),
         "envelope" => handle_envelope(&args[1..]),
         "action" => handle_action(&args[1..]),
+        "supervisor" => handle_supervisor(&args[1..]),
         "shadow" => handle_shadow(&args[1..]),
         "parity" => handle_parity(&args[1..]),
         "-h" | "--help" | "help" => {
@@ -328,6 +331,41 @@ fn handle_shadow(args: &[String]) -> LoomResult<()> {
 
 fn handle_action(args: &[String]) -> LoomResult<()> {
     match args.first().map(String::as_str) {
+        Some("enqueue") => {
+            let root = root_from(take_value(args, "--root").as_deref())?;
+            let agent_id = required_flag(args, "--agent-id")?;
+            let action_type = required_flag(args, "--action-type")?;
+            let resource = required_flag(args, "--resource")?;
+            let estimated_cost_usd = parse_f64_flag(args, "--estimated-cost-usd").unwrap_or(0.0);
+            let kernel_path = take_value(args, "--kernel-path");
+            let org_id = take_value(args, "--org-id");
+            let run_id = take_value(args, "--run-id");
+            let session_id = take_value(args, "--session-id");
+            let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+
+            let envelope = build_action_envelope(
+                &root,
+                kernel_path.as_deref(),
+                &agent_id,
+                org_id.as_deref(),
+                &action_type,
+                &resource,
+                estimated_cost_usd,
+                run_id.as_deref(),
+                session_id.as_deref(),
+            )?;
+            let effective_kernel_path = kernel_path_for(&root, kernel_path.as_deref())?;
+            let capture = enqueue_action(&root, &effective_kernel_path, &envelope)?;
+            if format == "json" {
+                print!("{}", render_enqueued_action_json(&capture));
+            } else {
+                print_human_block(&[
+                    render_envelope_human(&envelope),
+                    render_enqueued_action_human(&capture),
+                ]);
+            }
+            Ok(())
+        }
         Some("execute") => {
             let root = root_from(take_value(args, "--root").as_deref())?;
             let agent_id = required_flag(args, "--agent-id")?;
@@ -376,7 +414,7 @@ fn handle_action(args: &[String]) -> LoomResult<()> {
             }
             std::process::exit(decision_exit_code(&decision, 0, 2));
         }
-        _ => Err("action supports 'execute'".to_string()),
+        _ => Err("action supports 'enqueue' and 'execute'".to_string()),
     }
 }
 
@@ -388,6 +426,27 @@ fn handle_parity(args: &[String]) -> LoomResult<()> {
             Ok(())
         }
         _ => Err("parity supports 'report'".to_string()),
+    }
+}
+
+fn handle_supervisor(args: &[String]) -> LoomResult<()> {
+    match args.first().map(String::as_str) {
+        Some("run") => {
+            let root = root_from(take_value(args, "--root").as_deref())?;
+            let kernel_path = take_value(args, "--kernel-path");
+            let max_jobs = take_value(args, "--max-jobs")
+                .and_then(|raw| raw.parse::<usize>().ok())
+                .unwrap_or(1);
+            let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+            let summary = run_supervisor(&root, kernel_path.as_deref(), max_jobs)?;
+            if format == "json" {
+                print!("{}", render_supervisor_run_json(&summary));
+            } else {
+                print_human(&render_supervisor_run_human(&summary));
+            }
+            Ok(())
+        }
+        _ => Err("supervisor supports 'run'".to_string()),
     }
 }
 
@@ -407,7 +466,7 @@ fn parse_f64_flag(args: &[String], flag: &str) -> Option<f64> {
 
 fn print_help() {
     print_human(
-        "Meridian Loom // HELP\n======================\nphase:       public experimental scaffold\nboundary:    operator shape is real; governed runtime is not\n\nBootstrap\n---------\n  loom init --mode <embedded|shadow|standalone> [--kernel-path PATH] [--root PATH] [--org-id ID]\n  loom doctor [--root PATH] [--format json|human]\n  loom health [--root PATH] [--format json|human]\n  loom status [--root PATH]\n  loom config show [--root PATH]\n\nGovernance surfaces\n-------------------\n  loom contract show [--root PATH] [--kernel-path PATH] [--format human|json]\n  loom capsule inspect [--root PATH]\n  loom agent resolve --agent-id ID [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom envelope build --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\nRuntime rehearsal\n-----------------\n  loom action execute --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom shadow preflight --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom shadow decide --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom shadow enforce --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom shadow compare --primary FILE [--shadow FILE] [--root PATH] [--format human|json]\n  loom shadow report [--root PATH]\n  loom parity report [--root PATH]\n\nNext\n----\n  1. loom init --mode embedded --root /tmp/loom-rehearsal --kernel-path /tmp/meridian-kernel\n  2. loom doctor --root /tmp/loom-rehearsal --format human\n  3. ./scripts/rehearse_setup.sh\n"
+        "Meridian Loom // HELP\n======================\nphase:       public experimental scaffold\nboundary:    operator shape is real; governed runtime is not\n\nBootstrap\n---------\n  loom init --mode <embedded|shadow|standalone> [--kernel-path PATH] [--root PATH] [--org-id ID]\n  loom doctor [--root PATH] [--format json|human]\n  loom health [--root PATH] [--format json|human]\n  loom status [--root PATH]\n  loom config show [--root PATH]\n\nGovernance surfaces\n-------------------\n  loom contract show [--root PATH] [--kernel-path PATH] [--format human|json]\n  loom capsule inspect [--root PATH]\n  loom agent resolve --agent-id ID [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom envelope build --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\nRuntime rehearsal\n-----------------\n  loom action enqueue --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom action execute --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom supervisor run [--root PATH] [--kernel-path PATH] [--max-jobs N] [--format human|json]\n  loom shadow preflight --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom shadow decide --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom shadow enforce --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom shadow compare --primary FILE [--shadow FILE] [--root PATH] [--format human|json]\n  loom shadow report [--root PATH]\n  loom parity report [--root PATH]\n\nNext\n----\n  1. loom init --mode embedded --root /tmp/loom-rehearsal --kernel-path /tmp/meridian-kernel\n  2. loom action enqueue --agent-id agent_atlas --action-type research --resource web_search --root /tmp/loom-rehearsal\n  3. loom supervisor run --root /tmp/loom-rehearsal --max-jobs 1\n"
     );
 }
 

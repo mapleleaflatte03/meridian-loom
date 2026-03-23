@@ -444,8 +444,7 @@ pub fn render_health_human(healthy: bool, json: &str) -> String {
     let status = if healthy { "healthy" } else { "degraded" };
     let mode = extract_json_string(json, "\"mode\"").unwrap_or_else(|| "unknown".to_string());
     let org_id = extract_json_string(json, "\"org_id\"").unwrap_or_else(|| "unknown".to_string());
-    let checks = extract_json_literal(json, "\"checks\"").unwrap_or_else(|| "[]".to_string());
-    let check_count = checks.matches("\"label\"").count();
+    let check_count = json.matches("\"label\"").count();
     format!(
         "Meridian Loom // HEALTH\n=======================\nstatus:      {}\nmode:        {}\norg_id:      {}\nchecks:      {}\nsource:      doctor-derived health summary\nnext_step:   loom doctor --root <path> --format human\n",
         status,
@@ -464,20 +463,21 @@ pub fn status_human(root: &Path) -> LoomResult<String> {
         .join(&config.org_id)
         .join("manifest.json");
     Ok(format!(
-        "Meridian Loom // STATUS\n=======================\nmode:        {}\norg_id:      {}\nstate_dir:   {}\nkernel_path: {}\ncapsule:     {}\nshadow:      {}\nruntime:     experimental rehearsal only\nexperimental_hooks: {}\n",
+        "Meridian Loom // STATUS\n=======================\nmode:        {}\norg_id:      {}\nstate_dir:   {}\nkernel_path: {}\ncapsule:     {}\nshadow:      {}\nqueue:       {}\nruntime:     experimental local queue supervisor + one-shot rehearsal\nexperimental_hooks: {}\n",
         config.mode,
         config.org_id,
         state_dir.display(),
         if config.kernel_path.is_empty() { "(not set)" } else { &config.kernel_path },
         manifest.display(),
         state_dir.join("shadow/latest.json").display(),
+        state_dir.join("runtime/queue/pending").display(),
         EXPERIMENTAL_PRELIGHT_HOOKS.join(", ")
     ))
 }
 
 pub fn render_config_human(config: &Config, root: &Path) -> String {
     format!(
-        "Meridian Loom // CONFIG\n=======================\nroot:        {}\nmode:        {}\norg_id:      {}\nstate_dir:   {}\nkernel_path: {}\npython_path: {}\ntypescript:  {}\nwasm_dir:    {}\nboundary:    local config only; no worker supervisor yet\n",
+        "Meridian Loom // CONFIG\n=======================\nroot:        {}\nmode:        {}\norg_id:      {}\nstate_dir:   {}\nkernel_path: {}\npython_path: {}\ntypescript:  {}\nwasm_dir:    {}\nboundary:    local config only; experimental queue supervisor is available\n",
         root.display(),
         config.mode,
         config.org_id,

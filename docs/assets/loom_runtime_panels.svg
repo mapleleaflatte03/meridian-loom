@@ -38,7 +38,7 @@
   <text x="88" y="490" class="body">No governed worker supervisor yet.</text>
 
   <text x="456" y="118" class="tag">Runtime Audit</text>
-  <text x="456" y="160" class="title">.loom/audit/runtime_events.jsonl</text>
+  <text x="456" y="160" class="title">kernel/runtime_audit/loom_runtime_events.jsonl</text>
   <text x="456" y="208" class="body">source                loom_runtime_execute</text>
   <text x="456" y="240" class="body">policy_ref            experimental_runtime_rehearsal</text>
   <text x="456" y="272" class="body">serializer            kernel when available</text>

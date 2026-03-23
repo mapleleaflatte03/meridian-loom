@@ -1,0 +1,233 @@
+== Meridian Loom supervisor queue rehearsal ==
+root:   /tmp/loom-supervisor-queue
+kernel: /tmp/loom-supervisor-kernel.kl0aQO
+agent:  agent_allow
+org:    org_demo
+Meridian Loom // INIT
+====================
+root:        /tmp/loom-supervisor-queue
+mode:        embedded
+org_id:      org_demo
+state_dir:   .loom
+kernel_path: /tmp/loom-supervisor-kernel.kl0aQO
+status:      initialized experimental scaffold
+next_step:   loom doctor --root /tmp/loom-supervisor-queue --format human
+Meridian Loom // ACTION ENVELOPE
+=================================
+agent_id:            agent_allow
+agent_name:          Allow Path
+org_id:              org_demo
+runtime_id:          local_kernel
+runtime_label:       Local Kernel Runtime
+action_type:         research
+resource:            web_search
+estimated_cost_usd:  0.0500
+run_id:              (none)
+session_id:          (none)
+source:              loom_experimental_preflight
+input_hash:          563bb9b3929c696e
+
+
+Meridian Loom // ACTION ENQUEUED
+=================================
+queue_path:           /tmp/loom-supervisor-queue/.loom/runtime/queue/pending/1774280253-agent_allow-563bb9b3.json
+input_hash:           563bb9b3929c696e
+agent_id:             agent_allow
+org_id:               org_demo
+action_type:          research
+resource:             web_search
+estimated_cost_usd:   0.050000
+kernel_path:          /tmp/loom-supervisor-kernel.kl0aQO
+next_step:            loom supervisor run --root <path> --max-jobs 1
+Meridian Loom // SUPERVISOR RUN
+================================
+phase:       experimental local queue supervisor
+boundary:    queued worker dispatch is real; hosted governed supervisor is not
+
+Current state
+=============
+root:                /tmp/loom-supervisor-queue
+queue_dir:           /tmp/loom-supervisor-queue/.loom/runtime/queue
+processed:           1
+allowed:             1
+denied:              0
+failed:              0
+last_input_hash:     563bb9b3929c696e
+last_execution:      /tmp/loom-supervisor-queue/.loom/runtime/last_execution.json
+audit_log:           /tmp/loom-supervisor-kernel.kl0aQO/kernel/runtime_audit/loom_runtime_events.jsonl
+note:                processed=1 allowed=1 denied=0 failed=0
+
+Next
+====
+1. loom parity report --root /tmp/loom-supervisor-queue
+2. loom shadow report --root /tmp/loom-supervisor-queue
+3. Inspect /tmp/loom-supervisor-kernel.kl0aQO/kernel/runtime_audit/loom_runtime_events.jsonl for canonical runtime audit entries.
+Meridian Loom // PARITY REPORT
+===============================
+phase:       runtime-side parity surface
+boundary:    parity report is real; per-action live runtime parity is still future work
+
+Parity latest
+=============
+source: /tmp/loom-supervisor-queue/.loom/parity/latest.json
+
+{
+  "status": "parity_report_captured",
+  "execution_path": "/tmp/loom-supervisor-queue/.loom/runtime/last_execution.json",
+  "decision_path": "/tmp/loom-supervisor-queue/.loom/shadow/decision.json",
+  "audit_log_path": "/tmp/loom-supervisor-kernel.kl0aQO/kernel/runtime_audit/loom_runtime_events.jsonl",
+  "parity_stream_path": "/tmp/loom-supervisor-queue/.loom/parity/stream.jsonl",
+  "openclaw_live_probe_path": null,
+  "openclaw_live_probe_stream_path": "/tmp/loom-supervisor-queue/.loom/parity/openclaw_live_stream.jsonl",
+  "reference_decision": "allow",
+  "reference_stage": "ok",
+  "overall_decision": "allow",
+  "effective_stage": "ok",
+  "openclaw_live_probe_status": "not_available",
+  "openclaw_live_probe_note": "live OpenClaw proof script not found at /tmp/loom-supervisor-kernel.kl0aQO/kernel/missing_openclaw_runtime_proof.py",
+  "parity_status": "match",
+  "parity_reason": "reference and loom agreed on allow at stage ok",
+  "note": "runtime-side parity stream now captures Loom execution plus a per-action OpenClaw live probe artifact when available; hosted per-action parity remains future work"
+}
+
+Parity stream
+=============
+source: /tmp/loom-supervisor-queue/.loom/parity/stream.jsonl
+
+{"timestamp":"1774280253","source":"openclaw_reference_stream","phase":"reference_gate","hook_name":"ok","decision":"allow","stage":"ok","agent_id":"agent_allow","org_id":"org_demo","input_hash":"563bb9b3929c696e","reason":"ok"}
+{"timestamp":"1774280253","source":"loom_runtime_stream","phase":"worker_supervisor","hook_name":"ok","decision":"allow","stage":"ok","agent_id":"agent_allow","org_id":"org_demo","input_hash":"563bb9b3929c696e","reason":"ok","worker_status":"completed","worker_kind":"python_reference_worker","worker_result_path":"/tmp/loom-supervisor-queue/.loom/runtime/jobs/563bb9b3929c696e/result.json"}
+{"timestamp":"1774280253","source":"loom_runtime_stream","phase":"audit_emission","hook_name":"audit_emission","decision":"kernel_cli_runtime_event_written","stage":"runtime_audit","agent_id":"agent_allow","org_id":"org_demo","input_hash":"563bb9b3929c696e","reason":"worker_executed","audit_log":"/tmp/loom-supervisor-kernel.kl0aQO/kernel/runtime_audit/loom_runtime_events.jsonl"}
+{"timestamp":"1774280253","source":"openclaw_live_probe","phase":"live_runtime_probe","hook_name":"runtime_health","decision":"not_available","stage":"live_single_host_openclaw","agent_id":"agent_allow","org_id":"org_demo","input_hash":"563bb9b3929c696e","reason":"live OpenClaw proof script not found at /tmp/loom-supervisor-kernel.kl0aQO/kernel/missing_openclaw_runtime_proof.py","probe_path":"","probe_stream_path":"/tmp/loom-supervisor-queue/.loom/parity/openclaw_live_stream.jsonl"}
+
+OpenClaw live probe
+===================
+source: (not captured)
+
+
+OpenClaw live probe stream
+==========================
+source: /tmp/loom-supervisor-queue/.loom/parity/openclaw_live_stream.jsonl
+
+{"timestamp":"1774280253","input_hash":"563bb9b3929c696e","status":"not_available","reason":"live OpenClaw proof script not found at /tmp/loom-supervisor-kernel.kl0aQO/kernel/missing_openclaw_runtime_proof.py","probe_path":null}
+
+
+Meridian Loom // SHADOW REPORT
+==============================
+phase:       experimental shadow + parity surface
+boundary:    report artifacts are real; governed runtime is not
+Runtime execution
+=================
+source: /tmp/loom-supervisor-queue/.loom/runtime/last_execution.json
+
+{
+  "status": "runtime_execution_captured",
+  "execution_path": "/tmp/loom-supervisor-queue/.loom/runtime/last_execution.json",
+  "worker_request_path": "/tmp/loom-supervisor-queue/.loom/runtime/jobs/563bb9b3929c696e/request.json",
+  "worker_result_path": "/tmp/loom-supervisor-queue/.loom/runtime/jobs/563bb9b3929c696e/result.json",
+  "worker_log_path": "/tmp/loom-supervisor-queue/.loom/runtime/jobs/563bb9b3929c696e/worker.log",
+  "decision_path": "/tmp/loom-supervisor-queue/.loom/shadow/decision.json",
+  "audit_log_path": "/tmp/loom-supervisor-kernel.kl0aQO/kernel/runtime_audit/loom_runtime_events.jsonl",
+  "parity_stream_path": "/tmp/loom-supervisor-queue/.loom/parity/stream.jsonl",
+  "parity_report_path": "/tmp/loom-supervisor-queue/.loom/parity/latest.json",
+  "openclaw_live_probe_path": null,
+  "openclaw_live_probe_stream_path": "/tmp/loom-supervisor-queue/.loom/parity/openclaw_live_stream.jsonl",
+  "agent_id": "agent_allow",
+  "org_id": "org_demo",
+  "action_type": "research",
+  "resource": "web_search",
+  "input_hash": "563bb9b3929c696e",
+  "estimated_cost_usd": 0.050000,
+  "runtime_outcome": "worker_executed",
+  "worker_status": "completed",
+  "worker_kind": "python_reference_worker",
+  "worker_note": "experimental supervisor dispatched /tmp/loom-supervisor-queue/workers/python/loom_runtime_worker.py",
+  "overall_decision": "allow",
+  "effective_source": "reference_gate",
+  "effective_stage": "ok",
+  "reference_decision": "allow",
+  "reference_stage": "ok",
+  "audit_emission_status": "kernel_cli_runtime_event_written",
+  "openclaw_live_probe_status": "not_available",
+  "openclaw_live_probe_note": "live OpenClaw proof script not found at /tmp/loom-supervisor-kernel.kl0aQO/kernel/missing_openclaw_runtime_proof.py",
+  "parity_status": "match",
+  "parity_reason": "reference and loom agreed on allow at stage ok",
+  "note": "experimental local supervisor path exists for allow decisions; governed hosted supervisor remains future work"
+}
+
+
+Parity latest
+=============
+source: /tmp/loom-supervisor-queue/.loom/parity/latest.json
+
+{
+  "status": "parity_report_captured",
+  "execution_path": "/tmp/loom-supervisor-queue/.loom/runtime/last_execution.json",
+  "decision_path": "/tmp/loom-supervisor-queue/.loom/shadow/decision.json",
+  "audit_log_path": "/tmp/loom-supervisor-kernel.kl0aQO/kernel/runtime_audit/loom_runtime_events.jsonl",
+  "parity_stream_path": "/tmp/loom-supervisor-queue/.loom/parity/stream.jsonl",
+  "openclaw_live_probe_path": null,
+  "openclaw_live_probe_stream_path": "/tmp/loom-supervisor-queue/.loom/parity/openclaw_live_stream.jsonl",
+  "reference_decision": "allow",
+  "reference_stage": "ok",
+  "overall_decision": "allow",
+  "effective_stage": "ok",
+  "openclaw_live_probe_status": "not_available",
+  "openclaw_live_probe_note": "live OpenClaw proof script not found at /tmp/loom-supervisor-kernel.kl0aQO/kernel/missing_openclaw_runtime_proof.py",
+  "parity_status": "match",
+  "parity_reason": "reference and loom agreed on allow at stage ok",
+  "note": "runtime-side parity stream now captures Loom execution plus a per-action OpenClaw live probe artifact when available; hosted per-action parity remains future work"
+}
+
+
+Decision artifact
+=================
+source: /tmp/loom-supervisor-queue/.loom/shadow/decision.json
+
+{
+  "status": "decision_captured",
+  "decision_path": "/tmp/loom-supervisor-queue/.loom/shadow/decision.json",
+  "source": "experimental_preflight_gate",
+  "agent_id": "agent_allow",
+  "org_id": "org_demo",
+  "action_type": "research",
+  "resource": "web_search",
+  "input_hash": "563bb9b3929c696e",
+  "estimated_cost_usd": 0.050000,
+  "identity_restrictions": [],
+  "reference_restrictions": [],
+  "local_sanction_allowed": true,
+  "local_sanction_decision": "allow",
+  "local_sanction_reason": "no execute restriction",
+  "sanction_gate_decision": "allow",
+  "approval_gate_decision": "allow",
+  "budget_limit_usd": 5.000000,
+  "budget_gate_decision": "allow",
+  "overall_decision": "allow",
+  "effective_source": "reference_gate",
+  "effective_stage": "ok",
+  "effective_reason": "ok",
+  "reference_stage": "ok",
+  "reference_reason": "ok",
+  "note": "experimental preflight decision only; not governed runtime enforcement"
+}
+
+
+Legacy shadow marker
+====================
+source: /tmp/loom-supervisor-queue/.loom/shadow/latest.json
+
+{
+  "status": "not_started",
+  "events_compared": 0,
+  "divergences": 0,
+  "note": "shadow mode is not implemented in this scaffold"
+}
+
+Note
+----
+latest shadow marker still says `not_started`; the runtime execution and parity sections above are the newer operator surfaces for this flow.
+processed_queue_files:
+/tmp/loom-supervisor-queue/.loom/runtime/queue/processed/1774280253-agent_allow-563bb9b3.json
+canonical_runtime_audit:
+{"id": "evt_8ec64170df", "timestamp": "2026-03-23T15:37:33Z", "org_id": "org_demo", "agent_id": "agent_allow", "actor_type": "agent", "action": "research", "resource": "web_search", "outcome": "worker_executed", "details": {"source": "loom_runtime_execute", "input_hash": "563bb9b3929c696e", "estimated_cost_usd": 0.05, "effective_source": "reference_gate", "effective_stage": "ok", "reference_stage": "ok", "runtime_outcome": "worker_executed", "worker_status": "completed", "worker_kind": "python_reference_worker", "parity_status": "match", "experimental": true}, "policy_ref": "experimental_runtime_rehearsal"}
+== Supervisor queue rehearsal complete ==

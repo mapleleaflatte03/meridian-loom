@@ -1,6 +1,6 @@
 == Meridian Loom allow execute rehearsal ==
 root:   /tmp/loom-allow-execute
-kernel: /tmp/loom-allow-kernel.wtREKe
+kernel: /tmp/loom-allow-kernel.JQjCJU
 agent:  agent_allow
 org:    org_demo
 Meridian Loom // INIT
@@ -9,7 +9,7 @@ root:        /tmp/loom-allow-execute
 mode:        embedded
 org_id:      org_demo
 state_dir:   .loom
-kernel_path: /tmp/loom-allow-kernel.wtREKe
+kernel_path: /tmp/loom-allow-kernel.JQjCJU
 status:      initialized experimental scaffold
 next_step:   loom doctor --root /tmp/loom-allow-execute --format human
 Meridian Loom // DOCTOR
@@ -25,9 +25,9 @@ Checks
 [OK      ] typescript_workers typescript worker path present (/tmp/loom-allow-execute/workers/typescript)
 [OK      ] wasm_modules       wasm module path present (/tmp/loom-allow-execute/workers/wasm)
 [OK      ] capsule_manifest   capsule manifest present (/tmp/loom-allow-execute/.loom/capsules/org_demo/manifest.json)
-[OK      ] kernel_path        kernel path present (/tmp/loom-allow-kernel.wtREKe)
-[OK      ] runtime_registry   Meridian runtime registry available (/tmp/loom-allow-kernel.wtREKe/kernel/runtimes.json)
-[OK      ] agent_registry     Meridian agent registry CLI available (/tmp/loom-allow-kernel.wtREKe/kernel/agent_registry.py)
+[OK      ] kernel_path        kernel path present (/tmp/loom-allow-kernel.JQjCJU)
+[OK      ] runtime_registry   Meridian runtime registry available (/tmp/loom-allow-kernel.JQjCJU/kernel/runtimes.json)
+[OK      ] agent_registry     Meridian agent registry CLI available (/tmp/loom-allow-kernel.JQjCJU/kernel/agent_registry.py)
 Meridian Loom // AGENT IDENTITY
 ================================
 agent_id:            agent_allow
@@ -125,7 +125,7 @@ audit / parity artifacts
 ========================
 execution_path:      /tmp/loom-allow-execute/.loom/runtime/last_execution.json
 decision_path:       /tmp/loom-allow-execute/.loom/shadow/decision.json
-audit_log:           /tmp/loom-allow-execute/.loom/audit/runtime_events.jsonl (kernel_cli_runtime_event_written)
+audit_log:           /tmp/loom-allow-kernel.JQjCJU/kernel/runtime_audit/loom_runtime_events.jsonl (kernel_cli_runtime_event_written)
 parity_stream:       /tmp/loom-allow-execute/.loom/parity/stream.jsonl
 parity_report:       /tmp/loom-allow-execute/.loom/parity/latest.json
 openclaw_live_probe: (not captured) (not_available)
@@ -136,7 +136,7 @@ Next
 1. loom parity report --root /tmp/loom-allow-execute
 2. loom shadow report --root /tmp/loom-allow-execute
 3. Inspect /tmp/loom-allow-execute/.loom/runtime/jobs/563bb9b3929c696e/worker.log for worker execution details.
-4. Inspect /tmp/loom-allow-execute/.loom/audit/runtime_events.jsonl for runtime-side audit details.
+4. Inspect /tmp/loom-allow-kernel.JQjCJU/kernel/runtime_audit/loom_runtime_events.jsonl for runtime-side audit details.
 Meridian Loom // PARITY REPORT
 ===============================
 phase:       runtime-side parity surface
@@ -150,7 +150,7 @@ source: /tmp/loom-allow-execute/.loom/parity/latest.json
   "status": "parity_report_captured",
   "execution_path": "/tmp/loom-allow-execute/.loom/runtime/last_execution.json",
   "decision_path": "/tmp/loom-allow-execute/.loom/shadow/decision.json",
-  "audit_log_path": "/tmp/loom-allow-execute/.loom/audit/runtime_events.jsonl",
+  "audit_log_path": "/tmp/loom-allow-kernel.JQjCJU/kernel/runtime_audit/loom_runtime_events.jsonl",
   "parity_stream_path": "/tmp/loom-allow-execute/.loom/parity/stream.jsonl",
   "openclaw_live_probe_path": null,
   "openclaw_live_probe_stream_path": "/tmp/loom-allow-execute/.loom/parity/openclaw_live_stream.jsonl",
@@ -159,7 +159,7 @@ source: /tmp/loom-allow-execute/.loom/parity/latest.json
   "overall_decision": "allow",
   "effective_stage": "ok",
   "openclaw_live_probe_status": "not_available",
-  "openclaw_live_probe_note": "live OpenClaw proof script not found at /tmp/loom-allow-kernel.wtREKe/kernel/missing_openclaw_runtime_proof.py",
+  "openclaw_live_probe_note": "live OpenClaw proof script not found at /tmp/loom-allow-kernel.JQjCJU/kernel/missing_openclaw_runtime_proof.py",
   "parity_status": "match",
   "parity_reason": "reference and loom agreed on allow at stage ok",
   "note": "runtime-side parity stream now captures Loom execution plus a per-action OpenClaw live probe artifact when available; hosted per-action parity remains future work"
@@ -169,10 +169,10 @@ Parity stream
 =============
 source: /tmp/loom-allow-execute/.loom/parity/stream.jsonl
 
-{"timestamp":"1774279387","source":"openclaw_reference_stream","phase":"reference_gate","hook_name":"ok","decision":"allow","stage":"ok","agent_id":"agent_allow","org_id":"org_demo","input_hash":"563bb9b3929c696e","reason":"ok"}
-{"timestamp":"1774279387","source":"loom_runtime_stream","phase":"worker_supervisor","hook_name":"ok","decision":"allow","stage":"ok","agent_id":"agent_allow","org_id":"org_demo","input_hash":"563bb9b3929c696e","reason":"ok","worker_status":"completed","worker_kind":"python_reference_worker","worker_result_path":"/tmp/loom-allow-execute/.loom/runtime/jobs/563bb9b3929c696e/result.json"}
-{"timestamp":"1774279387","source":"loom_runtime_stream","phase":"audit_emission","hook_name":"audit_emission","decision":"kernel_cli_runtime_event_written","stage":"runtime_audit","agent_id":"agent_allow","org_id":"org_demo","input_hash":"563bb9b3929c696e","reason":"worker_executed","audit_log":"/tmp/loom-allow-execute/.loom/audit/runtime_events.jsonl"}
-{"timestamp":"1774279387","source":"openclaw_live_probe","phase":"live_runtime_probe","hook_name":"runtime_health","decision":"not_available","stage":"live_single_host_openclaw","agent_id":"agent_allow","org_id":"org_demo","input_hash":"563bb9b3929c696e","reason":"live OpenClaw proof script not found at /tmp/loom-allow-kernel.wtREKe/kernel/missing_openclaw_runtime_proof.py","probe_path":"","probe_stream_path":"/tmp/loom-allow-execute/.loom/parity/openclaw_live_stream.jsonl"}
+{"timestamp":"1774280253","source":"openclaw_reference_stream","phase":"reference_gate","hook_name":"ok","decision":"allow","stage":"ok","agent_id":"agent_allow","org_id":"org_demo","input_hash":"563bb9b3929c696e","reason":"ok"}
+{"timestamp":"1774280253","source":"loom_runtime_stream","phase":"worker_supervisor","hook_name":"ok","decision":"allow","stage":"ok","agent_id":"agent_allow","org_id":"org_demo","input_hash":"563bb9b3929c696e","reason":"ok","worker_status":"completed","worker_kind":"python_reference_worker","worker_result_path":"/tmp/loom-allow-execute/.loom/runtime/jobs/563bb9b3929c696e/result.json"}
+{"timestamp":"1774280253","source":"loom_runtime_stream","phase":"audit_emission","hook_name":"audit_emission","decision":"kernel_cli_runtime_event_written","stage":"runtime_audit","agent_id":"agent_allow","org_id":"org_demo","input_hash":"563bb9b3929c696e","reason":"worker_executed","audit_log":"/tmp/loom-allow-kernel.JQjCJU/kernel/runtime_audit/loom_runtime_events.jsonl"}
+{"timestamp":"1774280253","source":"openclaw_live_probe","phase":"live_runtime_probe","hook_name":"runtime_health","decision":"not_available","stage":"live_single_host_openclaw","agent_id":"agent_allow","org_id":"org_demo","input_hash":"563bb9b3929c696e","reason":"live OpenClaw proof script not found at /tmp/loom-allow-kernel.JQjCJU/kernel/missing_openclaw_runtime_proof.py","probe_path":"","probe_stream_path":"/tmp/loom-allow-execute/.loom/parity/openclaw_live_stream.jsonl"}
 
 OpenClaw live probe
 ===================
@@ -183,7 +183,7 @@ OpenClaw live probe stream
 ==========================
 source: /tmp/loom-allow-execute/.loom/parity/openclaw_live_stream.jsonl
 
-{"timestamp":"1774279387","input_hash":"563bb9b3929c696e","status":"not_available","reason":"live OpenClaw proof script not found at /tmp/loom-allow-kernel.wtREKe/kernel/missing_openclaw_runtime_proof.py","probe_path":null}
+{"timestamp":"1774280253","input_hash":"563bb9b3929c696e","status":"not_available","reason":"live OpenClaw proof script not found at /tmp/loom-allow-kernel.JQjCJU/kernel/missing_openclaw_runtime_proof.py","probe_path":null}
 
 
 Meridian Loom // SHADOW REPORT
@@ -201,7 +201,7 @@ source: /tmp/loom-allow-execute/.loom/runtime/last_execution.json
   "worker_result_path": "/tmp/loom-allow-execute/.loom/runtime/jobs/563bb9b3929c696e/result.json",
   "worker_log_path": "/tmp/loom-allow-execute/.loom/runtime/jobs/563bb9b3929c696e/worker.log",
   "decision_path": "/tmp/loom-allow-execute/.loom/shadow/decision.json",
-  "audit_log_path": "/tmp/loom-allow-execute/.loom/audit/runtime_events.jsonl",
+  "audit_log_path": "/tmp/loom-allow-kernel.JQjCJU/kernel/runtime_audit/loom_runtime_events.jsonl",
   "parity_stream_path": "/tmp/loom-allow-execute/.loom/parity/stream.jsonl",
   "parity_report_path": "/tmp/loom-allow-execute/.loom/parity/latest.json",
   "openclaw_live_probe_path": null,
@@ -223,7 +223,7 @@ source: /tmp/loom-allow-execute/.loom/runtime/last_execution.json
   "reference_stage": "ok",
   "audit_emission_status": "kernel_cli_runtime_event_written",
   "openclaw_live_probe_status": "not_available",
-  "openclaw_live_probe_note": "live OpenClaw proof script not found at /tmp/loom-allow-kernel.wtREKe/kernel/missing_openclaw_runtime_proof.py",
+  "openclaw_live_probe_note": "live OpenClaw proof script not found at /tmp/loom-allow-kernel.JQjCJU/kernel/missing_openclaw_runtime_proof.py",
   "parity_status": "match",
   "parity_reason": "reference and loom agreed on allow at stage ok",
   "note": "experimental local supervisor path exists for allow decisions; governed hosted supervisor remains future work"
@@ -238,7 +238,7 @@ source: /tmp/loom-allow-execute/.loom/parity/latest.json
   "status": "parity_report_captured",
   "execution_path": "/tmp/loom-allow-execute/.loom/runtime/last_execution.json",
   "decision_path": "/tmp/loom-allow-execute/.loom/shadow/decision.json",
-  "audit_log_path": "/tmp/loom-allow-execute/.loom/audit/runtime_events.jsonl",
+  "audit_log_path": "/tmp/loom-allow-kernel.JQjCJU/kernel/runtime_audit/loom_runtime_events.jsonl",
   "parity_stream_path": "/tmp/loom-allow-execute/.loom/parity/stream.jsonl",
   "openclaw_live_probe_path": null,
   "openclaw_live_probe_stream_path": "/tmp/loom-allow-execute/.loom/parity/openclaw_live_stream.jsonl",
@@ -247,7 +247,7 @@ source: /tmp/loom-allow-execute/.loom/parity/latest.json
   "overall_decision": "allow",
   "effective_stage": "ok",
   "openclaw_live_probe_status": "not_available",
-  "openclaw_live_probe_note": "live OpenClaw proof script not found at /tmp/loom-allow-kernel.wtREKe/kernel/missing_openclaw_runtime_proof.py",
+  "openclaw_live_probe_note": "live OpenClaw proof script not found at /tmp/loom-allow-kernel.JQjCJU/kernel/missing_openclaw_runtime_proof.py",
   "parity_status": "match",
   "parity_reason": "reference and loom agreed on allow at stage ok",
   "note": "runtime-side parity stream now captures Loom execution plus a per-action OpenClaw live probe artifact when available; hosted per-action parity remains future work"
@@ -305,7 +305,7 @@ worker_result:
 {
   "action_type": "research",
   "agent_id": "agent_allow",
-  "completed_at": "2026-03-23T15:23:07+00:00",
+  "completed_at": "2026-03-23T15:37:33+00:00",
   "decision": "allow",
   "effective_stage": "ok",
   "input_hash": "563bb9b3929c696e",
@@ -316,5 +316,5 @@ worker_result:
   "worker_kind": "python_reference_worker"
 }
 audit_rows:
-{"id": "evt_fd0c79d61e", "timestamp": "2026-03-23T15:23:07Z", "org_id": "org_demo", "agent_id": "agent_allow", "actor_type": "agent", "action": "research", "resource": "web_search", "outcome": "worker_executed", "details": {"source": "loom_runtime_execute", "input_hash": "563bb9b3929c696e", "estimated_cost_usd": 0.05, "effective_source": "reference_gate", "effective_stage": "ok", "reference_stage": "ok", "runtime_outcome": "worker_executed", "worker_status": "completed", "worker_kind": "python_reference_worker", "parity_status": "match", "experimental": true}, "policy_ref": "experimental_runtime_rehearsal"}
+{"id": "evt_63dc15d6ec", "timestamp": "2026-03-23T15:37:33Z", "org_id": "org_demo", "agent_id": "agent_allow", "actor_type": "agent", "action": "research", "resource": "web_search", "outcome": "worker_executed", "details": {"source": "loom_runtime_execute", "input_hash": "563bb9b3929c696e", "estimated_cost_usd": 0.05, "effective_source": "reference_gate", "effective_stage": "ok", "reference_stage": "ok", "runtime_outcome": "worker_executed", "worker_status": "completed", "worker_kind": "python_reference_worker", "parity_status": "match", "experimental": true}, "policy_ref": "experimental_runtime_rehearsal"}
 == Allow execute rehearsal complete ==

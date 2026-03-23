@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="${1:-/tmp/loom-allow-execute}"
-KERNEL_PATH="$(mktemp -d /tmp/loom-allow-kernel.XXXXXX)"
+ROOT_DIR="${1:-/tmp/loom-supervisor-queue}"
+KERNEL_PATH="$(mktemp -d /tmp/loom-supervisor-kernel.XXXXXX)"
 SOURCE_KERNEL="${SOURCE_KERNEL:-/tmp/meridian-kernel}"
 
 cleanup() {
@@ -10,7 +10,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "== Meridian Loom allow execute rehearsal =="
+echo "== Meridian Loom supervisor queue rehearsal =="
 echo "root:   ${ROOT_DIR}"
 echo "kernel: ${KERNEL_PATH}"
 echo "agent:  agent_allow"
@@ -24,8 +24,8 @@ cat > "${KERNEL_PATH}/kernel/runtimes.json" <<'EOF'
   "runtimes": {
     "local_kernel": {"id": "local_kernel", "label": "Local Kernel Runtime"},
     "meridian_loom": {
-      "status": "planned",
-      "notes": "fixture-backed allow execute rehearsal",
+      "status": "experimental",
+      "notes": "fixture-backed supervisor queue rehearsal",
       "contract_compliance": {
         "agent_identity": null,
         "action_envelope": null,
@@ -130,14 +130,14 @@ cargo build --workspace
 export MERIDIAN_OPENCLAW_PROOF_SCRIPT="${KERNEL_PATH}/kernel/missing_openclaw_runtime_proof.py"
 
 ./target/debug/loom init --mode embedded --kernel-path "${KERNEL_PATH}" --root "${ROOT_DIR}" --org-id org_demo
-./target/debug/loom doctor --root "${ROOT_DIR}" --format human
-./target/debug/loom action execute --root "${ROOT_DIR}" --agent-id agent_allow --org-id org_demo --action-type research --resource web_search --estimated-cost-usd 0.05 --format human
+./target/debug/loom action enqueue --root "${ROOT_DIR}" --agent-id agent_allow --org-id org_demo --action-type research --resource web_search --estimated-cost-usd 0.05 --format human
+./target/debug/loom supervisor run --root "${ROOT_DIR}" --kernel-path "${KERNEL_PATH}" --max-jobs 1 --format human
 ./target/debug/loom parity report --root "${ROOT_DIR}"
 ./target/debug/loom shadow report --root "${ROOT_DIR}"
 
-echo "worker_result:"
-cat "${ROOT_DIR}/.loom/runtime/jobs/"*/result.json
-echo "audit_rows:"
+echo "processed_queue_files:"
+find "${ROOT_DIR}/.loom/runtime/queue" -maxdepth 2 -type f | sort
+echo "canonical_runtime_audit:"
 cat "${KERNEL_PATH}/kernel/runtime_audit/loom_runtime_events.jsonl"
 
-echo "== Allow execute rehearsal complete =="
+echo "== Supervisor queue rehearsal complete =="

@@ -21,10 +21,12 @@
 
 # Meridian Loom // Setup Rehearsal
 
-This repository includes two rehearsals:
+This repository includes four rehearsals:
 
 - a founder-host rehearsal against the current kernel truth
 - a fixture-backed rehearsal for local sanction denial
+- a fixture-backed allow-path rehearsal
+- a fixture-backed queue supervisor rehearsal
 
 The point is not to pretend Loom is already a runtime. The point is to make the
 install path, operator path, and fail-closed runtime rehearsal concrete enough
@@ -56,9 +58,10 @@ The rehearsal verifies:
     (`0` allow, `2` deny).
 14. `loom action execute` now materializes a runtime execution receipt instead
     of stopping at a shell preflight gate.
-15. `audit_emission` now writes a runtime-side audit artifact at
-    `.loom/audit/runtime_events.jsonl`, using the kernel serializer when
-    available and a local fallback otherwise.
+15. `audit_emission` now writes a runtime-side audit artifact through the
+    kernel-owned `audit.py log-runtime` path into
+    `kernel/runtime_audit/loom_runtime_events.jsonl` when a kernel is present,
+    with a local fallback only when no kernel audit path exists.
 16. `loom shadow compare` still exists for offline diffing of event logs.
 17. `loom parity report` is now the stronger surface: it reads the runtime-side
     parity stream and the latest parity report produced by `loom action execute`.
@@ -78,7 +81,7 @@ The rehearsal verifies:
 - It does not prove per-action OpenClaw parity.
 - The live OpenClaw probe is a runtime health/proof snapshot, not a replayed
   gate-by-gate execution stream.
-- The canonical kernel audit log is still not owned by Loom.
+- The hosted kernel's global audit trail is still not owned by Loom.
 
 ## Run
 
@@ -140,9 +143,25 @@ That script proves the current local supervisor path:
 - the effective decision is `allow`
 - `loom action execute` dispatches the default Python worker
 - the worker writes a result artifact under `.loom/runtime/jobs/<input_hash>/`
-- runtime audit emission uses the kernel-owned `audit.py log-runtime` path
+- runtime audit emission uses the kernel-owned `audit.py log-runtime` path and
+  lands in `kernel/runtime_audit/loom_runtime_events.jsonl`
 - parity artifacts include a per-action OpenClaw probe stream entry, even when
   the probe is unavailable in the synthetic fixture
+
+There is now a separate queue-backed supervisor rehearsal:
+
+```bash
+./scripts/rehearse_supervisor_queue.sh
+```
+
+That script proves the current queue supervisor path:
+- `loom action enqueue` materializes a pending queue artifact under
+  `.loom/runtime/queue/pending/`
+- `loom supervisor run` processes the queued action through the same effective
+  decision surface used by `loom action execute`
+- the processed queue entry moves to `.loom/runtime/queue/processed/`
+- the runtime audit lands in `kernel/runtime_audit/loom_runtime_events.jsonl`
+- parity and shadow reports stay consistent with the supervisor-processed action
 
 The rehearsal now also proves both fail-closed surfaces against the current
 kernel truth:

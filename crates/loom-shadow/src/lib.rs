@@ -1,6 +1,7 @@
 use loom_core::{
-    envelope_input_hash, ensure_runtime_worker_scaffold, preview_local_sanction_controls,
-    read_config, runtime_worker_entry, ActionEnvelope, AgentIdentityResolution, Config,
+    build_action_envelope, envelope_input_hash, ensure_runtime_worker_scaffold,
+    evaluate_reference_gates, kernel_path_for, preview_local_sanction_controls, read_config,
+    resolve_agent_identity, runtime_worker_entry, ActionEnvelope, AgentIdentityResolution, Config,
     ReferenceGateCheck,
 };
 use std::fs;
@@ -107,6 +108,32 @@ pub struct RuntimeExecutionCapture {
     pub openclaw_live_probe_note: String,
     pub parity_status: String,
     pub parity_reason: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EnqueuedAction {
+    pub queue_path: PathBuf,
+    pub input_hash: String,
+    pub agent_id: String,
+    pub org_id: String,
+    pub action_type: String,
+    pub resource: String,
+    pub estimated_cost_usd: String,
+    pub kernel_path: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SupervisorRunSummary {
+    pub root: PathBuf,
+    pub queue_dir: PathBuf,
+    pub processed: usize,
+    pub allowed: usize,
+    pub denied: usize,
+    pub failed: usize,
+    pub last_input_hash: String,
+    pub last_execution_path: PathBuf,
+    pub audit_log_path: PathBuf,
+    pub note: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -532,7 +559,7 @@ pub fn capture_runtime_execution(
 ) -> ShadowResult<RuntimeExecutionCapture> {
     let runtime_dir = ensure_runtime_dir(root)?;
     let parity_dir = ensure_parity_dir(root)?;
-    let audit_log_path = ensure_audit_dir(root)?.join("runtime_events.jsonl");
+    let audit_log_path = runtime_audit_log_path(root, Some(kernel_path.to_string_lossy().as_ref()));
     let execution_path = runtime_dir.join("last_execution.json");
     let parity_stream_path = parity_dir.join("stream.jsonl");
     let parity_report_path = parity_dir.join("latest.json");
@@ -675,6 +702,181 @@ pub fn capture_runtime_execution(
     fs::write(&execution_path, render_runtime_execution_json(&capture)).map_err(io_err)?;
     fs::write(&parity_report_path, render_parity_report_json(&capture)).map_err(io_err)?;
     Ok(capture)
+}
+
+pub fn enqueue_action(
+    root: &Path,
+    kernel_path: &Path,
+    envelope: &ActionEnvelope,
+) -> ShadowResult<EnqueuedAction> {
+    let pending_dir = ensure_runtime_dir(root)?.join("queue").join("pending");
+    fs::create_dir_all(&pending_dir).map_err(io_err)?;
+    let input_hash = envelope_input_hash(envelope);
+    let queue_path = pending_dir.join(format!(
+        "{}-{}-{}.json",
+        timestamp_now(),
+        sanitize_filename(&envelope.agent_id),
+        &input_hash[..8]
+    ));
+    fs::write(
+        &queue_path,
+        format!(
+            "{{\n  \"status\": \"queued\",\n  \"queued_at\": {},\n  \"input_hash\": {},\n  \"agent_id\": {},\n  \"org_id\": {},\n  \"action_type\": {},\n  \"resource\": {},\n  \"estimated_cost_usd\": {:.6},\n  \"run_id\": {},\n  \"session_id\": {},\n  \"kernel_path\": {}\n}}\n",
+            json_string(&timestamp_now()),
+            json_string(&input_hash),
+            json_string(&envelope.agent_id),
+            json_string(&envelope.org_id),
+            json_string(&envelope.action_type),
+            json_string(&envelope.resource),
+            envelope.estimated_cost_usd,
+            json_string(&envelope.run_id),
+            json_string(&envelope.session_id),
+            json_string(&kernel_path.display().to_string()),
+        ),
+    )
+    .map_err(io_err)?;
+    Ok(EnqueuedAction {
+        queue_path,
+        input_hash,
+        agent_id: envelope.agent_id.clone(),
+        org_id: envelope.org_id.clone(),
+        action_type: envelope.action_type.clone(),
+        resource: envelope.resource.clone(),
+        estimated_cost_usd: format!("{:.6}", envelope.estimated_cost_usd),
+        kernel_path: kernel_path.display().to_string(),
+    })
+}
+
+pub fn run_supervisor(
+    root: &Path,
+    override_kernel_path: Option<&str>,
+    max_jobs: usize,
+) -> ShadowResult<SupervisorRunSummary> {
+    let runtime_dir = ensure_runtime_dir(root)?;
+    let queue_dir = runtime_dir.join("queue");
+    let pending_dir = queue_dir.join("pending");
+    let processed_dir = queue_dir.join("processed");
+    let failed_dir = queue_dir.join("failed");
+    fs::create_dir_all(&pending_dir).map_err(io_err)?;
+    fs::create_dir_all(&processed_dir).map_err(io_err)?;
+    fs::create_dir_all(&failed_dir).map_err(io_err)?;
+
+    let mut pending = fs::read_dir(&pending_dir)
+        .map_err(io_err)?
+        .filter_map(|entry| entry.ok().map(|item| item.path()))
+        .filter(|path| path.extension().map(|ext| ext == "json").unwrap_or(false))
+        .collect::<Vec<_>>();
+    pending.sort();
+
+    let mut summary = SupervisorRunSummary {
+        root: root.to_path_buf(),
+        queue_dir: queue_dir.clone(),
+        processed: 0,
+        allowed: 0,
+        denied: 0,
+        failed: 0,
+        last_input_hash: String::new(),
+        last_execution_path: runtime_dir.join("last_execution.json"),
+        audit_log_path: runtime_audit_log_path(root, override_kernel_path),
+        note: "no queued actions were present".to_string(),
+    };
+
+    for path in pending.into_iter().take(max_jobs.max(1)) {
+        let contents = fs::read_to_string(&path).map_err(io_err)?;
+        let kernel_path_string = extract_json_string(&contents, "\"kernel_path\"")
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| override_kernel_path.map(|value| value.to_string()))
+            .unwrap_or_else(|| kernel_path_for(root, override_kernel_path).map(|p| p.display().to_string()).unwrap_or_default());
+        if kernel_path_string.is_empty() {
+            return Err(format!(
+                "queued action {} has no kernel_path and no override was provided",
+                path.display()
+            ));
+        }
+        let agent_id = extract_json_string(&contents, "\"agent_id\"")
+            .ok_or_else(|| format!("agent_id missing in {}", path.display()))?;
+        let org_id = extract_json_string(&contents, "\"org_id\"")
+            .ok_or_else(|| format!("org_id missing in {}", path.display()))?;
+        let action_type = extract_json_string(&contents, "\"action_type\"")
+            .ok_or_else(|| format!("action_type missing in {}", path.display()))?;
+        let resource = extract_json_string(&contents, "\"resource\"")
+            .ok_or_else(|| format!("resource missing in {}", path.display()))?;
+        let estimated_cost_usd = extract_json_number(&contents, "\"estimated_cost_usd\"")
+            .ok_or_else(|| format!("estimated_cost_usd missing in {}", path.display()))?;
+        let run_id = extract_json_string(&contents, "\"run_id\"").unwrap_or_default();
+        let session_id = extract_json_string(&contents, "\"session_id\"").unwrap_or_default();
+
+        let process_result = (|| -> ShadowResult<RuntimeExecutionCapture> {
+            let identity = resolve_agent_identity(
+                root,
+                Some(&kernel_path_string),
+                &agent_id,
+                Some(&org_id),
+            )?;
+            let envelope = build_action_envelope(
+                root,
+                Some(&kernel_path_string),
+                &agent_id,
+                Some(&org_id),
+                &action_type,
+                &resource,
+                estimated_cost_usd,
+                if run_id.is_empty() { None } else { Some(run_id.as_str()) },
+                if session_id.is_empty() {
+                    None
+                } else {
+                    Some(session_id.as_str())
+                },
+            )?;
+            let reference =
+                evaluate_reference_gates(root, Some(&kernel_path_string), &identity, &envelope)?;
+            let decision = capture_decision(root, &identity, &envelope, &reference)?;
+            capture_runtime_execution(root, Path::new(&kernel_path_string), &envelope, &reference, &decision)
+        })();
+
+        match process_result {
+            Ok(capture) => {
+                summary.processed += 1;
+                summary.last_input_hash = capture.input_hash.clone();
+                summary.last_execution_path = capture.execution_path.clone();
+                summary.audit_log_path = capture.audit_log_path.clone();
+                if capture.overall_decision == "allow" {
+                    summary.allowed += 1;
+                } else {
+                    summary.denied += 1;
+                }
+                let destination = processed_dir.join(
+                    path.file_name()
+                        .ok_or_else(|| format!("invalid queue file {}", path.display()))?,
+                );
+                fs::rename(&path, destination).map_err(io_err)?;
+            }
+            Err(error) => {
+                summary.failed += 1;
+                let destination = failed_dir.join(
+                    path.file_name()
+                        .ok_or_else(|| format!("invalid queue file {}", path.display()))?,
+                );
+                let failure_payload = format!(
+                    "{{\n  \"status\": \"failed\",\n  \"failed_at\": {},\n  \"source_path\": {},\n  \"error\": {},\n  \"queued_action\": {}\n}}\n",
+                    json_string(&timestamp_now()),
+                    json_string(&path.display().to_string()),
+                    json_string(&error),
+                    contents.trim(),
+                );
+                fs::write(&destination, failure_payload).map_err(io_err)?;
+                fs::remove_file(&path).map_err(io_err)?;
+            }
+        }
+    }
+
+    if summary.processed > 0 || summary.failed > 0 {
+        summary.note = format!(
+            "processed={} allowed={} denied={} failed={}",
+            summary.processed, summary.allowed, summary.denied, summary.failed
+        );
+    }
+    Ok(summary)
 }
 
 pub fn decision_exit_code(capture: &DecisionCapture, allow_code: i32, deny_code: i32) -> i32 {
@@ -931,6 +1133,73 @@ pub fn render_runtime_execution_json(capture: &RuntimeExecutionCapture) -> Strin
     )
 }
 
+pub fn render_enqueued_action_human(capture: &EnqueuedAction) -> String {
+    format!(
+        "Meridian Loom // ACTION ENQUEUED\n=================================\nqueue_path:           {}\ninput_hash:           {}\nagent_id:             {}\norg_id:               {}\naction_type:          {}\nresource:             {}\nestimated_cost_usd:   {}\nkernel_path:          {}\nnext_step:            loom supervisor run --root <path> --max-jobs 1\n",
+        capture.queue_path.display(),
+        capture.input_hash,
+        capture.agent_id,
+        capture.org_id,
+        capture.action_type,
+        capture.resource,
+        capture.estimated_cost_usd,
+        capture.kernel_path,
+    )
+}
+
+pub fn render_enqueued_action_json(capture: &EnqueuedAction) -> String {
+    format!(
+        "{{\n  \"status\": \"queued\",\n  \"queue_path\": {},\n  \"input_hash\": {},\n  \"agent_id\": {},\n  \"org_id\": {},\n  \"action_type\": {},\n  \"resource\": {},\n  \"estimated_cost_usd\": {},\n  \"kernel_path\": {}\n}}\n",
+        json_string(&capture.queue_path.display().to_string()),
+        json_string(&capture.input_hash),
+        json_string(&capture.agent_id),
+        json_string(&capture.org_id),
+        json_string(&capture.action_type),
+        json_string(&capture.resource),
+        capture.estimated_cost_usd,
+        json_string(&capture.kernel_path),
+    )
+}
+
+pub fn render_supervisor_run_human(summary: &SupervisorRunSummary) -> String {
+    format!(
+        "Meridian Loom // SUPERVISOR RUN\n================================\nphase:       experimental local queue supervisor\nboundary:    queued worker dispatch is real; hosted governed supervisor is not\n\nCurrent state\n=============\nroot:                {}\nqueue_dir:           {}\nprocessed:           {}\nallowed:             {}\ndenied:              {}\nfailed:              {}\nlast_input_hash:     {}\nlast_execution:      {}\naudit_log:           {}\nnote:                {}\n\nNext\n====\n1. loom parity report --root {}\n2. loom shadow report --root {}\n3. Inspect {} for canonical runtime audit entries.\n",
+        summary.root.display(),
+        summary.queue_dir.display(),
+        summary.processed,
+        summary.allowed,
+        summary.denied,
+        summary.failed,
+        if summary.last_input_hash.is_empty() {
+            "(none)".to_string()
+        } else {
+            summary.last_input_hash.clone()
+        },
+        summary.last_execution_path.display(),
+        summary.audit_log_path.display(),
+        summary.note,
+        summary.root.display(),
+        summary.root.display(),
+        summary.audit_log_path.display(),
+    )
+}
+
+pub fn render_supervisor_run_json(summary: &SupervisorRunSummary) -> String {
+    format!(
+        "{{\n  \"status\": \"supervisor_run_complete\",\n  \"root\": {},\n  \"queue_dir\": {},\n  \"processed\": {},\n  \"allowed\": {},\n  \"denied\": {},\n  \"failed\": {},\n  \"last_input_hash\": {},\n  \"last_execution_path\": {},\n  \"audit_log_path\": {},\n  \"note\": {}\n}}\n",
+        json_string(&summary.root.display().to_string()),
+        json_string(&summary.queue_dir.display().to_string()),
+        summary.processed,
+        summary.allowed,
+        summary.denied,
+        summary.failed,
+        json_string(&summary.last_input_hash),
+        json_string(&summary.last_execution_path.display().to_string()),
+        json_string(&summary.audit_log_path.display().to_string()),
+        json_string(&summary.note),
+    )
+}
+
 pub fn render_compare_human(summary: &ComparisonSummary) -> String {
     let divergence_lines = {
         let rendered = summary
@@ -1179,6 +1448,16 @@ fn ensure_audit_dir(root: &Path) -> ShadowResult<PathBuf> {
     let audit_dir = root.join(".loom/audit");
     fs::create_dir_all(&audit_dir).map_err(io_err)?;
     Ok(audit_dir)
+}
+
+fn runtime_audit_log_path(root: &Path, override_kernel_path: Option<&str>) -> PathBuf {
+    match kernel_path_for(root, override_kernel_path) {
+        Ok(kernel_path) => kernel_path
+            .join("kernel")
+            .join("runtime_audit")
+            .join("loom_runtime_events.jsonl"),
+        Err(_) => root.join(".loom/audit/runtime_events.jsonl"),
+    }
 }
 
 fn ensure_parity_dir(root: &Path) -> ShadowResult<PathBuf> {
@@ -1491,6 +1770,9 @@ fn emit_runtime_audit(
     worker: &WorkerExecutionCapture,
 ) -> ShadowResult<String> {
     let kernel_dir = kernel_path.join("kernel");
+    if let Some(parent) = audit_log_path.parent() {
+        fs::create_dir_all(parent).map_err(io_err)?;
+    }
     if kernel_dir.join("audit.py").exists() {
         let output = Command::new("python3")
             .arg(kernel_dir.join("audit.py"))
@@ -1529,7 +1811,6 @@ fn emit_runtime_audit(
             })
             .arg("--session_id")
             .arg(&envelope.session_id)
-            .env("MERIDIAN_AUDIT_FILE", audit_log_path)
             .output()
             .map_err(io_err)?;
         if output.status.success() {
@@ -1570,6 +1851,19 @@ fn append_line(path: &Path, line: &str) -> ShadowResult<()> {
     existing.push_str(line);
     fs::write(path, existing).map_err(io_err)?;
     Ok(())
+}
+
+fn sanitize_filename(input: &str) -> String {
+    input
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect()
 }
 
 fn load_events(path: &Path) -> ShadowResult<Vec<ShadowEvent>> {
@@ -1617,6 +1911,17 @@ fn extract_json_bool(section: &str, key: &str) -> Option<bool> {
     }
 }
 
+fn extract_json_number(section: &str, key: &str) -> Option<f64> {
+    let idx = section.find(key)?;
+    let after = &section[idx + key.len()..];
+    let colon = after.find(':')?;
+    let rest = after[colon + 1..].trim_start();
+    let end = rest
+        .find(|c: char| c == ',' || c == '\n' || c == '}')
+        .unwrap_or(rest.len());
+    rest[..end].trim().parse::<f64>().ok()
+}
+
 fn json_string(input: &str) -> String {
     format!("{:?}", input)
 }
@@ -1645,7 +1950,7 @@ fn timestamp_now() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use loom_core::{ActionEnvelope, AgentIdentityResolution};
+    use loom_core::{init_workspace, ActionEnvelope, AgentIdentityResolution};
 
     #[test]
     fn records_preflight_and_renders_report() {
@@ -1920,6 +2225,180 @@ mod tests {
         assert!(report.contains("status:      not_started"));
         assert!(report.contains("loom action execute"));
         assert!(report.contains("loom shadow report"));
+    }
+
+    #[test]
+    fn enqueue_action_writes_pending_queue_artifact() {
+        let root = temp_path("loom-shadow-enqueue");
+        fs::create_dir_all(&root).expect("root");
+        let envelope = sample_envelope();
+
+        let capture = enqueue_action(&root, Path::new("/tmp/meridian-kernel"), &envelope)
+            .expect("enqueue");
+        assert!(capture.queue_path.exists());
+        let queued = fs::read_to_string(&capture.queue_path).expect("queued file");
+        assert!(queued.contains("\"status\": \"queued\""));
+        assert!(queued.contains("\"agent_id\": \"agent_atlas\""));
+        assert!(queued.contains("\"kernel_path\": \"/tmp/meridian-kernel\""));
+    }
+
+    #[test]
+    fn supervisor_run_processes_pending_queue_and_uses_kernel_runtime_audit_path() {
+        let root = temp_path("loom-shadow-supervisor");
+        fs::create_dir_all(&root).expect("root");
+        let kernel_root = temp_path("loom-shadow-supervisor-kernel");
+        let kernel_dir = kernel_root.join("kernel");
+        fs::create_dir_all(&kernel_dir).expect("kernel dir");
+        fs::write(
+            kernel_dir.join("runtimes.json"),
+            "{\n  \"runtimes\": {\n    \"local_kernel\": {\"id\": \"local_kernel\", \"label\": \"Local Kernel Runtime\"},\n    \"meridian_loom\": {\"status\": \"experimental\", \"notes\": \"test note\", \"contract_compliance\": {\"agent_identity\": null, \"action_envelope\": null, \"cost_attribution\": null, \"approval_hook\": null, \"audit_emission\": null, \"sanction_controls\": null, \"budget_gate\": null}}\n  }\n}\n",
+        )
+        .expect("write runtimes");
+        fs::write(
+            kernel_dir.join("agent_registry.py"),
+            "import json, sys\nagent_id = sys.argv[sys.argv.index('--agent_id') + 1]\norg_id = sys.argv[sys.argv.index('--org_id') + 1] if '--org_id' in sys.argv else 'org_demo'\nprint(json.dumps({'id': agent_id, 'name': 'Atlas', 'org_id': org_id, 'role': 'analyst', 'economy_key': 'atlas', 'approval_required': False, 'budget': {'max_per_run_usd': 0.5}, 'runtime_binding': {'runtime_id': 'local_kernel', 'runtime_label': 'Local Kernel Runtime', 'bound_org_id': org_id, 'boundary_name': 'workspace', 'identity_model': 'session', 'runtime_registered': True, 'registration_status': 'registered'}}, indent=2))\n",
+        )
+        .expect("write agent registry");
+        fs::write(
+            kernel_dir.join("court.py"),
+            "def get_restrictions(agent_id, org_id=None):\n    return []\n",
+        )
+        .expect("write court");
+        fs::write(
+            kernel_dir.join("authority.py"),
+            "def check_authority(agent_id, action, org_id=None):\n    return True, 'ok'\n",
+        )
+        .expect("write authority");
+        fs::write(
+            kernel_dir.join("treasury.py"),
+            "def check_budget(agent_id, cost_usd, org_id=None):\n    if cost_usd > 0.5:\n        return False, 'below reserve'\n    return True, 'ok'\n",
+        )
+        .expect("write treasury");
+        let adapters_dir = kernel_dir.join("adapters");
+        fs::create_dir_all(&adapters_dir).expect("adapters dir");
+        fs::write(adapters_dir.join("__init__.py"), "").expect("write adapters init");
+        fs::write(
+            adapters_dir.join("openclaw_compatible.py"),
+            "import treasury\n\ndef pre_action_check(org_id, envelope):\n    allowed, reason = treasury.check_budget(envelope.get('agent_id'), float(envelope.get('estimated_cost_usd', 0.0)), org_id)\n    if not allowed:\n        return {'allowed': False, 'stage': 'budget_gate', 'reason': reason, 'restrictions': []}\n    return {'allowed': True, 'stage': 'ok', 'reason': 'ok', 'restrictions': []}\n",
+        )
+        .expect("write adapter");
+        fs::write(
+            kernel_dir.join("audit.py"),
+            r#"#!/usr/bin/env python3
+import argparse
+import datetime
+import json
+import os
+import uuid
+
+PLATFORM_DIR = os.path.dirname(os.path.abspath(__file__))
+RUNTIME_AUDIT_FILE = os.path.join(PLATFORM_DIR, "runtime_audit", "loom_runtime_events.jsonl")
+
+def _now():
+    return datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
+
+def log_event(org_id, agent_id, action, resource='', outcome='success', details=None, policy_ref='', session_id=None, audit_file=None):
+    audit_file = audit_file or RUNTIME_AUDIT_FILE
+    os.makedirs(os.path.dirname(audit_file), exist_ok=True)
+    event = {
+        'id': f'evt_{uuid.uuid4().hex[:10]}',
+        'timestamp': _now(),
+        'org_id': org_id,
+        'agent_id': agent_id,
+        'action': action,
+        'resource': resource,
+        'outcome': outcome,
+        'details': details or {},
+        'policy_ref': policy_ref,
+    }
+    if session_id:
+        event['session_id'] = session_id
+    with open(audit_file, 'a', encoding='utf-8') as handle:
+        handle.write(json.dumps(event) + '\n')
+
+def main():
+    parser = argparse.ArgumentParser()
+    sub = parser.add_subparsers(dest='command')
+    runtime = sub.add_parser('log-runtime')
+    runtime.add_argument('--org_id', required=True)
+    runtime.add_argument('--agent_id', default='')
+    runtime.add_argument('--action', required=True)
+    runtime.add_argument('--resource', default='')
+    runtime.add_argument('--outcome', required=True)
+    runtime.add_argument('--input_hash', required=True)
+    runtime.add_argument('--estimated_cost_usd', type=float, required=True)
+    runtime.add_argument('--effective_source', required=True)
+    runtime.add_argument('--effective_stage', required=True)
+    runtime.add_argument('--reference_stage', required=True)
+    runtime.add_argument('--runtime_outcome', required=True)
+    runtime.add_argument('--worker_status', default='')
+    runtime.add_argument('--worker_kind', default='')
+    runtime.add_argument('--parity_status', default='')
+    runtime.add_argument('--session_id', default=None)
+    args = parser.parse_args()
+    log_event(
+        args.org_id,
+        args.agent_id,
+        args.action,
+        resource=args.resource,
+        outcome=args.outcome,
+        details={
+            'source': 'loom_runtime_execute',
+            'input_hash': args.input_hash,
+            'estimated_cost_usd': args.estimated_cost_usd,
+            'effective_source': args.effective_source,
+            'effective_stage': args.effective_stage,
+            'reference_stage': args.reference_stage,
+            'runtime_outcome': args.runtime_outcome,
+            'worker_status': args.worker_status,
+            'worker_kind': args.worker_kind,
+            'parity_status': args.parity_status,
+            'experimental': True,
+        },
+        policy_ref='experimental_runtime_rehearsal',
+        session_id=args.session_id,
+    )
+
+if __name__ == '__main__':
+    main()
+"#,
+        )
+        .expect("write audit");
+        init_workspace(
+            &root,
+            "embedded",
+            Some(kernel_root.to_string_lossy().as_ref()),
+            "org_demo",
+        )
+        .expect("init workspace");
+        let envelope = sample_envelope();
+        enqueue_action(&root, &kernel_root, &envelope).expect("enqueue");
+
+        let summary = run_supervisor(&root, Some(kernel_root.to_string_lossy().as_ref()), 1)
+            .expect("supervisor");
+        assert_eq!(summary.processed, 1);
+        assert_eq!(summary.allowed, 1);
+        assert_eq!(
+            summary.audit_log_path,
+            kernel_root
+                .join("kernel")
+                .join("runtime_audit")
+                .join("loom_runtime_events.jsonl")
+        );
+        assert!(summary.audit_log_path.exists());
+        assert!(summary.last_execution_path.exists());
+        let pending_dir = root.join(".loom/runtime/queue/pending");
+        let processed_dir = root.join(".loom/runtime/queue/processed");
+        assert_eq!(
+            fs::read_dir(&pending_dir).expect("pending dir").count(),
+            0
+        );
+        assert_eq!(
+            fs::read_dir(&processed_dir).expect("processed dir").count(),
+            1
+        );
+        let human = render_supervisor_run_human(&summary);
+        assert!(human.contains("experimental local queue supervisor"));
     }
 
     fn temp_path(prefix: &str) -> PathBuf {
