@@ -22,7 +22,7 @@
 
 # Meridian Loom // Setup Rehearsal
 
-This repository includes eight focused rehearsals plus the broader setup sweep:
+This repository includes nine focused rehearsals plus the broader setup sweep:
 
 - a founder-host rehearsal against the current kernel truth
 - a fixture-backed rehearsal for local sanction denial
@@ -31,6 +31,7 @@ This repository includes eight focused rehearsals plus the broader setup sweep:
 - a fixture-backed bounded supervisor watch rehearsal
 - a fixture-backed bounded supervisor daemon rehearsal
 - a fixture-backed local runtime service rehearsal
+- a fixture-backed local HTTP runtime control-plane rehearsal
 - a fixture-backed sender-side commitment import rehearsal
 
 The point is not to pretend Loom is already a runtime. The point is to make the
@@ -53,6 +54,7 @@ to inspect honestly.
 | `./scripts/rehearse_supervisor_watch.sh` | bounded watch-loop state and heartbeat history | daemonized service |
 | `./scripts/rehearse_supervisor_daemon.sh` | local daemon lifecycle shell | hosted runtime supervisor |
 | `./scripts/rehearse_runtime_service.sh` | local runtime service lifecycle, ingress stream, service-owned execution shell | hosted ingress service |
+| `./scripts/rehearse_runtime_http_service.sh` | tokenized local HTTP control plane for runtime service status/submit/stop | hosted HTTP runtime ingress |
 | `./scripts/rehearse_commitment_import.sh` | sender-side commitment outbox import into Loom queue | live cross-host replacement |
 
 ## Current rehearsal scope
@@ -105,7 +107,10 @@ The rehearsal verifies:
 25. When the local Unix socket boundary is unavailable, the runtime service
     falls back to file-backed ingress under `.loom/runtime/ingress/` instead of
     failing silently.
-26. `loom service import-commitments` can now import sender-side
+26. `loom service start --http-address ... --service-token ...` can now expose
+    a tokenized local HTTP control plane with `GET /status`, `POST /submit`,
+    and `POST /stop` when the host allows binding.
+27. `loom service import-commitments` can now import sender-side
     `execution_request` delivery refs from a commitments snapshot into the
     local Loom queue, creating import markers under
     `.loom/runtime/imports/commitment_execution/`.
@@ -270,6 +275,24 @@ That script proves the current local service shell:
 
 Its checked-in transcript lives at
 `examples/runtime-service-output.txt`.
+
+There is now a separate local HTTP control-plane rehearsal:
+
+```bash
+./scripts/rehearse_runtime_http_service.sh
+```
+
+That script proves the current tokenized HTTP surface:
+- `loom service start --http-address 127.0.0.1:0 --service-token ...` binds a
+  local HTTP control plane when the host permits it
+- unauthenticated `GET /status` is rejected when a service token is configured
+- authenticated `POST /submit` lands the same queue, job, audit, and parity
+  artifacts as the socket/file ingress path
+- authenticated `POST /stop` requests a clean local shutdown through that same
+  boundary
+
+Its checked-in transcript lives at
+`examples/runtime-http-service-output.txt`.
 
 There is now a separate commitment import rehearsal:
 

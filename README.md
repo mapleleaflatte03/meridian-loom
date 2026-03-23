@@ -185,7 +185,24 @@ That path proves a local service lifecycle is now real:
 
 Its checked-in transcript lives at `examples/runtime-service-output.txt`.
 
-And an eighth rehearsal for sender-side commitment outbox import:
+And an eighth rehearsal for the local HTTP control plane:
+
+```bash
+./scripts/rehearse_runtime_http_service.sh
+```
+
+That path proves a second local ingress seam:
+- `loom service start --http-address 127.0.0.1:0 --service-token ...` binds a
+  local HTTP control plane when the host allows it
+- bearer-token enforcement is real on that HTTP surface
+- `POST /submit` accepts a governed action over local HTTP and lands the same
+  runtime-owned queue, job, audit, and parity artifacts
+- `POST /stop` can request a clean local service stop over the same tokenized
+  boundary
+
+Its checked-in transcript lives at `examples/runtime-http-service-output.txt`.
+
+And a ninth rehearsal for sender-side commitment outbox import:
 
 ```bash
 ./scripts/rehearse_commitment_import.sh
@@ -310,6 +327,7 @@ is “what parts of a real runtime path are already tangible?”
 | Queue-backed supervisor lane | `loom action enqueue` and `loom supervisor run` now provide a real local queue boundary. A queued action is materialized under `.loom/runtime/queue/`, then processed through the same decision surface and worker dispatch path when the supervisor runs. |
 | Runtime-owned job ledger | `loom job list` and `loom job inspect` now surface persisted job state from `.loom/runtime/jobs/<input_hash>/job.json`. Queue, runtime, decision, parity, and audit artifact paths are now operator-readable without spelunking the runtime tree manually. |
 | Local runtime service shell | `loom service start/status/submit/stop` now provide a real local service lifecycle with runtime state, service events, ingress stream artifacts, and truthful transport reporting. On hosts where the Unix socket boundary is unavailable, the service falls back to file-backed ingress instead of failing silently. |
+| Local HTTP control plane | `loom service start --http-address ... --service-token ...` now exposes a tokenized local HTTP ingress boundary. `GET /status`, `POST /submit`, and `POST /stop` are locally real when the host permits binding, but this is still not a hosted runtime service. |
 | Commitment outbox import | `loom service import-commitments` can now read sender-side `execution_request` delivery refs from a commitments snapshot and materialize those requests into the local Loom queue. This is a real local ingress seam from kernel truth, not yet a hosted cross-host replacement path. |
 | Supervisor watch loop | `loom supervisor watch` now runs that same queue supervisor in a bounded polling loop, writes `.loom/runtime/supervisor/status.json`, and appends heartbeat history into `.loom/runtime/supervisor/heartbeat.jsonl`. This makes local supervisor state inspectable, but it is still not a daemonized or hosted scheduler. |
 | Daemon lifecycle rehearsal | `loom supervisor daemon start/status/stop` now wrap the same queue supervisor with a real local lifecycle shell. A background child writes `.loom/runtime/supervisor/runtime_state.json`, appends heartbeat history, and honors a local stop request. This is still a bounded local daemon rehearsal, not a hosted supervisor service. |

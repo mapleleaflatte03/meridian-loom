@@ -912,6 +912,8 @@ fn handle_service(args: &[String]) -> LoomResult<()> {
             let root = root_from(take_value(args, "--root").as_deref())?;
             let kernel_path = take_value(args, "--kernel-path");
             let socket_path = take_value(args, "--socket");
+            let http_address = take_value(args, "--http-address");
+            let service_token = take_value(args, "--service-token");
             let commitments_source = take_value(args, "--commitments-source");
             let workspace_token = take_value(args, "--workspace-token");
             let max_jobs = take_value(args, "--max-jobs")
@@ -953,6 +955,12 @@ fn handle_service(args: &[String]) -> LoomResult<()> {
             if let Some(socket_path) = socket_path.as_deref() {
                 command.arg("--socket").arg(socket_path);
             }
+            if let Some(http_address) = http_address.as_deref() {
+                command.arg("--http-address").arg(http_address);
+            }
+            if let Some(service_token) = service_token.as_deref() {
+                command.arg("--service-token").arg(service_token);
+            }
             if let Some(commitments_source) = commitments_source.as_deref() {
                 command.arg("--commitments-source").arg(commitments_source);
             }
@@ -984,6 +992,11 @@ fn handle_service(args: &[String]) -> LoomResult<()> {
                     .as_deref()
                     .map(std::path::PathBuf::from)
                     .unwrap_or_else(|| root.join(".loom/runtime/service/runtime.sock")),
+                http_address: http_address.clone().unwrap_or_default(),
+                http_token_required: service_token
+                    .as_deref()
+                    .map(|value| !value.trim().is_empty())
+                    .unwrap_or(false),
                 runtime_state_path: root.join(".loom/runtime/service/runtime_state.json"),
                 stop_request_path: root.join(".loom/runtime/service/stop.requested"),
                 stdout_log_path,
@@ -1028,6 +1041,8 @@ fn handle_service(args: &[String]) -> LoomResult<()> {
             let root = root_from(take_value(args, "--root").as_deref())?;
             let kernel_path = take_value(args, "--kernel-path");
             let socket_path = take_value(args, "--socket");
+            let http_address = take_value(args, "--http-address");
+            let service_token = take_value(args, "--service-token");
             let commitments_source = take_value(args, "--commitments-source");
             let workspace_token = take_value(args, "--workspace-token");
             let max_jobs = take_value(args, "--max-jobs")
@@ -1046,6 +1061,8 @@ fn handle_service(args: &[String]) -> LoomResult<()> {
                 &root,
                 kernel_path.as_deref(),
                 socket_path.as_deref(),
+                http_address.as_deref(),
+                service_token.as_deref(),
                 commitments_source.as_deref(),
                 workspace_token.as_deref(),
                 max_jobs,
@@ -1095,6 +1112,8 @@ fn handle_service(args: &[String]) -> LoomResult<()> {
             let run_id = take_value(args, "--run-id");
             let session_id = take_value(args, "--session-id");
             let socket_path = take_value(args, "--socket");
+            let http_url = take_value(args, "--http-url");
+            let service_token = take_value(args, "--service-token");
             let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
 
             let envelope = build_action_envelope(
@@ -1112,6 +1131,8 @@ fn handle_service(args: &[String]) -> LoomResult<()> {
             let capture = submit_runtime_service_action(
                 &root,
                 socket_path.as_deref(),
+                http_url.as_deref(),
+                service_token.as_deref(),
                 &effective_kernel_path,
                 &envelope,
             )?;
@@ -1209,9 +1230,9 @@ Runtime rehearsal\n\
 -----------------\n\
   loom action enqueue --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
   loom action execute --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
-  loom service start [--root PATH] [--kernel-path PATH] [--socket PATH] [--commitments-source PATH|URL] [--workspace-token TOKEN] [--max-jobs N] [--poll-seconds N] [--iterations N] [--format human|json]\n\
+  loom service start [--root PATH] [--kernel-path PATH] [--socket PATH] [--http-address HOST:PORT] [--service-token TOKEN] [--commitments-source PATH|URL] [--workspace-token TOKEN] [--max-jobs N] [--poll-seconds N] [--iterations N] [--format human|json]\n\
   loom service status [--root PATH] [--socket PATH] [--format human|json]\n\
-  loom service submit --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--socket PATH] [--format human|json]\n\
+  loom service submit --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--socket PATH] [--http-url URL] [--service-token TOKEN] [--format human|json]\n\
   loom service import-commitments --commitments-source PATH|URL [--workspace-token TOKEN] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
   loom service stop [--root PATH] [--socket PATH] [--format human|json]\n\
   loom supervisor run [--root PATH] [--kernel-path PATH] [--max-jobs N] [--format human|json]\n\
@@ -1231,7 +1252,7 @@ Runtime rehearsal\n\
 Next\n\
 ----\n\
   1. loom init --mode embedded --root /tmp/loom-rehearsal --kernel-path /tmp/meridian-kernel\n\
-  2. loom service start --root /tmp/loom-rehearsal --kernel-path /tmp/meridian-kernel --max-jobs 1 --poll-seconds 1 --iterations 20\n\
+  2. loom service start --root /tmp/loom-rehearsal --kernel-path /tmp/meridian-kernel --http-address 127.0.0.1:0 --max-jobs 1 --poll-seconds 1 --iterations 20\n\
   3. loom service submit --root /tmp/loom-rehearsal --agent-id agent_atlas --action-type research --resource web_search --estimated-cost-usd 0.05\n\
   4. loom service import-commitments --root /tmp/loom-rehearsal --commitments-source /tmp/commitments.json\n\
   5. loom parity report --root /tmp/loom-rehearsal\n",

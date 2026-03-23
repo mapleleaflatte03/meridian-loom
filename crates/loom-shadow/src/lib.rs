@@ -24,7 +24,8 @@ use scheduler_state::{
 use proof_views::render_proof_first_status_human;
 use serde_json::Value;
 use std::fs;
-use std::io::{ErrorKind, Read, Write};
+use std::io::{self, ErrorKind, Read, Write};
+use std::net::{Shutdown, TcpListener, TcpStream};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -267,6 +268,8 @@ pub struct RuntimeServiceSnapshot {
     pub root: PathBuf,
     pub service_dir: PathBuf,
     pub socket_path: PathBuf,
+    pub http_address: String,
+    pub http_token_required: bool,
     pub runtime_state_path: PathBuf,
     pub stop_request_path: PathBuf,
     pub stdout_log_path: PathBuf,
@@ -300,6 +303,8 @@ pub struct RuntimeServiceSnapshot {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RuntimeServiceSubmitCapture {
     pub request_id: String,
+    pub transport: String,
+    pub service_target: String,
     pub socket_path: PathBuf,
     pub ingress_request_path: PathBuf,
     pub ingress_receipt_path: PathBuf,
@@ -2150,6 +2155,8 @@ pub fn run_supervisor_daemon_loop(
         }
         if poll_seconds > 0 {
             thread::sleep(Duration::from_secs(poll_seconds));
+        } else {
+            thread::sleep(Duration::from_millis(25));
         }
     }
 
@@ -2334,6 +2341,8 @@ pub fn run_runtime_service_loop(
     root: &Path,
     override_kernel_path: Option<&str>,
     socket_override: Option<&str>,
+    http_address: Option<&str>,
+    service_token: Option<&str>,
     commitments_source: Option<&str>,
     workspace_token: Option<&str>,
     max_jobs: usize,
@@ -2382,6 +2391,39 @@ pub fn run_runtime_service_loop(
             None
         }
     };
+    let http_listener = match http_address {
+        Some(raw) if !raw.trim().is_empty() => match TcpListener::bind(raw) {
+            Ok(listener) => {
+                listener.set_nonblocking(true).map_err(io_err)?;
+                Some(listener)
+            }
+            Err(error) => {
+                append_line(
+                    &event_log_path,
+                    &format!(
+                        "{{\"timestamp\":{},\"session_id\":{},\"status\":\"http_bind_failed\",\"http_address\":{},\"note\":{}}}\n",
+                        json_string(&timestamp_now()),
+                        json_string(session_id),
+                        json_string(raw),
+                        json_string(&format!(
+                            "http control plane unavailable; continuing without HTTP ingress: {}",
+                            error
+                        )),
+                    ),
+                )?;
+                None
+            }
+        },
+        _ => None,
+    };
+    let resolved_http_address = http_listener
+        .as_ref()
+        .and_then(|listener| listener.local_addr().ok())
+        .map(|addr| addr.to_string())
+        .unwrap_or_default();
+    let http_token_required = service_token
+        .map(|token| !token.trim().is_empty())
+        .unwrap_or(false);
 
     let mut iterations_completed = 0usize;
     let mut submitted = 0usize;
@@ -2396,6 +2438,12 @@ pub fn run_runtime_service_loop(
     write_runtime_service_state(
         &runtime_state_path,
         &socket_path,
+        if resolved_http_address.is_empty() {
+            None
+        } else {
+            Some(resolved_http_address.as_str())
+        },
+        http_token_required,
         session_id,
         pid,
         true,
@@ -2417,9 +2465,17 @@ pub fn run_runtime_service_loop(
         "",
         "",
         if listener.is_some() {
-            format!("runtime service {} booted with socket ingress", session_id)
+            if resolved_http_address.is_empty() {
+                format!("runtime service {} booted with socket ingress", session_id)
+            } else {
+                format!("runtime service {} booted with socket ingress + http control plane at {}", session_id, resolved_http_address)
+            }
         } else {
-            format!("runtime service {} booted with file-backed ingress only", session_id)
+            if resolved_http_address.is_empty() {
+                format!("runtime service {} booted with file-backed ingress only", session_id)
+            } else {
+                format!("runtime service {} booted with file-backed ingress + http control plane at {}", session_id, resolved_http_address)
+            }
         },
     )?;
 
@@ -2437,7 +2493,8 @@ pub fn run_runtime_service_loop(
                         let reply = handle_runtime_service_request(
                             root,
                             override_kernel_path,
-                            &socket_path,
+                            &socket_path.display().to_string(),
+                            "socket",
                             &request_contents,
                         )?;
                         if reply.status == "accepted" {
@@ -2450,11 +2507,12 @@ pub fn run_runtime_service_loop(
                         append_line(
                             &event_log_path,
                             &format!(
-                                "{{\"timestamp\":{},\"session_id\":{},\"request_id\":{},\"status\":{},\"job_id\":{},\"note\":{}}}\n",
+                                "{{\"timestamp\":{},\"session_id\":{},\"request_id\":{},\"status\":{},\"transport\":{},\"job_id\":{},\"note\":{}}}\n",
                                 json_string(&timestamp_now()),
                                 json_string(session_id),
                                 json_string(&reply.request_id),
                                 json_string(&reply.status),
+                                json_string(&reply.transport),
                                 json_string(&reply.job_id),
                                 json_string(&reply.note),
                             ),
@@ -2471,12 +2529,58 @@ pub fn run_runtime_service_loop(
             }
         }
 
+        if let Some(http_listener) = http_listener.as_ref() {
+            loop {
+                match http_listener.accept() {
+                    Ok((mut stream, _addr)) => {
+                        let request_contents = read_http_request_stream(&mut stream)?;
+                        let reply = handle_runtime_service_http_request(
+                            root,
+                            override_kernel_path,
+                            &resolved_http_address,
+                            service_token,
+                            &request_contents,
+                        )?;
+                        if reply.status == "accepted" || reply.status == "commitment_imported" {
+                            submitted += 1;
+                            last_request_id = reply.request_id.clone();
+                            if !reply.job_id.is_empty() {
+                                last_job_id = reply.job_id.clone();
+                            }
+                        } else if reply.status == "stop_requested" {
+                            last_request_id = reply.request_id.clone();
+                            stop_reason = "stop_requested".to_string();
+                        }
+                        append_line(
+                            &event_log_path,
+                            &format!(
+                                "{{\"timestamp\":{},\"session_id\":{},\"request_id\":{},\"status\":{},\"transport\":{},\"job_id\":{},\"note\":{}}}\n",
+                                json_string(&timestamp_now()),
+                                json_string(session_id),
+                                json_string(&reply.request_id),
+                                json_string(&reply.status),
+                                json_string(&reply.transport),
+                                json_string(&reply.job_id),
+                                json_string(&reply.note),
+                            ),
+                        )?;
+                        let http_response = build_http_response(reply.http_status_code, &reply.payload);
+                        stream.write_all(http_response.as_bytes()).map_err(io_err)?;
+                        stream.flush().map_err(io_err)?;
+                    }
+                    Err(error) if error.kind() == ErrorKind::WouldBlock => break,
+                    Err(error) => return Err(io_err(error)),
+                }
+            }
+        }
+
         for request_path in collect_pending_runtime_ingress_requests(root)? {
             let request_contents = fs::read_to_string(&request_path).map_err(io_err)?;
             let reply = handle_runtime_service_request(
                 root,
                 override_kernel_path,
-                &socket_path,
+                &socket_path.display().to_string(),
+                "file_ingress",
                 &request_contents,
             )?;
             if reply.status == "accepted" {
@@ -2542,6 +2646,12 @@ pub fn run_runtime_service_loop(
         write_runtime_service_state(
             &runtime_state_path,
             &socket_path,
+            if resolved_http_address.is_empty() {
+                None
+            } else {
+                Some(resolved_http_address.as_str())
+            },
+            http_token_required,
             session_id,
             pid,
             true,
@@ -2600,6 +2710,7 @@ pub fn run_runtime_service_loop(
     }
 
     drop(listener);
+    drop(http_listener);
     if socket_path.exists() && !socket_path.is_dir() {
         fs::remove_file(&socket_path).map_err(io_err)?;
     }
@@ -2608,6 +2719,12 @@ pub fn run_runtime_service_loop(
     write_runtime_service_state(
         &runtime_state_path,
         &socket_path,
+        if resolved_http_address.is_empty() {
+            None
+        } else {
+            Some(resolved_http_address.as_str())
+        },
+        http_token_required,
         session_id,
         pid,
         false,
@@ -2658,6 +2775,8 @@ pub fn runtime_service_status(
             root: root.to_path_buf(),
             service_dir,
             socket_path,
+            http_address: String::new(),
+            http_token_required: false,
             runtime_state_path,
             stop_request_path,
             stdout_log_path,
@@ -2704,6 +2823,8 @@ pub fn runtime_service_status(
         root: root.to_path_buf(),
         service_dir,
         socket_path,
+        http_address: extract_optional_string(&contents, "\"http_address\"").unwrap_or_default(),
+        http_token_required: extract_json_bool(&contents, "\"http_token_required\"").unwrap_or(false),
         runtime_state_path,
         stop_request_path,
         stdout_log_path,
@@ -2788,6 +2909,8 @@ pub fn request_runtime_service_stop(
 pub fn submit_runtime_service_action(
     root: &Path,
     socket_override: Option<&str>,
+    http_url: Option<&str>,
+    service_token: Option<&str>,
     kernel_path: &Path,
     envelope: &ActionEnvelope,
 ) -> ShadowResult<RuntimeServiceSubmitCapture> {
@@ -2818,8 +2941,53 @@ pub fn submit_runtime_service_action(
     if !service_snapshot.available || !service_snapshot.running {
         return Err("runtime service is not running; start it with `loom service start` first".to_string());
     }
+    let fallback_http_url = if service_snapshot.http_address.trim().is_empty() {
+        None
+    } else {
+        Some(format!("http://{}", service_snapshot.http_address))
+    };
+    let effective_http_url = http_url
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .or(fallback_http_url);
 
-    if socket_path.exists() {
+    if let Some(http_url) = effective_http_url.as_deref() {
+        let reply = send_runtime_service_http_request(
+            http_url,
+            "POST",
+            "/submit",
+            Some(&request),
+            service_token,
+        )?;
+        let body = extract_http_body(&reply);
+        let status = extract_json_string(&body, "\"status\"").unwrap_or_else(|| "unknown".to_string());
+        if status != "accepted" {
+            return Err(format!(
+                "runtime service submission failed: {}",
+                extract_json_string(&body, "\"note\"").unwrap_or(body)
+            ));
+        }
+        return Ok(RuntimeServiceSubmitCapture {
+            request_id: extract_json_string(&body, "\"request_id\"").unwrap_or(request_id),
+            transport: extract_json_string(&body, "\"transport\"").unwrap_or_else(|| "http".to_string()),
+            service_target: extract_json_string(&body, "\"service_target\"")
+                .unwrap_or_else(|| http_url.to_string()),
+            socket_path,
+            ingress_request_path: PathBuf::from(
+                extract_json_string(&body, "\"ingress_request_path\"").unwrap_or_default(),
+            ),
+            ingress_receipt_path: PathBuf::from(
+                extract_json_string(&body, "\"ingress_receipt_path\"").unwrap_or_default(),
+            ),
+            job_id: extract_json_string(&body, "\"job_id\"").unwrap_or_default(),
+            policy_class: extract_json_string(&body, "\"policy_class\"").unwrap_or_default(),
+            queue_path: PathBuf::from(
+                extract_json_string(&body, "\"queue_path\"").unwrap_or_default(),
+            ),
+            accepted_at: extract_json_string(&body, "\"accepted_at\"").unwrap_or_default(),
+            note: extract_json_string(&body, "\"note\"").unwrap_or_default(),
+        });
+    } else if socket_path.exists() && !socket_path.is_dir() {
         if let Ok(reply) = send_runtime_service_request(&socket_path, &request) {
             let status = extract_json_string(&reply, "\"status\"").unwrap_or_else(|| "unknown".to_string());
             if status != "accepted" {
@@ -2830,6 +2998,9 @@ pub fn submit_runtime_service_action(
             }
             return Ok(RuntimeServiceSubmitCapture {
                 request_id: extract_json_string(&reply, "\"request_id\"").unwrap_or(request_id),
+                transport: extract_json_string(&reply, "\"transport\"").unwrap_or_else(|| "socket".to_string()),
+                service_target: extract_json_string(&reply, "\"service_target\"")
+                    .unwrap_or_else(|| socket_path.display().to_string()),
                 socket_path,
                 ingress_request_path: PathBuf::from(
                     extract_json_string(&reply, "\"ingress_request_path\"").unwrap_or_default(),
@@ -2885,6 +3056,10 @@ pub fn submit_runtime_service_action(
             let reply = fs::read_to_string(&ingress_receipt_path).map_err(io_err)?;
             return Ok(RuntimeServiceSubmitCapture {
                 request_id: extract_json_string(&reply, "\"request_id\"").unwrap_or(request_id),
+                transport: extract_json_string(&reply, "\"transport\"")
+                    .unwrap_or_else(|| "file_ingress".to_string()),
+                service_target: extract_json_string(&reply, "\"service_target\"")
+                    .unwrap_or_else(|| socket_path.display().to_string()),
                 socket_path,
                 ingress_request_path,
                 ingress_receipt_path,
@@ -2908,6 +3083,8 @@ pub fn submit_runtime_service_action(
         classify_action(&envelope.action_type, envelope.estimated_cost_usd, false).label().to_string();
     Ok(RuntimeServiceSubmitCapture {
         request_id,
+        transport: "file_ingress".to_string(),
+        service_target: socket_path.display().to_string(),
         socket_path,
         ingress_request_path,
         ingress_receipt_path,
@@ -2922,16 +3099,19 @@ pub fn submit_runtime_service_action(
 
 struct RuntimeServiceReply {
     status: String,
+    transport: String,
     request_id: String,
     job_id: String,
     note: String,
+    http_status_code: u16,
     payload: String,
 }
 
 fn handle_runtime_service_request(
     root: &Path,
     override_kernel_path: Option<&str>,
-    socket_path: &Path,
+    ingress_target: &str,
+    transport: &str,
     request_contents: &str,
 ) -> ShadowResult<RuntimeServiceReply> {
     let request_type = extract_json_string(request_contents, "\"request_type\"")
@@ -2972,11 +3152,12 @@ fn handle_runtime_service_request(
             fs::write(
                 &ingress_request_path,
                 format!(
-                    "{{\n  \"status\": \"received\",\n  \"request_id\": {},\n  \"request_type\": {},\n  \"received_at\": {},\n  \"socket_path\": {},\n  \"agent_id\": {},\n  \"org_id\": {},\n  \"action_type\": {},\n  \"resource\": {},\n  \"estimated_cost_usd\": {:.6}\n}}\n",
+                    "{{\n  \"status\": \"received\",\n  \"request_id\": {},\n  \"request_type\": {},\n  \"received_at\": {},\n  \"transport\": {},\n  \"ingress_target\": {},\n  \"agent_id\": {},\n  \"org_id\": {},\n  \"action_type\": {},\n  \"resource\": {},\n  \"estimated_cost_usd\": {:.6}\n}}\n",
                     json_string(&request_id),
                     json_string(&request_type),
                     json_string(&timestamp_now()),
-                    json_string(&socket_path.display().to_string()),
+                    json_string(transport),
+                    json_string(ingress_target),
                     json_string(&agent_id),
                     json_string(&org_id),
                     json_string(&action_type),
@@ -2990,9 +3171,11 @@ fn handle_runtime_service_request(
             fs::write(
                 &ingress_receipt_path,
                 format!(
-                    "{{\n  \"status\": \"accepted\",\n  \"request_id\": {},\n  \"accepted_at\": {},\n  \"job_id\": {},\n  \"policy_class\": {},\n  \"queue_path\": {},\n  \"kernel_path\": {},\n  \"note\": \"service ingress accepted and queued action for local runtime supervision\"\n}}\n",
+                    "{{\n  \"status\": \"accepted\",\n  \"request_id\": {},\n  \"accepted_at\": {},\n  \"transport\": {},\n  \"service_target\": {},\n  \"job_id\": {},\n  \"policy_class\": {},\n  \"queue_path\": {},\n  \"kernel_path\": {},\n  \"note\": \"service ingress accepted and queued action for local runtime supervision\"\n}}\n",
                     json_string(&request_id),
                     json_string(&timestamp_now()),
+                    json_string(transport),
+                    json_string(ingress_target),
                     json_string(&enqueue.input_hash),
                     json_string(&enqueue.policy_class),
                     json_string(&enqueue.queue_path.display().to_string()),
@@ -3003,17 +3186,20 @@ fn handle_runtime_service_request(
             append_line(
                 &runtime_ingress_stream_path(root)?,
                 &format!(
-                    "{{\"timestamp\":{},\"request_id\":{},\"status\":\"accepted\",\"job_id\":{},\"policy_class\":{},\"queue_path\":{},\"socket_path\":{}}}\n",
+                    "{{\"timestamp\":{},\"request_id\":{},\"status\":\"accepted\",\"transport\":{},\"job_id\":{},\"policy_class\":{},\"queue_path\":{},\"ingress_target\":{}}}\n",
                     json_string(&timestamp_now()),
                     json_string(&request_id),
+                    json_string(transport),
                     json_string(&enqueue.input_hash),
                     json_string(&enqueue.policy_class),
                     json_string(&enqueue.queue_path.display().to_string()),
-                    json_string(&socket_path.display().to_string()),
+                    json_string(ingress_target),
                 ),
             )?;
             let payload = format!(
-                "{{\"status\":\"accepted\",\"request_id\":{},\"accepted_at\":{},\"job_id\":{},\"policy_class\":{},\"queue_path\":{},\"ingress_request_path\":{},\"ingress_receipt_path\":{},\"note\":\"service ingress accepted and queued action\"}}\n",
+                "{{\"status\":\"accepted\",\"transport\":{},\"service_target\":{},\"request_id\":{},\"accepted_at\":{},\"job_id\":{},\"policy_class\":{},\"queue_path\":{},\"ingress_request_path\":{},\"ingress_receipt_path\":{},\"note\":\"service ingress accepted and queued action\"}}\n",
+                json_string(transport),
+                json_string(ingress_target),
                 json_string(&request_id),
                 json_string(&timestamp_now()),
                 json_string(&enqueue.input_hash),
@@ -3024,9 +3210,11 @@ fn handle_runtime_service_request(
             );
             Ok(RuntimeServiceReply {
                 status: "accepted".to_string(),
+                transport: transport.to_string(),
                 request_id,
                 job_id: enqueue.input_hash,
                 note: "service ingress accepted and queued action".to_string(),
+                http_status_code: 202,
                 payload,
             })
         }
@@ -3047,9 +3235,11 @@ fn handle_runtime_service_request(
             );
             Ok(RuntimeServiceReply {
                 status: "stop_requested".to_string(),
+                transport: transport.to_string(),
                 request_id,
                 job_id: String::new(),
                 note: "runtime service stop has been requested".to_string(),
+                http_status_code: 202,
                 payload,
             })
         }
@@ -3061,9 +3251,11 @@ fn handle_runtime_service_request(
             );
             Ok(RuntimeServiceReply {
                 status: "rejected".to_string(),
+                transport: transport.to_string(),
                 request_id,
                 job_id: String::new(),
                 note: format!("unknown request_type '{}'", request_type),
+                http_status_code: 400,
                 payload,
             })
         }
@@ -3071,10 +3263,192 @@ fn handle_runtime_service_request(
 }
 
 fn send_runtime_service_request(socket_path: &Path, request: &str) -> ShadowResult<String> {
-    let mut stream = UnixStream::connect(socket_path).map_err(io_err)?;
+    let mut last_error = None;
+    for _ in 0..20 {
+        match UnixStream::connect(socket_path) {
+            Ok(mut stream) => {
+                stream.write_all(request.as_bytes()).map_err(io_err)?;
+                stream.shutdown(Shutdown::Write).map_err(io_err)?;
+                return read_stream_string(&mut stream);
+            }
+            Err(error) => {
+                last_error = Some(error);
+                thread::sleep(Duration::from_millis(50));
+            }
+        }
+    }
+    Err(io_err(last_error.unwrap_or_else(|| io::Error::new(ErrorKind::Other, "runtime service socket connection failed"))))
+}
+
+fn send_runtime_service_http_request(
+    http_url: &str,
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+    service_token: Option<&str>,
+) -> ShadowResult<String> {
+    let target = http_url
+        .trim()
+        .strip_prefix("http://")
+        .ok_or_else(|| "http_url must start with http://".to_string())?;
+    let (host_port, base_path) = if let Some((host_port, suffix)) = target.split_once('/') {
+        (host_port, format!("/{}", suffix.trim_start_matches('/')))
+    } else {
+        (target, String::new())
+    };
+    let resolved_path = format!("{}{}", base_path, path);
+    let mut stream = TcpStream::connect(host_port).map_err(io_err)?;
+    let payload = body.unwrap_or("");
+    let mut request = format!(
+        "{} {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n",
+        method, resolved_path, host_port
+    );
+    if let Some(token) = service_token {
+        request.push_str(&format!("Authorization: Bearer {}\r\n", token));
+    }
+    if !payload.is_empty() {
+        request.push_str("Content-Type: application/json\r\n");
+        request.push_str(&format!("Content-Length: {}\r\n", payload.as_bytes().len()));
+    } else {
+        request.push_str("Content-Length: 0\r\n");
+    }
+    request.push_str("\r\n");
+    request.push_str(payload);
     stream.write_all(request.as_bytes()).map_err(io_err)?;
-    stream.shutdown(std::net::Shutdown::Write).map_err(io_err)?;
-    read_stream_string(&mut stream)
+    stream.shutdown(Shutdown::Write).map_err(io_err)?;
+    read_tcp_stream_string(&mut stream)
+}
+
+fn handle_runtime_service_http_request(
+    root: &Path,
+    override_kernel_path: Option<&str>,
+    http_address: &str,
+    service_token: Option<&str>,
+    raw_request: &str,
+) -> ShadowResult<RuntimeServiceReply> {
+    let request = parse_http_request(raw_request)?;
+    if let Some(expected) = service_token {
+        let presented = request
+            .authorization
+            .unwrap_or_default()
+            .trim()
+            .strip_prefix("Bearer ")
+            .unwrap_or_default()
+            .to_string();
+        if presented != expected {
+            let payload = "{\"status\":\"unauthorized\",\"note\":\"service token required for this HTTP surface\"}\n".to_string();
+            return Ok(RuntimeServiceReply {
+                status: "unauthorized".to_string(),
+                transport: "http".to_string(),
+                request_id: canonical_join_runtime(&["http", "unauthorized", &timestamp_now()]),
+                job_id: String::new(),
+                note: "service token required for this HTTP surface".to_string(),
+                http_status_code: 401,
+                payload,
+            });
+        }
+    }
+
+    match (request.method.as_str(), request.path.as_str()) {
+        ("GET", "/status") | ("GET", "/health") => {
+            let snapshot = runtime_service_status(root, None)?;
+            Ok(RuntimeServiceReply {
+                status: "status".to_string(),
+                transport: "http".to_string(),
+                request_id: canonical_join_runtime(&["http", "status", &timestamp_now()]),
+                job_id: snapshot.last_job_id.clone(),
+                note: "service status rendered over local http control plane".to_string(),
+                http_status_code: 200,
+                payload: render_runtime_service_json(&snapshot),
+            })
+        }
+        ("POST", "/submit") => {
+            let body = serde_json::from_str::<Value>(&request.body).map_err(|error| error.to_string())?;
+            let payload = format!(
+                "{{\"request_type\":{},\"request_id\":{},\"agent_id\":{},\"org_id\":{},\"action_type\":{},\"resource\":{},\"estimated_cost_usd\":{:.6},\"run_id\":{},\"session_id\":{},\"kernel_path\":{}}}\n",
+                json_string("submit_action"),
+                json_string(&value_string(body.get("request_id"))),
+                json_string(&value_string(body.get("agent_id"))),
+                json_string(&value_string(body.get("org_id"))),
+                json_string(&value_string(body.get("action_type"))),
+                json_string(&value_string(body.get("resource"))),
+                body.get("estimated_cost_usd").and_then(Value::as_f64).unwrap_or(0.0),
+                json_string(&value_string(body.get("run_id"))),
+                json_string(&value_string(body.get("session_id"))),
+                json_string(&value_string(body.get("kernel_path"))),
+            );
+            handle_runtime_service_request(
+                root,
+                override_kernel_path,
+                http_address,
+                "http",
+                &payload,
+            )
+        }
+        ("POST", "/import-commitments") => {
+            let body = serde_json::from_str::<Value>(&request.body).map_err(|error| error.to_string())?;
+            let commitments_source = value_string(body.get("commitments_source"));
+            let kernel_path = value_string(body.get("kernel_path"));
+            if commitments_source.is_empty() {
+                let payload = "{\"status\":\"rejected\",\"note\":\"commitments_source is required\"}\n".to_string();
+                return Ok(RuntimeServiceReply {
+                    status: "rejected".to_string(),
+                    transport: "http".to_string(),
+                    request_id: canonical_join_runtime(&["http", "import", &timestamp_now()]),
+                    job_id: String::new(),
+                    note: "commitments_source is required".to_string(),
+                    http_status_code: 400,
+                    payload,
+                });
+            }
+            let effective_kernel_path = if kernel_path.trim().is_empty() {
+                override_kernel_path
+            } else {
+                Some(kernel_path.as_str())
+            };
+            let import = import_commitment_execution_requests(
+                root,
+                effective_kernel_path,
+                &commitments_source,
+                body.get("workspace_token").and_then(Value::as_str),
+            )?;
+            Ok(RuntimeServiceReply {
+                status: "commitment_imported".to_string(),
+                transport: "http".to_string(),
+                request_id: canonical_join_runtime(&["http", "import", &timestamp_now()]),
+                job_id: import.last_job_id.clone(),
+                note: import.note.clone(),
+                http_status_code: 202,
+                payload: render_runtime_service_import_json(&import),
+            })
+        }
+        ("POST", "/stop") => handle_runtime_service_request(
+            root,
+            override_kernel_path,
+            http_address,
+            "http",
+            &format!(
+                "{{\"request_type\":{},\"request_id\":{}}}\n",
+                json_string("stop"),
+                json_string(&canonical_join_runtime(&["http", "stop", &timestamp_now()])),
+            ),
+        ),
+        _ => {
+            let payload = format!(
+                "{{\"status\":\"not_found\",\"note\":{}}}\n",
+                json_string(&format!("unsupported route {} {}", request.method, request.path)),
+            );
+            Ok(RuntimeServiceReply {
+                status: "not_found".to_string(),
+                transport: "http".to_string(),
+                request_id: canonical_join_runtime(&["http", "not-found", &timestamp_now()]),
+                job_id: String::new(),
+                note: format!("unsupported route {} {}", request.method, request.path),
+                http_status_code: 404,
+                payload,
+            })
+        }
+    }
 }
 
 fn collect_pending_runtime_ingress_requests(root: &Path) -> ShadowResult<Vec<PathBuf>> {
@@ -3277,6 +3651,146 @@ fn read_stream_string(stream: &mut UnixStream) -> ShadowResult<String> {
     let mut buffer = String::new();
     stream.read_to_string(&mut buffer).map_err(io_err)?;
     Ok(buffer)
+}
+
+fn read_tcp_stream_string(stream: &mut TcpStream) -> ShadowResult<String> {
+    let mut buffer = String::new();
+    stream.read_to_string(&mut buffer).map_err(io_err)?;
+    Ok(buffer)
+}
+
+fn read_http_request_stream(stream: &mut TcpStream) -> ShadowResult<String> {
+    let mut buffer = Vec::new();
+    let mut chunk = [0u8; 4096];
+    let mut header_end = None;
+    let mut expected_total_len = None;
+
+    loop {
+        let bytes_read = stream.read(&mut chunk).map_err(io_err)?;
+        if bytes_read == 0 {
+            break;
+        }
+        buffer.extend_from_slice(&chunk[..bytes_read]);
+
+        if header_end.is_none() {
+            if let Some(idx) = buffer.windows(4).position(|window| window == b"\r\n\r\n") {
+                let end = idx + 4;
+                header_end = Some(end);
+                let headers = String::from_utf8_lossy(&buffer[..end]);
+                let content_length = headers
+                    .lines()
+                    .find_map(|line| {
+                        let lower = line.to_ascii_lowercase();
+                        if let Some(rest) = lower.strip_prefix("content-length:") {
+                            rest.trim().parse::<usize>().ok()
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(0);
+                expected_total_len = Some(end + content_length);
+            } else if let Some(idx) = buffer.windows(2).position(|window| window == b"\n\n") {
+                let end = idx + 2;
+                header_end = Some(end);
+                let headers = String::from_utf8_lossy(&buffer[..end]);
+                let content_length = headers
+                    .lines()
+                    .find_map(|line| {
+                        let lower = line.to_ascii_lowercase();
+                        if let Some(rest) = lower.strip_prefix("content-length:") {
+                            rest.trim().parse::<usize>().ok()
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(0);
+                expected_total_len = Some(end + content_length);
+            }
+        }
+
+        if let Some(expected_total_len) = expected_total_len {
+            if buffer.len() >= expected_total_len {
+                break;
+            }
+        }
+    }
+
+    String::from_utf8(buffer).map_err(|error| error.to_string())
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct HttpRequest {
+    method: String,
+    path: String,
+    body: String,
+    authorization: Option<String>,
+}
+
+fn parse_http_request(raw: &str) -> ShadowResult<HttpRequest> {
+    let (head, body) = if let Some((head, body)) = raw.split_once("\r\n\r\n") {
+        (head, body)
+    } else if let Some((head, body)) = raw.split_once("\n\n") {
+        (head, body)
+    } else {
+        (raw, "")
+    };
+    let mut lines = head.lines();
+    let request_line = lines
+        .next()
+        .ok_or_else(|| "http request missing request line".to_string())?;
+    let mut parts = request_line.split_whitespace();
+    let method = parts
+        .next()
+        .ok_or_else(|| "http request missing method".to_string())?
+        .to_string();
+    let path = parts
+        .next()
+        .ok_or_else(|| "http request missing path".to_string())?
+        .to_string();
+    let mut authorization = None;
+    for line in lines {
+        if let Some((name, value)) = line.split_once(':') {
+            if name.trim().eq_ignore_ascii_case("authorization") {
+                authorization = Some(value.trim().to_string());
+            }
+        }
+    }
+    Ok(HttpRequest {
+        method,
+        path,
+        body: body.to_string(),
+        authorization,
+    })
+}
+
+fn build_http_response(status_code: u16, body: &str) -> String {
+    let status_text = match status_code {
+        200 => "OK",
+        202 => "Accepted",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        404 => "Not Found",
+        405 => "Method Not Allowed",
+        500 => "Internal Server Error",
+        _ => "OK",
+    };
+    format!(
+        "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        status_code,
+        status_text,
+        body.as_bytes().len(),
+        body
+    )
+}
+
+fn extract_http_body(response: &str) -> String {
+    if let Some((_, body)) = response.split_once("\r\n\r\n") {
+        body.to_string()
+    } else if let Some((_, body)) = response.split_once("\n\n") {
+        body.to_string()
+    } else {
+        response.to_string()
+    }
 }
 
 pub fn decision_exit_code(capture: &DecisionCapture, allow_code: i32, deny_code: i32) -> i32 {
@@ -4012,10 +4526,12 @@ pub fn render_supervisor_daemon_json(snapshot: &SupervisorDaemonSnapshot) -> Str
 pub fn render_runtime_service_human(snapshot: &RuntimeServiceSnapshot) -> String {
     if !snapshot.available {
         return format!(
-            "Meridian Loom // RUNTIME SERVICE\n=================================\nphase:       experimental local runtime service\nboundary:    no service state captured yet; transport replacement remains future work\n\nCurrent state\n=============\nroot:                {}\nservice_dir:         {}\nsocket_path:         {}\nruntime_state:       {}\nstdout_log:          {}\nevent_log:           {}\ningress_stream:      {}\npending_jobs:        {}\nprocessed_jobs:      {}\nfailed_jobs:         {}\nnote:                {}\n\nNext\n====\n1. loom service start --root {} --max-jobs 1 --poll-seconds 1 --iterations 20\n2. loom service submit --root {} --agent-id agent_atlas --action-type research --resource web_search --estimated-cost-usd 0.05\n3. loom service status --root {}\n",
+            "Meridian Loom // RUNTIME SERVICE\n=================================\nphase:       experimental local runtime service\nboundary:    no service state captured yet; transport replacement remains future work\n\nCurrent state\n=============\nroot:                {}\nservice_dir:         {}\nsocket_path:         {}\nhttp_address:        {}\nhttp_token_required: {}\nruntime_state:       {}\nstdout_log:          {}\nevent_log:           {}\ningress_stream:      {}\npending_jobs:        {}\nprocessed_jobs:      {}\nfailed_jobs:         {}\nnote:                {}\n\nNext\n====\n1. loom service start --root {} --http-address 127.0.0.1:0 --max-jobs 1 --poll-seconds 1 --iterations 20\n2. loom service submit --root {} --agent-id agent_atlas --action-type research --resource web_search --estimated-cost-usd 0.05\n3. loom service status --root {}\n",
             snapshot.root.display(),
             snapshot.service_dir.display(),
             snapshot.socket_path.display(),
+            "(none)",
+            "false",
             snapshot.runtime_state_path.display(),
             snapshot.stdout_log_path.display(),
             snapshot.event_log_path.display(),
@@ -4031,10 +4547,12 @@ pub fn render_runtime_service_human(snapshot: &RuntimeServiceSnapshot) -> String
     }
 
     format!(
-        "Meridian Loom // RUNTIME SERVICE\n=================================\nphase:       experimental local runtime service\nboundary:    service-owned ingress is locally real; live OpenClaw replacement is not\n\nCurrent state\n=============\nroot:                {}\nservice_dir:         {}\nsocket_path:         {}\nsession_id:          {}\npid:                 {}\nrunning:             {}\nstatus:              {}\nbooted_at:           {}\nupdated_at:          {}\nstopped_at:          {}\npoll_seconds:        {}\nmax_jobs:            {}\nmax_iterations:      {}\niterations_completed:{}\nsubmitted:           {}\nprocessed:           {}\nallowed:             {}\ndenied:              {}\nfailed:              {}\npending_jobs:        {}\nprocessed_jobs:      {}\nfailed_jobs:         {}\nlast_request_id:     {}\nlast_job_id:         {}\nruntime_state:       {}\nstdout_log:          {}\nevent_log:           {}\ningress_stream:      {}\nstop_request:        {}\nnote:                {}\n\nNext\n====\n1. loom service submit --root {} --agent-id agent_atlas --action-type research --resource web_search --estimated-cost-usd 0.05\n2. loom service status --root {}\n3. loom parity report --root {}\n4. loom job inspect --job-id {} --root {}\n",
+        "Meridian Loom // RUNTIME SERVICE\n=================================\nphase:       experimental local runtime service\nboundary:    service-owned ingress is locally real; live OpenClaw replacement is not\n\nCurrent state\n=============\nroot:                {}\nservice_dir:         {}\nsocket_path:         {}\nhttp_address:        {}\nhttp_token_required: {}\nsession_id:          {}\npid:                 {}\nrunning:             {}\nstatus:              {}\nbooted_at:           {}\nupdated_at:          {}\nstopped_at:          {}\npoll_seconds:        {}\nmax_jobs:            {}\nmax_iterations:      {}\niterations_completed:{}\nsubmitted:           {}\nprocessed:           {}\nallowed:             {}\ndenied:              {}\nfailed:              {}\npending_jobs:        {}\nprocessed_jobs:      {}\nfailed_jobs:         {}\nlast_request_id:     {}\nlast_job_id:         {}\nruntime_state:       {}\nstdout_log:          {}\nevent_log:           {}\ningress_stream:      {}\nstop_request:        {}\nnote:                {}\n\nNext\n====\n1. loom service submit --root {} --agent-id agent_atlas --action-type research --resource web_search --estimated-cost-usd 0.05\n2. loom service status --root {}\n3. loom parity report --root {}\n4. loom job inspect --job-id {} --root {}\n",
         snapshot.root.display(),
         snapshot.service_dir.display(),
         snapshot.socket_path.display(),
+        if snapshot.http_address.is_empty() { "(none)".to_string() } else { snapshot.http_address.clone() },
+        if snapshot.http_token_required { "true" } else { "false" },
         if snapshot.session_id.is_empty() { "(none)".to_string() } else { snapshot.session_id.clone() },
         snapshot.pid,
         if snapshot.running { "true" } else { "false" },
@@ -4072,11 +4590,17 @@ pub fn render_runtime_service_human(snapshot: &RuntimeServiceSnapshot) -> String
 
 pub fn render_runtime_service_json(snapshot: &RuntimeServiceSnapshot) -> String {
     format!(
-        "{{\n  \"status\": {},\n  \"root\": {},\n  \"service_dir\": {},\n  \"socket_path\": {},\n  \"runtime_state_path\": {},\n  \"stop_request_path\": {},\n  \"stdout_log_path\": {},\n  \"event_log_path\": {},\n  \"ingress_stream_path\": {},\n  \"available\": {},\n  \"session_id\": {},\n  \"pid\": {},\n  \"running\": {},\n  \"service_status\": {},\n  \"updated_at\": {},\n  \"booted_at\": {},\n  \"stopped_at\": {},\n  \"poll_seconds\": {},\n  \"max_jobs\": {},\n  \"max_iterations\": {},\n  \"iterations_completed\": {},\n  \"submitted\": {},\n  \"processed\": {},\n  \"allowed\": {},\n  \"denied\": {},\n  \"failed\": {},\n  \"pending_jobs\": {},\n  \"processed_jobs\": {},\n  \"failed_jobs\": {},\n  \"last_request_id\": {},\n  \"last_job_id\": {},\n  \"note\": {}\n}}\n",
+        "{{\n  \"status\": {},\n  \"root\": {},\n  \"service_dir\": {},\n  \"socket_path\": {},\n  \"http_address\": {},\n  \"http_token_required\": {},\n  \"runtime_state_path\": {},\n  \"stop_request_path\": {},\n  \"stdout_log_path\": {},\n  \"event_log_path\": {},\n  \"ingress_stream_path\": {},\n  \"available\": {},\n  \"session_id\": {},\n  \"pid\": {},\n  \"running\": {},\n  \"service_status\": {},\n  \"updated_at\": {},\n  \"booted_at\": {},\n  \"stopped_at\": {},\n  \"poll_seconds\": {},\n  \"max_jobs\": {},\n  \"max_iterations\": {},\n  \"iterations_completed\": {},\n  \"submitted\": {},\n  \"processed\": {},\n  \"allowed\": {},\n  \"denied\": {},\n  \"failed\": {},\n  \"pending_jobs\": {},\n  \"processed_jobs\": {},\n  \"failed_jobs\": {},\n  \"last_request_id\": {},\n  \"last_job_id\": {},\n  \"note\": {}\n}}\n",
         json_string(if snapshot.available { "runtime_service_status_available" } else { "runtime_service_not_started" }),
         json_string(&snapshot.root.display().to_string()),
         json_string(&snapshot.service_dir.display().to_string()),
         json_string(&snapshot.socket_path.display().to_string()),
+        if snapshot.http_address.is_empty() {
+            "null".to_string()
+        } else {
+            json_string(&snapshot.http_address)
+        },
+        if snapshot.http_token_required { "true" } else { "false" },
         json_string(&snapshot.runtime_state_path.display().to_string()),
         json_string(&snapshot.stop_request_path.display().to_string()),
         json_string(&snapshot.stdout_log_path.display().to_string()),
@@ -4110,9 +4634,11 @@ pub fn render_runtime_service_json(snapshot: &RuntimeServiceSnapshot) -> String 
 
 pub fn render_runtime_service_submit_human(capture: &RuntimeServiceSubmitCapture) -> String {
     format!(
-        "Meridian Loom // SERVICE SUBMIT\n================================\nphase:       experimental runtime ingress\nboundary:    service-owned local ingress is real; live transport replacement is not\n\nCurrent state\n=============\nrequest_id:          {}\naccepted_at:         {}\nsocket_path:         {}\njob_id:              {}\npolicy_class:        {}\nqueue_path:          {}\ningress_request:     {}\ningress_receipt:     {}\nnote:                {}\n\nNext\n====\n1. loom service status --root <path>\n2. loom job inspect --job-id {} --root <path>\n3. loom parity report --root <path>\n",
+        "Meridian Loom // SERVICE SUBMIT\n================================\nphase:       experimental runtime ingress\nboundary:    service-owned local ingress is real; live transport replacement is not\n\nCurrent state\n=============\nrequest_id:          {}\naccepted_at:         {}\ntransport:           {}\nservice_target:      {}\nsocket_path:         {}\njob_id:              {}\npolicy_class:        {}\nqueue_path:          {}\ningress_request:     {}\ningress_receipt:     {}\nnote:                {}\n\nNext\n====\n1. loom service status --root <path>\n2. loom job inspect --job-id {} --root <path>\n3. loom parity report --root <path>\n",
         capture.request_id,
         capture.accepted_at,
+        capture.transport,
+        capture.service_target,
         capture.socket_path.display(),
         capture.job_id,
         capture.policy_class,
@@ -4126,9 +4652,11 @@ pub fn render_runtime_service_submit_human(capture: &RuntimeServiceSubmitCapture
 
 pub fn render_runtime_service_submit_json(capture: &RuntimeServiceSubmitCapture) -> String {
     format!(
-        "{{\n  \"status\": \"service_submit_accepted\",\n  \"request_id\": {},\n  \"accepted_at\": {},\n  \"socket_path\": {},\n  \"ingress_request_path\": {},\n  \"ingress_receipt_path\": {},\n  \"job_id\": {},\n  \"policy_class\": {},\n  \"queue_path\": {},\n  \"note\": {}\n}}\n",
+        "{{\n  \"status\": \"service_submit_accepted\",\n  \"request_id\": {},\n  \"accepted_at\": {},\n  \"transport\": {},\n  \"service_target\": {},\n  \"socket_path\": {},\n  \"ingress_request_path\": {},\n  \"ingress_receipt_path\": {},\n  \"job_id\": {},\n  \"policy_class\": {},\n  \"queue_path\": {},\n  \"note\": {}\n}}\n",
         json_string(&capture.request_id),
         json_string(&capture.accepted_at),
+        json_string(&capture.transport),
+        json_string(&capture.service_target),
         json_string(&capture.socket_path.display().to_string()),
         json_string(&capture.ingress_request_path.display().to_string()),
         json_string(&capture.ingress_receipt_path.display().to_string()),
@@ -4672,7 +5200,13 @@ fn service_socket_path(root: &Path, socket_override: Option<&str>) -> ShadowResu
         }
         return Ok(path);
     }
-    Ok(ensure_runtime_service_dir(root)?.join("runtime.sock"))
+    let root_token = sanitize_filename(&root.display().to_string());
+    let suffix = if root_token.len() > 32 {
+        &root_token[root_token.len() - 32..]
+    } else {
+        root_token.as_str()
+    };
+    Ok(std::env::temp_dir().join(format!("meridian-loom-{}.sock", suffix)))
 }
 
 fn runtime_service_state_path(root: &Path) -> ShadowResult<PathBuf> {
@@ -4756,6 +5290,8 @@ fn write_supervisor_runtime_state(
 fn write_runtime_service_state(
     runtime_state_path: &Path,
     socket_path: &Path,
+    http_address: Option<&str>,
+    http_token_required: bool,
     session_id: &str,
     pid: u32,
     running: bool,
@@ -4781,13 +5317,17 @@ fn write_runtime_service_state(
     fs::write(
         runtime_state_path,
         format!(
-            "{{\n  \"status\": {},\n  \"updated_at\": {},\n  \"session_id\": {},\n  \"pid\": {},\n  \"running\": {},\n  \"socket_path\": {},\n  \"booted_at\": {},\n  \"stopped_at\": {},\n  \"poll_seconds\": {},\n  \"max_jobs\": {},\n  \"max_iterations\": {},\n  \"iterations_completed\": {},\n  \"submitted\": {},\n  \"processed\": {},\n  \"allowed\": {},\n  \"denied\": {},\n  \"failed\": {},\n  \"pending_jobs\": {},\n  \"processed_jobs\": {},\n  \"failed_jobs\": {},\n  \"last_request_id\": {},\n  \"last_job_id\": {},\n  \"note\": {}\n}}\n",
+            "{{\n  \"status\": {},\n  \"updated_at\": {},\n  \"session_id\": {},\n  \"pid\": {},\n  \"running\": {},\n  \"socket_path\": {},\n  \"http_address\": {},\n  \"http_token_required\": {},\n  \"booted_at\": {},\n  \"stopped_at\": {},\n  \"poll_seconds\": {},\n  \"max_jobs\": {},\n  \"max_iterations\": {},\n  \"iterations_completed\": {},\n  \"submitted\": {},\n  \"processed\": {},\n  \"allowed\": {},\n  \"denied\": {},\n  \"failed\": {},\n  \"pending_jobs\": {},\n  \"processed_jobs\": {},\n  \"failed_jobs\": {},\n  \"last_request_id\": {},\n  \"last_job_id\": {},\n  \"note\": {}\n}}\n",
             json_string(status),
             json_string(&timestamp_now()),
             json_string(session_id),
             pid,
             if running { "true" } else { "false" },
             json_string(&socket_path.display().to_string()),
+            http_address
+                .map(json_string)
+                .unwrap_or_else(|| "null".to_string()),
+            if http_token_required { "true" } else { "false" },
             json_string(booted_at),
             json_string(stopped_at),
             poll_seconds,
@@ -5785,6 +6325,22 @@ fn extract_json_string(section: &str, key: &str) -> Option<String> {
     Some(rest[..end_quote].to_string())
 }
 
+fn extract_optional_string(section: &str, key: &str) -> Option<String> {
+    let idx = section.find(key)?;
+    let after = &section[idx + key.len()..];
+    let colon = after.find(':')?;
+    let rest = after[colon + 1..].trim_start();
+    if rest.starts_with("null") {
+        return None;
+    }
+    if !rest.starts_with('"') {
+        return None;
+    }
+    let remainder = &rest[1..];
+    let end_quote = remainder.find('"')?;
+    Some(remainder[..end_quote].to_string())
+}
+
 fn extract_json_bool(section: &str, key: &str) -> Option<bool> {
     let idx = section.find(key)?;
     let after = &section[idx + key.len()..];
@@ -6746,6 +7302,8 @@ if __name__ == '__main__':
                 None,
                 None,
                 None,
+                None,
+                None,
                 1,
                 1,
                 3,
@@ -6753,7 +7311,7 @@ if __name__ == '__main__':
             )
         });
 
-        let socket_path = root.join(".loom/runtime/service/runtime.sock");
+        let socket_path = service_socket_path(&root, None).expect("socket path");
         for _ in 0..20 {
             if socket_path.exists() {
                 break;
@@ -6762,7 +7320,7 @@ if __name__ == '__main__':
         }
         assert!(socket_path.exists(), "runtime service socket did not appear");
 
-        let capture = submit_runtime_service_action(&root, None, &kernel, &sample_envelope())
+        let capture = submit_runtime_service_action(&root, None, None, None, &kernel, &sample_envelope())
             .expect("submit via service");
         assert_eq!(capture.job_id, envelope_input_hash(&sample_envelope()));
         request_runtime_service_stop(&root, None).expect("request stop");
@@ -6831,6 +7389,8 @@ if __name__ == '__main__':
                 Some(&socket_override_for_service),
                 None,
                 None,
+                None,
+                None,
                 1,
                 0,
                 100,
@@ -6853,12 +7413,14 @@ if __name__ == '__main__':
 
         let capture = submit_runtime_service_action(
             &root,
-            Some(&socket_override),
+            None,
+            None,
+            None,
             &kernel,
             &sample_envelope(),
         )
         .expect("submit via file ingress fallback");
-        request_runtime_service_stop(&root, Some(&socket_override)).expect("request stop");
+        request_runtime_service_stop(&root, None).expect("request stop");
         let snapshot = handle.join().expect("join service thread").expect("service loop");
         assert!(snapshot.available);
         assert_eq!(snapshot.session_id, "service-file-test");
@@ -6973,6 +7535,8 @@ if __name__ == '__main__':
         let snapshot = run_runtime_service_loop(
             &root,
             Some(kernel.to_string_lossy().as_ref()),
+            None,
+            None,
             None,
             Some(commitments_path.to_string_lossy().as_ref()),
             None,
