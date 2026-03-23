@@ -1,18 +1,24 @@
 == Meridian Loom rehearsal ==
 root:   /tmp/loom-rehearsal
 kernel: /tmp/meridian-kernel
+agent:  agent_atlas
+org:    org_b7d95bae
+
+running 5 tests
+test tests::init_refuses_overwrite ... ok
+test tests::build_envelope_rejects_negative_cost ... ok
+test tests::init_and_read_config_round_trip ... ok
+test tests::resolve_identity_does_not_force_workspace_org_hint ... ok
+test tests::resolve_identity_and_build_envelope_against_fake_kernel ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
 
 running 2 tests
-test tests::init_and_read_config_round_trip ... ok
-test tests::init_refuses_overwrite ... ok
+test tests::compares_identical_logs_without_divergence ... ok
+test tests::records_preflight_and_renders_report ... ok
 
 test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-
-
-running 1 test
-test tests::renders_existing_report ... ok
-
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
 
 running 0 tests
@@ -31,7 +37,7 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 initialized Loom scaffold at /tmp/loom-rehearsal
 mode: embedded
-org_id: rehearsal_org
+org_id: org_b7d95bae
 state_dir: .loom
 kernel_path: /tmp/meridian-kernel
 Meridian Loom doctor
@@ -41,29 +47,34 @@ Meridian Loom doctor
 [OK      ] python_workers     python worker path present (/tmp/loom-rehearsal/workers/python)
 [OK      ] typescript_workers typescript worker path present (/tmp/loom-rehearsal/workers/typescript)
 [OK      ] wasm_modules       wasm module path present (/tmp/loom-rehearsal/workers/wasm)
-[OK      ] capsule_manifest   capsule manifest present (/tmp/loom-rehearsal/.loom/capsules/rehearsal_org/manifest.json)
+[OK      ] capsule_manifest   capsule manifest present (/tmp/loom-rehearsal/.loom/capsules/org_b7d95bae/manifest.json)
 [OK      ] kernel_path        kernel path present (/tmp/meridian-kernel)
 [OK      ] runtime_registry   Meridian runtime registry available (/tmp/meridian-kernel/kernel/runtimes.json)
+[OK      ] agent_registry     Meridian agent registry CLI available (/tmp/meridian-kernel/kernel/agent_registry.py)
 {
   "status": "healthy",
   "mode": "embedded",
-  "org_id": "rehearsal_org",
-  "checks": [{"level":"OK","label":"config","detail":"loaded /tmp/loom-rehearsal/loom.toml"},{"level":"OK","label":"state_dir","detail":"state directory present (/tmp/loom-rehearsal/.loom)"},{"level":"OK","label":"python_workers","detail":"python worker path present (/tmp/loom-rehearsal/workers/python)"},{"level":"OK","label":"typescript_workers","detail":"typescript worker path present (/tmp/loom-rehearsal/workers/typescript)"},{"level":"OK","label":"wasm_modules","detail":"wasm module path present (/tmp/loom-rehearsal/workers/wasm)"},{"level":"OK","label":"capsule_manifest","detail":"capsule manifest present (/tmp/loom-rehearsal/.loom/capsules/rehearsal_org/manifest.json)"},{"level":"OK","label":"kernel_path","detail":"kernel path present (/tmp/meridian-kernel)"},{"level":"OK","label":"runtime_registry","detail":"Meridian runtime registry available (/tmp/meridian-kernel/kernel/runtimes.json)"}]
+  "org_id": "org_b7d95bae",
+  "checks": [{"level":"OK","label":"config","detail":"loaded /tmp/loom-rehearsal/loom.toml"},{"level":"OK","label":"state_dir","detail":"state directory present (/tmp/loom-rehearsal/.loom)"},{"level":"OK","label":"python_workers","detail":"python worker path present (/tmp/loom-rehearsal/workers/python)"},{"level":"OK","label":"typescript_workers","detail":"typescript worker path present (/tmp/loom-rehearsal/workers/typescript)"},{"level":"OK","label":"wasm_modules","detail":"wasm module path present (/tmp/loom-rehearsal/workers/wasm)"},{"level":"OK","label":"capsule_manifest","detail":"capsule manifest present (/tmp/loom-rehearsal/.loom/capsules/org_b7d95bae/manifest.json)"},{"level":"OK","label":"kernel_path","detail":"kernel path present (/tmp/meridian-kernel)"},{"level":"OK","label":"runtime_registry","detail":"Meridian runtime registry available (/tmp/meridian-kernel/kernel/runtimes.json)"},{"level":"OK","label":"agent_registry","detail":"Meridian agent registry CLI available (/tmp/meridian-kernel/kernel/agent_registry.py)"}],
+  "experimental_hooks": ["agent_identity", "action_envelope"]
 }
 Meridian Loom status
 ====================
 mode:        embedded
-org_id:      rehearsal_org
+org_id:      org_b7d95bae
 state_dir:   /tmp/loom-rehearsal/.loom
 kernel_path: /tmp/meridian-kernel
-capsule:     /tmp/loom-rehearsal/.loom/capsules/rehearsal_org/manifest.json
+capsule:     /tmp/loom-rehearsal/.loom/capsules/org_b7d95bae/manifest.json
 shadow:      /tmp/loom-rehearsal/.loom/shadow/latest.json
+experimental_hooks: agent_identity, action_envelope
 Meridian Loom contract state
 ============================
 kernel: /tmp/meridian-kernel
 status: planned
 local_scaffold: experimental_scaffold_present
 
+registry_declared_hooks
+----------------------
 agent_identity     null
 action_envelope    null
 cost_attribution   null
@@ -72,22 +83,110 @@ audit_emission     null
 sanction_controls  null
 budget_gate        null
 
+experimental_hook_paths
+-----------------------
+agent_identity     experimental_preflight_path
+action_envelope    experimental_preflight_path
+
 notes: Experimental public scaffold exists for CLI/setup rehearsal, but no governed execution runtime or proven hooks exist yet. Polyglot architecture: Rust supervisor core, Python/TypeScript workers, WASM capability modules. Directional targets: <50MB memory, <500ms cold start, native 7/7 contract compliance (all unproven). See docs/LOOM_SPEC.md for spec, docs/loom/ for productization strategy.
+Meridian Loom agent identity
+============================
+agent_id:            agent_atlas
+agent_name:          Atlas
+org_id:              org_b7d95bae
+role:                analyst
+economy_key:         atlas
+runtime_id:          local_kernel
+runtime_label:       Local Kernel Runtime
+bound_org_id:        org_b7d95bae
+boundary_name:       workspace
+identity_model:      session
+runtime_registered:  true
+registration_status: registered
+source:              kernel_agent_registry
+Meridian Loom action envelope
+==============================
+agent_id:            agent_atlas
+agent_name:          Atlas
+org_id:              org_b7d95bae
+runtime_id:          local_kernel
+runtime_label:       Local Kernel Runtime
+action_type:         research
+resource:            web_search
+estimated_cost_usd:  0.0500
+run_id:              (none)
+session_id:          (none)
+source:              loom_experimental_preflight
+input_hash:          bba40f20f386cb46
 Capsule inspection
 ==================
-org_id:       rehearsal_org
+org_id:       org_b7d95bae
 state_dir:    /tmp/loom-rehearsal/.loom
-manifest:     /tmp/loom-rehearsal/.loom/capsules/rehearsal_org/manifest.json
+manifest:     /tmp/loom-rehearsal/.loom/capsules/org_b7d95bae/manifest.json
 files:        manifest.json
+Meridian Loom agent identity
+============================
+agent_id:            agent_atlas
+agent_name:          Atlas
+org_id:              org_b7d95bae
+role:                analyst
+economy_key:         atlas
+runtime_id:          local_kernel
+runtime_label:       Local Kernel Runtime
+bound_org_id:        org_b7d95bae
+boundary_name:       workspace
+identity_model:      session
+runtime_registered:  true
+registration_status: registered
+source:              kernel_agent_registry
+
+Meridian Loom action envelope
+==============================
+agent_id:            agent_atlas
+agent_name:          Atlas
+org_id:              org_b7d95bae
+runtime_id:          local_kernel
+runtime_label:       Local Kernel Runtime
+action_type:         research
+resource:            web_search
+estimated_cost_usd:  0.0500
+run_id:              (none)
+session_id:          (none)
+source:              loom_experimental_preflight
+input_hash:          bba40f20f386cb46
+
+Shadow preflight capture
+========================
+event_log:      /tmp/loom-rehearsal/.loom/shadow/events.jsonl
+latest_report:  /tmp/loom-rehearsal/.loom/shadow/latest.json
+input_hash:     bba40f20f386cb46
+captured_hooks: agent_identity, action_envelope
+Shadow comparison
+=================
+primary_log:     /tmp/loom-rehearsal/.loom/shadow/events.jsonl
+shadow_log:      /tmp/loom-rehearsal/.loom/shadow/events.jsonl
+primary_events:  2
+shadow_events:   2
+pairs_compared:  2
+matches:         2
+divergences:     0
+divergence_rate: 0.0000
+note:            file-level comparison only; not proof of runtime parity
 Shadow report
 =============
 source: /tmp/loom-rehearsal/.loom/shadow/latest.json
 
 {
-  "status": "not_started",
-  "events_compared": 0,
+  "status": "comparison_complete",
+  "primary_log": "/tmp/loom-rehearsal/.loom/shadow/events.jsonl",
+  "shadow_log": "/tmp/loom-rehearsal/.loom/shadow/events.jsonl",
+  "primary_events": 2,
+  "shadow_events": 2,
+  "pairs_compared": 2,
+  "matches": 2,
   "divergences": 0,
-  "note": "shadow mode is not implemented in this scaffold"
+  "divergence_rate": 0.000000,
+  "note": "file-level comparison only; not proof of runtime parity"
 }
 
 == Rehearsal complete ==

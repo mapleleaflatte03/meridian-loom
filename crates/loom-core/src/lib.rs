@@ -1,11 +1,13 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub type LoomResult<T> = Result<T, String>;
 
 const DEFAULT_STATE_DIR: &str = ".loom";
+const EXPERIMENTAL_PRELIGHT_HOOKS: [&str; 2] = ["agent_identity", "action_envelope"];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
@@ -32,6 +34,7 @@ pub struct ContractSnapshot {
     pub local_scaffold: String,
     pub notes: String,
     pub hooks: Vec<(String, String)>,
+    pub experimental_hooks: Vec<(String, String)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -40,6 +43,38 @@ pub struct CapsuleInspection {
     pub manifest_path: PathBuf,
     pub state_dir: PathBuf,
     pub files: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentIdentityResolution {
+    pub agent_id: String,
+    pub agent_name: String,
+    pub org_id: String,
+    pub role: String,
+    pub economy_key: String,
+    pub runtime_id: String,
+    pub runtime_label: String,
+    pub bound_org_id: String,
+    pub boundary_name: String,
+    pub identity_model: String,
+    pub runtime_registered: bool,
+    pub registration_status: String,
+    pub source: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ActionEnvelope {
+    pub agent_id: String,
+    pub agent_name: String,
+    pub org_id: String,
+    pub runtime_id: String,
+    pub runtime_label: String,
+    pub action_type: String,
+    pub resource: String,
+    pub estimated_cost_usd: f64,
+    pub run_id: String,
+    pub session_id: String,
+    pub source: String,
 }
 
 pub fn init_workspace(
@@ -117,6 +152,7 @@ pub fn init_workspace(
         "{\n  \"status\": \"not_started\",\n  \"events_compared\": 0,\n  \"divergences\": 0,\n  \"note\": \"shadow mode is not implemented in this scaffold\"\n}\n",
     )
     .map_err(io_err)?;
+    fs::write(shadow_dir.join("events.jsonl"), "").map_err(io_err)?;
 
     Ok(config)
 }
@@ -250,6 +286,14 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                 true,
                 "Meridian runtime registry available",
             );
+            let agent_registry = path.join("kernel/agent_registry.py");
+            push_path_check(
+                &mut checks,
+                "agent_registry",
+                &agent_registry,
+                true,
+                "Meridian agent registry CLI available",
+            );
         }
         (false, None) => checks.push(Check {
             level: "WARN",
@@ -292,11 +336,12 @@ pub fn health(root: &Path) -> LoomResult<(bool, String)> {
     let config = read_config(root)?;
     let status = if degraded { "degraded" } else { "healthy" };
     let json = format!(
-        "{{\n  \"status\": {},\n  \"mode\": {},\n  \"org_id\": {},\n  \"checks\": {}\n}}\n",
+        "{{\n  \"status\": {},\n  \"mode\": {},\n  \"org_id\": {},\n  \"checks\": {},\n  \"experimental_hooks\": {}\n}}\n",
         json_string(status),
         json_string(&config.mode),
         json_string(&config.org_id),
-        render_doctor_json(&checks).trim()
+        render_doctor_json(&checks).trim(),
+        render_json_string_array(&EXPERIMENTAL_PRELIGHT_HOOKS)
     );
     Ok((!degraded, json))
 }
@@ -310,28 +355,20 @@ pub fn status_human(root: &Path) -> LoomResult<String> {
         .join(&config.org_id)
         .join("manifest.json");
     Ok(format!(
-        "Meridian Loom status\n====================\nmode:        {}\norg_id:      {}\nstate_dir:   {}\nkernel_path: {}\ncapsule:     {}\nshadow:      {}\n",
+        "Meridian Loom status\n====================\nmode:        {}\norg_id:      {}\nstate_dir:   {}\nkernel_path: {}\ncapsule:     {}\nshadow:      {}\nexperimental_hooks: {}\n",
         config.mode,
         config.org_id,
         state_dir.display(),
         if config.kernel_path.is_empty() { "(not set)" } else { &config.kernel_path },
         manifest.display(),
-        state_dir.join("shadow/latest.json").display()
+        state_dir.join("shadow/latest.json").display(),
+        EXPERIMENTAL_PRELIGHT_HOOKS.join(", ")
     ))
 }
 
 pub fn contract_show(root: &Path, override_kernel_path: Option<&str>) -> LoomResult<ContractSnapshot> {
     let config = read_config(root)?;
-    let kernel_path = override_kernel_path
-        .map(PathBuf::from)
-        .or_else(|| {
-            if config.kernel_path.is_empty() {
-                None
-            } else {
-                Some(PathBuf::from(config.kernel_path))
-            }
-        })
-        .ok_or_else(|| "kernel path is required for contract inspection".to_string())?;
+    let kernel_path = resolve_kernel_path(root, override_kernel_path, Some(&config))?;
     let registry_path = kernel_path.join("kernel/runtimes.json");
     let contents = fs::read_to_string(&registry_path).map_err(io_err)?;
     let start = contents
@@ -360,24 +397,33 @@ pub fn contract_show(root: &Path, override_kernel_path: Option<&str>) -> LoomRes
         })
         .collect();
 
+    let experimental_hooks = EXPERIMENTAL_PRELIGHT_HOOKS
+        .iter()
+        .map(|hook| ((*hook).to_string(), "experimental_preflight_path".to_string()))
+        .collect();
+
     Ok(ContractSnapshot {
         kernel_path,
         runtime_status,
         local_scaffold: "experimental_scaffold_present".to_string(),
         notes,
         hooks,
+        experimental_hooks,
     })
 }
 
 pub fn render_contract_human(snapshot: &ContractSnapshot) -> String {
     let mut out = format!(
-        "Meridian Loom contract state\n============================\nkernel: {}\nstatus: {}\nlocal_scaffold: {}\n\n",
+        "Meridian Loom contract state\n============================\nkernel: {}\nstatus: {}\nlocal_scaffold: {}\n\nregistry_declared_hooks\n----------------------\n",
         snapshot.kernel_path.display(),
-        snapshot.runtime_status
-        ,
+        snapshot.runtime_status,
         snapshot.local_scaffold,
     );
     for (hook, value) in &snapshot.hooks {
+        out.push_str(&format!("{:<18} {}\n", hook, value));
+    }
+    out.push_str("\nexperimental_hook_paths\n-----------------------\n");
+    for (hook, value) in &snapshot.experimental_hooks {
         out.push_str(&format!("{:<18} {}\n", hook, value));
     }
     out.push_str(&format!("\nnotes: {}\n", snapshot.notes));
@@ -391,13 +437,227 @@ pub fn render_contract_json(snapshot: &ContractSnapshot) -> String {
         .map(|(hook, value)| format!("    {}: {}", json_string(hook), json_string(value)))
         .collect::<Vec<_>>()
         .join(",\n");
+    let experimental = snapshot
+        .experimental_hooks
+        .iter()
+        .map(|(hook, value)| format!("    {}: {}", json_string(hook), json_string(value)))
+        .collect::<Vec<_>>()
+        .join(",\n");
     format!(
-        "{{\n  \"kernel_path\": {},\n  \"status\": {},\n  \"local_scaffold\": {},\n  \"hooks\": {{\n{}\n  }},\n  \"notes\": {}\n}}\n",
+        "{{\n  \"kernel_path\": {},\n  \"status\": {},\n  \"local_scaffold\": {},\n  \"hooks\": {{\n{}\n  }},\n  \"experimental_hooks\": {{\n{}\n  }},\n  \"notes\": {}\n}}\n",
         json_string(&snapshot.kernel_path.display().to_string()),
         json_string(&snapshot.runtime_status),
         json_string(&snapshot.local_scaffold),
         hooks,
+        experimental,
         json_string(&snapshot.notes)
+    )
+}
+
+pub fn resolve_agent_identity(
+    root: &Path,
+    override_kernel_path: Option<&str>,
+    agent_ref: &str,
+    org_hint: Option<&str>,
+) -> LoomResult<AgentIdentityResolution> {
+    let config = read_config(root)?;
+    let kernel_path = resolve_kernel_path(root, override_kernel_path, Some(&config))?;
+    let script = kernel_path.join("kernel/agent_registry.py");
+    if !script.exists() {
+        return Err(format!("missing {}", script.display()));
+    }
+
+    let normalized_agent = agent_ref.trim();
+    if normalized_agent.is_empty() {
+        return Err("agent_ref is required".to_string());
+    }
+
+    let explicit_org_hint = org_hint
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let stdout = run_agent_registry_lookup(&script, normalized_agent, explicit_org_hint.as_deref())?;
+
+    let runtime_binding = find_named_object(&stdout, "\"runtime_binding\"")
+        .ok_or_else(|| "runtime_binding missing from agent record".to_string())?;
+
+    Ok(AgentIdentityResolution {
+        agent_id: extract_json_string(&stdout, "\"id\"")
+            .ok_or_else(|| "agent id missing".to_string())?,
+        agent_name: extract_json_string(&stdout, "\"name\"")
+            .ok_or_else(|| "agent name missing".to_string())?,
+        org_id: extract_json_string(&stdout, "\"org_id\"")
+            .ok_or_else(|| "org_id missing".to_string())?,
+        role: extract_json_string(&stdout, "\"role\"").unwrap_or_default(),
+        economy_key: extract_json_string(&stdout, "\"economy_key\"").unwrap_or_default(),
+        runtime_id: extract_json_string(&runtime_binding, "\"runtime_id\"")
+            .ok_or_else(|| "runtime_id missing".to_string())?,
+        runtime_label: extract_json_string(&runtime_binding, "\"runtime_label\"").unwrap_or_default(),
+        bound_org_id: extract_json_string(&runtime_binding, "\"bound_org_id\"").unwrap_or_default(),
+        boundary_name: extract_json_string(&runtime_binding, "\"boundary_name\"").unwrap_or_default(),
+        identity_model: extract_json_string(&runtime_binding, "\"identity_model\"").unwrap_or_default(),
+        runtime_registered: extract_json_bool(&runtime_binding, "\"runtime_registered\"").unwrap_or(true),
+        registration_status: extract_json_string(&runtime_binding, "\"registration_status\"")
+            .unwrap_or_else(|| "registered".to_string()),
+        source: "kernel_agent_registry".to_string(),
+    })
+}
+
+fn run_agent_registry_lookup(
+    script: &Path,
+    agent_ref: &str,
+    org_hint: Option<&str>,
+) -> LoomResult<String> {
+    let mut cmd = Command::new("python3");
+    cmd.arg(script).arg("get").arg("--agent_id").arg(agent_ref);
+    if let Some(org_id) = org_hint {
+        cmd.arg("--org_id").arg(org_id);
+    }
+
+    let output = cmd.output().map_err(io_err)?;
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !output.status.success() {
+        return Err(format!(
+            "agent_registry lookup failed: {}",
+            if stderr.is_empty() { stdout } else { stderr }
+        ));
+    }
+    if stdout.starts_with("Not found:") {
+        return Err(stdout);
+    }
+    if !stdout.starts_with('{') {
+        return Err(format!(
+            "agent_registry returned non-JSON output: {}",
+            stdout.lines().next().unwrap_or_default()
+        ));
+    }
+    Ok(stdout)
+}
+
+pub fn render_identity_human(identity: &AgentIdentityResolution) -> String {
+    format!(
+        "Meridian Loom agent identity\n============================\nagent_id:            {}\nagent_name:          {}\norg_id:              {}\nrole:                {}\neconomy_key:         {}\nruntime_id:          {}\nruntime_label:       {}\nbound_org_id:        {}\nboundary_name:       {}\nidentity_model:      {}\nruntime_registered:  {}\nregistration_status: {}\nsource:              {}\n",
+        identity.agent_id,
+        identity.agent_name,
+        identity.org_id,
+        identity.role,
+        if identity.economy_key.is_empty() { "(none)" } else { &identity.economy_key },
+        identity.runtime_id,
+        identity.runtime_label,
+        identity.bound_org_id,
+        identity.boundary_name,
+        identity.identity_model,
+        identity.runtime_registered,
+        identity.registration_status,
+        identity.source,
+    )
+}
+
+pub fn render_identity_json(identity: &AgentIdentityResolution) -> String {
+    format!(
+        "{{\n  \"agent_id\": {},\n  \"agent_name\": {},\n  \"org_id\": {},\n  \"role\": {},\n  \"economy_key\": {},\n  \"runtime_id\": {},\n  \"runtime_label\": {},\n  \"bound_org_id\": {},\n  \"boundary_name\": {},\n  \"identity_model\": {},\n  \"runtime_registered\": {},\n  \"registration_status\": {},\n  \"source\": {}\n}}\n",
+        json_string(&identity.agent_id),
+        json_string(&identity.agent_name),
+        json_string(&identity.org_id),
+        json_string(&identity.role),
+        json_string(&identity.economy_key),
+        json_string(&identity.runtime_id),
+        json_string(&identity.runtime_label),
+        json_string(&identity.bound_org_id),
+        json_string(&identity.boundary_name),
+        json_string(&identity.identity_model),
+        if identity.runtime_registered { "true" } else { "false" },
+        json_string(&identity.registration_status),
+        json_string(&identity.source),
+    )
+}
+
+pub fn build_action_envelope(
+    root: &Path,
+    override_kernel_path: Option<&str>,
+    agent_ref: &str,
+    org_hint: Option<&str>,
+    action_type: &str,
+    resource: &str,
+    estimated_cost_usd: f64,
+    run_id: Option<&str>,
+    session_id: Option<&str>,
+) -> LoomResult<ActionEnvelope> {
+    let action_type = action_type.trim();
+    let resource = resource.trim();
+    if action_type.is_empty() {
+        return Err("action_type is required".to_string());
+    }
+    if resource.is_empty() {
+        return Err("resource is required".to_string());
+    }
+    if estimated_cost_usd < 0.0 {
+        return Err("estimated_cost_usd must be non-negative".to_string());
+    }
+
+    let identity = resolve_agent_identity(root, override_kernel_path, agent_ref, org_hint)?;
+    Ok(ActionEnvelope {
+        agent_id: identity.agent_id,
+        agent_name: identity.agent_name,
+        org_id: identity.org_id,
+        runtime_id: identity.runtime_id,
+        runtime_label: identity.runtime_label,
+        action_type: action_type.to_string(),
+        resource: resource.to_string(),
+        estimated_cost_usd,
+        run_id: run_id.unwrap_or("").trim().to_string(),
+        session_id: session_id.unwrap_or("").trim().to_string(),
+        source: "loom_experimental_preflight".to_string(),
+    })
+}
+
+pub fn envelope_input_hash(envelope: &ActionEnvelope) -> String {
+    let raw = format!(
+        "{}|{}|{}|{}|{:.6}|{}|{}",
+        envelope.agent_id,
+        envelope.org_id,
+        envelope.runtime_id,
+        envelope.action_type,
+        envelope.estimated_cost_usd,
+        envelope.resource,
+        envelope.source,
+    );
+    format!("{:016x}", fnv1a64(raw.as_bytes()))
+}
+
+pub fn render_envelope_human(envelope: &ActionEnvelope) -> String {
+    format!(
+        "Meridian Loom action envelope\n==============================\nagent_id:            {}\nagent_name:          {}\norg_id:              {}\nruntime_id:          {}\nruntime_label:       {}\naction_type:         {}\nresource:            {}\nestimated_cost_usd:  {:.4}\nrun_id:              {}\nsession_id:          {}\nsource:              {}\ninput_hash:          {}\n",
+        envelope.agent_id,
+        envelope.agent_name,
+        envelope.org_id,
+        envelope.runtime_id,
+        envelope.runtime_label,
+        envelope.action_type,
+        envelope.resource,
+        envelope.estimated_cost_usd,
+        if envelope.run_id.is_empty() { "(none)" } else { &envelope.run_id },
+        if envelope.session_id.is_empty() { "(none)" } else { &envelope.session_id },
+        envelope.source,
+        envelope_input_hash(envelope),
+    )
+}
+
+pub fn render_envelope_json(envelope: &ActionEnvelope) -> String {
+    format!(
+        "{{\n  \"agent_id\": {},\n  \"agent_name\": {},\n  \"org_id\": {},\n  \"runtime_id\": {},\n  \"runtime_label\": {},\n  \"action_type\": {},\n  \"resource\": {},\n  \"estimated_cost_usd\": {:.6},\n  \"run_id\": {},\n  \"session_id\": {},\n  \"source\": {},\n  \"input_hash\": {}\n}}\n",
+        json_string(&envelope.agent_id),
+        json_string(&envelope.agent_name),
+        json_string(&envelope.org_id),
+        json_string(&envelope.runtime_id),
+        json_string(&envelope.runtime_label),
+        json_string(&envelope.action_type),
+        json_string(&envelope.resource),
+        envelope.estimated_cost_usd,
+        json_string(&envelope.run_id),
+        json_string(&envelope.session_id),
+        json_string(&envelope.source),
+        json_string(&envelope_input_hash(envelope)),
     )
 }
 
@@ -437,6 +697,23 @@ pub fn root_from(opt: Option<&str>) -> LoomResult<PathBuf> {
         .unwrap_or_else(std::env::current_dir)
         .map_err(io_err)?;
     ensure_root(&root)
+}
+
+fn resolve_kernel_path(
+    root: &Path,
+    override_kernel_path: Option<&str>,
+    config: Option<&Config>,
+) -> LoomResult<PathBuf> {
+    let from_override = override_kernel_path
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let from_config = config
+        .map(|cfg| cfg.kernel_path.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let kernel_path = from_override
+        .or(from_config)
+        .ok_or_else(|| format!("kernel path is required for {}", root.display()))?;
+    Ok(PathBuf::from(kernel_path))
 }
 
 fn ensure_root(root: &Path) -> LoomResult<PathBuf> {
@@ -492,6 +769,49 @@ fn push_path_check(
     }
 }
 
+fn find_named_object(section: &str, key: &str) -> Option<String> {
+    let idx = section.find(key)?;
+    let after = &section[idx + key.len()..];
+    let brace_idx = after.find('{')?;
+    let start = idx + key.len() + brace_idx;
+    let end = find_matching_brace(section, start)?;
+    Some(section[start..=end].to_string())
+}
+
+fn find_matching_brace(section: &str, start: usize) -> Option<usize> {
+    let bytes = section.as_bytes();
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (idx, byte) in bytes.iter().enumerate().skip(start) {
+        let ch = *byte as char;
+        if in_string {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(idx);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 fn extract_json_string(section: &str, key: &str) -> Option<String> {
     let idx = section.find(key)?;
     let after = &section[idx + key.len()..];
@@ -499,6 +819,14 @@ fn extract_json_string(section: &str, key: &str) -> Option<String> {
     let rest = &after[first_quote + 1..];
     let end_quote = rest.find('"')?;
     Some(rest[..end_quote].to_string())
+}
+
+fn extract_json_bool(section: &str, key: &str) -> Option<bool> {
+    match extract_json_literal(section, key)?.as_str() {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    }
 }
 
 fn extract_json_literal(section: &str, key: &str) -> Option<String> {
@@ -510,8 +838,23 @@ fn extract_json_literal(section: &str, key: &str) -> Option<String> {
     Some(rest[..end].trim().trim_matches('"').to_string())
 }
 
+fn render_json_string_array(values: &[&str]) -> String {
+    format!(
+        "[{}]",
+        values
+            .iter()
+            .map(|value| json_string(value))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
 fn json_string(input: &str) -> String {
     format!("{:?}", input)
+}
+
+fn io_err(error: impl std::fmt::Display) -> String {
+    error.to_string()
 }
 
 fn unix_now() -> u64 {
@@ -521,36 +864,134 @@ fn unix_now() -> u64 {
         .as_secs()
 }
 
-fn io_err(error: std::io::Error) -> String {
-    error.to_string()
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
-    fn temp_root(name: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!("loom-core-{}-{}", name, unix_now()));
-        if path.exists() {
-            let _ = fs::remove_dir_all(&path);
-        }
-        path
+    #[test]
+    fn init_refuses_overwrite() {
+        let root = temp_path("loom-core-init-refuse");
+        fs::create_dir_all(&root).expect("root");
+        fs::write(root.join("loom.toml"), "existing").expect("existing config");
+        let error = init_workspace(&root, "embedded", None, "org_demo").expect_err("should fail");
+        assert!(error.contains("refusing to overwrite"));
     }
 
     #[test]
     fn init_and_read_config_round_trip() {
-        let root = temp_root("roundtrip");
-        let config = init_workspace(&root, "embedded", Some("/tmp/meridian-kernel"), "test_org")
+        let root = temp_path("loom-core-init");
+        let config = init_workspace(&root, "embedded", Some("/tmp/meridian-kernel"), "org_demo")
             .expect("init workspace");
+        assert_eq!(config.mode, "embedded");
         let loaded = read_config(&root).expect("read config");
-        assert_eq!(config, loaded);
+        assert_eq!(loaded.org_id, "org_demo");
+        assert_eq!(loaded.kernel_path, "/tmp/meridian-kernel");
+        assert!(root.join(".loom/shadow/events.jsonl").exists());
     }
 
     #[test]
-    fn init_refuses_overwrite() {
-        let root = temp_root("overwrite");
-        init_workspace(&root, "embedded", None, "org").expect("first init");
-        let error = init_workspace(&root, "embedded", None, "org").expect_err("second init fails");
-        assert!(error.contains("refusing to overwrite"));
+    fn resolve_identity_and_build_envelope_against_fake_kernel() {
+        let kernel = fake_kernel_root("atlas");
+        let root = temp_path("loom-core-envelope");
+        init_workspace(&root, "shadow", Some(&kernel.display().to_string()), "org_demo")
+            .expect("init workspace");
+
+        let identity = resolve_agent_identity(&root, None, "atlas", None).expect("resolve identity");
+        assert_eq!(identity.agent_id, "agent_atlas");
+        assert_eq!(identity.runtime_id, "local_kernel");
+        assert!(identity.runtime_registered);
+
+        let envelope = build_action_envelope(
+            &root,
+            None,
+            "atlas",
+            None,
+            "research",
+            "web_search",
+            0.25,
+            Some("run_1"),
+            Some("session_1"),
+        )
+        .expect("build envelope");
+        assert_eq!(envelope.agent_id, "agent_atlas");
+        assert_eq!(envelope.org_id, "org_demo");
+        assert_eq!(envelope.estimated_cost_usd, 0.25);
+        assert!(!envelope_input_hash(&envelope).is_empty());
+    }
+
+    #[test]
+    fn build_envelope_rejects_negative_cost() {
+        let kernel = fake_kernel_root("atlas");
+        let root = temp_path("loom-core-envelope-negative");
+        init_workspace(&root, "shadow", Some(&kernel.display().to_string()), "org_demo")
+            .expect("init workspace");
+        let error = build_action_envelope(
+            &root,
+            None,
+            "atlas",
+            None,
+            "research",
+            "web_search",
+            -0.1,
+            None,
+            None,
+        )
+        .expect_err("negative cost should fail");
+        assert!(error.contains("non-negative"));
+    }
+
+    #[test]
+    fn resolve_identity_does_not_force_workspace_org_hint() {
+        let kernel = fake_kernel_root("atlas");
+        let root = temp_path("loom-core-org-fallback");
+        init_workspace(&root, "embedded", Some(&kernel.display().to_string()), "org_local")
+            .expect("init workspace");
+
+        let identity = resolve_agent_identity(&root, None, "atlas", None).expect("resolve identity");
+        assert_eq!(identity.agent_id, "agent_atlas");
+        assert_eq!(identity.org_id, "org_demo");
+    }
+
+    fn temp_path(prefix: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "{}-{}",
+            prefix,
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ))
+    }
+
+    fn fake_kernel_root(agent_lookup: &str) -> PathBuf {
+        let root = temp_path("loom-core-kernel");
+        let kernel_dir = root.join("kernel");
+        fs::create_dir_all(&kernel_dir).expect("kernel dir");
+        fs::write(
+            kernel_dir.join("runtimes.json"),
+            format!(
+                "{{\n  \"runtimes\": {{\n    \"local_kernel\": {{\"id\": \"local_kernel\", \"label\": \"Local Kernel Runtime\"}},\n    \"meridian_loom\": {{\"status\": \"planned\", \"notes\": \"test note\", \"contract_compliance\": {{\"agent_identity\": null, \"action_envelope\": null, \"cost_attribution\": null, \"approval_hook\": null, \"audit_emission\": null, \"sanction_controls\": null, \"budget_gate\": null}}}}\n  }}\n}}\n"
+            ),
+        )
+        .expect("write runtimes");
+        fs::write(
+            kernel_dir.join("agent_registry.py"),
+            format!(
+                "import json, sys\nagent_id = sys.argv[sys.argv.index('--agent_id') + 1]\norg_id = 'org_demo'\nif '--org_id' in sys.argv:\n    org_id = sys.argv[sys.argv.index('--org_id') + 1]\nif agent_id in ('{lookup}', 'agent_atlas', 'Atlas'):\n    print(json.dumps({{'id': 'agent_atlas', 'name': 'Atlas', 'org_id': org_id, 'role': 'analyst', 'economy_key': '{lookup}', 'runtime_binding': {{'runtime_id': 'local_kernel', 'runtime_label': 'Local Kernel Runtime', 'bound_org_id': org_id, 'boundary_name': 'workspace', 'identity_model': 'session', 'runtime_registered': True, 'registration_status': 'registered'}}}}, indent=2))\nelse:\n    print(f'Not found: {{agent_id}}')\n",
+                lookup = agent_lookup
+            ),
+        )
+        .expect("write agent_registry");
+        root
     }
 }

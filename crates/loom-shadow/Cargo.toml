@@ -6,6 +6,8 @@ license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
 
+[dependencies]
+loom-core = { path = "../loom-core" }
+
 [lib]
 path = "src/lib.rs"
-

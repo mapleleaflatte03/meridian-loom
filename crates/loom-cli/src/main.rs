@@ -1,10 +1,16 @@
 use loom_core::{
-    capsule_inspect, contract_show, doctor, health, init_workspace, read_config, render_capsule_human,
-    render_contract_human, render_contract_json, render_doctor_human, render_doctor_json, root_from,
+    build_action_envelope, capsule_inspect, contract_show, doctor, health, init_workspace,
+    read_config, render_capsule_human, render_contract_human, render_contract_json,
+    render_doctor_human, render_doctor_json, render_envelope_human, render_envelope_json,
+    render_identity_human, render_identity_json, resolve_agent_identity, root_from,
     status_human, LoomResult,
 };
-use loom_shadow::render_shadow_report;
+use loom_shadow::{
+    capture_preflight, compare_logs, render_compare_human, render_compare_json,
+    render_preflight_human, render_preflight_json, render_shadow_report,
+};
 use std::env;
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
@@ -32,6 +38,8 @@ fn run() -> LoomResult<()> {
         "config" => handle_config(&args[1..]),
         "contract" => handle_contract(&args[1..]),
         "capsule" => handle_capsule(&args[1..]),
+        "agent" => handle_agent(&args[1..]),
+        "envelope" => handle_envelope(&args[1..]),
         "shadow" => handle_shadow(&args[1..]),
         "-h" | "--help" | "help" => {
             print_help();
@@ -140,19 +148,132 @@ fn handle_capsule(args: &[String]) -> LoomResult<()> {
     Ok(())
 }
 
-fn handle_shadow(args: &[String]) -> LoomResult<()> {
-    if args.first().map(String::as_str) != Some("report") {
-        return Err("shadow only supports 'report' in this scaffold".to_string());
+fn handle_agent(args: &[String]) -> LoomResult<()> {
+    if args.first().map(String::as_str) != Some("resolve") {
+        return Err("agent only supports 'resolve' in this scaffold".to_string());
     }
     let root = root_from(take_value(args, "--root").as_deref())?;
-    print!("{}", render_shadow_report(&root)?);
+    let agent_id = required_flag(args, "--agent-id")?;
+    let kernel_path = take_value(args, "--kernel-path");
+    let org_id = take_value(args, "--org-id");
+    let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+    let identity = resolve_agent_identity(&root, kernel_path.as_deref(), &agent_id, org_id.as_deref())?;
+    if format == "json" {
+        print!("{}", render_identity_json(&identity));
+    } else {
+        print!("{}", render_identity_human(&identity));
+    }
     Ok(())
+}
+
+fn handle_envelope(args: &[String]) -> LoomResult<()> {
+    if args.first().map(String::as_str) != Some("build") {
+        return Err("envelope only supports 'build' in this scaffold".to_string());
+    }
+    let root = root_from(take_value(args, "--root").as_deref())?;
+    let agent_id = required_flag(args, "--agent-id")?;
+    let action_type = required_flag(args, "--action-type")?;
+    let resource = required_flag(args, "--resource")?;
+    let estimated_cost_usd = parse_f64_flag(args, "--estimated-cost-usd").unwrap_or(0.0);
+    let kernel_path = take_value(args, "--kernel-path");
+    let org_id = take_value(args, "--org-id");
+    let run_id = take_value(args, "--run-id");
+    let session_id = take_value(args, "--session-id");
+    let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+
+    let envelope = build_action_envelope(
+        &root,
+        kernel_path.as_deref(),
+        &agent_id,
+        org_id.as_deref(),
+        &action_type,
+        &resource,
+        estimated_cost_usd,
+        run_id.as_deref(),
+        session_id.as_deref(),
+    )?;
+    if format == "json" {
+        print!("{}", render_envelope_json(&envelope));
+    } else {
+        print!("{}", render_envelope_human(&envelope));
+    }
+    Ok(())
+}
+
+fn handle_shadow(args: &[String]) -> LoomResult<()> {
+    match args.first().map(String::as_str) {
+        Some("report") => {
+            let root = root_from(take_value(args, "--root").as_deref())?;
+            print!("{}", render_shadow_report(&root)?);
+            Ok(())
+        }
+        Some("preflight") => {
+            let root = root_from(take_value(args, "--root").as_deref())?;
+            let agent_id = required_flag(args, "--agent-id")?;
+            let action_type = required_flag(args, "--action-type")?;
+            let resource = required_flag(args, "--resource")?;
+            let estimated_cost_usd = parse_f64_flag(args, "--estimated-cost-usd").unwrap_or(0.0);
+            let kernel_path = take_value(args, "--kernel-path");
+            let org_id = take_value(args, "--org-id");
+            let run_id = take_value(args, "--run-id");
+            let session_id = take_value(args, "--session-id");
+            let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+
+            let identity = resolve_agent_identity(&root, kernel_path.as_deref(), &agent_id, org_id.as_deref())?;
+            let envelope = build_action_envelope(
+                &root,
+                kernel_path.as_deref(),
+                &agent_id,
+                org_id.as_deref(),
+                &action_type,
+                &resource,
+                estimated_cost_usd,
+                run_id.as_deref(),
+                session_id.as_deref(),
+            )?;
+            let capture = capture_preflight(&root, &identity, &envelope)?;
+            if format == "json" {
+                print!("{}", render_preflight_json(&capture));
+            } else {
+                print!("{}", render_identity_human(&identity));
+                println!();
+                print!("{}", render_envelope_human(&envelope));
+                println!();
+                print!("{}", render_preflight_human(&capture));
+            }
+            Ok(())
+        }
+        Some("compare") => {
+            let root = root_from(take_value(args, "--root").as_deref())?;
+            let primary = PathBuf::from(required_flag(args, "--primary")?);
+            let shadow = take_value(args, "--shadow")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| root.join(".loom/shadow/events.jsonl"));
+            let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+            let summary = compare_logs(Some(&root), &primary, &shadow)?;
+            if format == "json" {
+                print!("{}", render_compare_json(&summary));
+            } else {
+                print!("{}", render_compare_human(&summary));
+            }
+            Ok(())
+        }
+        _ => Err("shadow supports 'preflight', 'compare', and 'report'".to_string()),
+    }
 }
 
 fn take_value(args: &[String], flag: &str) -> Option<String> {
     args.windows(2)
         .find(|pair| pair[0] == flag)
         .map(|pair| pair[1].clone())
+}
+
+fn required_flag(args: &[String], flag: &str) -> LoomResult<String> {
+    take_value(args, flag).ok_or_else(|| format!("missing required flag {}", flag))
+}
+
+fn parse_f64_flag(args: &[String], flag: &str) -> Option<f64> {
+    take_value(args, flag).and_then(|raw| raw.parse::<f64>().ok())
 }
 
 fn print_help() {
@@ -167,6 +288,10 @@ fn print_help() {
            loom config show [--root PATH]\n\
            loom contract show [--root PATH] [--kernel-path PATH] [--format human|json]\n\
            loom capsule inspect [--root PATH]\n\
+           loom agent resolve --agent-id ID [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
+           loom envelope build --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
+           loom shadow preflight --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
+           loom shadow compare --primary FILE [--shadow FILE] [--root PATH] [--format human|json]\n\
            loom shadow report [--root PATH]\n"
     );
 }

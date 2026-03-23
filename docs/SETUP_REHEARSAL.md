@@ -13,15 +13,21 @@ The rehearsal verifies:
 4. `loom doctor` reports configuration and filesystem health.
 5. `loom health` returns a structured summary.
 6. `loom contract show` can read the current kernel runtime registry.
-7. `loom capsule inspect` surfaces the local capsule state boundary.
-8. `loom shadow report` reports the current placeholder shadow state honestly.
+7. `loom agent resolve` resolves a governed agent identity against the kernel registry.
+8. `loom envelope build` constructs a normalized action envelope.
+9. `loom capsule inspect` surfaces the local capsule state boundary.
+10. `loom shadow preflight` captures experimental shadow events for the first two hooks.
+11. `loom shadow compare` can verify the comparison surface against captured event logs.
+12. `loom shadow report` surfaces the latest shadow capture or comparison report honestly.
 
 ## What the rehearsal does not prove
 
-- It does not prove any contract hook is implemented.
+- It does not prove runtime-level contract compliance.
+- It does not upgrade registry compliance beyond 0/7.
 - It does not prove transport adapters exist.
 - It does not prove OpenClaw replacement.
 - It does not prove shadow parity.
+- A self-compare run only verifies the comparison tool path, not runtime parity.
 
 ## Run
 
@@ -30,7 +36,8 @@ The rehearsal verifies:
 ```
 
 The script creates a disposable directory under `/tmp/loom-rehearsal` by
-default and does not mutate the Meridian kernel.
+default, auto-discovers a governed agent from the current kernel registry, and
+does not mutate the Meridian kernel.
 
 ## Fresh public clone verification
 
@@ -53,3 +60,7 @@ That fresh-clone run passed and confirmed:
 2. The public repository tests pass from scratch.
 3. The bundled rehearsal still succeeds against the current kernel truth.
 4. The scaffold still reports `planned` runtime status and `0/7` proven hooks.
+
+The current rehearsal now also exercises `loom shadow compare` as a
+self-compare against the captured shadow log. That verifies the compare surface
+honestly without turning it into a parity claim.

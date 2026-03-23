@@ -15,9 +15,9 @@ Experimental public scaffold for the planned Meridian-native runtime.
 ## What exists in this scaffold
 
 - A Rust workspace with:
-  - `loom-core` — config/state helpers and contract inspection
+  - `loom-core` — config/state helpers, identity resolution, contract inspection, envelope build
   - `loom-cli` — `loom` binary
-  - `loom-shadow` — shadow report reader
+  - `loom-shadow` — shadow event capture, comparison, and report surfaces
 - Working commands:
   - `loom init`
   - `loom doctor`
@@ -25,17 +25,23 @@ Experimental public scaffold for the planned Meridian-native runtime.
   - `loom status`
   - `loom config show`
   - `loom contract show`
+  - `loom agent resolve`
+  - `loom envelope build`
   - `loom capsule inspect`
+  - `loom shadow preflight`
+  - `loom shadow compare`
   - `loom shadow report`
 - A local setup rehearsal script:
-  - `scripts/rehearse_setup.sh`
+  - `scripts/rehearse_setup.sh` (auto-discovers a governed agent from the
+    current kernel registry before running the experimental preflight flow)
 
 ## What does not exist yet
 
 - No governed execution runtime
 - No worker supervisor
 - No MCP / Telegram / HTTP transport
-- No native hook implementation
+- No proven runtime hook implementation beyond the experimental preflight path for
+  `agent_identity` and `action_envelope`
 - No shadow-mode parity engine
 - No public benchmark claims
 
@@ -47,9 +53,17 @@ cargo build
 ./target/debug/loom doctor --root /tmp/loom-rehearsal --format human
 ./target/debug/loom health --root /tmp/loom-rehearsal --format json
 ./target/debug/loom contract show --root /tmp/loom-rehearsal
+./target/debug/loom agent resolve --root /tmp/loom-rehearsal --agent-id agent_atlas --format human
+./target/debug/loom envelope build --root /tmp/loom-rehearsal --agent-id agent_atlas --action-type research --resource web_search --estimated-cost-usd 0.05 --format human
 ./target/debug/loom capsule inspect --root /tmp/loom-rehearsal
+./target/debug/loom shadow preflight --root /tmp/loom-rehearsal --agent-id agent_atlas --action-type research --resource web_search --estimated-cost-usd 0.05 --format human
+./target/debug/loom shadow compare --root /tmp/loom-rehearsal --primary /tmp/loom-rehearsal/.loom/shadow/events.jsonl --shadow /tmp/loom-rehearsal/.loom/shadow/events.jsonl --format human
 ./target/debug/loom shadow report --root /tmp/loom-rehearsal
 ```
+
+If your kernel registry constrains agent lookup by organization, pass the bound
+org explicitly with `--org-id <bound-org-id>`. The bundled rehearsal script
+auto-discovers both the agent id and org id from the current kernel registry.
 
 Or run the bundled rehearsal:
 
@@ -79,8 +93,10 @@ meridian-loom/
 
 ## Current status
 
-This repo is enough to rehearse the install/setup/operator path honestly.
-It is not enough to claim Loom exists as a runtime.
+This repo is enough to rehearse the install/setup/operator path honestly, and
+it now includes an experimental preflight path for `agent_identity` and
+`action_envelope`.
+It is still not enough to claim Loom exists as a governed execution runtime.
 
 ## Publication readiness
 

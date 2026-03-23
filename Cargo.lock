@@ -9,6 +9,9 @@ version = "0.1.0-alpha.1"
 [[package]]
 name = "loom-shadow"
 version = "0.1.0-alpha.1"
+dependencies = [
+ "loom-core",
+]
 
 [[package]]
 name = "meridian-loom"
