@@ -1,0 +1,11 @@
+[runtime]
+mode = "embedded"
+kernel_path = "/tmp/meridian-kernel"
+org_id = "local_foundry"
+state_dir = ".loom"
+
+[workers]
+python_path = "workers/python"
+typescript_path = "workers/typescript"
+wasm_dir = "workers/wasm"
+

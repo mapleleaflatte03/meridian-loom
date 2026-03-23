@@ -1,0 +1,16 @@
+[package]
+name = "meridian-loom"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+loom-core = { path = "../loom-core" }
+loom-shadow = { path = "../loom-shadow" }
+
+[[bin]]
+name = "loom"
+path = "src/main.rs"
+

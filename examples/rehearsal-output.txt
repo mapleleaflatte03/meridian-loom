@@ -1,0 +1,92 @@
+== Meridian Loom rehearsal ==
+root:   /tmp/loom-rehearsal
+kernel: /tmp/meridian-kernel
+
+running 2 tests
+test tests::init_refuses_overwrite ... ok
+test tests::init_and_read_config_round_trip ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 1 test
+test tests::renders_existing_report ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+initialized Loom scaffold at /tmp/loom-rehearsal
+mode: embedded
+org_id: rehearsal_org
+state_dir: .loom
+kernel_path: /tmp/meridian-kernel
+Meridian Loom doctor
+====================
+[OK      ] config             loaded /tmp/loom-rehearsal/loom.toml
+[OK      ] state_dir          state directory present (/tmp/loom-rehearsal/.loom)
+[OK      ] python_workers     python worker path present (/tmp/loom-rehearsal/workers/python)
+[OK      ] typescript_workers typescript worker path present (/tmp/loom-rehearsal/workers/typescript)
+[OK      ] wasm_modules       wasm module path present (/tmp/loom-rehearsal/workers/wasm)
+[OK      ] capsule_manifest   capsule manifest present (/tmp/loom-rehearsal/.loom/capsules/rehearsal_org/manifest.json)
+[OK      ] kernel_path        kernel path present (/tmp/meridian-kernel)
+[OK      ] runtime_registry   Meridian runtime registry available (/tmp/meridian-kernel/kernel/runtimes.json)
+{
+  "status": "healthy",
+  "mode": "embedded",
+  "org_id": "rehearsal_org",
+  "checks": [{"level":"OK","label":"config","detail":"loaded /tmp/loom-rehearsal/loom.toml"},{"level":"OK","label":"state_dir","detail":"state directory present (/tmp/loom-rehearsal/.loom)"},{"level":"OK","label":"python_workers","detail":"python worker path present (/tmp/loom-rehearsal/workers/python)"},{"level":"OK","label":"typescript_workers","detail":"typescript worker path present (/tmp/loom-rehearsal/workers/typescript)"},{"level":"OK","label":"wasm_modules","detail":"wasm module path present (/tmp/loom-rehearsal/workers/wasm)"},{"level":"OK","label":"capsule_manifest","detail":"capsule manifest present (/tmp/loom-rehearsal/.loom/capsules/rehearsal_org/manifest.json)"},{"level":"OK","label":"kernel_path","detail":"kernel path present (/tmp/meridian-kernel)"},{"level":"OK","label":"runtime_registry","detail":"Meridian runtime registry available (/tmp/meridian-kernel/kernel/runtimes.json)"}]
+}
+Meridian Loom status
+====================
+mode:        embedded
+org_id:      rehearsal_org
+state_dir:   /tmp/loom-rehearsal/.loom
+kernel_path: /tmp/meridian-kernel
+capsule:     /tmp/loom-rehearsal/.loom/capsules/rehearsal_org/manifest.json
+shadow:      /tmp/loom-rehearsal/.loom/shadow/latest.json
+Meridian Loom contract state
+============================
+kernel: /tmp/meridian-kernel
+status: planned
+
+agent_identity     null
+action_envelope    null
+cost_attribution   null
+approval_hook      null
+audit_emission     null
+sanction_controls  null
+budget_gate        null
+
+notes: Spec only. No code exists yet. Polyglot architecture: Rust supervisor core, Python/TypeScript workers, WASM capability modules. Directional targets: <50MB memory, <500ms cold start, native 7/7 contract compliance (all unproven). See docs/LOOM_SPEC.md for spec, docs/loom/ for productization strategy.
+Capsule inspection
+==================
+org_id:       rehearsal_org
+state_dir:    /tmp/loom-rehearsal/.loom
+manifest:     /tmp/loom-rehearsal/.loom/capsules/rehearsal_org/manifest.json
+files:        manifest.json
+Shadow report
+=============
+source: /tmp/loom-rehearsal/.loom/shadow/latest.json
+
+{
+  "status": "not_started",
+  "events_compared": 0,
+  "divergences": 0,
+  "note": "shadow mode is not implemented in this scaffold"
+}
+
+== Rehearsal complete ==
