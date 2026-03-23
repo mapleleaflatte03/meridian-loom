@@ -19,7 +19,7 @@ running 2 tests
 test tests::compares_identical_logs_without_divergence ... ok
 test tests::records_preflight_and_renders_report ... ok
 
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
 
 running 0 tests
@@ -94,7 +94,7 @@ audit_emission     experimental_preflight_path
 sanction_controls  experimental_preflight_path
 budget_gate        experimental_preflight_path
 
-notes: Experimental public scaffold exists for CLI/setup rehearsal and 7-surface preflight coverage. Audit emission currently writes a local preview file. Sanction controls, approval hook, and budget gate now read kernel reference-adapter decisions through a read-only preflight path, but there is still no native Loom enforcement, governed execution runtime, or proven hook compliance. Polyglot architecture: Rust supervisor core, Python/TypeScript workers, WASM capability modules. Directional targets: <50MB memory, <500ms cold start, native 7/7 contract compliance (all unproven). See docs/LOOM_SPEC.md for spec, docs/loom/ for productization strategy.
+notes: Experimental public scaffold exists for CLI/setup rehearsal and 7-surface preflight coverage. Audit emission now uses the kernel audit serializer to write a local preview file. Sanction controls, approval hook, and budget gate now read kernel reference-adapter decisions through a read-only preflight path, but there is still no native Loom enforcement, governed execution runtime, or proven hook compliance. Polyglot architecture: Rust supervisor core, Python/TypeScript workers, WASM capability modules. Directional targets: <50MB memory, <500ms cold start, native 7/7 contract compliance (all unproven). See docs/LOOM_SPEC.md for spec, docs/loom/ for productization strategy.
 Meridian Loom agent identity
 ============================
 agent_id:            agent_atlas
@@ -183,6 +183,7 @@ sanction_controls:   allow (snapshot: clear)
 budget_limit_usd:    0.5000
 budget_gate:         deny
 approval_hook:       allow (policy: not_required)
+audit_emission:      kernel_preview_written
 overall_decision:    deny
 reference_stage:     budget_gate
 reference_reason:    Treasury below reserve floor (runway $-50.00). Recapitalize before spending.

@@ -97,7 +97,8 @@ meridian-loom/
 This repo is enough to rehearse the install/setup/operator path honestly, and
 it now includes an experimental preflight path for all seven governance
 surfaces. Two of those remain preview-only surfaces:
-- `audit_emission` writes a local audit preview file, not the kernel's canonical audit log
+- `audit_emission` now uses the kernel audit serializer to write a local preview file,
+  not the kernel's canonical audit log
 - `sanction_controls`, `approval_hook`, and `budget_gate` now read the kernel's
   reference adapter decisions in a read-only preflight path, but they still do
   not provide native runtime enforcement

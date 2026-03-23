@@ -907,6 +907,11 @@ pub fn root_from(opt: Option<&str>) -> LoomResult<PathBuf> {
     ensure_root(&root)
 }
 
+pub fn kernel_path_for(root: &Path, override_kernel_path: Option<&str>) -> LoomResult<PathBuf> {
+    let config = read_config(root)?;
+    resolve_kernel_path(root, override_kernel_path, Some(&config))
+}
+
 fn resolve_kernel_path(
     root: &Path,
     override_kernel_path: Option<&str>,

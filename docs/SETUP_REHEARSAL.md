@@ -18,8 +18,8 @@ The rehearsal verifies:
 9. `loom capsule inspect` surfaces the local capsule state boundary.
 10. `loom shadow preflight` captures experimental shadow events for all seven
     contract surfaces.
-11. `audit_emission` is currently exercised as a local audit preview file, not
-    the kernel's canonical audit log.
+11. `audit_emission` now uses the kernel audit serializer to write a local
+    preview file, not the kernel's canonical audit log.
 12. `sanction_controls`, `approval_hook`, and `budget_gate` are now evaluated
     through the kernel reference adapter in a read-only preflight path, but not
     through a native Loom runtime.
