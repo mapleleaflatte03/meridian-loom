@@ -219,6 +219,10 @@ That one command does four useful things:
 
 If the effective decision is deny, the command exits `2` fail-closed.
 
+If you run `loom parity report` before any runtime rehearsal artifacts exist,
+the command now tells you exactly what to run next instead of failing with a
+missing-file error.
+
 ## What “user only needs Loom” means right now
 
 Today it means:

@@ -119,7 +119,8 @@ The current founder-host rehearsal now exercises both the old and new surfaces:
 - `loom action execute` writes a runtime execution receipt, a runtime-side
   audit artifact, and a parity stream
 - `loom parity report` surfaces that parity stream plus a live OpenClaw proof
-  snapshot when the founder-host proof script is available
+  snapshot when the founder-host proof script is available, and now gives a
+  guided next-step message when no parity artifacts exist yet
 
 That is still not a claim of per-action runtime parity. It is a stronger,
 runtime-side rehearsal surface than the previous file-only diff.

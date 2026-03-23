@@ -797,11 +797,33 @@ pub fn render_decision_json(capture: &DecisionCapture) -> String {
 }
 
 pub fn render_runtime_execution_human(capture: &RuntimeExecutionCapture) -> String {
+    let root = capture
+        .execution_path
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "(unknown)".to_string());
     format!(
-        "Meridian Loom // RUNTIME EXECUTE\n=================================\nexecution_path:         {}\ndecision_path:          {}\naudit_log:              {}\nparity_stream:          {}\nparity_report:          {}\nopenclaw_live_probe:    {}\nagent_id:               {}\norg_id:                 {}\naction_type:            {}\nresource:               {}\ninput_hash:             {}\nestimated_cost_usd:{:>12.4}\nruntime_outcome:        {}\noverall_decision:       {}\neffective_source:       {}\neffective_stage:        {}\nreference_decision:     {}\nreference_stage:        {}\naudit_emission:         {}\nopenclaw_probe:         {} ({})\nparity_status:          {}\nparity_reason:          {}\n",
+        "Meridian Loom // RUNTIME EXECUTE\n=================================\nphase:       experimental runtime rehearsal\nboundary:    runtime artifacts are real; governed worker supervisor is not\n\nDecision\n========\nagent_id:            {}\norg_id:              {}\naction_type:         {}\nresource:            {}\ninput_hash:          {}\nestimated_cost_usd:  {:.4}\noverall_decision:    {}\neffective_source:    {}\neffective_stage:     {}\nreference_decision:  {}\nreference_stage:     {}\nruntime_outcome:     {}\nparity_status:       {}\nparity_reason:       {}\n\naudit / parity artifacts\n========================\nexecution_path:      {}\ndecision_path:       {}\naudit_log:           {} ({})\nparity_stream:       {}\nparity_report:       {}\nopenclaw_live_probe: {} ({})\n\nNext\n====\n1. loom parity report --root {}\n2. loom shadow report --root {}\n3. Inspect {} for runtime-side audit details.\n",
+        capture.agent_id,
+        capture.org_id,
+        capture.action_type,
+        capture.resource,
+        capture.input_hash,
+        capture.estimated_cost_usd,
+        capture.overall_decision,
+        capture.effective_source,
+        capture.effective_stage,
+        capture.reference_decision,
+        capture.reference_stage,
+        capture.runtime_outcome,
+        capture.parity_status,
+        capture.parity_reason,
         capture.execution_path.display(),
         capture.decision_path.display(),
         capture.audit_log_path.display(),
+        capture.audit_emission_status,
         capture.parity_stream_path.display(),
         capture.parity_report_path.display(),
         capture
@@ -809,23 +831,10 @@ pub fn render_runtime_execution_human(capture: &RuntimeExecutionCapture) -> Stri
             .as_ref()
             .map(|path| path.display().to_string())
             .unwrap_or_else(|| "(not captured)".to_string()),
-        capture.agent_id,
-        capture.org_id,
-        capture.action_type,
-        capture.resource,
-        capture.input_hash,
-        capture.estimated_cost_usd,
-        capture.runtime_outcome,
-        capture.overall_decision,
-        capture.effective_source,
-        capture.effective_stage,
-        capture.reference_decision,
-        capture.reference_stage,
-        capture.audit_emission_status,
         capture.openclaw_live_probe_status,
-        capture.openclaw_live_probe_note,
-        capture.parity_status,
-        capture.parity_reason,
+        root,
+        root,
+        capture.audit_log_path.display(),
     )
 }
 
@@ -1029,26 +1038,31 @@ pub fn render_shadow_report(root: &Path) -> ShadowResult<String> {
 
 pub fn render_parity_report(root: &Path) -> ShadowResult<String> {
     let report_path = root.join(".loom/parity/latest.json");
-    let contents = fs::read_to_string(&report_path)
-        .map_err(|_| format!("could not read parity report at {}", report_path.display()))?;
+    let contents = fs::read_to_string(&report_path).ok();
     let stream_path = root.join(".loom/parity/stream.jsonl");
-    let stream = fs::read_to_string(&stream_path)
-        .map_err(|_| format!("could not read parity stream at {}", stream_path.display()))?;
+    let stream = fs::read_to_string(&stream_path).ok();
     let openclaw_live_path = root.join(".loom/parity/openclaw_live.json");
     let openclaw_live = fs::read_to_string(&openclaw_live_path).ok();
+    if contents.is_none() && stream.is_none() && openclaw_live.is_none() {
+        return Ok(format!(
+            "Meridian Loom // PARITY REPORT\n===============================\nphase:       runtime-side parity surface\nboundary:    parity artifacts appear only after runtime rehearsal\n\nCurrent state\n=============\nstatus:      not_started\nmeaning:     no parity stream, parity report, or live OpenClaw probe has been captured yet\n\nRecommended next step\n=====================\n1. loom action execute --agent-id agent_atlas --action-type research --resource web_search --kernel-path /tmp/meridian-kernel --root {}\n2. loom shadow report --root {}\n3. Re-run loom parity report after runtime rehearsal artifacts exist.\n",
+            root.display(),
+            root.display(),
+        ));
+    }
     Ok(format!(
-        "Meridian Loom // PARITY REPORT\n===============================\nsource: {}\n\n{}\nParity stream\n-------------\nsource: {}\n\n{}\n{}\n",
+        "Meridian Loom // PARITY REPORT\n===============================\nphase:       runtime-side parity surface\nboundary:    parity report is real; per-action live runtime parity is still future work\n\nParity latest\n=============\nsource: {}\n\n{}\nParity stream\n=============\nsource: {}\n\n{}\n{}\n",
         report_path.display(),
-        contents,
+        contents.unwrap_or_else(|| "{\n  \"status\": \"missing\",\n  \"note\": \"latest parity report has not been captured yet\"\n}\n".to_string()),
         stream_path.display(),
-        stream,
+        stream.unwrap_or_else(|| "# parity stream not captured yet\n".to_string()),
         openclaw_live
             .map(|contents| format!(
-                "OpenClaw live probe\n-------------------\nsource: {}\n\n{}\n",
+                "OpenClaw live probe\n===================\nsource: {}\n\n{}\n",
                 openclaw_live_path.display(),
                 contents
             ))
-            .unwrap_or_else(|| "OpenClaw live probe\n-------------------\nsource: (not captured)\n\n".to_string()),
+            .unwrap_or_else(|| "OpenClaw live probe\n===================\nsource: (not captured)\n\n".to_string()),
     ))
 }
 
@@ -1602,7 +1616,9 @@ mod tests {
 
         let human = render_runtime_execution_human(&capture);
         assert!(human.contains("Meridian Loom // RUNTIME EXECUTE"));
-        assert!(human.contains("openclaw_probe:"));
+        assert!(human.contains("phase:       experimental runtime rehearsal"));
+        assert!(human.contains("audit / parity artifacts"));
+        assert!(human.contains("loom parity report --root"));
         let json = render_runtime_execution_json(&capture);
         assert!(json.contains("\"status\": \"runtime_execution_captured\""));
         assert!(json.contains("\"openclaw_live_probe_status\":"));
@@ -1655,6 +1671,18 @@ mod tests {
         assert!(report.contains("Recommended next step"));
         assert!(report.contains("loom shadow preflight"));
         assert!(report.contains("meaning:     no shadow or runtime rehearsal artifacts have been captured yet"));
+    }
+
+    #[test]
+    fn parity_report_guides_next_steps_when_no_artifacts_exist() {
+        let root = temp_path("loom-parity-guidance");
+        fs::create_dir_all(root.join(".loom/parity")).expect("parity dir");
+
+        let report = render_parity_report(&root).expect("render parity");
+        assert!(report.contains("Current state"));
+        assert!(report.contains("status:      not_started"));
+        assert!(report.contains("loom action execute"));
+        assert!(report.contains("loom shadow report"));
     }
 
     fn temp_path(prefix: &str) -> PathBuf {
