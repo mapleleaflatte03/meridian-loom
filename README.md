@@ -17,6 +17,7 @@
 <p align="center">
   <a href="docs/SETUP_REHEARSAL.md">Setup Rehearsal</a> ·
   <a href="docs/PUBLICATION_CHECKLIST.md">Publication Checklist</a> ·
+  <a href="docs/LOOM_100_IMPROVEMENTS.md">100 Improvements</a> ·
   <a href="https://github.com/mapleleaflatte03/meridian-kernel">Meridian Kernel</a> ·
   <a href="https://github.com/mapleleaflatte03/meridian-kernel/blob/main/docs/LOOM_SPEC.md">Loom Spec</a> ·
   <a href="https://app.welliam.codes">Live Host</a>
@@ -137,6 +138,18 @@ And a sixth rehearsal for bounded daemon lifecycle:
 ```
 
 Its checked-in transcript lives at `examples/supervisor-daemon-output.txt`.
+
+## Frontier runtime docket
+
+The scaffold README is intentionally about what exists today. The broader
+research agenda for what Loom could become lives separately in:
+
+- [docs/LOOM_100_IMPROVEMENTS.md](docs/LOOM_100_IMPROVEMENTS.md)
+
+That docket is not a maturity claim. It is a research-backed map of 100
+improvements across runtime model, assembly-augmented control paths, capability
+ABI, isolation ladder, scheduler semantics, proof surfaces, operator UX, and
+transport replacement strategy.
 
 ## What exists today
 
@@ -322,6 +335,7 @@ meridian-loom/
 
 - [docs/SETUP_REHEARSAL.md](docs/SETUP_REHEARSAL.md)
 - [docs/PUBLICATION_CHECKLIST.md](docs/PUBLICATION_CHECKLIST.md)
+- [docs/LOOM_100_IMPROVEMENTS.md](docs/LOOM_100_IMPROVEMENTS.md)
 - [`meridian-kernel` README](https://github.com/mapleleaflatte03/meridian-kernel)
 - [`docs/LOOM_SPEC.md` in meridian-kernel](https://github.com/mapleleaflatte03/meridian-kernel/blob/main/docs/LOOM_SPEC.md)
 
