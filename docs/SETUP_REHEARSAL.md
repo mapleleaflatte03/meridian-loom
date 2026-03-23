@@ -33,6 +33,10 @@ The rehearsal verifies:
     the current deny/allow outcome auditable for operators.
 17. `loom shadow enforce` now returns a fail-closed exit code (`0` allow, `2`
     deny) using the same experimental decision surface.
+18. The decision surface now unions a local sanction preview derived from the
+    resolved identity snapshot with the read-only reference gate result.
+19. A fixture-backed rehearsal proves that `execute` / `remediation_only`
+    restrictions deny locally even when the reference gate would otherwise allow.
 
 ## What the rehearsal does not prove
 
@@ -91,3 +95,23 @@ backed; it does not make Loom a governed execution runtime.
 The rehearsal now also proves `loom shadow enforce` fails closed against the
 current kernel truth. On the founder host it returns exit code `2` because the
 reference budget gate denies the action.
+
+## Fixture-backed local sanction preview verification
+
+The founder-host rehearsal proves the real current kernel path. A second,
+fixture-backed rehearsal exists to prove the local sanction override path:
+
+```bash
+./scripts/rehearse_local_sanction_preview.sh
+```
+
+That script creates a synthetic kernel fixture where:
+
+1. The resolved agent identity includes an `execute` restriction.
+2. The read-only reference adapter still returns `allow`.
+3. `loom shadow decide` reports `effective_source: local_sanction_preview`.
+4. `loom shadow enforce` returns exit code `2`.
+
+This is intentionally a fixture-backed proof surface, not a claim about the
+founder host's current kernel state. Its transcript lives at
+`examples/local-sanction-preview.txt`.

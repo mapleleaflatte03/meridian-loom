@@ -1,0 +1,121 @@
+== Meridian Loom local sanction preview ==
+root:   /tmp/loom-local-sanction-preview
+kernel: /tmp/loom-local-kernel.mhPeUL
+agent:  agent_sanction
+org:    org_demo
+initialized Loom scaffold at /tmp/loom-local-sanction-preview
+mode: embedded
+org_id: org_demo
+state_dir: .loom
+kernel_path: /tmp/loom-local-kernel.mhPeUL
+Meridian Loom agent identity
+============================
+agent_id:            agent_sanction
+agent_name:          Sanction Preview
+org_id:              org_demo
+role:                analyst
+economy_key:         sanction
+approval_required:   false
+max_per_run_usd:     1.0000
+restrictions:        execute
+sanction_decision:   restricted_execute
+runtime_id:          local_kernel
+runtime_label:       Local Kernel Runtime
+bound_org_id:        org_demo
+boundary_name:       workspace
+identity_model:      session
+runtime_registered:  true
+registration_status: registered
+source:              kernel_agent_registry
+Shadow decision
+===============
+decision_path:          /tmp/loom-local-sanction-preview/.loom/shadow/decision.json
+source:                 experimental_preflight_gate
+agent_id:               agent_sanction
+org_id:                 org_demo
+action_type:            research
+resource:               web_search
+input_hash:             b7d2387503716f98
+estimated_cost_usd:      0.0500
+identity_restrictions:  execute
+reference_restrictions: (none)
+local_sanction:         deny (Agent agent_sanction is restricted from execute)
+sanction_gate:          allow
+approval_gate:          allow
+budget_limit_usd:       1.0000
+budget_gate:            allow
+overall_decision:       deny
+effective_source:       local_sanction_preview
+effective_stage:        sanction_controls_preview
+effective_reason:       Agent agent_sanction is restricted from execute
+reference_stage:        ok
+reference_reason:       ok
+Shadow decision
+===============
+decision_path:          /tmp/loom-local-sanction-preview/.loom/shadow/decision.json
+source:                 experimental_preflight_gate
+agent_id:               agent_sanction
+org_id:                 org_demo
+action_type:            research
+resource:               web_search
+input_hash:             b7d2387503716f98
+estimated_cost_usd:      0.0500
+identity_restrictions:  execute
+reference_restrictions: (none)
+local_sanction:         deny (Agent agent_sanction is restricted from execute)
+sanction_gate:          allow
+approval_gate:          allow
+budget_limit_usd:       1.0000
+budget_gate:            allow
+overall_decision:       deny
+effective_source:       local_sanction_preview
+effective_stage:        sanction_controls_preview
+effective_reason:       Agent agent_sanction is restricted from execute
+reference_stage:        ok
+reference_reason:       ok
+shadow_enforce_exit_code: 2
+Shadow report
+=============
+source: /tmp/loom-local-sanction-preview/.loom/shadow/latest.json
+
+{
+  "status": "not_started",
+  "events_compared": 0,
+  "divergences": 0,
+  "note": "shadow mode is not implemented in this scaffold"
+}
+
+
+Decision artifact
+=================
+source: /tmp/loom-local-sanction-preview/.loom/shadow/decision.json
+
+{
+  "status": "decision_captured",
+  "decision_path": "/tmp/loom-local-sanction-preview/.loom/shadow/decision.json",
+  "source": "experimental_preflight_gate",
+  "agent_id": "agent_sanction",
+  "org_id": "org_demo",
+  "action_type": "research",
+  "resource": "web_search",
+  "input_hash": "b7d2387503716f98",
+  "estimated_cost_usd": 0.050000,
+  "identity_restrictions": ["execute"],
+  "reference_restrictions": [],
+  "local_sanction_allowed": false,
+  "local_sanction_decision": "deny",
+  "local_sanction_reason": "Agent agent_sanction is restricted from execute",
+  "sanction_gate_decision": "allow",
+  "approval_gate_decision": "allow",
+  "budget_limit_usd": 1.000000,
+  "budget_gate_decision": "allow",
+  "overall_decision": "deny",
+  "effective_source": "local_sanction_preview",
+  "effective_stage": "sanction_controls_preview",
+  "effective_reason": "Agent agent_sanction is restricted from execute",
+  "reference_stage": "ok",
+  "reference_reason": "ok",
+  "note": "experimental preflight decision only; not governed runtime enforcement"
+}
+
+== Local sanction preview rehearsal complete ==

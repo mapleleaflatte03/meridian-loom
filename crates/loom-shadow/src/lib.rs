@@ -1,5 +1,6 @@
 use loom_core::{
-    envelope_input_hash, ActionEnvelope, AgentIdentityResolution, ReferenceGateCheck,
+    envelope_input_hash, preview_local_sanction_controls, ActionEnvelope, AgentIdentityResolution,
+    ReferenceGateCheck,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -18,7 +19,8 @@ pub struct PreflightCapture {
     pub input_hash: String,
     pub hooks: Vec<String>,
     pub estimated_cost_usd: f64,
-    pub restrictions: Vec<String>,
+    pub identity_restrictions: Vec<String>,
+    pub reference_restrictions: Vec<String>,
     pub sanction_decision: String,
     pub sanction_gate_decision: String,
     pub budget_limit_usd: Option<f64>,
@@ -54,12 +56,19 @@ pub struct DecisionCapture {
     pub action_type: String,
     pub resource: String,
     pub estimated_cost_usd: f64,
-    pub restrictions: Vec<String>,
+    pub identity_restrictions: Vec<String>,
+    pub reference_restrictions: Vec<String>,
+    pub local_sanction_allowed: bool,
+    pub local_sanction_decision: String,
+    pub local_sanction_reason: String,
     pub sanction_gate_decision: String,
     pub approval_gate_decision: String,
     pub budget_limit_usd: Option<f64>,
     pub budget_gate_decision: String,
     pub overall_decision: String,
+    pub effective_source: String,
+    pub effective_stage: String,
+    pub effective_reason: String,
     pub reference_stage: String,
     pub reference_reason: String,
     pub source: String,
@@ -318,7 +327,8 @@ pub fn capture_preflight(
             "budget_gate".to_string(),
         ],
         estimated_cost_usd: envelope.estimated_cost_usd,
-        restrictions: effective_restrictions,
+        identity_restrictions: identity.restrictions.clone(),
+        reference_restrictions: effective_restrictions,
         sanction_decision: sanction_decision.to_string(),
         sanction_gate_decision: reference.sanction_gate_decision.clone(),
         budget_limit_usd,
@@ -414,6 +424,30 @@ pub fn capture_decision(
     reference: &ReferenceGateCheck,
 ) -> ShadowResult<DecisionCapture> {
     let decision_path = ensure_shadow_dir(root)?.join("decision.json");
+    let local_preview = preview_local_sanction_controls(identity);
+    let (overall_decision, effective_source, effective_stage, effective_reason) =
+        if !local_preview.allowed {
+            (
+                "deny".to_string(),
+                "local_sanction_preview".to_string(),
+                "sanction_controls_preview".to_string(),
+                local_preview.reason.clone(),
+            )
+        } else if reference.allowed {
+            (
+                "allow".to_string(),
+                "reference_gate".to_string(),
+                reference.stage.clone(),
+                reference.reason.clone(),
+            )
+        } else {
+            (
+                "deny".to_string(),
+                "reference_gate".to_string(),
+                reference.stage.clone(),
+                reference.reason.clone(),
+            )
+        };
     let capture = DecisionCapture {
         decision_path: decision_path.clone(),
         input_hash: envelope_input_hash(envelope),
@@ -422,16 +456,19 @@ pub fn capture_decision(
         action_type: envelope.action_type.clone(),
         resource: envelope.resource.clone(),
         estimated_cost_usd: envelope.estimated_cost_usd,
-        restrictions: reference.restrictions.clone(),
+        identity_restrictions: identity.restrictions.clone(),
+        reference_restrictions: reference.restrictions.clone(),
+        local_sanction_allowed: local_preview.allowed,
+        local_sanction_decision: local_preview.decision,
+        local_sanction_reason: local_preview.reason,
         sanction_gate_decision: reference.sanction_gate_decision.clone(),
         approval_gate_decision: reference.approval_gate_decision.clone(),
         budget_limit_usd: identity.max_per_run_usd,
         budget_gate_decision: reference.budget_gate_decision.clone(),
-        overall_decision: if reference.allowed {
-            "allow".to_string()
-        } else {
-            "deny".to_string()
-        },
+        overall_decision,
+        effective_source,
+        effective_stage,
+        effective_reason,
         reference_stage: reference.stage.clone(),
         reference_reason: reference.reason.clone(),
         source: "experimental_preflight_gate".to_string(),
@@ -450,7 +487,7 @@ pub fn decision_exit_code(capture: &DecisionCapture, allow_code: i32, deny_code:
 
 pub fn render_preflight_human(capture: &PreflightCapture) -> String {
     format!(
-        "Shadow preflight capture\n========================\nevent_log:           {}\naudit_preview_log:   {}\nreference_report:    {}\nreference_event_log: {}\nlatest_report:       {}\ninput_hash:          {}\nestimated_cost_usd:  {:.4}\nrestrictions:        {}\nsanction_controls:   {} (snapshot: {})\nbudget_limit_usd:    {}\nbudget_gate:         {}\napproval_hook:       {} (policy: {})\naudit_emission:      {}\noverall_decision:    {}\nreference_stage:     {}\nreference_reason:    {}\ncaptured_hooks:      {}\n",
+        "Shadow preflight capture\n========================\nevent_log:              {}\naudit_preview_log:      {}\nreference_report:       {}\nreference_event_log:    {}\nlatest_report:          {}\ninput_hash:             {}\nestimated_cost_usd:     {:.4}\nidentity_restrictions:  {}\nreference_restrictions: {}\nsanction_controls:      {} (snapshot: {})\nbudget_limit_usd:       {}\nbudget_gate:            {}\napproval_hook:          {} (policy: {})\naudit_emission:         {}\noverall_decision:       {}\nreference_stage:        {}\nreference_reason:       {}\ncaptured_hooks:         {}\n",
         capture.event_log.display(),
         capture.audit_preview_log.display(),
         capture.reference_report.display(),
@@ -458,10 +495,15 @@ pub fn render_preflight_human(capture: &PreflightCapture) -> String {
         capture.latest_report.display(),
         capture.input_hash,
         capture.estimated_cost_usd,
-        if capture.restrictions.is_empty() {
+        if capture.identity_restrictions.is_empty() {
             "(none)".to_string()
         } else {
-            capture.restrictions.join(", ")
+            capture.identity_restrictions.join(", ")
+        },
+        if capture.reference_restrictions.is_empty() {
+            "(none)".to_string()
+        } else {
+            capture.reference_restrictions.join(", ")
         },
         capture.sanction_gate_decision,
         capture.sanction_decision,
@@ -486,7 +528,7 @@ pub fn render_preflight_human(capture: &PreflightCapture) -> String {
 
 pub fn render_preflight_json(capture: &PreflightCapture) -> String {
     format!(
-        "{{\n  \"event_log\": {},\n  \"audit_preview_log\": {},\n  \"reference_report\": {},\n  \"reference_event_log\": {},\n  \"latest_report\": {},\n  \"input_hash\": {},\n  \"estimated_cost_usd\": {:.6},\n  \"restrictions\": {},\n  \"sanction_decision\": {},\n  \"sanction_gate_decision\": {},\n  \"budget_limit_usd\": {},\n  \"budget_gate_decision\": {},\n  \"approval_decision\": {},\n  \"approval_gate_decision\": {},\n  \"audit_emission_decision\": {},\n  \"overall_decision\": {},\n  \"reference_stage\": {},\n  \"reference_reason\": {},\n  \"captured_hooks\": [\"agent_identity\", \"action_envelope\", \"cost_attribution\", \"approval_hook\", \"audit_emission\", \"sanction_controls\", \"budget_gate\"]\n}}\n",
+        "{{\n  \"event_log\": {},\n  \"audit_preview_log\": {},\n  \"reference_report\": {},\n  \"reference_event_log\": {},\n  \"latest_report\": {},\n  \"input_hash\": {},\n  \"estimated_cost_usd\": {:.6},\n  \"identity_restrictions\": {},\n  \"reference_restrictions\": {},\n  \"sanction_decision\": {},\n  \"sanction_gate_decision\": {},\n  \"budget_limit_usd\": {},\n  \"budget_gate_decision\": {},\n  \"approval_decision\": {},\n  \"approval_gate_decision\": {},\n  \"audit_emission_decision\": {},\n  \"overall_decision\": {},\n  \"reference_stage\": {},\n  \"reference_reason\": {},\n  \"captured_hooks\": [\"agent_identity\", \"action_envelope\", \"cost_attribution\", \"approval_hook\", \"audit_emission\", \"sanction_controls\", \"budget_gate\"]\n}}\n",
         json_string(&capture.event_log.display().to_string()),
         json_string(&capture.audit_preview_log.display().to_string()),
         json_string(&capture.reference_report.display().to_string()),
@@ -494,7 +536,8 @@ pub fn render_preflight_json(capture: &PreflightCapture) -> String {
         json_string(&capture.latest_report.display().to_string()),
         json_string(&capture.input_hash),
         capture.estimated_cost_usd,
-        render_json_string_array(&capture.restrictions),
+        render_json_string_array(&capture.identity_restrictions),
+        render_json_string_array(&capture.reference_restrictions),
         json_string(&capture.sanction_decision),
         json_string(&capture.sanction_gate_decision),
         capture
@@ -513,7 +556,7 @@ pub fn render_preflight_json(capture: &PreflightCapture) -> String {
 
 pub fn render_decision_human(capture: &DecisionCapture) -> String {
     format!(
-        "Shadow decision\n===============\ndecision_path:     {}\nsource:            {}\nagent_id:          {}\norg_id:            {}\naction_type:       {}\nresource:          {}\ninput_hash:        {}\nestimated_cost_usd:{:>12.4}\nrestrictions:      {}\nsanction_gate:     {}\napproval_gate:     {}\nbudget_limit_usd:  {}\nbudget_gate:       {}\noverall_decision:  {}\nreference_stage:   {}\nreference_reason:  {}\n",
+        "Shadow decision\n===============\ndecision_path:          {}\nsource:                 {}\nagent_id:               {}\norg_id:                 {}\naction_type:            {}\nresource:               {}\ninput_hash:             {}\nestimated_cost_usd:{:>12.4}\nidentity_restrictions:  {}\nreference_restrictions: {}\nlocal_sanction:         {} ({})\nsanction_gate:          {}\napproval_gate:          {}\nbudget_limit_usd:       {}\nbudget_gate:            {}\noverall_decision:       {}\neffective_source:       {}\neffective_stage:        {}\neffective_reason:       {}\nreference_stage:        {}\nreference_reason:       {}\n",
         capture.decision_path.display(),
         capture.source,
         capture.agent_id,
@@ -522,11 +565,18 @@ pub fn render_decision_human(capture: &DecisionCapture) -> String {
         capture.resource,
         capture.input_hash,
         capture.estimated_cost_usd,
-        if capture.restrictions.is_empty() {
+        if capture.identity_restrictions.is_empty() {
             "(none)".to_string()
         } else {
-            capture.restrictions.join(", ")
+            capture.identity_restrictions.join(", ")
         },
+        if capture.reference_restrictions.is_empty() {
+            "(none)".to_string()
+        } else {
+            capture.reference_restrictions.join(", ")
+        },
+        capture.local_sanction_decision,
+        capture.local_sanction_reason,
         capture.sanction_gate_decision,
         capture.approval_gate_decision,
         capture
@@ -535,6 +585,13 @@ pub fn render_decision_human(capture: &DecisionCapture) -> String {
             .unwrap_or_else(|| "(unknown)".to_string()),
         capture.budget_gate_decision,
         capture.overall_decision,
+        capture.effective_source,
+        capture.effective_stage,
+        if capture.effective_reason.is_empty() {
+            "(none)"
+        } else {
+            &capture.effective_reason
+        },
         capture.reference_stage,
         if capture.reference_reason.is_empty() {
             "(none)"
@@ -546,7 +603,7 @@ pub fn render_decision_human(capture: &DecisionCapture) -> String {
 
 pub fn render_decision_json(capture: &DecisionCapture) -> String {
     format!(
-        "{{\n  \"status\": \"decision_captured\",\n  \"decision_path\": {},\n  \"source\": {},\n  \"agent_id\": {},\n  \"org_id\": {},\n  \"action_type\": {},\n  \"resource\": {},\n  \"input_hash\": {},\n  \"estimated_cost_usd\": {:.6},\n  \"restrictions\": {},\n  \"sanction_gate_decision\": {},\n  \"approval_gate_decision\": {},\n  \"budget_limit_usd\": {},\n  \"budget_gate_decision\": {},\n  \"overall_decision\": {},\n  \"reference_stage\": {},\n  \"reference_reason\": {},\n  \"note\": \"experimental preflight decision only; not governed runtime enforcement\"\n}}\n",
+        "{{\n  \"status\": \"decision_captured\",\n  \"decision_path\": {},\n  \"source\": {},\n  \"agent_id\": {},\n  \"org_id\": {},\n  \"action_type\": {},\n  \"resource\": {},\n  \"input_hash\": {},\n  \"estimated_cost_usd\": {:.6},\n  \"identity_restrictions\": {},\n  \"reference_restrictions\": {},\n  \"local_sanction_allowed\": {},\n  \"local_sanction_decision\": {},\n  \"local_sanction_reason\": {},\n  \"sanction_gate_decision\": {},\n  \"approval_gate_decision\": {},\n  \"budget_limit_usd\": {},\n  \"budget_gate_decision\": {},\n  \"overall_decision\": {},\n  \"effective_source\": {},\n  \"effective_stage\": {},\n  \"effective_reason\": {},\n  \"reference_stage\": {},\n  \"reference_reason\": {},\n  \"note\": \"experimental preflight decision only; not governed runtime enforcement\"\n}}\n",
         json_string(&capture.decision_path.display().to_string()),
         json_string(&capture.source),
         json_string(&capture.agent_id),
@@ -555,7 +612,11 @@ pub fn render_decision_json(capture: &DecisionCapture) -> String {
         json_string(&capture.resource),
         json_string(&capture.input_hash),
         capture.estimated_cost_usd,
-        render_json_string_array(&capture.restrictions),
+        render_json_string_array(&capture.identity_restrictions),
+        render_json_string_array(&capture.reference_restrictions),
+        if capture.local_sanction_allowed { "true" } else { "false" },
+        json_string(&capture.local_sanction_decision),
+        json_string(&capture.local_sanction_reason),
         json_string(&capture.sanction_gate_decision),
         json_string(&capture.approval_gate_decision),
         capture
@@ -564,6 +625,9 @@ pub fn render_decision_json(capture: &DecisionCapture) -> String {
             .unwrap_or_else(|| "null".to_string()),
         json_string(&capture.budget_gate_decision),
         json_string(&capture.overall_decision),
+        json_string(&capture.effective_source),
+        json_string(&capture.effective_stage),
+        json_string(&capture.effective_reason),
         json_string(&capture.reference_stage),
         json_string(&capture.reference_reason),
     )
@@ -864,7 +928,8 @@ mod tests {
         assert!(capture.reference_event_log.exists());
         assert_eq!(capture.sanction_decision, "clear");
         assert_eq!(capture.sanction_gate_decision, "allow");
-        assert_eq!(capture.restrictions, Vec::<String>::new());
+        assert_eq!(capture.identity_restrictions, Vec::<String>::new());
+        assert_eq!(capture.reference_restrictions, Vec::<String>::new());
         assert_eq!(capture.budget_gate_decision, "allow");
         assert_eq!(capture.approval_decision, "not_required");
         assert_eq!(capture.approval_gate_decision, "allow");
@@ -897,18 +962,60 @@ mod tests {
         let capture = capture_decision(&root, &identity, &envelope, &reference).expect("decision");
         assert!(capture.decision_path.exists());
         assert_eq!(capture.overall_decision, "deny");
+        assert!(capture.identity_restrictions.is_empty());
+        assert_eq!(capture.reference_restrictions, vec!["execute".to_string()]);
+        assert!(capture.local_sanction_allowed);
+        assert_eq!(capture.local_sanction_decision, "allow");
+        assert_eq!(capture.effective_source, "reference_gate");
+        assert_eq!(capture.effective_stage, "budget_gate");
         assert_eq!(capture.reference_stage, "budget_gate");
         let human = render_decision_human(&capture);
-        assert!(human.contains("overall_decision:  deny"));
-        assert!(human.contains("reference_stage:   budget_gate"));
+        assert!(human.contains("overall_decision:       deny"));
+        assert!(human.contains("identity_restrictions:  (none)"));
+        assert!(human.contains("reference_restrictions: execute"));
+        assert!(human.contains("effective_source:       reference_gate"));
+        assert!(human.contains("reference_stage:        budget_gate"));
         let json = render_decision_json(&capture);
         assert!(json.contains("\"status\": \"decision_captured\""));
+        assert!(json.contains("\"identity_restrictions\": []"));
+        assert!(json.contains("\"reference_restrictions\": [\"execute\"]"));
         assert!(json.contains("\"overall_decision\": \"deny\""));
         assert!(json.contains("\"note\": \"experimental preflight decision only; not governed runtime enforcement\""));
         assert_eq!(decision_exit_code(&capture, 0, 2), 2);
         let report = render_shadow_report(&root).expect("render report");
         assert!(report.contains("Decision artifact"));
         assert!(report.contains("\"overall_decision\": \"deny\""));
+    }
+
+    #[test]
+    fn decision_capture_prefers_local_sanction_preview_when_execute_is_restricted() {
+        let root = temp_path("loom-shadow-decision-sanction");
+        fs::create_dir_all(root.join(".loom/shadow")).expect("shadow dir");
+        let mut identity = sample_identity();
+        identity.restrictions = vec!["execute".to_string()];
+        identity.sanction_decision = "restricted_execute".to_string();
+        let envelope = sample_envelope();
+        let reference = ReferenceGateCheck {
+            allowed: true,
+            stage: "ok".to_string(),
+            reason: "ok".to_string(),
+            restrictions: vec!["execute".to_string()],
+            sanction_gate_decision: "allow".to_string(),
+            approval_gate_decision: "allow".to_string(),
+            budget_gate_decision: "allow".to_string(),
+            source: "kernel_reference_adapter_read_only".to_string(),
+        };
+
+        let capture = capture_decision(&root, &identity, &envelope, &reference).expect("decision");
+        assert_eq!(capture.overall_decision, "deny");
+        assert_eq!(capture.identity_restrictions, vec!["execute".to_string()]);
+        assert_eq!(capture.reference_restrictions, vec!["execute".to_string()]);
+        assert!(!capture.local_sanction_allowed);
+        assert_eq!(capture.local_sanction_decision, "deny");
+        assert_eq!(capture.effective_source, "local_sanction_preview");
+        assert_eq!(capture.effective_stage, "sanction_controls_preview");
+        assert!(capture.effective_reason.contains("restricted from execute"));
+        assert_eq!(decision_exit_code(&capture, 0, 2), 2);
     }
 
     #[test]

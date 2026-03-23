@@ -36,6 +36,9 @@ Experimental public scaffold for the planned Meridian-native runtime.
 - A local setup rehearsal script:
   - `scripts/rehearse_setup.sh` (auto-discovers a governed agent from the
     current kernel registry before running the experimental preflight flow)
+  - `scripts/rehearse_local_sanction_preview.sh` (uses a synthetic kernel
+    fixture to prove that a local execute/remediation restriction can deny the
+    action even when the read-only reference gate would otherwise allow it)
   - the compare/report surfaces now emit per-hook divergence details so the
     remaining gap is inspectable without pretending runtime parity
 
@@ -117,13 +120,20 @@ explicit instead of buried in a single aggregate rate. It is still not enough
 to claim Loom exists as a governed execution runtime.
 
 `loom shadow decide` now writes an explicit decision artifact backed by the same
-reference gate evaluation used during preflight. That makes the deny/allow path
-inspectable for operators without pretending Loom already enforces those gates
-as a native runtime.
+effective decision surface used during preflight. That surface unions:
+- a local sanction preview derived from the resolved agent identity restrictions
+- the read-only reference gate result for sanction/approval/budget
+
+If the local preview sees `execute` or `remediation_only`, the overall decision
+fails closed even when the reference gate would otherwise allow the action.
+That makes the deny/allow path inspectable for operators without pretending
+Loom already enforces those gates as a native runtime.
 
 `loom shadow enforce` now reuses that same decision path but returns a fail-closed
 exit code for automation: `0` for allow, `2` for deny. It is still an
-experimental preflight command, not a governed execution runtime.
+experimental preflight command, not a governed execution runtime. The founder-host
+rehearsal currently denies through the reference budget gate; the fixture-backed
+local sanction rehearsal proves the local sanction override path separately.
 
 ## Publication readiness
 

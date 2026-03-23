@@ -4,24 +4,28 @@ kernel: /tmp/meridian-kernel
 agent:  agent_atlas
 org:    org_b7d95bae
 
-running 6 tests
+running 9 tests
+test tests::local_sanction_preview_allows_non_execute_restrictions ... ok
+test tests::local_sanction_preview_denies_execute_and_remediation_only ... ok
 test tests::init_refuses_overwrite ... ok
 test tests::build_envelope_rejects_negative_cost ... ok
 test tests::init_and_read_config_round_trip ... ok
+test tests::resolve_identity_prefers_snapshot_restrictions_when_present ... ok
 test tests::resolve_identity_does_not_force_workspace_org_hint ... ok
 test tests::resolve_identity_and_build_envelope_against_fake_kernel ... ok
 test tests::evaluate_reference_gates_uses_kernel_reference_adapter ... ok
 
-test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
 
 
-running 4 tests
-test tests::compare_report_surfaces_hook_level_divergence_details ... ok
-test tests::decision_capture_surfaces_gate_outcome ... ok
+running 5 tests
 test tests::compares_identical_logs_without_divergence ... ok
+test tests::decision_capture_prefers_local_sanction_preview_when_execute_is_restricted ... ok
+test tests::decision_capture_surfaces_gate_outcome ... ok
+test tests::compare_report_surfaces_hook_level_divergence_details ... ok
 test tests::records_preflight_and_renders_report ... ok
 
-test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
 
 running 0 tests
@@ -96,7 +100,7 @@ audit_emission     experimental_preflight_path
 sanction_controls  experimental_preflight_path
 budget_gate        experimental_preflight_path
 
-notes: Experimental public scaffold exists for CLI/setup rehearsal and 7-surface preflight coverage. Audit emission now uses the kernel audit serializer to write a local preview file. Sanction controls, approval hook, and budget gate now read kernel reference-adapter decisions through a read-only preflight path, and `loom shadow decide` materializes that gate result as a standalone decision artifact for operator review. There is still no native Loom enforcement, governed execution runtime, or proven hook compliance. Polyglot architecture: Rust supervisor core, Python/TypeScript workers, WASM capability modules. Directional targets: <50MB memory, <500ms cold start, native 7/7 contract compliance (all unproven). See docs/LOOM_SPEC.md for spec, docs/loom/ for productization strategy.
+notes: Experimental public scaffold exists for CLI/setup rehearsal and 7-surface preflight coverage. Audit emission now uses the kernel audit serializer to write a local preview file. Sanction controls, approval hook, and budget gate now read kernel reference-adapter decisions through a read-only preflight path. `loom shadow decide` materializes an effective decision surface that unions those read-only gate results with a local sanction preview derived from the resolved identity snapshot, and `loom shadow enforce` returns fail-closed exit codes from that same experimental decision surface for shell automation. There is still no native Loom enforcement, governed execution runtime, or proven hook compliance. Polyglot architecture: Rust supervisor core, Python/TypeScript workers, WASM capability modules. Directional targets: <50MB memory, <500ms cold start, native 7/7 contract compliance (all unproven). See docs/LOOM_SPEC.md for spec, docs/loom/ for productization strategy.
 Meridian Loom agent identity
 ============================
 agent_id:            agent_atlas
@@ -173,59 +177,70 @@ input_hash:          bba40f20f386cb46
 
 Shadow preflight capture
 ========================
-event_log:           /tmp/loom-rehearsal/.loom/shadow/events.jsonl
-audit_preview_log:   /tmp/loom-rehearsal/.loom/audit/preview.jsonl
-reference_report:    /tmp/loom-rehearsal/.loom/shadow/reference.json
-reference_event_log: /tmp/loom-rehearsal/.loom/shadow/reference_events.jsonl
-latest_report:       /tmp/loom-rehearsal/.loom/shadow/latest.json
-input_hash:          bba40f20f386cb46
-estimated_cost_usd:  0.0500
-restrictions:        (none)
-sanction_controls:   allow (snapshot: clear)
-budget_limit_usd:    0.5000
-budget_gate:         deny
-approval_hook:       allow (policy: not_required)
-audit_emission:      kernel_preview_written
-overall_decision:    deny
-reference_stage:     budget_gate
-reference_reason:    Treasury below reserve floor (runway $-50.00). Recapitalize before spending.
-captured_hooks:      agent_identity, action_envelope, cost_attribution, approval_hook, audit_emission, sanction_controls, budget_gate
+event_log:              /tmp/loom-rehearsal/.loom/shadow/events.jsonl
+audit_preview_log:      /tmp/loom-rehearsal/.loom/audit/preview.jsonl
+reference_report:       /tmp/loom-rehearsal/.loom/shadow/reference.json
+reference_event_log:    /tmp/loom-rehearsal/.loom/shadow/reference_events.jsonl
+latest_report:          /tmp/loom-rehearsal/.loom/shadow/latest.json
+input_hash:             bba40f20f386cb46
+estimated_cost_usd:     0.0500
+identity_restrictions:  (none)
+reference_restrictions: (none)
+sanction_controls:      allow (snapshot: clear)
+budget_limit_usd:       0.5000
+budget_gate:            deny
+approval_hook:          allow (policy: not_required)
+audit_emission:         kernel_preview_written
+overall_decision:       deny
+reference_stage:        budget_gate
+reference_reason:       Treasury below reserve floor (runway $-50.00). Recapitalize before spending.
+captured_hooks:         agent_identity, action_envelope, cost_attribution, approval_hook, audit_emission, sanction_controls, budget_gate
 Shadow decision
 ===============
-decision_path:     /tmp/loom-rehearsal/.loom/shadow/decision.json
-source:            experimental_preflight_gate
-agent_id:          agent_atlas
-org_id:            org_b7d95bae
-action_type:       research
-resource:          web_search
-input_hash:        bba40f20f386cb46
+decision_path:          /tmp/loom-rehearsal/.loom/shadow/decision.json
+source:                 experimental_preflight_gate
+agent_id:               agent_atlas
+org_id:                 org_b7d95bae
+action_type:            research
+resource:               web_search
+input_hash:             bba40f20f386cb46
 estimated_cost_usd:      0.0500
-restrictions:      (none)
-sanction_gate:     allow
-approval_gate:     allow
-budget_limit_usd:  0.5000
-budget_gate:       deny
-overall_decision:  deny
-reference_stage:   budget_gate
-reference_reason:  Treasury below reserve floor (runway $-50.00). Recapitalize before spending.
+identity_restrictions:  (none)
+reference_restrictions: (none)
+local_sanction:         allow (no execute restriction)
+sanction_gate:          allow
+approval_gate:          allow
+budget_limit_usd:       0.5000
+budget_gate:            deny
+overall_decision:       deny
+effective_source:       reference_gate
+effective_stage:        budget_gate
+effective_reason:       Treasury below reserve floor (runway $-50.00). Recapitalize before spending.
+reference_stage:        budget_gate
+reference_reason:       Treasury below reserve floor (runway $-50.00). Recapitalize before spending.
 Shadow decision
 ===============
-decision_path:     /tmp/loom-rehearsal/.loom/shadow/decision.json
-source:            experimental_preflight_gate
-agent_id:          agent_atlas
-org_id:            org_b7d95bae
-action_type:       research
-resource:          web_search
-input_hash:        bba40f20f386cb46
+decision_path:          /tmp/loom-rehearsal/.loom/shadow/decision.json
+source:                 experimental_preflight_gate
+agent_id:               agent_atlas
+org_id:                 org_b7d95bae
+action_type:            research
+resource:               web_search
+input_hash:             bba40f20f386cb46
 estimated_cost_usd:      0.0500
-restrictions:      (none)
-sanction_gate:     allow
-approval_gate:     allow
-budget_limit_usd:  0.5000
-budget_gate:       deny
-overall_decision:  deny
-reference_stage:   budget_gate
-reference_reason:  Treasury below reserve floor (runway $-50.00). Recapitalize before spending.
+identity_restrictions:  (none)
+reference_restrictions: (none)
+local_sanction:         allow (no execute restriction)
+sanction_gate:          allow
+approval_gate:          allow
+budget_limit_usd:       0.5000
+budget_gate:            deny
+overall_decision:       deny
+effective_source:       reference_gate
+effective_stage:        budget_gate
+effective_reason:       Treasury below reserve floor (runway $-50.00). Recapitalize before spending.
+reference_stage:        budget_gate
+reference_reason:       Treasury below reserve floor (runway $-50.00). Recapitalize before spending.
 shadow_enforce_exit_code: 2
 Shadow comparison
 =================
@@ -299,12 +314,19 @@ source: /tmp/loom-rehearsal/.loom/shadow/decision.json
   "resource": "web_search",
   "input_hash": "bba40f20f386cb46",
   "estimated_cost_usd": 0.050000,
-  "restrictions": [],
+  "identity_restrictions": [],
+  "reference_restrictions": [],
+  "local_sanction_allowed": true,
+  "local_sanction_decision": "allow",
+  "local_sanction_reason": "no execute restriction",
   "sanction_gate_decision": "allow",
   "approval_gate_decision": "allow",
   "budget_limit_usd": 0.500000,
   "budget_gate_decision": "deny",
   "overall_decision": "deny",
+  "effective_source": "reference_gate",
+  "effective_stage": "budget_gate",
+  "effective_reason": "Treasury below reserve floor (runway $-50.00). Recapitalize before spending.",
   "reference_stage": "budget_gate",
   "reference_reason": "Treasury below reserve floor (runway $-50.00). Recapitalize before spending.",
   "note": "experimental preflight decision only; not governed runtime enforcement"

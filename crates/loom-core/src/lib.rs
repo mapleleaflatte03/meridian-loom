@@ -101,6 +101,13 @@ pub struct ReferenceGateCheck {
     pub source: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LocalSanctionPreview {
+    pub allowed: bool,
+    pub decision: String,
+    pub reason: String,
+}
+
 pub fn init_workspace(
     root: &Path,
     mode: &str,
@@ -514,13 +521,20 @@ pub fn resolve_agent_identity(
     let approval_required = extract_json_bool(&stdout, "\"approval_required\"").unwrap_or(false);
     let max_per_run_usd = find_named_object(&stdout, "\"budget\"")
         .and_then(|budget| extract_json_f64(&budget, "\"max_per_run_usd\""));
+    let snapshot_restrictions = extract_json_string_array(&stdout, "\"restrictions\"");
+    let snapshot_sanction_decision = extract_json_string(&stdout, "\"sanction_decision\"");
     let restriction_lookup = if economy_key.is_empty() {
         agent_id.as_str()
     } else {
         economy_key.as_str()
     };
-    let (restrictions, sanction_decision) =
-        query_agent_restrictions(&kernel_path, restriction_lookup, Some(&org_id));
+    let (restrictions, sanction_decision) = if snapshot_restrictions.is_empty() {
+        query_agent_restrictions(&kernel_path, restriction_lookup, Some(&org_id))
+    } else {
+        let decision = snapshot_sanction_decision
+            .unwrap_or_else(|| derive_sanction_decision(&snapshot_restrictions).to_string());
+        (snapshot_restrictions, decision)
+    };
 
     Ok(AgentIdentityResolution {
         agent_id,
@@ -611,16 +625,23 @@ for item in get_restrictions(agent_id, org_id=org_id) or []:
                 .filter(|line| !line.is_empty())
                 .map(|line| line.to_string())
                 .collect::<Vec<_>>();
-            let decision = if restrictions.is_empty() {
-                "clear"
-            } else if restrictions.iter().any(|value| value == "execute") {
-                "restricted_execute"
-            } else {
-                "restricted"
-            };
+            let decision = derive_sanction_decision(&restrictions);
             (restrictions, decision.to_string())
         }
         _ => (Vec::new(), "unknown".to_string()),
+    }
+}
+
+fn derive_sanction_decision(restrictions: &[String]) -> &'static str {
+    if restrictions.is_empty() {
+        "clear"
+    } else if restrictions
+        .iter()
+        .any(|value| value == "execute" || value == "remediation_only")
+    {
+        "restricted_execute"
+    } else {
+        "restricted"
     }
 }
 
@@ -717,6 +738,26 @@ pub fn build_action_envelope(
         session_id: session_id.unwrap_or("").trim().to_string(),
         source: "loom_experimental_preflight".to_string(),
     })
+}
+
+pub fn preview_local_sanction_controls(identity: &AgentIdentityResolution) -> LocalSanctionPreview {
+    if identity
+        .restrictions
+        .iter()
+        .any(|value| value == "execute" || value == "remediation_only")
+    {
+        return LocalSanctionPreview {
+            allowed: false,
+            decision: "deny".to_string(),
+            reason: format!("Agent {} is restricted from execute", identity.agent_id),
+        };
+    }
+
+    LocalSanctionPreview {
+        allowed: true,
+        decision: "allow".to_string(),
+        reason: "no execute restriction".to_string(),
+    }
 }
 
 pub fn evaluate_reference_gates(
@@ -1171,6 +1212,24 @@ mod tests {
     }
 
     #[test]
+    fn resolve_identity_prefers_snapshot_restrictions_when_present() {
+        let kernel =
+            fake_kernel_root_with_snapshot("sanction", &["execute"], Some("restricted_execute"), &[]);
+        let root = temp_path("loom-core-snapshot");
+        init_workspace(&root, "shadow", Some(&kernel.display().to_string()), "org_demo")
+            .expect("init workspace");
+
+        let identity =
+            resolve_agent_identity(&root, None, "sanction", None).expect("resolve identity");
+        assert_eq!(identity.agent_id, "agent_atlas");
+        assert_eq!(identity.restrictions, vec!["execute".to_string()]);
+        assert_eq!(identity.sanction_decision, "restricted_execute");
+        let preview = preview_local_sanction_controls(&identity);
+        assert!(!preview.allowed);
+        assert_eq!(preview.decision, "deny");
+    }
+
+    #[test]
     fn evaluate_reference_gates_uses_kernel_reference_adapter() {
         let kernel = fake_kernel_root("atlas");
         let root = temp_path("loom-core-reference");
@@ -1252,6 +1311,65 @@ mod tests {
         assert_eq!(identity.restrictions, vec!["lead".to_string()]);
     }
 
+    #[test]
+    fn local_sanction_preview_allows_non_execute_restrictions() {
+        let identity = AgentIdentityResolution {
+            agent_id: "agent_atlas".to_string(),
+            agent_name: "Atlas".to_string(),
+            org_id: "org_demo".to_string(),
+            role: "analyst".to_string(),
+            economy_key: "atlas".to_string(),
+            approval_required: false,
+            max_per_run_usd: Some(0.5),
+            restrictions: vec!["lead".to_string()],
+            sanction_decision: "restricted".to_string(),
+            runtime_id: "local_kernel".to_string(),
+            runtime_label: "Local Kernel Runtime".to_string(),
+            bound_org_id: "org_demo".to_string(),
+            boundary_name: "workspace".to_string(),
+            identity_model: "session".to_string(),
+            runtime_registered: true,
+            registration_status: "registered".to_string(),
+            source: "kernel_agent_registry".to_string(),
+        };
+        let preview = preview_local_sanction_controls(&identity);
+        assert!(preview.allowed);
+        assert_eq!(preview.decision, "allow");
+        assert_eq!(preview.reason, "no execute restriction");
+    }
+
+    #[test]
+    fn local_sanction_preview_denies_execute_and_remediation_only() {
+        let mut identity = AgentIdentityResolution {
+            agent_id: "agent_atlas".to_string(),
+            agent_name: "Atlas".to_string(),
+            org_id: "org_demo".to_string(),
+            role: "analyst".to_string(),
+            economy_key: "atlas".to_string(),
+            approval_required: false,
+            max_per_run_usd: Some(0.5),
+            restrictions: vec!["execute".to_string()],
+            sanction_decision: "restricted_execute".to_string(),
+            runtime_id: "local_kernel".to_string(),
+            runtime_label: "Local Kernel Runtime".to_string(),
+            bound_org_id: "org_demo".to_string(),
+            boundary_name: "workspace".to_string(),
+            identity_model: "session".to_string(),
+            runtime_registered: true,
+            registration_status: "registered".to_string(),
+            source: "kernel_agent_registry".to_string(),
+        };
+        let preview = preview_local_sanction_controls(&identity);
+        assert!(!preview.allowed);
+        assert_eq!(preview.decision, "deny");
+        assert!(preview.reason.contains("restricted from execute"));
+
+        identity.restrictions = vec!["remediation_only".to_string()];
+        let remediation = preview_local_sanction_controls(&identity);
+        assert!(!remediation.allowed);
+        assert_eq!(remediation.decision, "deny");
+    }
+
     fn temp_path(prefix: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
             "{}-{}",
@@ -1264,9 +1382,48 @@ mod tests {
     }
 
     fn fake_kernel_root(agent_lookup: &str) -> PathBuf {
+        fake_kernel_root_with_snapshot(agent_lookup, &[], None, &["lead"])
+    }
+
+    fn fake_kernel_root_with_snapshot(
+        agent_lookup: &str,
+        snapshot_restrictions: &[&str],
+        snapshot_sanction_decision: Option<&str>,
+        court_restrictions: &[&str],
+    ) -> PathBuf {
         let root = temp_path("loom-core-kernel");
         let kernel_dir = root.join("kernel");
         fs::create_dir_all(&kernel_dir).expect("kernel dir");
+        let snapshot_restrictions_literal = format!(
+            "[{}]",
+            snapshot_restrictions
+                .iter()
+                .map(|value| format!("{:?}", value))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        let snapshot_fields = if snapshot_restrictions.is_empty() {
+            String::new()
+        } else if let Some(decision) = snapshot_sanction_decision {
+            format!(
+                "'restrictions': {restrictions}, 'sanction_decision': {decision:?}, ",
+                restrictions = snapshot_restrictions_literal,
+                decision = decision
+            )
+        } else {
+            format!(
+                "'restrictions': {restrictions}, ",
+                restrictions = snapshot_restrictions_literal
+            )
+        };
+        let court_restrictions_literal = format!(
+            "[{}]",
+            court_restrictions
+                .iter()
+                .map(|value| format!("{:?}", value))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
         fs::write(
             kernel_dir.join("runtimes.json"),
             format!(
@@ -1277,14 +1434,18 @@ mod tests {
         fs::write(
             kernel_dir.join("agent_registry.py"),
             format!(
-                "import json, sys\nagent_id = sys.argv[sys.argv.index('--agent_id') + 1]\norg_id = 'org_demo'\nif '--org_id' in sys.argv:\n    org_id = sys.argv[sys.argv.index('--org_id') + 1]\nif agent_id in ('{lookup}', 'agent_atlas', 'Atlas'):\n    print(json.dumps({{'id': 'agent_atlas', 'name': 'Atlas', 'org_id': org_id, 'role': 'analyst', 'economy_key': '{lookup}', 'approval_required': False, 'budget': {{'max_per_run_usd': 0.5}}, 'runtime_binding': {{'runtime_id': 'local_kernel', 'runtime_label': 'Local Kernel Runtime', 'bound_org_id': org_id, 'boundary_name': 'workspace', 'identity_model': 'session', 'runtime_registered': True, 'registration_status': 'registered'}}}}, indent=2))\nelse:\n    print(f'Not found: {{agent_id}}')\n",
-                lookup = agent_lookup
+                "import json, sys\nagent_id = sys.argv[sys.argv.index('--agent_id') + 1]\norg_id = 'org_demo'\nif '--org_id' in sys.argv:\n    org_id = sys.argv[sys.argv.index('--org_id') + 1]\nif agent_id in ('{lookup}', 'agent_atlas', 'Atlas'):\n    print(json.dumps({{'id': 'agent_atlas', 'name': 'Atlas', 'org_id': org_id, 'role': 'analyst', 'economy_key': '{lookup}', 'approval_required': False, {snapshot_fields}'budget': {{'max_per_run_usd': 0.5}}, 'runtime_binding': {{'runtime_id': 'local_kernel', 'runtime_label': 'Local Kernel Runtime', 'bound_org_id': org_id, 'boundary_name': 'workspace', 'identity_model': 'session', 'runtime_registered': True, 'registration_status': 'registered'}}}}, indent=2))\nelse:\n    print(f'Not found: {{agent_id}}')\n",
+                lookup = agent_lookup,
+                snapshot_fields = snapshot_fields
             ),
         )
         .expect("write agent_registry");
         fs::write(
             kernel_dir.join("court.py"),
-            "def get_restrictions(agent_id, org_id=None):\n    if agent_id in ('atlas', 'agent_atlas'):\n        return ['lead']\n    return []\n",
+            format!(
+                "def get_restrictions(agent_id, org_id=None):\n    if agent_id in ('atlas', 'agent_atlas'):\n        return {restrictions}\n    return []\n",
+                restrictions = court_restrictions_literal
+            ),
         )
         .expect("write court");
         let adapters_dir = kernel_dir.join("adapters");
