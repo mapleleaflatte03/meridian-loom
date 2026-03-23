@@ -1,8 +1,8 @@
 # Meridian Loom Publication Checklist
 
-This checklist is for the first public publication of the experimental Loom
-scaffold. It is deliberately strict so the repo does not overclaim maturity on
-day one.
+This checklist now records the conditions that were required for the first
+public publication of the experimental Loom scaffold. It remains deliberately
+strict so the repo does not overclaim maturity.
 
 ## Local repository truth
 
@@ -15,12 +15,12 @@ day one.
 - [x] Cargo workspace builds locally
 - [x] Cargo workspace tests pass locally
 
-## Required before first public push
+## First public push status
 
-- [ ] GitHub CLI authentication works again
-- [ ] Public repository is created
-- [ ] Remote `origin` points at the public repository
-- [ ] First push succeeds
+- [x] GitHub API access works again
+- [x] Public repository is created
+- [x] Remote `origin` points at the public repository
+- [x] First push succeeds
 
 ## First public release message
 

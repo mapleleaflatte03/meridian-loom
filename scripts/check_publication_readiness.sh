@@ -45,11 +45,21 @@ echo "== git status =="
 git status --short
 
 echo
-echo "== gh auth status =="
-if gh auth status >/tmp/meridian-loom-gh-auth.txt 2>&1; then
-  cat /tmp/meridian-loom-gh-auth.txt
+echo "== remote origin =="
+if git remote get-url origin >/tmp/meridian-loom-origin.txt 2>&1; then
+  cat /tmp/meridian-loom-origin.txt
 else
-  cat /tmp/meridian-loom-gh-auth.txt
+  cat /tmp/meridian-loom-origin.txt
   echo
-  echo "[WARN] GitHub auth is not ready. Public publication remains blocked."
+  echo "[WARN] origin is not configured."
+fi
+
+echo
+echo "== GitHub API visibility =="
+if gh api repos/mapleleaflatte03/meridian-loom --jq '.html_url' >/tmp/meridian-loom-public-url.txt 2>&1; then
+  cat /tmp/meridian-loom-public-url.txt
+else
+  cat /tmp/meridian-loom-public-url.txt
+  echo
+  echo "[WARN] GitHub API could not confirm public repository visibility."
 fi

@@ -1,6 +1,6 @@
 # Meridian Loom
 
-Experimental local scaffold for the planned Meridian-native runtime.
+Experimental public scaffold for the planned Meridian-native runtime.
 
 ## Truth first
 
@@ -57,7 +57,7 @@ Or run the bundled rehearsal:
 ./scripts/rehearse_setup.sh
 ```
 
-Before public publication, run the readiness check:
+Run the publication/readiness check:
 
 ```bash
 ./scripts/check_publication_readiness.sh
@@ -84,8 +84,8 @@ It is not enough to claim Loom exists as a runtime.
 
 ## Publication readiness
 
-This scaffold is intended to be publish-ready before the first public GitHub
-push. The publication checklist lives in
+This scaffold is now public at
+`https://github.com/mapleleaflatte03/meridian-loom`. The publication checklist lives in
 [`docs/PUBLICATION_CHECKLIST.md`](docs/PUBLICATION_CHECKLIST.md), and the
-bundled readiness script verifies the local prerequisites that can be checked
-without a live GitHub push.
+bundled readiness script verifies the local prerequisites, remote wiring, and
+public repository visibility.
