@@ -57,6 +57,12 @@ Or run the bundled rehearsal:
 ./scripts/rehearse_setup.sh
 ```
 
+Before public publication, run the readiness check:
+
+```bash
+./scripts/check_publication_readiness.sh
+```
+
 ## Layout
 
 ```text
@@ -75,3 +81,11 @@ meridian-loom/
 
 This repo is enough to rehearse the install/setup/operator path honestly.
 It is not enough to claim Loom exists as a runtime.
+
+## Publication readiness
+
+This scaffold is intended to be publish-ready before the first public GitHub
+push. The publication checklist lives in
+[`docs/PUBLICATION_CHECKLIST.md`](docs/PUBLICATION_CHECKLIST.md), and the
+bundled readiness script verifies the local prerequisites that can be checked
+without a live GitHub push.
