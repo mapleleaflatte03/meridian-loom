@@ -4,21 +4,22 @@ kernel: /tmp/meridian-kernel
 agent:  agent_atlas
 org:    org_b7d95bae
 
-running 5 tests
+running 6 tests
 test tests::init_refuses_overwrite ... ok
-test tests::build_envelope_rejects_negative_cost ... ok
 test tests::init_and_read_config_round_trip ... ok
+test tests::build_envelope_rejects_negative_cost ... ok
 test tests::resolve_identity_does_not_force_workspace_org_hint ... ok
 test tests::resolve_identity_and_build_envelope_against_fake_kernel ... ok
+test tests::evaluate_reference_gates_uses_kernel_reference_adapter ... ok
 
-test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
 
 
 running 2 tests
 test tests::compares_identical_logs_without_divergence ... ok
 test tests::records_preflight_and_renders_report ... ok
 
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
 
 
 running 0 tests
@@ -93,7 +94,7 @@ audit_emission     experimental_preflight_path
 sanction_controls  experimental_preflight_path
 budget_gate        experimental_preflight_path
 
-notes: Experimental public scaffold exists for CLI/setup rehearsal and 7-surface preflight coverage. Audit emission currently writes a local preview file and sanction controls currently record a restriction snapshot; no governed execution runtime or proven hooks exist yet. Polyglot architecture: Rust supervisor core, Python/TypeScript workers, WASM capability modules. Directional targets: <50MB memory, <500ms cold start, native 7/7 contract compliance (all unproven). See docs/LOOM_SPEC.md for spec, docs/loom/ for productization strategy.
+notes: Experimental public scaffold exists for CLI/setup rehearsal and 7-surface preflight coverage. Audit emission currently writes a local preview file. Sanction controls, approval hook, and budget gate now read kernel reference-adapter decisions through a read-only preflight path, but there is still no native Loom enforcement, governed execution runtime, or proven hook compliance. Polyglot architecture: Rust supervisor core, Python/TypeScript workers, WASM capability modules. Directional targets: <50MB memory, <500ms cold start, native 7/7 contract compliance (all unproven). See docs/LOOM_SPEC.md for spec, docs/loom/ for productization strategy.
 Meridian Loom agent identity
 ============================
 agent_id:            agent_atlas
@@ -172,25 +173,30 @@ Shadow preflight capture
 ========================
 event_log:           /tmp/loom-rehearsal/.loom/shadow/events.jsonl
 audit_preview_log:   /tmp/loom-rehearsal/.loom/audit/preview.jsonl
+reference_report:    /tmp/loom-rehearsal/.loom/shadow/reference.json
+reference_event_log: /tmp/loom-rehearsal/.loom/shadow/reference_events.jsonl
 latest_report:       /tmp/loom-rehearsal/.loom/shadow/latest.json
 input_hash:          bba40f20f386cb46
 estimated_cost_usd:  0.0500
 restrictions:        (none)
-sanction_controls:   clear
+sanction_controls:   allow (snapshot: clear)
 budget_limit_usd:    0.5000
-budget_gate:         allow
-approval_hook:       not_required
+budget_gate:         deny
+approval_hook:       allow (policy: not_required)
+overall_decision:    deny
+reference_stage:     budget_gate
+reference_reason:    Treasury below reserve floor (runway $-50.00). Recapitalize before spending.
 captured_hooks:      agent_identity, action_envelope, cost_attribution, approval_hook, audit_emission, sanction_controls, budget_gate
 Shadow comparison
 =================
-primary_log:     /tmp/loom-rehearsal/.loom/shadow/events.jsonl
+primary_log:     /tmp/loom-rehearsal/.loom/shadow/reference_events.jsonl
 shadow_log:      /tmp/loom-rehearsal/.loom/shadow/events.jsonl
 primary_events:  7
 shadow_events:   7
 pairs_compared:  7
-matches:         7
-divergences:     0
-divergence_rate: 0.0000
+matches:         6
+divergences:     1
+divergence_rate: 0.1429
 note:            file-level comparison only; not proof of runtime parity
 Shadow report
 =============
@@ -198,15 +204,31 @@ source: /tmp/loom-rehearsal/.loom/shadow/latest.json
 
 {
   "status": "comparison_complete",
-  "primary_log": "/tmp/loom-rehearsal/.loom/shadow/events.jsonl",
+  "primary_log": "/tmp/loom-rehearsal/.loom/shadow/reference_events.jsonl",
   "shadow_log": "/tmp/loom-rehearsal/.loom/shadow/events.jsonl",
   "primary_events": 7,
   "shadow_events": 7,
   "pairs_compared": 7,
-  "matches": 7,
-  "divergences": 0,
-  "divergence_rate": 0.000000,
+  "matches": 6,
+  "divergences": 1,
+  "divergence_rate": 0.142857,
   "note": "file-level comparison only; not proof of runtime parity"
+}
+
+
+Reference gates
+===============
+source: /tmp/loom-rehearsal/.loom/shadow/reference.json
+
+{
+  "source": "kernel_reference_adapter_read_only",
+  "allowed": false,
+  "stage": "budget_gate",
+  "reason": "Treasury below reserve floor (runway $-50.00). Recapitalize before spending.",
+  "restrictions": [],
+  "sanction_gate_decision": "allow",
+  "approval_gate_decision": "allow",
+  "budget_gate_decision": "deny"
 }
 
 == Rehearsal complete ==

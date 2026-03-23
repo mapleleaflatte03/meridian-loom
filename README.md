@@ -43,7 +43,7 @@ Experimental public scaffold for the planned Meridian-native runtime.
 - No proven runtime hook implementation beyond the experimental preflight path for
   `agent_identity`, `action_envelope`, `cost_attribution`, `approval_hook`,
   `audit_emission`, `sanction_controls`, and `budget_gate`
-- No shadow-mode parity engine
+- No runtime-side shadow parity engine
 - No public benchmark claims
 
 ## Quick start
@@ -58,7 +58,7 @@ cargo build
 ./target/debug/loom envelope build --root /tmp/loom-rehearsal --agent-id agent_atlas --action-type research --resource web_search --estimated-cost-usd 0.05 --format human
 ./target/debug/loom capsule inspect --root /tmp/loom-rehearsal
 ./target/debug/loom shadow preflight --root /tmp/loom-rehearsal --agent-id agent_atlas --action-type research --resource web_search --estimated-cost-usd 0.05 --format human
-./target/debug/loom shadow compare --root /tmp/loom-rehearsal --primary /tmp/loom-rehearsal/.loom/shadow/events.jsonl --shadow /tmp/loom-rehearsal/.loom/shadow/events.jsonl --format human
+./target/debug/loom shadow compare --root /tmp/loom-rehearsal --primary /tmp/loom-rehearsal/.loom/shadow/reference_events.jsonl --shadow /tmp/loom-rehearsal/.loom/shadow/events.jsonl --format human
 ./target/debug/loom shadow report --root /tmp/loom-rehearsal
 ```
 
@@ -98,11 +98,14 @@ This repo is enough to rehearse the install/setup/operator path honestly, and
 it now includes an experimental preflight path for all seven governance
 surfaces. Two of those remain preview-only surfaces:
 - `audit_emission` writes a local audit preview file, not the kernel's canonical audit log
-- `sanction_controls` captures a restriction snapshot, not native runtime enforcement
+- `sanction_controls`, `approval_hook`, and `budget_gate` now read the kernel's
+  reference adapter decisions in a read-only preflight path, but they still do
+  not provide native runtime enforcement
 
 The scaffold also captures experimental paths for `agent_identity`,
-`action_envelope`, `cost_attribution`, `approval_hook`, and `budget_gate`.
-It is still not enough to claim Loom exists as a governed execution runtime.
+`action_envelope`, `cost_attribution`, and shadow divergence reporting against
+reference adapter events. It is still not enough to claim Loom exists as a
+governed execution runtime.
 
 ## Publication readiness
 

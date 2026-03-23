@@ -20,9 +20,11 @@ The rehearsal verifies:
     contract surfaces.
 11. `audit_emission` is currently exercised as a local audit preview file, not
     the kernel's canonical audit log.
-12. `sanction_controls` is currently exercised as a restriction snapshot, not
-    native runtime enforcement.
-13. `loom shadow compare` can verify the comparison surface against captured event logs.
+12. `sanction_controls`, `approval_hook`, and `budget_gate` are now evaluated
+    through the kernel reference adapter in a read-only preflight path, but not
+    through a native Loom runtime.
+13. `loom shadow compare` now compares reference-adapter event decisions
+    against Loom's captured shadow events.
 14. `loom shadow report` surfaces the latest shadow capture or comparison report honestly.
 
 ## What the rehearsal does not prove
@@ -31,8 +33,8 @@ The rehearsal verifies:
 - It does not upgrade registry compliance beyond 0/7.
 - It does not prove transport adapters exist.
 - It does not prove OpenClaw replacement.
-- It does not prove shadow parity.
-- A self-compare run only verifies the comparison tool path, not runtime parity.
+- It does not prove runtime parity.
+- The comparison surface is still file-level and adapter-backed, not live runtime parity.
 
 ## Run
 
@@ -66,6 +68,7 @@ That fresh-clone run passed and confirmed:
 3. The bundled rehearsal still succeeds against the current kernel truth.
 4. The scaffold still reports `planned` runtime status and `0/7` proven hooks.
 
-The current rehearsal now also exercises `loom shadow compare` as a
-self-compare against the captured shadow log. That verifies the compare surface
-honestly without turning it into a parity claim.
+The current rehearsal now also exercises `loom shadow compare` against a
+reference event log generated from the kernel-side OpenClaw-compatible adapter.
+That makes the divergence surface more useful without turning it into a live
+runtime parity claim.

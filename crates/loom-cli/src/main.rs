@@ -1,9 +1,9 @@
 use loom_core::{
     build_action_envelope, capsule_inspect, contract_show, doctor, health, init_workspace,
-    read_config, render_capsule_human, render_contract_human, render_contract_json,
-    render_doctor_human, render_doctor_json, render_envelope_human, render_envelope_json,
-    render_identity_human, render_identity_json, resolve_agent_identity, root_from,
-    status_human, LoomResult,
+    read_config, render_capsule_human, render_contract_human, render_contract_json, render_doctor_human,
+    render_doctor_json, render_envelope_human, render_envelope_json, render_identity_human,
+    render_identity_json, resolve_agent_identity, root_from, status_human, evaluate_reference_gates,
+    LoomResult,
 };
 use loom_shadow::{
     capture_preflight, compare_logs, render_compare_human, render_compare_json,
@@ -231,7 +231,9 @@ fn handle_shadow(args: &[String]) -> LoomResult<()> {
                 run_id.as_deref(),
                 session_id.as_deref(),
             )?;
-            let capture = capture_preflight(&root, &identity, &envelope)?;
+            let reference =
+                evaluate_reference_gates(&root, kernel_path.as_deref(), &identity, &envelope)?;
+            let capture = capture_preflight(&root, &identity, &envelope, &reference)?;
             if format == "json" {
                 print!("{}", render_preflight_json(&capture));
             } else {

@@ -89,6 +89,18 @@ pub struct ActionEnvelope {
     pub source: String,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReferenceGateCheck {
+    pub allowed: bool,
+    pub stage: String,
+    pub reason: String,
+    pub restrictions: Vec<String>,
+    pub sanction_gate_decision: String,
+    pub approval_gate_decision: String,
+    pub budget_gate_decision: String,
+    pub source: String,
+}
+
 pub fn init_workspace(
     root: &Path,
     mode: &str,
@@ -707,6 +719,106 @@ pub fn build_action_envelope(
     })
 }
 
+pub fn evaluate_reference_gates(
+    root: &Path,
+    override_kernel_path: Option<&str>,
+    identity: &AgentIdentityResolution,
+    envelope: &ActionEnvelope,
+) -> LoomResult<ReferenceGateCheck> {
+    let config = read_config(root)?;
+    let kernel_path = resolve_kernel_path(root, override_kernel_path, Some(&config))?;
+    let kernel_dir = kernel_path.join("kernel");
+    let script = r#"import json, sys
+kernel_dir = sys.argv[1]
+org_id = sys.argv[2]
+envelope = json.loads(sys.argv[3])
+sys.path.insert(0, kernel_dir)
+from adapters.openclaw_compatible import pre_action_check
+print(json.dumps(pre_action_check(org_id, envelope)))
+"#;
+
+    let reference_agent = if identity.economy_key.trim().is_empty() {
+        envelope.agent_id.clone()
+    } else {
+        identity.economy_key.clone()
+    };
+    let reference_envelope = ActionEnvelope {
+        agent_id: reference_agent,
+        agent_name: envelope.agent_name.clone(),
+        org_id: envelope.org_id.clone(),
+        runtime_id: envelope.runtime_id.clone(),
+        runtime_label: envelope.runtime_label.clone(),
+        action_type: envelope.action_type.clone(),
+        resource: envelope.resource.clone(),
+        estimated_cost_usd: envelope.estimated_cost_usd,
+        run_id: envelope.run_id.clone(),
+        session_id: envelope.session_id.clone(),
+        source: envelope.source.clone(),
+    };
+    let envelope_json = render_envelope_json(&reference_envelope);
+    let output = Command::new("python3")
+        .arg("-c")
+        .arg(script)
+        .arg(&kernel_dir)
+        .arg(&envelope.org_id)
+        .arg(envelope_json)
+        .output()
+        .map_err(io_err)?;
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !output.status.success() {
+        return Err(format!(
+            "reference adapter pre_action_check failed: {}",
+            if stderr.is_empty() { stdout } else { stderr }
+        ));
+    }
+    if !stdout.starts_with('{') {
+        return Err(format!(
+            "reference adapter returned non-JSON output: {}",
+            stdout.lines().next().unwrap_or_default()
+        ));
+    }
+
+    let allowed = extract_json_bool(&stdout, "\"allowed\"")
+        .ok_or_else(|| "reference adapter response missing allowed".to_string())?;
+    let stage = extract_json_string(&stdout, "\"stage\"").unwrap_or_else(|| {
+        if allowed {
+            "ok".to_string()
+        } else {
+            "unknown".to_string()
+        }
+    });
+    let reason = extract_json_string(&stdout, "\"reason\"").unwrap_or_default();
+    let restrictions = extract_json_string_array(&stdout, "\"restrictions\"");
+    let sanction_gate_decision = if stage == "sanction_controls" {
+        "deny".to_string()
+    } else {
+        "allow".to_string()
+    };
+    let approval_gate_decision = match stage.as_str() {
+        "sanction_controls" => "not_reached".to_string(),
+        "approval_hook" => "deny".to_string(),
+        _ => "allow".to_string(),
+    };
+    let budget_gate_decision = match stage.as_str() {
+        "sanction_controls" | "approval_hook" => "not_reached".to_string(),
+        "budget_gate" => "deny".to_string(),
+        _ if envelope.estimated_cost_usd <= 0.0 => "skipped_zero_cost".to_string(),
+        _ => "allow".to_string(),
+    };
+
+    Ok(ReferenceGateCheck {
+        allowed,
+        stage,
+        reason,
+        restrictions,
+        sanction_gate_decision,
+        approval_gate_decision,
+        budget_gate_decision,
+        source: "kernel_reference_adapter_read_only".to_string(),
+    })
+}
+
 pub fn envelope_input_hash(envelope: &ActionEnvelope) -> String {
     let raw = format!(
         "{}|{}|{}|{}|{:.6}|{}|{}",
@@ -925,6 +1037,26 @@ fn extract_json_bool(section: &str, key: &str) -> Option<bool> {
     }
 }
 
+fn extract_json_string_array(section: &str, key: &str) -> Vec<String> {
+    let Some(idx) = section.find(key) else {
+        return Vec::new();
+    };
+    let after = &section[idx + key.len()..];
+    let Some(bracket_start) = after.find('[') else {
+        return Vec::new();
+    };
+    let rest = &after[bracket_start + 1..];
+    let Some(bracket_end) = rest.find(']') else {
+        return Vec::new();
+    };
+    let body = &rest[..bracket_end];
+    body.split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(|item| item.trim_matches('"').to_string())
+        .collect()
+}
+
 fn extract_json_f64(section: &str, key: &str) -> Option<f64> {
     extract_json_literal(section, key)?.parse::<f64>().ok()
 }
@@ -1034,6 +1166,53 @@ mod tests {
     }
 
     #[test]
+    fn evaluate_reference_gates_uses_kernel_reference_adapter() {
+        let kernel = fake_kernel_root("atlas");
+        let root = temp_path("loom-core-reference");
+        init_workspace(&root, "shadow", Some(&kernel.display().to_string()), "org_demo")
+            .expect("init workspace");
+
+        let allowed = build_action_envelope(
+            &root,
+            None,
+            "atlas",
+            None,
+            "research",
+            "web_search",
+            0.25,
+            Some("run_1"),
+            Some("session_1"),
+        )
+        .expect("allowed envelope");
+        let identity = resolve_agent_identity(&root, None, "atlas", None).expect("identity");
+        let allowed_check =
+            evaluate_reference_gates(&root, None, &identity, &allowed).expect("allowed gates");
+        assert!(allowed_check.allowed);
+        assert_eq!(allowed_check.stage, "ok");
+        assert_eq!(allowed_check.sanction_gate_decision, "allow");
+        assert_eq!(allowed_check.approval_gate_decision, "allow");
+        assert_eq!(allowed_check.budget_gate_decision, "allow");
+
+        let denied = build_action_envelope(
+            &root,
+            None,
+            "atlas",
+            None,
+            "research",
+            "web_search",
+            1.25,
+            None,
+            None,
+        )
+        .expect("denied envelope");
+        let denied_check =
+            evaluate_reference_gates(&root, None, &identity, &denied).expect("denied gates");
+        assert!(!denied_check.allowed);
+        assert_eq!(denied_check.stage, "budget_gate");
+        assert_eq!(denied_check.budget_gate_decision, "deny");
+    }
+
+    #[test]
     fn build_envelope_rejects_negative_cost() {
         let kernel = fake_kernel_root("atlas");
         let root = temp_path("loom-core-envelope-negative");
@@ -1103,6 +1282,36 @@ mod tests {
             "def get_restrictions(agent_id, org_id=None):\n    if agent_id in ('atlas', 'agent_atlas'):\n        return ['lead']\n    return []\n",
         )
         .expect("write court");
+        let adapters_dir = kernel_dir.join("adapters");
+        fs::create_dir_all(&adapters_dir).expect("adapters dir");
+        fs::write(adapters_dir.join("__init__.py"), "").expect("write adapters init");
+        fs::write(
+            kernel_dir.join("authority.py"),
+            "def check_authority(agent_id, action, org_id=None):\n    return True, 'ok'\n",
+        )
+        .expect("write authority");
+        fs::write(
+            kernel_dir.join("treasury.py"),
+            "def check_budget(agent_id, cost_usd, org_id=None):\n    if cost_usd > 0.5:\n        return False, 'below reserve'\n    return True, 'ok'\n",
+        )
+        .expect("write treasury");
+        fs::write(
+            kernel_dir.join("audit.py"),
+            "def log_event(*args, **kwargs):\n    return 'evt_fake'\n",
+        )
+        .expect("write audit");
+        fs::write(
+            kernel_dir.join("metering.py"),
+            "def record(*args, **kwargs):\n    return 'meter_fake'\n",
+        )
+        .expect("write metering");
+        fs::write(
+            adapters_dir.join("openclaw_compatible.py"),
+            "from audit import log_event\nfrom authority import check_authority\nfrom court import get_restrictions\nfrom metering import record as meter_record\nfrom treasury import check_budget\n\n\
+def pre_session_check(org_id, agent_id):\n    restrictions = list(get_restrictions(agent_id, org_id=org_id) or [])\n    if 'execute' in restrictions or 'remediation_only' in restrictions:\n        return {'allowed': False, 'reason': f'Agent {agent_id} is restricted from execute', 'restrictions': restrictions}\n    return {'allowed': True, 'reason': 'ok', 'restrictions': restrictions}\n\n\
+def pre_action_check(org_id, envelope):\n    session_gate = pre_session_check(org_id, envelope['agent_id'])\n    if not session_gate['allowed']:\n        return {'allowed': False, 'reason': session_gate['reason'], 'stage': 'sanction_controls', 'envelope': envelope, 'restrictions': session_gate['restrictions']}\n    allowed, reason = check_authority(envelope['agent_id'], envelope['action_type'], org_id=org_id)\n    if not allowed:\n        return {'allowed': False, 'reason': reason, 'stage': 'approval_hook', 'envelope': envelope, 'restrictions': session_gate['restrictions']}\n    estimated_cost = envelope.get('estimated_cost_usd', 0.0)\n    if estimated_cost > 0:\n        allowed, reason = check_budget(envelope['agent_id'], estimated_cost, org_id=org_id)\n        if not allowed:\n            return {'allowed': False, 'reason': reason, 'stage': 'budget_gate', 'envelope': envelope, 'restrictions': session_gate['restrictions']}\n    return {'allowed': True, 'reason': 'ok', 'stage': 'ok', 'envelope': envelope, 'restrictions': session_gate['restrictions']}\n",
+        )
+        .expect("write adapter");
         root
     }
 }
