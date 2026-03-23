@@ -101,6 +101,12 @@ There is also a second rehearsal for local sanction denial:
 ./scripts/rehearse_local_sanction_preview.sh
 ```
 
+And a third rehearsal for the allow path:
+
+```bash
+./scripts/rehearse_allow_execute.sh
+```
+
 ## What exists today
 
 ### Product surfaces
@@ -143,6 +149,10 @@ Current human-mode output uses a single grammar:
 
 This matters. Loom is not just a crate layout. It is also a future operator
 surface, and that surface has to be designed now, not after the runtime exists.
+When run on a real TTY, the CLI now adds a restrained ANSI shell layer for
+headers and status cues. `NO_COLOR=1` disables that layer without changing the
+underlying artifact grammar, and `FORCE_COLOR=1` forces it for capture/demo
+work.
 
 ## Current runtime rehearsal status
 
@@ -151,22 +161,22 @@ is “what parts of a real runtime path are already tangible?”
 
 | Surface | Current truth |
 |---|---|
-| Native sanction enforcement | `loom action execute` now enforces the current effective allow/deny decision and fails closed with exit code `2` when denied. This is still an experimental runtime rehearsal, not a governed worker supervisor. |
-| Runtime-side audit emission | `loom action execute` now writes a runtime audit artifact under `.loom/audit/runtime_events.jsonl`, using the kernel serializer when available and a local fallback otherwise. This is not the kernel's canonical audit log. |
-| Parity stream | `loom action execute` now emits `.loom/parity/stream.jsonl` and `.loom/parity/latest.json`. The stream records reference-gate truth, Loom runtime rehearsal truth, audit emission, and an optional live OpenClaw proof snapshot when available. |
-| Live OpenClaw reference | On the founder host, Loom now captures a real OpenClaw proof snapshot through `openclaw_runtime_proof.py --json` and stores it under `.loom/parity/openclaw_live.json`. This is live runtime evidence, but not per-action OpenClaw parity yet. |
+| Governed local supervisor | `loom action execute` now dispatches an experimental local Python worker when the effective decision is `allow`, and still fails closed with exit code `2` when denied. This is a real local supervisor path, not a hosted runtime replacement. |
+| Runtime-side audit emission | `loom action execute` now writes a runtime audit artifact under `.loom/audit/runtime_events.jsonl` and uses the kernel-owned `audit.py log-runtime` CLI path when available. This is a canonical kernel serializer path, but still not the hosted kernel's global audit log. |
+| Parity stream | `loom action execute` now emits `.loom/parity/stream.jsonl` and `.loom/parity/latest.json`. The stream records reference-gate truth, Loom runtime execution truth, worker status, audit emission, and live-probe status. |
+| Live OpenClaw reference | On the founder host, Loom now captures a per-action OpenClaw proof artifact under `.loom/parity/openclaw/<input_hash>.json` plus `.loom/parity/openclaw_live_stream.jsonl`. This is live runtime evidence, but still not hosted per-action parity against an OpenClaw execution action. |
 | Shadow compare | `loom shadow compare` still exists, but it is now explicitly an offline event-log diff, not the main parity story. |
 
 ## What does not exist yet
 
 Loom is still missing the things that would make it a real runtime:
 
-- no governed worker supervisor
+- no long-running governed worker supervisor
 - no native transport adapters
 - no long-running scheduler/runtime loop
-- no native sanction enforcement inside a live worker runtime
-- no kernel-owned canonical audit trail
-- no per-action live OpenClaw parity stream
+- no native sanction enforcement inside a hosted worker runtime
+- no hosted kernel-owned canonical audit trail
+- no per-action live OpenClaw parity against a real OpenClaw action execution stream
 - no proven 7/7 contract compliance
 
 That is why the registry stays at `0/7`. The scaffold has become more real, but

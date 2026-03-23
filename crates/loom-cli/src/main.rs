@@ -13,6 +13,7 @@ use loom_shadow::{
     render_runtime_execution_human, render_runtime_execution_json, render_shadow_report,
 };
 use std::env;
+use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -60,7 +61,7 @@ fn handle_init(args: &[String]) -> LoomResult<()> {
     let root = root_from(take_value(args, "--root").as_deref())?;
     let org_id = take_value(args, "--org-id").unwrap_or_else(|| "local_foundry".to_string());
     let config = init_workspace(&root, &mode, kernel_path.as_deref(), &org_id)?;
-    println!(
+    print_human(&format!(
         "Meridian Loom // INIT\n====================\nroot:        {}\nmode:        {}\norg_id:      {}\nstate_dir:   {}\nkernel_path: {}\nstatus:      initialized experimental scaffold\nnext_step:   loom doctor --root {} --format human\n",
         root.display(),
         config.mode,
@@ -68,7 +69,7 @@ fn handle_init(args: &[String]) -> LoomResult<()> {
         config.state_dir,
         if config.kernel_path.is_empty() { "(not set)" } else { &config.kernel_path },
         root.display()
-    );
+    ));
     Ok(())
 }
 
@@ -77,7 +78,7 @@ fn handle_doctor(args: &[String]) -> LoomResult<()> {
     let format = take_value(args, "--format").unwrap_or_else(|| "json".to_string());
     let checks = doctor(&root)?;
     match format.as_str() {
-        "human" => print!("{}", render_doctor_human(&checks)),
+        "human" => print_human(&render_doctor_human(&checks)),
         _ => print!("{}", render_doctor_json(&checks)),
     }
     Ok(())
@@ -88,7 +89,7 @@ fn handle_health(args: &[String]) -> LoomResult<()> {
     let format = take_value(args, "--format").unwrap_or_else(|| "json".to_string());
     let (healthy, json) = health(&root)?;
     if format == "human" {
-        print!("{}", render_health_human(healthy, &json));
+        print_human(&render_health_human(healthy, &json));
     } else {
         print!("{}", json);
     }
@@ -97,7 +98,7 @@ fn handle_health(args: &[String]) -> LoomResult<()> {
 
 fn handle_status(args: &[String]) -> LoomResult<()> {
     let root = root_from(take_value(args, "--root").as_deref())?;
-    print!("{}", status_human(&root)?);
+    print_human(&status_human(&root)?);
     Ok(())
 }
 
@@ -107,7 +108,7 @@ fn handle_config(args: &[String]) -> LoomResult<()> {
     }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let config = read_config(&root)?;
-    print!("{}", render_config_human(&config, &root));
+    print_human(&render_config_human(&config, &root));
     Ok(())
 }
 
@@ -122,7 +123,7 @@ fn handle_contract(args: &[String]) -> LoomResult<()> {
     if format == "json" {
         print!("{}", render_contract_json(&snapshot));
     } else {
-        print!("{}", render_contract_human(&snapshot));
+        print_human(&render_contract_human(&snapshot));
     }
     Ok(())
 }
@@ -133,7 +134,7 @@ fn handle_capsule(args: &[String]) -> LoomResult<()> {
     }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let inspection = capsule_inspect(&root)?;
-    print!("{}", render_capsule_human(&inspection));
+    print_human(&render_capsule_human(&inspection));
     Ok(())
 }
 
@@ -150,7 +151,7 @@ fn handle_agent(args: &[String]) -> LoomResult<()> {
     if format == "json" {
         print!("{}", render_identity_json(&identity));
     } else {
-        print!("{}", render_identity_human(&identity));
+        print_human(&render_identity_human(&identity));
     }
     Ok(())
 }
@@ -184,7 +185,7 @@ fn handle_envelope(args: &[String]) -> LoomResult<()> {
     if format == "json" {
         print!("{}", render_envelope_json(&envelope));
     } else {
-        print!("{}", render_envelope_human(&envelope));
+        print_human(&render_envelope_human(&envelope));
     }
     Ok(())
 }
@@ -193,7 +194,7 @@ fn handle_shadow(args: &[String]) -> LoomResult<()> {
     match args.first().map(String::as_str) {
         Some("report") => {
             let root = root_from(take_value(args, "--root").as_deref())?;
-            print!("{}", render_shadow_report(&root)?);
+            print_human(&render_shadow_report(&root)?);
             Ok(())
         }
         Some("preflight") => {
@@ -228,11 +229,11 @@ fn handle_shadow(args: &[String]) -> LoomResult<()> {
             if format == "json" {
                 print!("{}", render_preflight_json(&capture));
             } else {
-                print!("{}", render_identity_human(&identity));
-                println!();
-                print!("{}", render_envelope_human(&envelope));
-                println!();
-                print!("{}", render_preflight_human(&capture));
+                print_human_block(&[
+                    render_identity_human(&identity),
+                    render_envelope_human(&envelope),
+                    render_preflight_human(&capture),
+                ]);
             }
             Ok(())
         }
@@ -267,7 +268,7 @@ fn handle_shadow(args: &[String]) -> LoomResult<()> {
             if format == "json" {
                 print!("{}", render_decision_json(&capture));
             } else {
-                print!("{}", render_decision_human(&capture));
+                print_human(&render_decision_human(&capture));
             }
             Ok(())
         }
@@ -302,7 +303,7 @@ fn handle_shadow(args: &[String]) -> LoomResult<()> {
             if format == "json" {
                 print!("{}", render_decision_json(&capture));
             } else {
-                print!("{}", render_decision_human(&capture));
+                print_human(&render_decision_human(&capture));
             }
             std::process::exit(decision_exit_code(&capture, 0, 2));
         }
@@ -317,7 +318,7 @@ fn handle_shadow(args: &[String]) -> LoomResult<()> {
             if format == "json" {
                 print!("{}", render_compare_json(&summary));
             } else {
-                print!("{}", render_compare_human(&summary));
+                print_human(&render_compare_human(&summary));
             }
             Ok(())
         }
@@ -366,13 +367,12 @@ fn handle_action(args: &[String]) -> LoomResult<()> {
             if format == "json" {
                 print!("{}", render_runtime_execution_json(&capture));
             } else {
-                print!("{}", render_identity_human(&identity));
-                println!();
-                print!("{}", render_envelope_human(&envelope));
-                println!();
-                print!("{}", render_decision_human(&decision));
-                println!();
-                print!("{}", render_runtime_execution_human(&capture));
+                print_human_block(&[
+                    render_identity_human(&identity),
+                    render_envelope_human(&envelope),
+                    render_decision_human(&decision),
+                    render_runtime_execution_human(&capture),
+                ]);
             }
             std::process::exit(decision_exit_code(&decision, 0, 2));
         }
@@ -384,7 +384,7 @@ fn handle_parity(args: &[String]) -> LoomResult<()> {
     match args.first().map(String::as_str) {
         Some("report") => {
             let root = root_from(take_value(args, "--root").as_deref())?;
-            print!("{}", render_parity_report(&root)?);
+            print_human(&render_parity_report(&root)?);
             Ok(())
         }
         _ => Err("parity supports 'report'".to_string()),
@@ -406,7 +406,80 @@ fn parse_f64_flag(args: &[String], flag: &str) -> Option<f64> {
 }
 
 fn print_help() {
-    println!(
+    print_human(
         "Meridian Loom // HELP\n======================\nphase:       public experimental scaffold\nboundary:    operator shape is real; governed runtime is not\n\nBootstrap\n---------\n  loom init --mode <embedded|shadow|standalone> [--kernel-path PATH] [--root PATH] [--org-id ID]\n  loom doctor [--root PATH] [--format json|human]\n  loom health [--root PATH] [--format json|human]\n  loom status [--root PATH]\n  loom config show [--root PATH]\n\nGovernance surfaces\n-------------------\n  loom contract show [--root PATH] [--kernel-path PATH] [--format human|json]\n  loom capsule inspect [--root PATH]\n  loom agent resolve --agent-id ID [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom envelope build --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\nRuntime rehearsal\n-----------------\n  loom action execute --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom shadow preflight --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom shadow decide --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom shadow enforce --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom shadow compare --primary FILE [--shadow FILE] [--root PATH] [--format human|json]\n  loom shadow report [--root PATH]\n  loom parity report [--root PATH]\n\nNext\n----\n  1. loom init --mode embedded --root /tmp/loom-rehearsal --kernel-path /tmp/meridian-kernel\n  2. loom doctor --root /tmp/loom-rehearsal --format human\n  3. ./scripts/rehearse_setup.sh\n"
     );
+}
+
+fn print_human(output: &str) {
+    if stdout_supports_color() {
+        print!("{}", style_human_output(output));
+    } else {
+        print!("{}", output);
+    }
+}
+
+fn print_human_block(parts: &[String]) {
+    let merged = parts.join("\n\n");
+    print_human(&merged);
+}
+
+fn stdout_supports_color() -> bool {
+    if env::var_os("FORCE_COLOR").is_some() {
+        return true;
+    }
+    if env::var_os("NO_COLOR").is_some() {
+        return false;
+    }
+    io::stdout().is_terminal()
+}
+
+fn style_human_output(output: &str) -> String {
+    let mut styled = output
+        .lines()
+        .map(style_human_line)
+        .collect::<Vec<_>>()
+        .join("\n");
+    if output.ends_with('\n') {
+        styled.push('\n');
+    }
+    styled
+}
+
+fn style_human_line(line: &str) -> String {
+    const RESET: &str = "\x1b[0m";
+    const CYAN: &str = "\x1b[38;5;81m";
+    const BLUE: &str = "\x1b[38;5;111m";
+    const GREEN: &str = "\x1b[38;5;114m";
+    const YELLOW: &str = "\x1b[38;5;221m";
+    const RED: &str = "\x1b[38;5;203m";
+    const DIM: &str = "\x1b[2m";
+    const BOLD: &str = "\x1b[1m";
+
+    if line.starts_with("Meridian Loom //") {
+        return format!("{BOLD}{CYAN}{line}{RESET}");
+    }
+    if !line.is_empty() && line.chars().all(|c| c == '=' || c == '-') {
+        return format!("{DIM}{line}{RESET}");
+    }
+    if line.starts_with("[OK") {
+        return format!("{GREEN}{line}{RESET}");
+    }
+    let lower = line.to_ascii_lowercase();
+    if lower.contains("deny") || lower.contains("blocked") || lower.contains("failed") {
+        return format!("{RED}{line}{RESET}");
+    }
+    if lower.contains("warn") || lower.contains("degraded") || lower.contains("divergence") {
+        return format!("{YELLOW}{line}{RESET}");
+    }
+    if line.starts_with("phase:")
+        || line.starts_with("boundary:")
+        || line == "Decision"
+        || line == "Checks"
+        || line == "Current state"
+        || line == "Next"
+    {
+        return format!("{BOLD}{BLUE}{line}{RESET}");
+    }
+    line.to_string()
 }

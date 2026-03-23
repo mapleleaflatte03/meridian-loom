@@ -7,6 +7,48 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub type LoomResult<T> = Result<T, String>;
 
 const DEFAULT_STATE_DIR: &str = ".loom";
+const DEFAULT_PYTHON_WORKER_FILE: &str = "loom_runtime_worker.py";
+const DEFAULT_PYTHON_WORKER_SOURCE: &str = r#"#!/usr/bin/env python3
+import argparse
+import json
+from datetime import datetime, timezone
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Meridian Loom experimental worker")
+    parser.add_argument("--input", required=True)
+    parser.add_argument("--output", required=True)
+    args = parser.parse_args()
+
+    with open(args.input, "r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+
+    envelope = payload.get("envelope", {})
+    decision = payload.get("decision", {})
+    result = {
+        "status": "completed",
+        "worker_kind": "python_reference_worker",
+        "completed_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        "agent_id": envelope.get("agent_id", ""),
+        "org_id": envelope.get("org_id", ""),
+        "action_type": envelope.get("action_type", ""),
+        "resource": envelope.get("resource", ""),
+        "input_hash": payload.get("input_hash", ""),
+        "decision": decision.get("overall_decision", ""),
+        "effective_stage": decision.get("effective_stage", ""),
+        "summary": f"experimental worker handled {envelope.get('action_type', 'unknown')}::{envelope.get('resource', 'unknown')}",
+    }
+
+    with open(args.output, "w", encoding="utf-8") as handle:
+        json.dump(result, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+
+    print(json.dumps(result, sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()
+"#;
 const EXPERIMENTAL_PRELIGHT_HOOKS: [&str; 7] = [
     "agent_identity",
     "action_envelope",
@@ -147,6 +189,7 @@ pub fn init_workspace(
         typescript_path: "workers/typescript".to_string(),
         wasm_dir: "workers/wasm".to_string(),
     };
+    ensure_runtime_worker_scaffold(&root, &config)?;
 
     fs::write(&config_path, render_config(&config)).map_err(io_err)?;
     fs::write(
@@ -236,6 +279,24 @@ pub fn read_config(root: &Path) -> LoomResult<Config> {
 
     normalize_mode(&config.mode)?;
     Ok(config)
+}
+
+pub fn ensure_runtime_worker_scaffold(root: &Path, config: &Config) -> LoomResult<PathBuf> {
+    let worker_path = root
+        .join(&config.python_path)
+        .join(DEFAULT_PYTHON_WORKER_FILE);
+    if let Some(parent) = worker_path.parent() {
+        fs::create_dir_all(parent).map_err(io_err)?;
+    }
+    if !worker_path.exists() {
+        fs::write(&worker_path, DEFAULT_PYTHON_WORKER_SOURCE).map_err(io_err)?;
+    }
+    Ok(worker_path)
+}
+
+pub fn runtime_worker_entry(root: &Path, config: &Config) -> PathBuf {
+    root.join(&config.python_path)
+        .join(DEFAULT_PYTHON_WORKER_FILE)
 }
 
 pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {

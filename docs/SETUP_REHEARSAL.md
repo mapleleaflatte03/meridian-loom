@@ -130,6 +130,20 @@ current gate outcome using the same reference stage and reason that drove the
 preflight result. That decision artifact is still experimental and adapter-
 backed; it does not make Loom a governed execution runtime.
 
+There is now a separate allow-path rehearsal:
+
+```bash
+./scripts/rehearse_allow_execute.sh
+```
+
+That script proves the current local supervisor path:
+- the effective decision is `allow`
+- `loom action execute` dispatches the default Python worker
+- the worker writes a result artifact under `.loom/runtime/jobs/<input_hash>/`
+- runtime audit emission uses the kernel-owned `audit.py log-runtime` path
+- parity artifacts include a per-action OpenClaw probe stream entry, even when
+  the probe is unavailable in the synthetic fixture
+
 The rehearsal now also proves both fail-closed surfaces against the current
 kernel truth:
 
