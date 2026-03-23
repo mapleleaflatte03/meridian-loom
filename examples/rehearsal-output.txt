@@ -3,8 +3,8 @@ root:   /tmp/loom-rehearsal
 kernel: /tmp/meridian-kernel
 
 running 2 tests
-test tests::init_refuses_overwrite ... ok
 test tests::init_and_read_config_round_trip ... ok
+test tests::init_refuses_overwrite ... ok
 
 test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
@@ -62,6 +62,7 @@ Meridian Loom contract state
 ============================
 kernel: /tmp/meridian-kernel
 status: planned
+local_scaffold: experimental_scaffold_present
 
 agent_identity     null
 action_envelope    null
