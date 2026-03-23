@@ -174,6 +174,36 @@ pub struct SupervisorStatusSnapshot {
     pub note: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SupervisorDaemonSnapshot {
+    pub root: PathBuf,
+    pub supervisor_dir: PathBuf,
+    pub runtime_state_path: PathBuf,
+    pub stop_request_path: PathBuf,
+    pub stdout_log_path: PathBuf,
+    pub available: bool,
+    pub session_id: String,
+    pub pid: u32,
+    pub running: bool,
+    pub status: String,
+    pub updated_at: String,
+    pub booted_at: String,
+    pub stopped_at: String,
+    pub poll_seconds: u64,
+    pub max_jobs: usize,
+    pub max_iterations: usize,
+    pub iterations_completed: usize,
+    pub processed: usize,
+    pub allowed: usize,
+    pub denied: usize,
+    pub failed: usize,
+    pub pending_jobs: usize,
+    pub processed_jobs: usize,
+    pub failed_jobs: usize,
+    pub heartbeat_entries: usize,
+    pub note: String,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 struct WorkerExecutionCapture {
     worker_request_path: PathBuf,
@@ -1060,6 +1090,7 @@ pub fn supervisor_status(root: &Path) -> ShadowResult<SupervisorStatusSnapshot> 
         updated_at: extract_json_string(&status_contents, "\"updated_at\"")
             .unwrap_or_else(|| "unknown".to_string()),
         iterations: extract_json_number(&status_contents, "\"iterations\"")
+            .or_else(|| extract_json_number(&status_contents, "\"iteration\""))
             .map(|value| value as usize)
             .unwrap_or(0),
         poll_seconds: extract_json_number(&status_contents, "\"poll_seconds\"")
@@ -1090,6 +1121,323 @@ pub fn supervisor_status(root: &Path) -> ShadowResult<SupervisorStatusSnapshot> 
         last_heartbeat_timestamp,
         note: extract_json_string(&status_contents, "\"note\"").unwrap_or_default(),
     })
+}
+
+pub fn run_supervisor_daemon_loop(
+    root: &Path,
+    override_kernel_path: Option<&str>,
+    max_jobs: usize,
+    poll_seconds: u64,
+    max_iterations: usize,
+    session_id: &str,
+) -> ShadowResult<SupervisorDaemonSnapshot> {
+    let runtime_dir = ensure_runtime_dir(root)?;
+    let supervisor_dir = runtime_dir.join("supervisor");
+    fs::create_dir_all(&supervisor_dir).map_err(io_err)?;
+    let runtime_state_path = supervisor_dir.join("runtime_state.json");
+    let stop_request_path = supervisor_dir.join("stop.requested");
+    let heartbeat_log_path = supervisor_dir.join("heartbeat.jsonl");
+    let status_path = supervisor_dir.join("status.json");
+    let booted_at = timestamp_now();
+    let pid = std::process::id();
+
+    if stop_request_path.exists() {
+        fs::remove_file(&stop_request_path).map_err(io_err)?;
+    }
+
+    let mut total_processed = 0usize;
+    let mut total_allowed = 0usize;
+    let mut total_denied = 0usize;
+    let mut total_failed = 0usize;
+    let mut iterations_completed = 0usize;
+    let mut stop_reason = "max_iterations_completed".to_string();
+
+    write_supervisor_runtime_state(
+        &runtime_state_path,
+        session_id,
+        pid,
+        true,
+        "running",
+        &booted_at,
+        "",
+        poll_seconds,
+        max_jobs,
+        max_iterations,
+        iterations_completed,
+        total_processed,
+        total_allowed,
+        total_denied,
+        total_failed,
+        count_runtime_queue_entries(root, "pending")?,
+        count_runtime_queue_entries(root, "processed")?,
+        count_runtime_queue_entries(root, "failed")?,
+        format!("daemon session {} booted", session_id),
+    )?;
+
+    for iteration in 0..max_iterations.max(1) {
+        if stop_request_path.exists() {
+            stop_reason = "stop_requested".to_string();
+            break;
+        }
+
+        let run = run_supervisor(root, override_kernel_path, max_jobs)?;
+        iterations_completed = iteration + 1;
+        total_processed += run.processed;
+        total_allowed += run.allowed;
+        total_denied += run.denied;
+        total_failed += run.failed;
+
+        let pending_jobs = count_runtime_queue_entries(root, "pending")?;
+        let processed_jobs = count_runtime_queue_entries(root, "processed")?;
+        let failed_jobs = count_runtime_queue_entries(root, "failed")?;
+
+        append_line(
+            &heartbeat_log_path,
+            &format!(
+                "{{\"timestamp\":{},\"mode\":\"daemon\",\"session_id\":{},\"iteration\":{},\"processed\":{},\"allowed\":{},\"denied\":{},\"failed\":{},\"pending_jobs\":{},\"processed_jobs\":{},\"failed_jobs\":{},\"note\":{}}}\n",
+                json_string(&timestamp_now()),
+                json_string(session_id),
+                iterations_completed,
+                run.processed,
+                run.allowed,
+                run.denied,
+                run.failed,
+                pending_jobs,
+                processed_jobs,
+                failed_jobs,
+                json_string(&run.note),
+            ),
+        )?;
+
+        fs::write(
+            &status_path,
+            format!(
+                "{{\n  \"status\": \"daemon_iteration_complete\",\n  \"updated_at\": {},\n  \"session_id\": {},\n  \"pid\": {},\n  \"iteration\": {},\n  \"poll_seconds\": {},\n  \"processed\": {},\n  \"allowed\": {},\n  \"denied\": {},\n  \"failed\": {},\n  \"pending_jobs\": {},\n  \"processed_jobs\": {},\n  \"failed_jobs\": {},\n  \"note\": {}\n}}\n",
+                json_string(&timestamp_now()),
+                json_string(session_id),
+                pid,
+                iterations_completed,
+                poll_seconds,
+                total_processed,
+                total_allowed,
+                total_denied,
+                total_failed,
+                pending_jobs,
+                processed_jobs,
+                failed_jobs,
+                json_string(&run.note),
+            ),
+        )
+        .map_err(io_err)?;
+
+        write_supervisor_runtime_state(
+            &runtime_state_path,
+            session_id,
+            pid,
+            true,
+            "running",
+            &booted_at,
+            "",
+            poll_seconds,
+            max_jobs,
+            max_iterations,
+            iterations_completed,
+            total_processed,
+            total_allowed,
+            total_denied,
+            total_failed,
+            pending_jobs,
+            processed_jobs,
+            failed_jobs,
+            format!(
+                "daemon iteration {} complete; processed={} allowed={} denied={} failed={}",
+                iterations_completed, total_processed, total_allowed, total_denied, total_failed
+            ),
+        )?;
+
+        if iterations_completed >= max_iterations {
+            break;
+        }
+        if poll_seconds > 0 {
+            thread::sleep(Duration::from_secs(poll_seconds));
+        }
+    }
+
+    let stopped_at = timestamp_now();
+    let pending_jobs = count_runtime_queue_entries(root, "pending")?;
+    let processed_jobs = count_runtime_queue_entries(root, "processed")?;
+    let failed_jobs = count_runtime_queue_entries(root, "failed")?;
+    write_supervisor_runtime_state(
+        &runtime_state_path,
+        session_id,
+        pid,
+        false,
+        if stop_reason == "stop_requested" {
+            "stop_requested"
+        } else {
+            "completed"
+        },
+        &booted_at,
+        &stopped_at,
+        poll_seconds,
+        max_jobs,
+        max_iterations,
+        iterations_completed,
+        total_processed,
+        total_allowed,
+        total_denied,
+        total_failed,
+        pending_jobs,
+        processed_jobs,
+        failed_jobs,
+        format!(
+            "daemon session stopped via {} after {} iterations",
+            stop_reason, iterations_completed
+        ),
+    )?;
+
+    if stop_request_path.exists() {
+        fs::remove_file(&stop_request_path).map_err(io_err)?;
+    }
+
+    supervisor_daemon_status(root)
+}
+
+pub fn supervisor_daemon_status(root: &Path) -> ShadowResult<SupervisorDaemonSnapshot> {
+    let runtime_dir = ensure_runtime_dir(root)?;
+    let supervisor_dir = runtime_dir.join("supervisor");
+    fs::create_dir_all(&supervisor_dir).map_err(io_err)?;
+    let runtime_state_path = supervisor_dir.join("runtime_state.json");
+    let stop_request_path = supervisor_dir.join("stop.requested");
+    let stdout_log_path = supervisor_dir.join("daemon.log");
+    let heartbeat_log_path = supervisor_dir.join("heartbeat.jsonl");
+
+    if !runtime_state_path.exists() {
+        return Ok(SupervisorDaemonSnapshot {
+            root: root.to_path_buf(),
+            supervisor_dir,
+            runtime_state_path,
+            stop_request_path,
+            stdout_log_path,
+            available: false,
+            session_id: String::new(),
+            pid: 0,
+            running: false,
+            status: "not_started".to_string(),
+            updated_at: "not_started".to_string(),
+            booted_at: String::new(),
+            stopped_at: String::new(),
+            poll_seconds: 0,
+            max_jobs: 0,
+            max_iterations: 0,
+            iterations_completed: 0,
+            processed: 0,
+            allowed: 0,
+            denied: 0,
+            failed: 0,
+            pending_jobs: count_runtime_queue_entries(root, "pending")?,
+            processed_jobs: count_runtime_queue_entries(root, "processed")?,
+            failed_jobs: count_runtime_queue_entries(root, "failed")?,
+            heartbeat_entries: 0,
+            note: "no daemon state captured yet; run `loom supervisor daemon start` first".to_string(),
+        });
+    }
+
+    let contents = fs::read_to_string(&runtime_state_path).map_err(io_err)?;
+    let pid = extract_json_number(&contents, "\"pid\"")
+        .map(|value| value as u32)
+        .unwrap_or(0);
+    let running_flag = extract_json_bool(&contents, "\"running\"").unwrap_or(false);
+    let alive = if pid > 0 {
+        PathBuf::from(format!("/proc/{}", pid)).exists()
+    } else {
+        false
+    };
+    let status = extract_json_string(&contents, "\"status\"").unwrap_or_else(|| "unknown".to_string());
+    let (heartbeat_entries, _) = if heartbeat_log_path.exists() {
+        let heartbeat = fs::read_to_string(&heartbeat_log_path).map_err(io_err)?;
+        let entries = heartbeat.lines().filter(|line| !line.trim().is_empty()).count();
+        (entries, ())
+    } else {
+        (0, ())
+    };
+
+    Ok(SupervisorDaemonSnapshot {
+        root: root.to_path_buf(),
+        supervisor_dir,
+        runtime_state_path,
+        stop_request_path,
+        stdout_log_path,
+        available: true,
+        session_id: extract_json_string(&contents, "\"session_id\"").unwrap_or_default(),
+        pid,
+        running: running_flag && alive,
+        status,
+        updated_at: extract_json_string(&contents, "\"updated_at\"").unwrap_or_default(),
+        booted_at: extract_json_string(&contents, "\"booted_at\"").unwrap_or_default(),
+        stopped_at: extract_json_string(&contents, "\"stopped_at\"").unwrap_or_default(),
+        poll_seconds: extract_json_number(&contents, "\"poll_seconds\"")
+            .map(|value| value as u64)
+            .unwrap_or(0),
+        max_jobs: extract_json_number(&contents, "\"max_jobs\"")
+            .map(|value| value as usize)
+            .unwrap_or(0),
+        max_iterations: extract_json_number(&contents, "\"max_iterations\"")
+            .map(|value| value as usize)
+            .unwrap_or(0),
+        iterations_completed: extract_json_number(&contents, "\"iterations_completed\"")
+            .map(|value| value as usize)
+            .unwrap_or(0),
+        processed: extract_json_number(&contents, "\"processed\"")
+            .map(|value| value as usize)
+            .unwrap_or(0),
+        allowed: extract_json_number(&contents, "\"allowed\"")
+            .map(|value| value as usize)
+            .unwrap_or(0),
+        denied: extract_json_number(&contents, "\"denied\"")
+            .map(|value| value as usize)
+            .unwrap_or(0),
+        failed: extract_json_number(&contents, "\"failed\"")
+            .map(|value| value as usize)
+            .unwrap_or(0),
+        pending_jobs: extract_json_number(&contents, "\"pending_jobs\"")
+            .map(|value| value as usize)
+            .unwrap_or(0),
+        processed_jobs: extract_json_number(&contents, "\"processed_jobs\"")
+            .map(|value| value as usize)
+            .unwrap_or(0),
+        failed_jobs: extract_json_number(&contents, "\"failed_jobs\"")
+            .map(|value| value as usize)
+            .unwrap_or(0),
+        heartbeat_entries,
+        note: extract_json_string(&contents, "\"note\"").unwrap_or_default(),
+    })
+}
+
+pub fn request_supervisor_daemon_stop(root: &Path) -> ShadowResult<SupervisorDaemonSnapshot> {
+    let runtime_dir = ensure_runtime_dir(root)?;
+    let supervisor_dir = runtime_dir.join("supervisor");
+    fs::create_dir_all(&supervisor_dir).map_err(io_err)?;
+    let stop_request_path = supervisor_dir.join("stop.requested");
+    fs::write(
+        &stop_request_path,
+        format!(
+            "{{\n  \"status\": \"stop_requested\",\n  \"requested_at\": {}\n}}\n",
+            json_string(&timestamp_now())
+        ),
+    )
+    .map_err(io_err)?;
+    let mut snapshot = supervisor_daemon_status(root)?;
+    snapshot.note = format!(
+        "{}; stop request recorded at {}",
+        if snapshot.note.is_empty() {
+            "stop requested".to_string()
+        } else {
+            snapshot.note.clone()
+        },
+        stop_request_path.display()
+    );
+    Ok(snapshot)
 }
 
 pub fn decision_exit_code(capture: &DecisionCapture, allow_code: i32, deny_code: i32) -> i32 {
@@ -1523,6 +1871,95 @@ pub fn render_supervisor_status_json(snapshot: &SupervisorStatusSnapshot) -> Str
     )
 }
 
+pub fn render_supervisor_daemon_human(snapshot: &SupervisorDaemonSnapshot) -> String {
+    if !snapshot.available {
+        return format!(
+            "Meridian Loom // SUPERVISOR DAEMON\n===================================\nphase:       experimental local queue supervisor daemon rehearsal\nboundary:    no daemon state captured yet; hosted scheduler remains future work\n\nCurrent state\n=============\nroot:                {}\nsupervisor_dir:      {}\nruntime_state:       {}\nstdout_log:          {}\npending_jobs:        {}\nprocessed_jobs:      {}\nfailed_jobs:         {}\nheartbeat_entries:   {}\nnote:                {}\n\nNext\n====\n1. loom supervisor daemon start --root {} --max-jobs 1 --poll-seconds 1 --iterations 10\n2. loom supervisor status --root {}\n3. inspect {} once the daemon has started.\n",
+            snapshot.root.display(),
+            snapshot.supervisor_dir.display(),
+            snapshot.runtime_state_path.display(),
+            snapshot.stdout_log_path.display(),
+            snapshot.pending_jobs,
+            snapshot.processed_jobs,
+            snapshot.failed_jobs,
+            snapshot.heartbeat_entries,
+            snapshot.note,
+            snapshot.root.display(),
+            snapshot.root.display(),
+            snapshot.runtime_state_path.display(),
+        );
+    }
+
+    format!(
+        "Meridian Loom // SUPERVISOR DAEMON\n===================================\nphase:       experimental local queue supervisor daemon rehearsal\nboundary:    daemon lifecycle is locally real; hosted scheduler remains future work\n\nCurrent state\n=============\nroot:                {}\nsupervisor_dir:      {}\nsession_id:          {}\npid:                 {}\nrunning:             {}\nstatus:              {}\nbooted_at:           {}\nupdated_at:          {}\nstopped_at:          {}\npoll_seconds:        {}\nmax_jobs:            {}\nmax_iterations:      {}\niterations_completed:{}\nprocessed:           {}\nallowed:             {}\ndenied:              {}\nfailed:              {}\npending_jobs:        {}\nprocessed_jobs:      {}\nfailed_jobs:         {}\nheartbeat_entries:   {}\nruntime_state:       {}\nstdout_log:          {}\nstop_request:        {}\nnote:                {}\n\nNext\n====\n1. loom supervisor daemon stop --root {}\n2. loom supervisor status --root {}\n3. inspect {} for background daemon output.\n",
+        snapshot.root.display(),
+        snapshot.supervisor_dir.display(),
+        if snapshot.session_id.is_empty() { "(none)".to_string() } else { snapshot.session_id.clone() },
+        snapshot.pid,
+        if snapshot.running { "true" } else { "false" },
+        snapshot.status,
+        if snapshot.booted_at.is_empty() { "(none)".to_string() } else { snapshot.booted_at.clone() },
+        if snapshot.updated_at.is_empty() { "(none)".to_string() } else { snapshot.updated_at.clone() },
+        if snapshot.stopped_at.is_empty() { "(none)".to_string() } else { snapshot.stopped_at.clone() },
+        snapshot.poll_seconds,
+        snapshot.max_jobs,
+        snapshot.max_iterations,
+        snapshot.iterations_completed,
+        snapshot.processed,
+        snapshot.allowed,
+        snapshot.denied,
+        snapshot.failed,
+        snapshot.pending_jobs,
+        snapshot.processed_jobs,
+        snapshot.failed_jobs,
+        snapshot.heartbeat_entries,
+        snapshot.runtime_state_path.display(),
+        snapshot.stdout_log_path.display(),
+        snapshot.stop_request_path.display(),
+        snapshot.note,
+        snapshot.root.display(),
+        snapshot.root.display(),
+        snapshot.stdout_log_path.display(),
+    )
+}
+
+pub fn render_supervisor_daemon_json(snapshot: &SupervisorDaemonSnapshot) -> String {
+    format!(
+        "{{\n  \"status\": {},\n  \"root\": {},\n  \"supervisor_dir\": {},\n  \"runtime_state_path\": {},\n  \"stop_request_path\": {},\n  \"stdout_log_path\": {},\n  \"available\": {},\n  \"session_id\": {},\n  \"pid\": {},\n  \"running\": {},\n  \"daemon_status\": {},\n  \"updated_at\": {},\n  \"booted_at\": {},\n  \"stopped_at\": {},\n  \"poll_seconds\": {},\n  \"max_jobs\": {},\n  \"max_iterations\": {},\n  \"iterations_completed\": {},\n  \"processed\": {},\n  \"allowed\": {},\n  \"denied\": {},\n  \"failed\": {},\n  \"pending_jobs\": {},\n  \"processed_jobs\": {},\n  \"failed_jobs\": {},\n  \"heartbeat_entries\": {},\n  \"note\": {}\n}}\n",
+        json_string(if snapshot.available {
+            "supervisor_daemon_status_available"
+        } else {
+            "supervisor_daemon_not_started"
+        }),
+        json_string(&snapshot.root.display().to_string()),
+        json_string(&snapshot.supervisor_dir.display().to_string()),
+        json_string(&snapshot.runtime_state_path.display().to_string()),
+        json_string(&snapshot.stop_request_path.display().to_string()),
+        json_string(&snapshot.stdout_log_path.display().to_string()),
+        if snapshot.available { "true" } else { "false" },
+        json_string(&snapshot.session_id),
+        snapshot.pid,
+        if snapshot.running { "true" } else { "false" },
+        json_string(&snapshot.status),
+        json_string(&snapshot.updated_at),
+        json_string(&snapshot.booted_at),
+        json_string(&snapshot.stopped_at),
+        snapshot.poll_seconds,
+        snapshot.max_jobs,
+        snapshot.max_iterations,
+        snapshot.iterations_completed,
+        snapshot.processed,
+        snapshot.allowed,
+        snapshot.denied,
+        snapshot.failed,
+        snapshot.pending_jobs,
+        snapshot.processed_jobs,
+        snapshot.failed_jobs,
+        snapshot.heartbeat_entries,
+        json_string(&snapshot.note),
+    )
+}
+
 pub fn render_compare_human(summary: &ComparisonSummary) -> String {
     let divergence_lines = {
         let rendered = summary
@@ -1781,6 +2218,55 @@ fn runtime_audit_log_path(root: &Path, override_kernel_path: Option<&str>) -> Pa
             .join("loom_runtime_events.jsonl"),
         Err(_) => root.join(".loom/audit/runtime_events.jsonl"),
     }
+}
+
+fn write_supervisor_runtime_state(
+    runtime_state_path: &Path,
+    session_id: &str,
+    pid: u32,
+    running: bool,
+    status: &str,
+    booted_at: &str,
+    stopped_at: &str,
+    poll_seconds: u64,
+    max_jobs: usize,
+    max_iterations: usize,
+    iterations_completed: usize,
+    processed: usize,
+    allowed: usize,
+    denied: usize,
+    failed: usize,
+    pending_jobs: usize,
+    processed_jobs: usize,
+    failed_jobs: usize,
+    note: String,
+) -> ShadowResult<()> {
+    fs::write(
+        runtime_state_path,
+        format!(
+            "{{\n  \"status\": {},\n  \"updated_at\": {},\n  \"session_id\": {},\n  \"pid\": {},\n  \"running\": {},\n  \"booted_at\": {},\n  \"stopped_at\": {},\n  \"poll_seconds\": {},\n  \"max_jobs\": {},\n  \"max_iterations\": {},\n  \"iterations_completed\": {},\n  \"processed\": {},\n  \"allowed\": {},\n  \"denied\": {},\n  \"failed\": {},\n  \"pending_jobs\": {},\n  \"processed_jobs\": {},\n  \"failed_jobs\": {},\n  \"note\": {}\n}}\n",
+            json_string(status),
+            json_string(&timestamp_now()),
+            json_string(session_id),
+            pid,
+            if running { "true" } else { "false" },
+            json_string(booted_at),
+            json_string(stopped_at),
+            poll_seconds,
+            max_jobs,
+            max_iterations,
+            iterations_completed,
+            processed,
+            allowed,
+            denied,
+            failed,
+            pending_jobs,
+            processed_jobs,
+            failed_jobs,
+            json_string(&note),
+        ),
+    )
+    .map_err(io_err)
 }
 
 fn count_runtime_queue_entries(root: &Path, bucket: &str) -> ShadowResult<usize> {
@@ -2874,6 +3360,77 @@ if __name__ == '__main__':
         let human = render_supervisor_status_human(&snapshot);
         assert!(human.contains("SUPERVISOR STATUS"));
         assert!(human.contains("bounded local loop state is real"));
+    }
+
+    #[test]
+    fn daemon_loop_writes_runtime_state_and_status() {
+        let root = temp_path("loom-shadow-daemon-loop");
+        fs::create_dir_all(&root).expect("root");
+        let kernel = temp_path("loom-shadow-daemon-kernel");
+        let kernel_dir = kernel.join("kernel");
+        fs::create_dir_all(kernel_dir.join("adapters")).expect("kernel dirs");
+        fs::write(
+            kernel_dir.join("runtimes.json"),
+            "{\n  \"runtimes\": {\n    \"local_kernel\": {\"id\": \"local_kernel\", \"label\": \"Local Kernel Runtime\"},\n    \"meridian_loom\": {\"status\": \"experimental\", \"notes\": \"daemon fixture\", \"contract_compliance\": {\"agent_identity\": null, \"action_envelope\": null, \"cost_attribution\": null, \"approval_hook\": null, \"audit_emission\": null, \"sanction_controls\": null, \"budget_gate\": null}}\n  }\n}\n",
+        )
+        .expect("write runtimes");
+        fs::write(
+            kernel_dir.join("agent_registry.py"),
+            "import json, sys\nagent_id = sys.argv[sys.argv.index('--agent_id') + 1]\norg_id = sys.argv[sys.argv.index('--org_id') + 1] if '--org_id' in sys.argv else 'org_demo'\nprint(json.dumps({'id': agent_id, 'name': 'Atlas', 'org_id': org_id, 'role': 'analyst', 'economy_key': 'atlas', 'approval_required': False, 'budget': {'max_per_run_usd': 0.5}, 'runtime_binding': {'runtime_id': 'local_kernel', 'runtime_label': 'Local Kernel Runtime', 'bound_org_id': org_id, 'boundary_name': 'workspace', 'identity_model': 'session', 'runtime_registered': True, 'registration_status': 'registered'}}, indent=2))\n",
+        )
+        .expect("write registry");
+        fs::write(
+            kernel_dir.join("court.py"),
+            "def get_restrictions(agent_id, org_id=None):\n    return []\n",
+        )
+        .expect("write court");
+        fs::write(
+            kernel_dir.join("authority.py"),
+            "def check_authority(agent_id, action, org_id=None):\n    return True, 'ok'\n",
+        )
+        .expect("write authority");
+        fs::write(
+            kernel_dir.join("treasury.py"),
+            "def check_budget(agent_id, cost_usd, org_id=None):\n    return True, 'ok'\n",
+        )
+        .expect("write treasury");
+        fs::write(
+            kernel_dir.join("audit.py"),
+            "def log_event(*args, **kwargs):\n    return 'evt_daemon'\n",
+        )
+        .expect("write audit");
+        fs::write(kernel_dir.join("adapters/__init__.py"), "").expect("write adapter init");
+        fs::write(
+            kernel_dir.join("adapters/openclaw_compatible.py"),
+            "def pre_action_check(org_id, envelope):\n    return {'allowed': True, 'stage': 'ok', 'reason': 'ok', 'restrictions': []}\n",
+        )
+        .expect("write adapter");
+        init_workspace(
+            &root,
+            "embedded",
+            Some(kernel.to_string_lossy().as_ref()),
+            "org_demo",
+        )
+        .expect("init workspace");
+        let envelope = sample_envelope();
+        enqueue_action(&root, &kernel, &envelope).expect("enqueue");
+
+        let snapshot = run_supervisor_daemon_loop(
+            &root,
+            Some(kernel.to_string_lossy().as_ref()),
+            1,
+            0,
+            2,
+            "daemon-test",
+        )
+        .expect("daemon loop");
+        assert!(snapshot.available);
+        assert_eq!(snapshot.session_id, "daemon-test");
+        assert_eq!(snapshot.processed, 1);
+        assert_eq!(snapshot.status, "completed");
+        assert!(snapshot.runtime_state_path.exists());
+        let human = render_supervisor_daemon_human(&snapshot);
+        assert!(human.contains("SUPERVISOR DAEMON"));
     }
 
     fn temp_path(prefix: &str) -> PathBuf {

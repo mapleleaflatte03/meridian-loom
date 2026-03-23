@@ -12,15 +12,17 @@ use loom_shadow::{
     render_decision_human, render_decision_json, render_enqueued_action_human,
     render_enqueued_action_json, render_parity_report, render_preflight_human,
     render_preflight_json, render_runtime_execution_human, render_runtime_execution_json,
+    render_supervisor_daemon_human, render_supervisor_daemon_json,
     render_shadow_report, render_supervisor_run_human, render_supervisor_run_json,
     render_supervisor_status_human, render_supervisor_status_json,
     render_supervisor_watch_human, render_supervisor_watch_json, run_supervisor,
+    run_supervisor_daemon_loop, request_supervisor_daemon_stop, supervisor_daemon_status,
     supervisor_status, watch_supervisor,
 };
 use std::env;
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;
-use std::process::ExitCode;
+use std::process::{Command, ExitCode, Stdio};
 
 fn main() -> ExitCode {
     match run() {
@@ -434,6 +436,7 @@ fn handle_parity(args: &[String]) -> LoomResult<()> {
 
 fn handle_supervisor(args: &[String]) -> LoomResult<()> {
     match args.first().map(String::as_str) {
+        Some("daemon") => handle_supervisor_daemon(&args[1..]),
         Some("run") => {
             let root = root_from(take_value(args, "--root").as_deref())?;
             let kernel_path = take_value(args, "--kernel-path");
@@ -487,7 +490,164 @@ fn handle_supervisor(args: &[String]) -> LoomResult<()> {
             }
             Ok(())
         }
-        _ => Err("supervisor supports 'run', 'watch', and 'status'".to_string()),
+        _ => Err("supervisor supports 'run', 'watch', 'status', and 'daemon'".to_string()),
+    }
+}
+
+fn handle_supervisor_daemon(args: &[String]) -> LoomResult<()> {
+    match args.first().map(String::as_str) {
+        Some("start") => {
+            let root = root_from(take_value(args, "--root").as_deref())?;
+            let kernel_path = take_value(args, "--kernel-path");
+            let max_jobs = take_value(args, "--max-jobs")
+                .and_then(|raw| raw.parse::<usize>().ok())
+                .unwrap_or(1);
+            let poll_seconds = take_value(args, "--poll-seconds")
+                .and_then(|raw| raw.parse::<u64>().ok())
+                .unwrap_or(1);
+            let iterations = take_value(args, "--iterations")
+                .and_then(|raw| raw.parse::<usize>().ok())
+                .unwrap_or(60);
+            let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+            let supervisor_dir = root.join(".loom/runtime/supervisor");
+            std::fs::create_dir_all(&supervisor_dir).map_err(|e| e.to_string())?;
+            let stdout_log_path = supervisor_dir.join("daemon.log");
+            let stdout = std::fs::File::create(&stdout_log_path).map_err(|e| e.to_string())?;
+            let stderr = stdout.try_clone().map_err(|e| e.to_string())?;
+            let session_id = format!("daemon-{}", chrono_like_timestamp());
+            let exe = env::current_exe().map_err(|e| e.to_string())?;
+            let mut command = Command::new(exe);
+            command
+                .arg("supervisor")
+                .arg("daemon")
+                .arg("loop")
+                .arg("--root")
+                .arg(&root)
+                .arg("--max-jobs")
+                .arg(max_jobs.to_string())
+                .arg("--poll-seconds")
+                .arg(poll_seconds.to_string())
+                .arg("--iterations")
+                .arg(iterations.to_string())
+                .arg("--session-id")
+                .arg(&session_id)
+                .stdout(Stdio::from(stdout))
+                .stderr(Stdio::from(stderr));
+            if let Some(kernel_path) = kernel_path.as_deref() {
+                command.arg("--kernel-path").arg(kernel_path);
+            }
+            let child = command.spawn().map_err(|e| e.to_string())?;
+            let note = format!(
+                "daemon start requested; pid={} session_id={} log={}",
+                child.id(),
+                session_id,
+                stdout_log_path.display()
+            );
+            let fallback_note = note.clone();
+            let mut snapshot_result = supervisor_daemon_status(&root);
+            for _ in 0..10 {
+                if let Ok(snapshot) = &snapshot_result {
+                    if snapshot.available {
+                        break;
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                snapshot_result = supervisor_daemon_status(&root);
+            }
+            let snapshot = snapshot_result.unwrap_or_else(|_| {
+                loom_shadow::SupervisorDaemonSnapshot {
+                    root: root.clone(),
+                    supervisor_dir,
+                    runtime_state_path: root.join(".loom/runtime/supervisor/runtime_state.json"),
+                    stop_request_path: root.join(".loom/runtime/supervisor/stop.requested"),
+                    stdout_log_path,
+                    available: true,
+                    session_id: session_id.clone(),
+                    pid: child.id(),
+                    running: true,
+                    status: "starting".to_string(),
+                    updated_at: String::new(),
+                    booted_at: String::new(),
+                    stopped_at: String::new(),
+                    poll_seconds,
+                    max_jobs,
+                    max_iterations: iterations,
+                    iterations_completed: 0,
+                    processed: 0,
+                    allowed: 0,
+                    denied: 0,
+                    failed: 0,
+                    pending_jobs: 0,
+                    processed_jobs: 0,
+                    failed_jobs: 0,
+                    heartbeat_entries: 0,
+                    note: fallback_note,
+                }
+            });
+            if format == "json" {
+                print!("{}", render_supervisor_daemon_json(&snapshot));
+            } else {
+                let mut snapshot = snapshot;
+                if snapshot.note.is_empty() {
+                    snapshot.note = note;
+                }
+                print_human(&render_supervisor_daemon_human(&snapshot));
+            }
+            Ok(())
+        }
+        Some("loop") => {
+            let root = root_from(take_value(args, "--root").as_deref())?;
+            let kernel_path = take_value(args, "--kernel-path");
+            let max_jobs = take_value(args, "--max-jobs")
+                .and_then(|raw| raw.parse::<usize>().ok())
+                .unwrap_or(1);
+            let poll_seconds = take_value(args, "--poll-seconds")
+                .and_then(|raw| raw.parse::<u64>().ok())
+                .unwrap_or(1);
+            let iterations = take_value(args, "--iterations")
+                .and_then(|raw| raw.parse::<usize>().ok())
+                .unwrap_or(60);
+            let session_id =
+                take_value(args, "--session-id").unwrap_or_else(|| format!("daemon-{}", chrono_like_timestamp()));
+            let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+            let snapshot = run_supervisor_daemon_loop(
+                &root,
+                kernel_path.as_deref(),
+                max_jobs,
+                poll_seconds,
+                iterations,
+                &session_id,
+            )?;
+            if format == "json" {
+                print!("{}", render_supervisor_daemon_json(&snapshot));
+            } else {
+                print_human(&render_supervisor_daemon_human(&snapshot));
+            }
+            Ok(())
+        }
+        Some("status") => {
+            let root = root_from(take_value(args, "--root").as_deref())?;
+            let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+            let snapshot = supervisor_daemon_status(&root)?;
+            if format == "json" {
+                print!("{}", render_supervisor_daemon_json(&snapshot));
+            } else {
+                print_human(&render_supervisor_daemon_human(&snapshot));
+            }
+            Ok(())
+        }
+        Some("stop") => {
+            let root = root_from(take_value(args, "--root").as_deref())?;
+            let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+            let snapshot = request_supervisor_daemon_stop(&root)?;
+            if format == "json" {
+                print!("{}", render_supervisor_daemon_json(&snapshot));
+            } else {
+                print_human(&render_supervisor_daemon_human(&snapshot));
+            }
+            Ok(())
+        }
+        _ => Err("supervisor daemon supports 'start', 'loop', 'status', and 'stop'".to_string()),
     }
 }
 
@@ -505,9 +665,19 @@ fn parse_f64_flag(args: &[String], flag: &str) -> Option<f64> {
     take_value(args, flag).and_then(|raw| raw.parse::<f64>().ok())
 }
 
+fn chrono_like_timestamp() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        .to_string()
+}
+
 fn print_help() {
     print_human(
-        "Meridian Loom // HELP\n======================\nphase:       public experimental scaffold\nboundary:    operator shape is real; governed runtime is not\n\nBootstrap\n---------\n  loom init --mode <embedded|shadow|standalone> [--kernel-path PATH] [--root PATH] [--org-id ID]\n  loom doctor [--root PATH] [--format json|human]\n  loom health [--root PATH] [--format json|human]\n  loom status [--root PATH]\n  loom config show [--root PATH]\n\nGovernance surfaces\n-------------------\n  loom contract show [--root PATH] [--kernel-path PATH] [--format human|json]\n  loom capsule inspect [--root PATH]\n  loom agent resolve --agent-id ID [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom envelope build --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\nRuntime rehearsal\n-----------------\n  loom action enqueue --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom action execute --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom supervisor run [--root PATH] [--kernel-path PATH] [--max-jobs N] [--format human|json]\n  loom supervisor watch [--root PATH] [--kernel-path PATH] [--max-jobs N] [--iterations N] [--poll-seconds N] [--format human|json]\n  loom supervisor status [--root PATH] [--format human|json]\n  loom shadow preflight --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom shadow decide --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom shadow enforce --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom shadow compare --primary FILE [--shadow FILE] [--root PATH] [--format human|json]\n  loom shadow report [--root PATH]\n  loom parity report [--root PATH]\n\nNext\n----\n  1. loom init --mode embedded --root /tmp/loom-rehearsal --kernel-path /tmp/meridian-kernel\n  2. loom action enqueue --agent-id agent_atlas --action-type research --resource web_search --root /tmp/loom-rehearsal\n  3. loom supervisor watch --root /tmp/loom-rehearsal --max-jobs 1 --iterations 2 --poll-seconds 1\n  4. loom supervisor status --root /tmp/loom-rehearsal --format human\n"
+        "Meridian Loom // HELP\n======================\nphase:       public experimental scaffold\nboundary:    operator shape is real; governed runtime is not\n\nBootstrap\n---------\n  loom init --mode <embedded|shadow|standalone> [--kernel-path PATH] [--root PATH] [--org-id ID]\n  loom doctor [--root PATH] [--format json|human]\n  loom health [--root PATH] [--format json|human]\n  loom status [--root PATH]\n  loom config show [--root PATH]\n\nGovernance surfaces\n-------------------\n  loom contract show [--root PATH] [--kernel-path PATH] [--format human|json]\n  loom capsule inspect [--root PATH]\n  loom agent resolve --agent-id ID [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom envelope build --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\nRuntime rehearsal\n-----------------\n  loom action enqueue --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom action execute --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom supervisor run [--root PATH] [--kernel-path PATH] [--max-jobs N] [--format human|json]\n  loom supervisor watch [--root PATH] [--kernel-path PATH] [--max-jobs N] [--iterations N] [--poll-seconds N] [--format human|json]\n  loom supervisor status [--root PATH] [--format human|json]\n  loom supervisor daemon start [--root PATH] [--kernel-path PATH] [--max-jobs N] [--poll-seconds N] [--iterations N] [--format human|json]\n  loom supervisor daemon status [--root PATH] [--format human|json]\n  loom supervisor daemon stop [--root PATH] [--format human|json]\n  loom shadow preflight --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom shadow decide --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom shadow enforce --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n  loom shadow compare --primary FILE [--shadow FILE] [--root PATH] [--format human|json]\n  loom shadow report [--root PATH]\n  loom parity report [--root PATH]\n\nNext\n----\n  1. loom init --mode embedded --root /tmp/loom-rehearsal --kernel-path /tmp/meridian-kernel\n  2. loom action enqueue --agent-id agent_atlas --action-type research --resource web_search --root /tmp/loom-rehearsal\n  3. loom supervisor daemon start --root /tmp/loom-rehearsal --max-jobs 1 --poll-seconds 1 --iterations 10\n  4. loom supervisor daemon status --root /tmp/loom-rehearsal --format human\n"
     );
 }
 

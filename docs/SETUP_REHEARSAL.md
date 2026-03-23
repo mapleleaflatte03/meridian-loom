@@ -21,13 +21,14 @@
 
 # Meridian Loom // Setup Rehearsal
 
-This repository includes five rehearsals:
+This repository includes six rehearsals:
 
 - a founder-host rehearsal against the current kernel truth
 - a fixture-backed rehearsal for local sanction denial
 - a fixture-backed allow-path rehearsal
 - a fixture-backed queue supervisor rehearsal
 - a fixture-backed bounded supervisor watch rehearsal
+- a fixture-backed bounded supervisor daemon rehearsal
 
 The point is not to pretend Loom is already a runtime. The point is to make the
 install path, operator path, and fail-closed runtime rehearsal concrete enough
@@ -75,6 +76,9 @@ The rehearsal verifies:
 21. `loom supervisor watch` now drives the queue supervisor through a bounded
     polling loop, writes `.loom/runtime/supervisor/status.json`, and appends
     heartbeat history into `.loom/runtime/supervisor/heartbeat.jsonl`.
+22. `loom supervisor daemon start/status/stop` now wrap that same queue
+    supervisor in a real local lifecycle shell with `runtime_state.json`,
+    background logging, and stop-request handling.
 
 ## What the rehearsal does not prove
 
@@ -83,7 +87,8 @@ The rehearsal verifies:
 - It does not prove transport adapters exist.
 - It does not prove OpenClaw replacement.
 - It does not prove per-action OpenClaw parity.
-- It does not prove a daemonized or hosted supervisor loop.
+- It does not prove a hosted daemon supervisor or long-running scheduler.
+- It does not prove a hosted long-running scheduler or worker pool.
 - The live OpenClaw probe is a runtime health/proof snapshot, not a replayed
   gate-by-gate execution stream.
 - The hosted kernel's global audit trail is still not owned by Loom.
@@ -188,6 +193,27 @@ That script proves the current watch-loop surface:
 
 Its checked-in transcript lives at
 `examples/supervisor-watch-output.txt`.
+
+There is now a separate bounded supervisor daemon rehearsal:
+
+```bash
+./scripts/rehearse_supervisor_daemon.sh
+```
+
+That script proves the current daemon-lifecycle surface:
+- `loom supervisor daemon start` spawns a background child for the local queue
+  supervisor rehearsal
+- `loom supervisor daemon status` reads `runtime_state.json` and surfaces
+  session, PID, heartbeat count, and queue totals
+- `loom supervisor daemon stop` records a local stop request that the daemon
+  loop honors cleanly
+- the daemon appends to `.loom/runtime/supervisor/heartbeat.jsonl` and writes
+  `.loom/runtime/supervisor/runtime_state.json`
+- the result is still a bounded local daemon rehearsal, not a hosted runtime
+  supervisor
+
+Its checked-in transcript lives at
+`examples/supervisor-daemon-output.txt`.
 
 The rehearsal now also proves both fail-closed surfaces against the current
 kernel truth:

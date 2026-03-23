@@ -95,6 +95,9 @@ That one rehearsal gives you:
 - `loom supervisor run`
 - `loom supervisor watch`
 - `loom supervisor status`
+- `loom supervisor daemon start`
+- `loom supervisor daemon status`
+- `loom supervisor daemon stop`
 - `loom shadow compare`
 - `loom shadow report`
 - `loom parity report`
@@ -124,6 +127,14 @@ And a fifth rehearsal for the bounded supervisor watch loop:
 ```
 
 Its checked-in transcript lives at `examples/supervisor-watch-output.txt`.
+
+And a sixth rehearsal for bounded daemon lifecycle:
+
+```bash
+./scripts/rehearse_supervisor_daemon.sh
+```
+
+Its checked-in transcript lives at `examples/supervisor-daemon-output.txt`.
 
 ## What exists today
 
@@ -158,6 +169,8 @@ Current human-mode output uses a single grammar:
 - `Meridian Loom // AGENT IDENTITY`
 - `Meridian Loom // ACTION ENVELOPE`
 - `Meridian Loom // CAPSULE INSPECT`
+- `Meridian Loom // SUPERVISOR STATUS`
+- `Meridian Loom // SUPERVISOR DAEMON`
 - `Meridian Loom // SHADOW PREFLIGHT`
 - `Meridian Loom // SHADOW DECISION`
 - `Meridian Loom // RUNTIME EXECUTE`
@@ -182,6 +195,7 @@ is “what parts of a real runtime path are already tangible?”
 | Governed local supervisor | `loom action execute` now dispatches an experimental local Python worker when the effective decision is `allow`, and still fails closed with exit code `2` when denied. This is a real local supervisor path, not a hosted runtime replacement. |
 | Queue-backed supervisor lane | `loom action enqueue` and `loom supervisor run` now provide a real local queue boundary. A queued action is materialized under `.loom/runtime/queue/`, then processed through the same decision surface and worker dispatch path when the supervisor runs. |
 | Supervisor watch loop | `loom supervisor watch` now runs that same queue supervisor in a bounded polling loop, writes `.loom/runtime/supervisor/status.json`, and appends heartbeat history into `.loom/runtime/supervisor/heartbeat.jsonl`. This makes local supervisor state inspectable, but it is still not a daemonized or hosted scheduler. |
+| Daemon lifecycle rehearsal | `loom supervisor daemon start/status/stop` now wrap the same queue supervisor with a real local lifecycle shell. A background child writes `.loom/runtime/supervisor/runtime_state.json`, appends heartbeat history, and honors a local stop request. This is still a bounded local daemon rehearsal, not a hosted supervisor service. |
 | Runtime-side audit emission | `loom action execute` and `loom supervisor run` now write runtime audit entries through the kernel-owned `audit.py log-runtime` path into `kernel/runtime_audit/loom_runtime_events.jsonl` when a kernel is present. This is a canonical kernel-owned file for the current rehearsal boundary, but still not the hosted kernel's global audit trail. |
 | Parity stream | `loom action execute` now emits `.loom/parity/stream.jsonl` and `.loom/parity/latest.json`. The stream records reference-gate truth, Loom runtime execution truth, worker status, audit emission, and live-probe status. |
 | Live OpenClaw reference | On the founder host, Loom now captures a per-action OpenClaw proof artifact under `.loom/parity/openclaw/<input_hash>.json` plus `.loom/parity/openclaw_live_stream.jsonl`. This is live runtime evidence, but still not hosted per-action parity against an OpenClaw execution action. |
@@ -191,8 +205,8 @@ is “what parts of a real runtime path are already tangible?”
 
 Loom is still missing the things that would make it a real runtime:
 
-- no unbounded or daemonized governed worker supervisor
 - no hosted supervisor loop or scheduler
+- no runtime-owned multi-worker scheduler beyond the current local daemon rehearsal
 - no native transport adapters
 - no long-running scheduler/runtime loop
 - no native sanction enforcement inside a hosted worker runtime
@@ -222,6 +236,9 @@ loom action execute
 loom supervisor run
 loom supervisor watch
 loom supervisor status
+loom supervisor daemon start
+loom supervisor daemon status
+loom supervisor daemon stop
 loom shadow preflight
 loom shadow decide
 loom shadow enforce
