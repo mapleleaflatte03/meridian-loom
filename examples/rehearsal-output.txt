@@ -72,7 +72,7 @@ audit_emission     null
 sanction_controls  null
 budget_gate        null
 
-notes: Spec only. No code exists yet. Polyglot architecture: Rust supervisor core, Python/TypeScript workers, WASM capability modules. Directional targets: <50MB memory, <500ms cold start, native 7/7 contract compliance (all unproven). See docs/LOOM_SPEC.md for spec, docs/loom/ for productization strategy.
+notes: Experimental local scaffold exists for CLI/setup rehearsal, but no governed execution runtime or proven hooks exist yet. Polyglot architecture: Rust supervisor core, Python/TypeScript workers, WASM capability modules. Directional targets: <50MB memory, <500ms cold start, native 7/7 contract compliance (all unproven). See docs/LOOM_SPEC.md for spec, docs/loom/ for productization strategy.
 Capsule inspection
 ==================
 org_id:       rehearsal_org
