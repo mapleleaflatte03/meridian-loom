@@ -1,6 +1,6 @@
 == Meridian Loom // First Governed Cell Rehearsal ==
 root:   /tmp/loom-first-cell
-kernel: /tmp/loom-first-cell-kernel.DLEZIz
+kernel: /tmp/loom-first-cell-kernel.SU8coT
 agent:  agent_tutorial
 org:    org_tutorial
 
@@ -13,7 +13,7 @@ root:        /tmp/loom-first-cell
 mode:        embedded
 org_id:      org_tutorial
 state_dir:   .loom
-kernel_path: /tmp/loom-first-cell-kernel.DLEZIz
+kernel_path: /tmp/loom-first-cell-kernel.SU8coT
 status:      initialized experimental scaffold
 next_step:   loom doctor --root /tmp/loom-first-cell --format human
 
@@ -31,9 +31,9 @@ Checks
 [OK      ] typescript_workers typescript worker path present (/tmp/loom-first-cell/workers/typescript)
 [OK      ] wasm_modules       wasm module path present (/tmp/loom-first-cell/workers/wasm)
 [OK      ] capsule_manifest   capsule manifest present (/tmp/loom-first-cell/.loom/capsules/org_tutorial/manifest.json)
-[OK      ] kernel_path        kernel path present (/tmp/loom-first-cell-kernel.DLEZIz)
-[OK      ] runtime_registry   Meridian runtime registry available (/tmp/loom-first-cell-kernel.DLEZIz/kernel/runtimes.json)
-[OK      ] agent_registry     Meridian agent registry CLI available (/tmp/loom-first-cell-kernel.DLEZIz/kernel/agent_registry.py)
+[OK      ] kernel_path        kernel path present (/tmp/loom-first-cell-kernel.SU8coT)
+[OK      ] runtime_registry   Meridian runtime registry available (/tmp/loom-first-cell-kernel.SU8coT/kernel/runtimes.json)
+[OK      ] agent_registry     Meridian agent registry CLI available (/tmp/loom-first-cell-kernel.SU8coT/kernel/agent_registry.py)
 
 --- Step 3: Build envelope ---
 Meridian Loom // ACTION ENVELOPE
@@ -70,7 +70,7 @@ input_hash:          e2a248e147077af0
 
 Meridian Loom // ACTION ENQUEUED
 =================================
-queue_path:           /tmp/loom-first-cell/.loom/runtime/queue/pending/standard/1774286361-agent_tutorial-e2a248e1.json
+queue_path:           /tmp/loom-first-cell/.loom/runtime/queue/pending/standard/1774287653-agent_tutorial-e2a248e1.json
 job_path:             /tmp/loom-first-cell/.loom/runtime/jobs/e2a248e147077af0/job.json
 input_hash:           e2a248e147077af0
 policy_class:         standard
@@ -79,7 +79,7 @@ org_id:               org_tutorial
 action_type:          research
 resource:             web_search
 estimated_cost_usd:   0.050000
-kernel_path:          /tmp/loom-first-cell-kernel.DLEZIz
+kernel_path:          /tmp/loom-first-cell-kernel.SU8coT
 next_step:            loom job inspect --job-id e2a248e147077af0 --root <path>
 then:                 loom supervisor run --root <path> --max-jobs 1
 
@@ -97,7 +97,7 @@ jobs_found:          1
 
 Entries
 -------
-  e2a248e147077af0 | status=queued | stage=queue_pending | bucket=pending:standard | agent=agent_tutorial | action=research::web_search | updated_at=1774286361
+  e2a248e147077af0 | status=queued | stage=queue_pending | bucket=pending:standard | agent=agent_tutorial | action=research::web_search | updated_at=1774287653
 
 Next
 ====
@@ -121,14 +121,14 @@ denied:              0
 failed:              0
 last_input_hash:     e2a248e147077af0
 last_execution:      /tmp/loom-first-cell/.loom/runtime/last_execution.json
-audit_log:           /tmp/loom-first-cell-kernel.DLEZIz/kernel/runtime_audit/loom_runtime_events.jsonl
+audit_log:           /tmp/loom-first-cell-kernel.SU8coT/kernel/runtime_audit/loom_runtime_events.jsonl
 note:                processed=1 allowed=1 denied=0 failed=0
 
 Next
 ====
 1. loom parity report --root /tmp/loom-first-cell
 2. loom shadow report --root /tmp/loom-first-cell
-3. Inspect /tmp/loom-first-cell-kernel.DLEZIz/kernel/runtime_audit/loom_runtime_events.jsonl for canonical runtime audit entries.
+3. Inspect /tmp/loom-first-cell-kernel.SU8coT/kernel/runtime_audit/loom_runtime_events.jsonl for canonical runtime audit entries.
 
 --- Step 7: Inspect completed job ---
 job_id: e2a248e147077af0
@@ -143,8 +143,8 @@ job_id:              e2a248e147077af0
 status:              completed
 stage:               local_queue_supervisor
 queue_bucket:        processed:standard
-queued_at:           1774286361
-updated_at:          1774286362
+queued_at:           1774287653
+updated_at:          1774287653
 agent_id:            agent_tutorial
 org_id:              org_tutorial
 action_type:         research
@@ -157,10 +157,10 @@ note:                experimental supervisor dispatched /tmp/loom-first-cell/wor
 Artifacts
 =========
 job_path:            /tmp/loom-first-cell/.loom/runtime/jobs/e2a248e147077af0/job.json
-queue_path:          /tmp/loom-first-cell/.loom/runtime/queue/processed/1774286361-agent_tutorial-e2a248e1.json
+queue_path:          /tmp/loom-first-cell/.loom/runtime/queue/processed/1774287653-agent_tutorial-e2a248e1.json
 decision_path:       /tmp/loom-first-cell/.loom/shadow/decision.json
 execution_path:      /tmp/loom-first-cell/.loom/runtime/last_execution.json
-audit_log_path:      /tmp/loom-first-cell-kernel.DLEZIz/kernel/runtime_audit/loom_runtime_events.jsonl
+audit_log_path:      /tmp/loom-first-cell-kernel.SU8coT/kernel/runtime_audit/loom_runtime_events.jsonl
 parity_report_path:  /tmp/loom-first-cell/.loom/parity/latest.json
 
 Next
@@ -183,7 +183,7 @@ source: /tmp/loom-first-cell/.loom/parity/latest.json
   "status": "parity_report_captured",
   "execution_path": "/tmp/loom-first-cell/.loom/runtime/last_execution.json",
   "decision_path": "/tmp/loom-first-cell/.loom/shadow/decision.json",
-  "audit_log_path": "/tmp/loom-first-cell-kernel.DLEZIz/kernel/runtime_audit/loom_runtime_events.jsonl",
+  "audit_log_path": "/tmp/loom-first-cell-kernel.SU8coT/kernel/runtime_audit/loom_runtime_events.jsonl",
   "parity_stream_path": "/tmp/loom-first-cell/.loom/parity/stream.jsonl",
   "openclaw_live_probe_path": null,
   "openclaw_live_probe_stream_path": "/tmp/loom-first-cell/.loom/parity/openclaw_live_stream.jsonl",
@@ -192,7 +192,7 @@ source: /tmp/loom-first-cell/.loom/parity/latest.json
   "overall_decision": "allow",
   "effective_stage": "ok",
   "openclaw_live_probe_status": "not_available",
-  "openclaw_live_probe_note": "live OpenClaw proof script not found at /tmp/loom-first-cell-kernel.DLEZIz/kernel/missing_openclaw_runtime_proof.py",
+  "openclaw_live_probe_note": "live OpenClaw proof script not found at /tmp/loom-first-cell-kernel.SU8coT/kernel/missing_openclaw_runtime_proof.py",
   "parity_status": "match",
   "parity_reason": "reference and loom agreed on allow at stage ok",
   "note": "runtime-side parity stream now captures Loom execution plus a per-action OpenClaw live probe artifact when available; hosted per-action parity remains future work"
@@ -202,10 +202,10 @@ Parity stream
 =============
 source: /tmp/loom-first-cell/.loom/parity/stream.jsonl
 
-{"timestamp":"1774286362","source":"openclaw_reference_stream","phase":"reference_gate","hook_name":"ok","decision":"allow","stage":"ok","agent_id":"agent_tutorial","org_id":"org_tutorial","input_hash":"e2a248e147077af0","reason":"ok"}
-{"timestamp":"1774286362","source":"loom_runtime_stream","phase":"worker_supervisor","hook_name":"ok","decision":"allow","stage":"ok","agent_id":"agent_tutorial","org_id":"org_tutorial","input_hash":"e2a248e147077af0","reason":"ok","worker_status":"completed","worker_kind":"python_reference_worker","worker_result_path":"/tmp/loom-first-cell/.loom/runtime/jobs/e2a248e147077af0/result.json"}
-{"timestamp":"1774286362","source":"loom_runtime_stream","phase":"audit_emission","hook_name":"audit_emission","decision":"kernel_cli_runtime_event_written","stage":"runtime_audit","agent_id":"agent_tutorial","org_id":"org_tutorial","input_hash":"e2a248e147077af0","reason":"worker_executed","audit_log":"/tmp/loom-first-cell-kernel.DLEZIz/kernel/runtime_audit/loom_runtime_events.jsonl"}
-{"timestamp":"1774286362","source":"openclaw_live_probe","phase":"live_runtime_probe","hook_name":"runtime_health","decision":"not_available","stage":"live_single_host_openclaw","agent_id":"agent_tutorial","org_id":"org_tutorial","input_hash":"e2a248e147077af0","reason":"live OpenClaw proof script not found at /tmp/loom-first-cell-kernel.DLEZIz/kernel/missing_openclaw_runtime_proof.py","probe_path":"","probe_stream_path":"/tmp/loom-first-cell/.loom/parity/openclaw_live_stream.jsonl"}
+{"timestamp":"1774287653","source":"openclaw_reference_stream","phase":"reference_gate","hook_name":"ok","decision":"allow","stage":"ok","agent_id":"agent_tutorial","org_id":"org_tutorial","input_hash":"e2a248e147077af0","reason":"ok"}
+{"timestamp":"1774287653","source":"loom_runtime_stream","phase":"worker_supervisor","hook_name":"ok","decision":"allow","stage":"ok","agent_id":"agent_tutorial","org_id":"org_tutorial","input_hash":"e2a248e147077af0","reason":"ok","worker_status":"completed","worker_kind":"python_reference_worker","worker_result_path":"/tmp/loom-first-cell/.loom/runtime/jobs/e2a248e147077af0/result.json"}
+{"timestamp":"1774287653","source":"loom_runtime_stream","phase":"audit_emission","hook_name":"audit_emission","decision":"kernel_cli_runtime_event_written","stage":"runtime_audit","agent_id":"agent_tutorial","org_id":"org_tutorial","input_hash":"e2a248e147077af0","reason":"worker_executed","audit_log":"/tmp/loom-first-cell-kernel.SU8coT/kernel/runtime_audit/loom_runtime_events.jsonl"}
+{"timestamp":"1774287653","source":"openclaw_live_probe","phase":"live_runtime_probe","hook_name":"runtime_health","decision":"not_available","stage":"live_single_host_openclaw","agent_id":"agent_tutorial","org_id":"org_tutorial","input_hash":"e2a248e147077af0","reason":"live OpenClaw proof script not found at /tmp/loom-first-cell-kernel.SU8coT/kernel/missing_openclaw_runtime_proof.py","probe_path":"","probe_stream_path":"/tmp/loom-first-cell/.loom/parity/openclaw_live_stream.jsonl"}
 
 OpenClaw live probe
 ===================
@@ -216,7 +216,7 @@ OpenClaw live probe stream
 ==========================
 source: /tmp/loom-first-cell/.loom/parity/openclaw_live_stream.jsonl
 
-{"timestamp":"1774286362","input_hash":"e2a248e147077af0","status":"not_available","reason":"live OpenClaw proof script not found at /tmp/loom-first-cell-kernel.DLEZIz/kernel/missing_openclaw_runtime_proof.py","probe_path":null}
+{"timestamp":"1774287653","input_hash":"e2a248e147077af0","status":"not_available","reason":"live OpenClaw proof script not found at /tmp/loom-first-cell-kernel.SU8coT/kernel/missing_openclaw_runtime_proof.py","probe_path":null}
 
 
 Meridian Loom // SHADOW REPORT
@@ -234,7 +234,7 @@ source: /tmp/loom-first-cell/.loom/runtime/last_execution.json
   "worker_result_path": "/tmp/loom-first-cell/.loom/runtime/jobs/e2a248e147077af0/result.json",
   "worker_log_path": "/tmp/loom-first-cell/.loom/runtime/jobs/e2a248e147077af0/worker.log",
   "decision_path": "/tmp/loom-first-cell/.loom/shadow/decision.json",
-  "audit_log_path": "/tmp/loom-first-cell-kernel.DLEZIz/kernel/runtime_audit/loom_runtime_events.jsonl",
+  "audit_log_path": "/tmp/loom-first-cell-kernel.SU8coT/kernel/runtime_audit/loom_runtime_events.jsonl",
   "parity_stream_path": "/tmp/loom-first-cell/.loom/parity/stream.jsonl",
   "parity_report_path": "/tmp/loom-first-cell/.loom/parity/latest.json",
   "openclaw_live_probe_path": null,
@@ -256,7 +256,7 @@ source: /tmp/loom-first-cell/.loom/runtime/last_execution.json
   "reference_stage": "ok",
   "audit_emission_status": "kernel_cli_runtime_event_written",
   "openclaw_live_probe_status": "not_available",
-  "openclaw_live_probe_note": "live OpenClaw proof script not found at /tmp/loom-first-cell-kernel.DLEZIz/kernel/missing_openclaw_runtime_proof.py",
+  "openclaw_live_probe_note": "live OpenClaw proof script not found at /tmp/loom-first-cell-kernel.SU8coT/kernel/missing_openclaw_runtime_proof.py",
   "parity_status": "match",
   "parity_reason": "reference and loom agreed on allow at stage ok",
   "note": "experimental local supervisor path exists for allow decisions; governed hosted supervisor remains future work"
@@ -271,7 +271,7 @@ source: /tmp/loom-first-cell/.loom/parity/latest.json
   "status": "parity_report_captured",
   "execution_path": "/tmp/loom-first-cell/.loom/runtime/last_execution.json",
   "decision_path": "/tmp/loom-first-cell/.loom/shadow/decision.json",
-  "audit_log_path": "/tmp/loom-first-cell-kernel.DLEZIz/kernel/runtime_audit/loom_runtime_events.jsonl",
+  "audit_log_path": "/tmp/loom-first-cell-kernel.SU8coT/kernel/runtime_audit/loom_runtime_events.jsonl",
   "parity_stream_path": "/tmp/loom-first-cell/.loom/parity/stream.jsonl",
   "openclaw_live_probe_path": null,
   "openclaw_live_probe_stream_path": "/tmp/loom-first-cell/.loom/parity/openclaw_live_stream.jsonl",
@@ -280,7 +280,7 @@ source: /tmp/loom-first-cell/.loom/parity/latest.json
   "overall_decision": "allow",
   "effective_stage": "ok",
   "openclaw_live_probe_status": "not_available",
-  "openclaw_live_probe_note": "live OpenClaw proof script not found at /tmp/loom-first-cell-kernel.DLEZIz/kernel/missing_openclaw_runtime_proof.py",
+  "openclaw_live_probe_note": "live OpenClaw proof script not found at /tmp/loom-first-cell-kernel.SU8coT/kernel/missing_openclaw_runtime_proof.py",
   "parity_status": "match",
   "parity_reason": "reference and loom agreed on allow at stage ok",
   "note": "runtime-side parity stream now captures Loom execution plus a per-action OpenClaw live probe artifact when available; hosted per-action parity remains future work"

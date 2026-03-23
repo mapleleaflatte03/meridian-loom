@@ -13,10 +13,10 @@ rustc:  rustc 1.75.0 (82e1608df 2023-12-21) (built from a source tarball)
 cargo:  cargo 1.75.0
 
 --- Step 2: Build ---
-Binary not found at /root/meridian-loom/target/release/loom, building...
-Build complete.
+Binary already exists at /root/meridian-loom/target/release/loom, skipping build.
 
 --- Step 3: Initialize workspace ---
+Removing previous workspace at /tmp/loom-bootstrap...
 Kernel found at /tmp/meridian-kernel, initializing in standalone mode.
 Meridian Loom // INIT
 ====================
@@ -77,8 +77,19 @@ What's next:
        /root/meridian-loom/target/release/loom contract show --root /tmp/loom-bootstrap
 
   3. Try an operator profile:
-       See profiles/ for opinionated configurations (solo, builder, team, institution).
+       solo        -> profiles/solo.toml        single operator, minimal ceremony
+       builder     -> profiles/builder.toml     active builder, wasm isolation available
+       team        -> profiles/team.toml        approvals and parity for multi-operator work
+       institution -> profiles/institution.toml full governance, microvm for sensitive actions
+       Profiles are starting points, not maturity claims.
 
-  4. Run the full rehearsal suite:
+  4. Run the first governed cell:
+       ./scripts/rehearse_first_governed_cell.sh
+
+  5. Run the queue and denial rehearsals:
+       ./scripts/rehearse_supervisor_queue.sh
+       ./scripts/rehearse_local_sanction_preview.sh
+
+  6. Run the full rehearsal suite:
        ./scripts/rehearse_setup.sh
 

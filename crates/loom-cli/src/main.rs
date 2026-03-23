@@ -5,8 +5,9 @@ use loom_core::{
     render_envelope_human, render_envelope_json, render_health_human, render_identity_human,
     render_identity_json, resolve_agent_identity, root_from, status_human,
     evaluate_reference_gates, LoomResult, capability_shims::{generate_shim, render_shim_human, render_shim_json, validate_shim, LegacyToolSpec},
+    wasm_host::{render_host_config_human, render_host_config_json, HostBackend, WasmHostBuilder},
     wasm_limits::{default_limits, from_toml as parse_wasm_limits_toml, render_limits_human, render_limits_json, validate_limits},
-    wasm_profiles::{profile_defaults_map, render_pooling_config_human, render_pooling_config_json},
+    wasm_profiles::{profile_defaults_map, render_pooling_config_human, render_pooling_config_json, PoolingProfile},
 };
 use loom_shadow::{
     capture_decision, capture_preflight, capture_runtime_execution, compare_logs,
@@ -544,7 +545,53 @@ fn handle_wasm(args: &[String]) -> LoomResult<()> {
             }
             Ok(())
         }
-        _ => Err("wasm supports 'limits' and 'profile show'".to_string()),
+        Some("host") => {
+            if args.get(1).map(String::as_str) != Some("show") {
+                return Err("wasm host supports 'show'".to_string());
+            }
+            let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+            let backend = match take_value(args, "--backend")
+                .unwrap_or_else(|| "preview_only".to_string())
+                .as_str()
+            {
+                "preview_only" => HostBackend::PreviewOnly,
+                "wasmtime_ready" => HostBackend::WasmtimeReady,
+                other => return Err(format!("unknown wasm host backend '{}'", other)),
+            };
+            let profile_name = take_value(args, "--profile").unwrap_or_else(|| "standard".to_string());
+            let profile = match profile_name.as_str() {
+                "minimal" => PoolingProfile::Minimal,
+                "standard" => PoolingProfile::Standard,
+                "heavy" => PoolingProfile::Heavy,
+                "custom" => PoolingProfile::Custom,
+                other => return Err(format!("unknown wasm pooling profile '{}'", other)),
+            };
+            let raw = if let Some(config_path) = take_value(args, "--config-file") {
+                std::fs::read_to_string(&config_path)
+                    .map_err(|error| format!("failed to read {}: {}", config_path, error))?
+            } else {
+                String::new()
+            };
+            let limits = if raw.is_empty() {
+                default_limits()
+            } else {
+                parse_wasm_limits_toml(&raw)?
+            };
+            let config = WasmHostBuilder::new()
+                .with_profile_name(format!("host/{}", profile_name))
+                .with_backend(backend)
+                .with_pooling_profile(profile)
+                .with_store_limits(limits)
+                .build()
+                .map_err(|errors| format!("invalid wasm host config: {}", errors.join("; ")))?;
+            if format == "json" {
+                print!("{}", render_host_config_json(&config));
+            } else {
+                print_human(&render_host_config_human(&config));
+            }
+            Ok(())
+        }
+        _ => Err("wasm supports 'limits', 'profile show', and 'host show'".to_string()),
     }
 }
 
@@ -825,6 +872,7 @@ Governance surfaces\n\
   loom envelope build --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
   loom wasm limits [--config-file loom.toml.example] [--format human|json]\n\
   loom wasm profile show [--profile minimal|standard|heavy] [--format human|json]\n\
+  loom wasm host show [--profile minimal|standard|heavy|custom] [--backend preview_only|wasmtime_ready] [--config-file loom.toml.example] [--format human|json]\n\
 \n\
 Runtime rehearsal\n\
 -----------------\n\

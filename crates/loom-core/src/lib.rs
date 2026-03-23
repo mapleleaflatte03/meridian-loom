@@ -5,6 +5,7 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub mod capability_shims;
+pub mod wasm_host;
 pub mod wasm_limits;
 pub mod wasm_profiles;
 

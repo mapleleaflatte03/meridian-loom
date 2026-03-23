@@ -39,6 +39,17 @@ to inspect honestly.
   <img src="assets/loom_runtime_panels.svg" alt="Meridian Loom rehearsal surfaces" width="960">
 </p>
 
+## Rehearsal matrix
+
+| Script | What it proves | What it does not prove |
+|---|---|---|
+| `./scripts/bootstrap_embedded.sh` | local bootstrap, build, doctor, health | runtime replacement |
+| `./scripts/rehearse_first_governed_cell.sh` | governed identity, queue, supervisor, audit, parity | hosted scheduler |
+| `./scripts/rehearse_local_sanction_preview.sh` | deny path when local sanctions override reference allow | real hosted enforcement |
+| `./scripts/rehearse_supervisor_queue.sh` | queue-backed supervisor and job ledger | long-running hosted daemon |
+| `./scripts/rehearse_supervisor_watch.sh` | bounded watch-loop state and heartbeat history | daemonized service |
+| `./scripts/rehearse_supervisor_daemon.sh` | local daemon lifecycle shell | hosted runtime supervisor |
+
 ## Current rehearsal scope
 
 The rehearsal verifies:

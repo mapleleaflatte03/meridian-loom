@@ -171,6 +171,18 @@ Those profiles are not maturity claims. They are opinionated starting points
 for scheduler, governance, isolation, and audit defaults inside the current
 experimental boundary.
 
+Choose the one that matches the shape of work you want today:
+
+| Profile | Best for | Boundary |
+|---|---|---|
+| `solo` | a single operator, local rehearsal, minimal ceremony | in-process, warn-level governance |
+| `builder` | one person moving fast with stronger audit and wasm isolation | enforced sanction/budget gates |
+| `team` | a small group that needs approvals and parity | approvals, parity, stronger scheduling |
+| `institution` | sensitive or high-governance execution | wasm + microvm, full proof chain |
+
+If you are unsure, start with `solo` and move up only when the work demands
+more ceremony.
+
 ## Frontier runtime docket
 
 The scaffold README is intentionally about what exists today. The broader

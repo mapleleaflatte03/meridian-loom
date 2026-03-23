@@ -4,16 +4,24 @@ use loom_core::{
     resolve_agent_identity, runtime_worker_entry, ActionEnvelope, AgentIdentityResolution, Config,
     ReferenceGateCheck,
 };
+mod event_schema;
 mod policy_queue;
 mod reservations;
+mod proof_views;
 mod scheduler_state;
 
+use event_schema::{
+    canonical_audit_id, canonical_decision_id, canonical_envelope_id, canonical_event_id,
+    canonical_execution_id, canonical_job_id, canonical_parity_id, render_artifact_refs_human,
+    render_artifact_refs_json, ArtifactRefSpec, RuntimeEventSpec, RuntimeEventV1,
+};
 use policy_queue::{classify_action, PolicyClass};
 use reservations::{ack_job, expire_stale, load_ledger, nack_job, reserve_job, save_ledger, ReservationLedger};
 use scheduler_state::{
     append_job_with_id, load_state as load_scheduler_state, save_state as save_scheduler_state,
     transition_job, update_job_metadata, JobStatus, SchedulerState,
 };
+use proof_views::render_proof_first_status_human;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -106,6 +114,9 @@ pub struct RuntimeExecutionCapture {
     pub resource: String,
     pub estimated_cost_usd: f64,
     pub runtime_outcome: String,
+    pub budget_reservation_id: String,
+    pub budget_reservation_status: String,
+    pub budget_reservation_reason: String,
     pub worker_status: String,
     pub worker_kind: String,
     pub worker_note: String,
@@ -250,6 +261,13 @@ struct WorkerExecutionCapture {
     worker_kind: String,
     worker_note: String,
     runtime_outcome: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BudgetReservationCapture {
+    reservation_id: String,
+    status: String,
+    reason: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -664,17 +682,73 @@ pub fn capture_runtime_execution(
 ) -> ShadowResult<RuntimeExecutionCapture> {
     let runtime_dir = ensure_runtime_dir(root)?;
     let parity_dir = ensure_parity_dir(root)?;
+    let jobs_dir = runtime_dir.join("jobs").join(&decision.input_hash);
+    fs::create_dir_all(&jobs_dir).map_err(io_err)?;
     let audit_log_path = runtime_audit_log_path(root, Some(kernel_path.to_string_lossy().as_ref()));
     let execution_path = runtime_dir.join("last_execution.json");
     let parity_stream_path = parity_dir.join("stream.jsonl");
     let parity_report_path = parity_dir.join("latest.json");
-    let worker_capture = run_worker_supervisor(root, envelope, decision)?;
+    let mut budget_capture = if decision.overall_decision == "allow" {
+        reserve_runtime_budget(kernel_path, envelope, decision)?
+    } else {
+        BudgetReservationCapture {
+            reservation_id: String::new(),
+            status: "not_requested".to_string(),
+            reason: "effective decision denied before runtime reservation".to_string(),
+        }
+    };
+    let worker_capture = if decision.overall_decision != "allow" {
+        run_worker_supervisor(root, envelope, decision)?
+    } else if budget_capture.status == "reservation_denied" {
+        let worker_log_path = jobs_dir.join("worker.log");
+        fs::write(
+            &worker_log_path,
+            format!(
+                "worker_not_dispatched budget_reservation_denied reason={}\n",
+                budget_capture.reason
+            ),
+        )
+        .map_err(io_err)?;
+        WorkerExecutionCapture {
+            worker_request_path: jobs_dir.join("request.json"),
+            worker_result_path: jobs_dir.join("result.json"),
+            worker_log_path,
+            worker_status: "not_dispatched".to_string(),
+            worker_kind: "python_reference_worker".to_string(),
+            worker_note: format!(
+                "runtime budget reservation denied before dispatch: {}",
+                budget_capture.reason
+            ),
+            runtime_outcome: "budget_reservation_denied".to_string(),
+        }
+    } else {
+        run_worker_supervisor(root, envelope, decision)?
+    };
     let (
         openclaw_live_probe_path,
         openclaw_live_probe_stream_path,
         openclaw_live_probe_status,
         openclaw_live_probe_note,
     ) = capture_openclaw_live_probe(root, &decision.input_hash)?;
+    if budget_capture.status == "reserved" {
+        budget_capture = if worker_capture.runtime_outcome == "worker_executed" {
+            finalize_runtime_budget(
+                kernel_path,
+                &budget_capture.reservation_id,
+                envelope.estimated_cost_usd,
+                true,
+                "runtime worker completed",
+            )?
+        } else {
+            finalize_runtime_budget(
+                kernel_path,
+                &budget_capture.reservation_id,
+                envelope.estimated_cost_usd,
+                false,
+                &worker_capture.runtime_outcome,
+            )?
+        };
+    }
     let runtime_outcome = worker_capture.runtime_outcome.clone();
     let audit_emission_status = emit_runtime_audit(
         kernel_path,
@@ -685,7 +759,12 @@ pub fn capture_runtime_execution(
         &worker_capture,
     )?;
     let reference_decision = if reference.allowed { "allow" } else { "deny" }.to_string();
-    let parity_status = if reference_decision == decision.overall_decision {
+    let effective_runtime_decision = if worker_capture.runtime_outcome == "budget_reservation_denied" {
+        "deny".to_string()
+    } else {
+        decision.overall_decision.clone()
+    };
+    let parity_status = if reference_decision == effective_runtime_decision {
         "match".to_string()
     } else {
         "divergence".to_string()
@@ -790,6 +869,9 @@ pub fn capture_runtime_execution(
         resource: decision.resource.clone(),
         estimated_cost_usd: decision.estimated_cost_usd,
         runtime_outcome,
+        budget_reservation_id: budget_capture.reservation_id.clone(),
+        budget_reservation_status: budget_capture.status.clone(),
+        budget_reservation_reason: budget_capture.reason.clone(),
         worker_status: worker_capture.worker_status,
         worker_kind: worker_capture.worker_kind,
         worker_note: worker_capture.worker_note,
@@ -866,6 +948,279 @@ pub fn capture_runtime_execution(
         },
     )?;
     Ok(capture)
+}
+
+fn artifact_spec(
+    artifact_kind: &str,
+    label: &str,
+    path: &Path,
+    source_event_id: &str,
+    job_id: &str,
+    execution_id: &str,
+    note: &str,
+) -> ArtifactRefSpec {
+    ArtifactRefSpec {
+        artifact_kind: artifact_kind.to_string(),
+        label: label.to_string(),
+        path: path.display().to_string(),
+        source_event_id: source_event_id.to_string(),
+        job_id: job_id.to_string(),
+        execution_id: execution_id.to_string(),
+        content_sha256: "unverified_local".to_string(),
+        note: note.to_string(),
+    }
+}
+
+fn runtime_event_for_capture(capture: &RuntimeExecutionCapture) -> RuntimeEventV1 {
+    let job_id = canonical_job_id(
+        &capture.org_id,
+        &capture.agent_id,
+        &capture.action_type,
+        &capture.input_hash,
+    );
+    let execution_id = canonical_execution_id(&job_id, &capture.effective_stage, &capture.runtime_outcome);
+    let decision_id = canonical_decision_id(&job_id, &capture.effective_stage, &capture.overall_decision);
+    let parity_id = canonical_parity_id(&job_id, &execution_id, &capture.parity_status);
+    let audit_id = canonical_audit_id(&job_id, &execution_id, &capture.action_type);
+    let subject_id = canonical_envelope_id(
+        &capture.org_id,
+        &capture.agent_id,
+        &capture.action_type,
+        &capture.input_hash,
+    );
+    let source_event_id = canonical_event_id(
+        &capture.org_id,
+        &capture.agent_id,
+        &capture.action_type,
+        &capture.resource,
+        &capture.runtime_outcome,
+        &capture.effective_stage,
+        &job_id,
+        &execution_id,
+    );
+    let mut artifact_refs = vec![
+        artifact_spec(
+            "execution_receipt",
+            "runtime_execution",
+            &capture.execution_path,
+            &source_event_id,
+            &job_id,
+            &execution_id,
+            "runtime execution receipt",
+        ),
+        artifact_spec(
+            "decision_receipt",
+            "runtime_decision",
+            &capture.decision_path,
+            &source_event_id,
+            &job_id,
+            &execution_id,
+            "pre-execution decision artifact",
+        ),
+        artifact_spec(
+            "audit_log",
+            "runtime_audit",
+            &capture.audit_log_path,
+            &source_event_id,
+            &job_id,
+            &execution_id,
+            &format!("kernel-owned runtime audit status={}", capture.audit_emission_status),
+        ),
+        artifact_spec(
+            "parity_stream",
+            "runtime_parity_stream",
+            &capture.parity_stream_path,
+            &source_event_id,
+            &job_id,
+            &execution_id,
+            &format!("parity_status={}", capture.parity_status),
+        ),
+        artifact_spec(
+            "parity_report",
+            "runtime_parity_report",
+            &capture.parity_report_path,
+            &source_event_id,
+            &job_id,
+            &execution_id,
+            &capture.parity_reason,
+        ),
+        artifact_spec(
+            "worker_request",
+            "worker_request",
+            &capture.worker_request_path,
+            &source_event_id,
+            &job_id,
+            &execution_id,
+            "worker dispatch envelope",
+        ),
+        artifact_spec(
+            "worker_result",
+            "worker_result",
+            &capture.worker_result_path,
+            &source_event_id,
+            &job_id,
+            &execution_id,
+            &format!("worker_status={}", capture.worker_status),
+        ),
+        artifact_spec(
+            "worker_log",
+            "worker_log",
+            &capture.worker_log_path,
+            &source_event_id,
+            &job_id,
+            &execution_id,
+            &capture.worker_note,
+        ),
+    ];
+    if let Some(path) = capture.openclaw_live_probe_path.as_ref() {
+        artifact_refs.push(artifact_spec(
+            "openclaw_live_probe",
+            "openclaw_live_probe",
+            path,
+            &source_event_id,
+            &job_id,
+            &execution_id,
+            &capture.openclaw_live_probe_note,
+        ));
+    }
+    if let Some(path) = capture.openclaw_live_probe_stream_path.as_ref() {
+        artifact_refs.push(artifact_spec(
+            "openclaw_live_probe_stream",
+            "openclaw_live_probe_stream",
+            path,
+            &source_event_id,
+            &job_id,
+            &execution_id,
+            "live OpenClaw probe stream entries",
+        ));
+    }
+    RuntimeEventSpec {
+        truth_class: "experimental_runtime_local".to_string(),
+        org_id: capture.org_id.clone(),
+        agent_id: capture.agent_id.clone(),
+        action_type: capture.action_type.clone(),
+        resource: capture.resource.clone(),
+        outcome: capture.runtime_outcome.clone(),
+        stage: capture.effective_stage.clone(),
+        source: "loom_runtime_execute".to_string(),
+        subject_kind: "action_envelope".to_string(),
+        subject_id,
+        job_id,
+        execution_id,
+        decision_id,
+        parity_id,
+        audit_id,
+        note: "runtime execution receipt with canonical proof identifiers".to_string(),
+        artifact_refs,
+    }
+    .into_event()
+}
+
+fn runtime_event_for_job(job: &JobSnapshot) -> RuntimeEventV1 {
+    let job_id = canonical_job_id(&job.org_id, &job.agent_id, &job.action_type, &job.job_id);
+    let execution_id = canonical_execution_id(&job_id, &job.stage, &job.runtime_outcome);
+    let decision_id = canonical_decision_id(&job_id, &job.stage, &job.status);
+    let parity_id = canonical_parity_id(
+        &job_id,
+        &execution_id,
+        if job.parity_report_path.is_some() { "linked" } else { "missing" },
+    );
+    let audit_id = canonical_audit_id(&job_id, &execution_id, &job.action_type);
+    let subject_id = canonical_envelope_id(&job.org_id, &job.agent_id, &job.action_type, &job.job_id);
+    let source_event_id = canonical_event_id(
+        &job.org_id,
+        &job.agent_id,
+        &job.action_type,
+        &job.resource,
+        &job.runtime_outcome,
+        &job.stage,
+        &job_id,
+        &execution_id,
+    );
+    let mut artifact_refs = vec![artifact_spec(
+        "job_snapshot",
+        "job_snapshot",
+        &job.job_path,
+        &source_event_id,
+        &job_id,
+        &execution_id,
+        &job.note,
+    )];
+    if let Some(path) = job.queue_path.as_ref() {
+        artifact_refs.push(artifact_spec(
+            "queue_entry",
+            "queue_entry",
+            path,
+            &source_event_id,
+            &job_id,
+            &execution_id,
+            "queue artifact for this job",
+        ));
+    }
+    if let Some(path) = job.decision_path.as_ref() {
+        artifact_refs.push(artifact_spec(
+            "decision_receipt",
+            "job_decision",
+            path,
+            &source_event_id,
+            &job_id,
+            &execution_id,
+            "decision artifact linked from job ledger",
+        ));
+    }
+    if let Some(path) = job.execution_path.as_ref() {
+        artifact_refs.push(artifact_spec(
+            "execution_receipt",
+            "job_execution",
+            path,
+            &source_event_id,
+            &job_id,
+            &execution_id,
+            "execution artifact linked from job ledger",
+        ));
+    }
+    if let Some(path) = job.audit_log_path.as_ref() {
+        artifact_refs.push(artifact_spec(
+            "audit_log",
+            "job_audit",
+            path,
+            &source_event_id,
+            &job_id,
+            &execution_id,
+            "kernel-owned runtime audit linked from job ledger",
+        ));
+    }
+    if let Some(path) = job.parity_report_path.as_ref() {
+        artifact_refs.push(artifact_spec(
+            "parity_report",
+            "job_parity",
+            path,
+            &source_event_id,
+            &job_id,
+            &execution_id,
+            "parity report linked from job ledger",
+        ));
+    }
+    RuntimeEventSpec {
+        truth_class: "experimental_runtime_job_ledger".to_string(),
+        org_id: job.org_id.clone(),
+        agent_id: job.agent_id.clone(),
+        action_type: job.action_type.clone(),
+        resource: job.resource.clone(),
+        outcome: job.status.clone(),
+        stage: job.stage.clone(),
+        source: "loom_runtime_job_ledger".to_string(),
+        subject_kind: "job_snapshot".to_string(),
+        subject_id,
+        job_id,
+        execution_id,
+        decision_id,
+        parity_id,
+        audit_id,
+        note: "job ledger view with canonical proof identifiers".to_string(),
+        artifact_refs,
+    }
+    .into_event()
 }
 
 pub fn enqueue_action(
@@ -1986,8 +2341,9 @@ pub fn render_runtime_execution_human(capture: &RuntimeExecutionCapture) -> Stri
         .and_then(Path::parent)
         .map(|path| path.display().to_string())
         .unwrap_or_else(|| "(unknown)".to_string());
+    let event = runtime_event_for_capture(capture);
     format!(
-        "Meridian Loom // RUNTIME EXECUTE\n=================================\nphase:       experimental runtime rehearsal\nboundary:    local governed supervisor path is real; hosted runtime replacement is not\n\nDecision\n========\nagent_id:            {}\norg_id:              {}\naction_type:         {}\nresource:            {}\ninput_hash:          {}\nestimated_cost_usd:  {:.4}\noverall_decision:    {}\neffective_source:    {}\neffective_stage:     {}\nreference_decision:  {}\nreference_stage:     {}\nruntime_outcome:     {}\nworker_status:       {}\nworker_kind:         {}\nworker_note:         {}\nparity_status:       {}\nparity_reason:       {}\n\nworker supervisor artifacts\n===========================\nworker_request:      {}\nworker_result:       {}\nworker_log:          {}\n\naudit / parity artifacts\n========================\nexecution_path:      {}\ndecision_path:       {}\naudit_log:           {} ({})\nparity_stream:       {}\nparity_report:       {}\nopenclaw_live_probe: {} ({})\nopenclaw_probe_log:  {}\n\nNext\n====\n1. loom job inspect --job-id {} --root {}\n2. loom parity report --root {}\n3. loom shadow report --root {}\n4. Inspect {} for worker execution details.\n5. Inspect {} for runtime-side audit details.\n",
+        "Meridian Loom // RUNTIME EXECUTE\n=================================\nphase:       experimental runtime rehearsal\nboundary:    local governed supervisor path is real; hosted runtime replacement is not\n\nDecision\n========\nagent_id:            {}\norg_id:              {}\naction_type:         {}\nresource:            {}\ninput_hash:          {}\nestimated_cost_usd:  {:.4}\noverall_decision:    {}\neffective_source:    {}\neffective_stage:     {}\nreference_decision:  {}\nreference_stage:     {}\nruntime_outcome:     {}\nbudget_reservation:  {} {}\nworker_status:       {}\nworker_kind:         {}\nworker_note:         {}\nparity_status:       {}\nparity_reason:       {}\n\n{}\nArtifacts\n=========\n{}\nworker supervisor artifacts\n===========================\nworker_request:      {}\nworker_result:       {}\nworker_log:          {}\n\naudit / parity artifacts\n========================\nexecution_path:      {}\ndecision_path:       {}\naudit_log:           {} ({})\nparity_stream:       {}\nparity_report:       {}\nopenclaw_live_probe: {} ({})\nopenclaw_probe_log:  {}\n\nNext\n====\n1. loom job inspect --job-id {} --root {}\n2. loom parity report --root {}\n3. loom shadow report --root {}\n4. Inspect {} for worker execution details.\n5. Inspect {} for runtime-side audit details.\n",
         capture.agent_id,
         capture.org_id,
         capture.action_type,
@@ -2000,11 +2356,19 @@ pub fn render_runtime_execution_human(capture: &RuntimeExecutionCapture) -> Stri
         capture.reference_decision,
         capture.reference_stage,
         capture.runtime_outcome,
+        capture.budget_reservation_status,
+        if capture.budget_reservation_reason.is_empty() {
+            String::new()
+        } else {
+            format!("({})", capture.budget_reservation_reason)
+        },
         capture.worker_status,
         capture.worker_kind,
         capture.worker_note,
         capture.parity_status,
         capture.parity_reason,
+        render_proof_first_status_human("Proof-first status", &event),
+        render_artifact_refs_human(&event.artifact_refs),
         capture.worker_request_path.display(),
         capture.worker_result_path.display(),
         capture.worker_log_path.display(),
@@ -2035,8 +2399,9 @@ pub fn render_runtime_execution_human(capture: &RuntimeExecutionCapture) -> Stri
 }
 
 pub fn render_runtime_execution_json(capture: &RuntimeExecutionCapture) -> String {
+    let event = runtime_event_for_capture(capture);
     format!(
-        "{{\n  \"status\": \"runtime_execution_captured\",\n  \"execution_path\": {},\n  \"worker_request_path\": {},\n  \"worker_result_path\": {},\n  \"worker_log_path\": {},\n  \"decision_path\": {},\n  \"audit_log_path\": {},\n  \"parity_stream_path\": {},\n  \"parity_report_path\": {},\n  \"openclaw_live_probe_path\": {},\n  \"openclaw_live_probe_stream_path\": {},\n  \"agent_id\": {},\n  \"org_id\": {},\n  \"action_type\": {},\n  \"resource\": {},\n  \"input_hash\": {},\n  \"estimated_cost_usd\": {:.6},\n  \"runtime_outcome\": {},\n  \"worker_status\": {},\n  \"worker_kind\": {},\n  \"worker_note\": {},\n  \"overall_decision\": {},\n  \"effective_source\": {},\n  \"effective_stage\": {},\n  \"reference_decision\": {},\n  \"reference_stage\": {},\n  \"audit_emission_status\": {},\n  \"openclaw_live_probe_status\": {},\n  \"openclaw_live_probe_note\": {},\n  \"parity_status\": {},\n  \"parity_reason\": {},\n  \"note\": \"experimental local supervisor path exists for allow decisions; governed hosted supervisor remains future work\"\n}}\n",
+        "{{\n  \"status\": \"runtime_execution_captured\",\n  \"execution_path\": {},\n  \"worker_request_path\": {},\n  \"worker_result_path\": {},\n  \"worker_log_path\": {},\n  \"decision_path\": {},\n  \"audit_log_path\": {},\n  \"parity_stream_path\": {},\n  \"parity_report_path\": {},\n  \"openclaw_live_probe_path\": {},\n  \"openclaw_live_probe_stream_path\": {},\n  \"agent_id\": {},\n  \"org_id\": {},\n  \"action_type\": {},\n  \"resource\": {},\n  \"input_hash\": {},\n  \"estimated_cost_usd\": {:.6},\n  \"runtime_outcome\": {},\n  \"budget_reservation_id\": {},\n  \"budget_reservation_status\": {},\n  \"budget_reservation_reason\": {},\n  \"worker_status\": {},\n  \"worker_kind\": {},\n  \"worker_note\": {},\n  \"overall_decision\": {},\n  \"effective_source\": {},\n  \"effective_stage\": {},\n  \"reference_decision\": {},\n  \"reference_stage\": {},\n  \"audit_emission_status\": {},\n  \"openclaw_live_probe_status\": {},\n  \"openclaw_live_probe_note\": {},\n  \"parity_status\": {},\n  \"parity_reason\": {},\n  \"event_schema_version\": {},\n  \"event_id\": {},\n  \"job_id\": {},\n  \"execution_id\": {},\n  \"decision_id\": {},\n  \"parity_id\": {},\n  \"audit_id\": {},\n  \"artifact_refs\": {},\n  \"note\": \"experimental local supervisor path exists for allow decisions; governed hosted supervisor remains future work\"\n}}\n",
         json_string(&capture.execution_path.display().to_string()),
         json_string(&capture.worker_request_path.display().to_string()),
         json_string(&capture.worker_result_path.display().to_string()),
@@ -2062,6 +2427,13 @@ pub fn render_runtime_execution_json(capture: &RuntimeExecutionCapture) -> Strin
         json_string(&capture.input_hash),
         capture.estimated_cost_usd,
         json_string(&capture.runtime_outcome),
+        if capture.budget_reservation_id.is_empty() {
+            "null".to_string()
+        } else {
+            json_string(&capture.budget_reservation_id)
+        },
+        json_string(&capture.budget_reservation_status),
+        json_string(&capture.budget_reservation_reason),
         json_string(&capture.worker_status),
         json_string(&capture.worker_kind),
         json_string(&capture.worker_note),
@@ -2075,6 +2447,14 @@ pub fn render_runtime_execution_json(capture: &RuntimeExecutionCapture) -> Strin
         json_string(&capture.openclaw_live_probe_note),
         json_string(&capture.parity_status),
         json_string(&capture.parity_reason),
+        json_string(&event.schema_version),
+        json_string(&event.event_id),
+        json_string(&event.job_id),
+        json_string(&event.execution_id),
+        json_string(&event.decision_id),
+        json_string(&event.parity_id),
+        json_string(&event.audit_id),
+        render_artifact_refs_json(&event.artifact_refs),
     )
 }
 
@@ -2157,8 +2537,9 @@ pub fn render_job_list_json(jobs: &[JobSnapshot]) -> String {
 }
 
 pub fn render_job_inspect_human(job: &JobSnapshot) -> String {
+    let event = runtime_event_for_job(job);
     format!(
-        "Meridian Loom // JOB INSPECT\n=============================\nphase:       experimental runtime-owned job ledger\nboundary:    job lifecycle is locally inspectable; hosted scheduler remains future work\n\nCurrent state\n=============\njob_id:              {}\nstatus:              {}\nstage:               {}\nqueue_bucket:        {}\nqueued_at:           {}\nupdated_at:          {}\nagent_id:            {}\norg_id:              {}\naction_type:         {}\nresource:            {}\nestimated_cost_usd:  {}\nruntime_outcome:     {}\nworker_status:       {}\nnote:                {}\n\nArtifacts\n=========\njob_path:            {}\nqueue_path:          {}\ndecision_path:       {}\nexecution_path:      {}\naudit_log_path:      {}\nparity_report_path:  {}\n\nNext\n====\n1. loom parity report --root {}\n2. loom shadow report --root {}\n3. Inspect {} for the latest persisted job state.\n",
+        "Meridian Loom // JOB INSPECT\n=============================\nphase:       experimental runtime-owned job ledger\nboundary:    job lifecycle is locally inspectable; hosted scheduler remains future work\n\nCurrent state\n=============\njob_id:              {}\nstatus:              {}\nstage:               {}\nqueue_bucket:        {}\nqueued_at:           {}\nupdated_at:          {}\nagent_id:            {}\norg_id:              {}\naction_type:         {}\nresource:            {}\nestimated_cost_usd:  {}\nruntime_outcome:     {}\nworker_status:       {}\nnote:                {}\n\n{}\nArtifacts\n=========\n{}\njob_path:            {}\nqueue_path:          {}\ndecision_path:       {}\nexecution_path:      {}\naudit_log_path:      {}\nparity_report_path:  {}\n\nNext\n====\n1. loom parity report --root {}\n2. loom shadow report --root {}\n3. Inspect {} for the latest persisted job state.\n",
         job.job_id,
         job.status,
         job.stage,
@@ -2173,6 +2554,8 @@ pub fn render_job_inspect_human(job: &JobSnapshot) -> String {
         job.runtime_outcome,
         job.worker_status,
         job.note,
+        render_proof_first_status_human("Proof-first status", &event),
+        render_artifact_refs_human(&event.artifact_refs),
         job.job_path.display(),
         display_optional_path(job.queue_path.as_ref()),
         display_optional_path(job.decision_path.as_ref()),
@@ -2186,8 +2569,17 @@ pub fn render_job_inspect_human(job: &JobSnapshot) -> String {
 }
 
 pub fn render_job_inspect_json(job: &JobSnapshot) -> String {
+    let event = runtime_event_for_job(job);
     format!(
-        "{{\n  \"status\": \"job_snapshot\",\n  {}\n}}\n",
+        "{{\n  \"status\": \"job_snapshot\",\n  \"event_schema_version\": {},\n  \"event_id\": {},\n  \"proof_job_id\": {},\n  \"execution_id\": {},\n  \"decision_id\": {},\n  \"parity_id\": {},\n  \"audit_id\": {},\n  \"artifact_refs\": {},\n  {}\n}}\n",
+        json_string(&event.schema_version),
+        json_string(&event.event_id),
+        json_string(&event.job_id),
+        json_string(&event.execution_id),
+        json_string(&event.decision_id),
+        json_string(&event.parity_id),
+        json_string(&event.audit_id),
+        render_artifact_refs_json(&event.artifact_refs),
         render_job_snapshot_json(job)
             .trim()
             .trim_start_matches('{')
@@ -3155,6 +3547,157 @@ fn capture_openclaw_live_probe(
     ))
 }
 
+fn reserve_runtime_budget(
+    kernel_path: &Path,
+    envelope: &ActionEnvelope,
+    decision: &DecisionCapture,
+) -> ShadowResult<BudgetReservationCapture> {
+    if envelope.estimated_cost_usd <= 0.0 {
+        return Ok(BudgetReservationCapture {
+            reservation_id: String::new(),
+            status: "skipped_zero_cost".to_string(),
+            reason: "no reservation required for zero-cost action".to_string(),
+        });
+    }
+    let kernel_dir = kernel_path.join("kernel");
+    if !kernel_dir.join("treasury.py").exists() {
+        return Ok(BudgetReservationCapture {
+            reservation_id: String::new(),
+            status: "not_available".to_string(),
+            reason: format!("treasury.py not found under {}", kernel_dir.display()),
+        });
+    }
+    let script = r#"import json, sys
+kernel_dir = sys.argv[1]
+org_id = sys.argv[2]
+agent_id = sys.argv[3]
+estimated_cost = float(sys.argv[4])
+action = sys.argv[5]
+resource = sys.argv[6]
+input_hash = sys.argv[7]
+session_id = sys.argv[8]
+sys.path.insert(0, kernel_dir)
+import treasury
+result = treasury.reserve_runtime_budget(
+    agent_id,
+    estimated_cost,
+    org_id=org_id,
+    action=action,
+    resource=resource,
+    context={"input_hash": input_hash, "session_id": session_id},
+    policy_ref="experimental_runtime_rehearsal",
+)
+print(json.dumps(result))
+"#;
+    let output = Command::new("python3")
+        .arg("-c")
+        .arg(script)
+        .arg(&kernel_dir)
+        .arg(&envelope.org_id)
+        .arg(&envelope.agent_id)
+        .arg(format!("{:.6}", envelope.estimated_cost_usd))
+        .arg(&envelope.action_type)
+        .arg(&envelope.resource)
+        .arg(&decision.input_hash)
+        .arg(&envelope.session_id)
+        .output()
+        .map_err(io_err)?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Ok(BudgetReservationCapture {
+            reservation_id: String::new(),
+            status: "reservation_failed".to_string(),
+            reason: if stderr.is_empty() {
+                "runtime budget reservation command failed".to_string()
+            } else {
+                stderr
+            },
+        });
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let allowed = extract_json_bool(&stdout, "\"allowed\"").unwrap_or(false);
+    let reservation_id = extract_json_string(&stdout, "\"reservation_id\"").unwrap_or_default();
+    let reason = extract_json_string(&stdout, "\"reason\"").unwrap_or_else(|| {
+        if allowed { "ok".to_string() } else { "runtime budget reservation denied".to_string() }
+    });
+    Ok(BudgetReservationCapture {
+        reservation_id,
+        status: if allowed { "reserved".to_string() } else { "reservation_denied".to_string() },
+        reason,
+    })
+}
+
+fn finalize_runtime_budget(
+    kernel_path: &Path,
+    reservation_id: &str,
+    actual_cost_usd: f64,
+    commit: bool,
+    reason: &str,
+) -> ShadowResult<BudgetReservationCapture> {
+    if reservation_id.trim().is_empty() {
+        return Ok(BudgetReservationCapture {
+            reservation_id: String::new(),
+            status: "not_requested".to_string(),
+            reason: "no reservation to finalize".to_string(),
+        });
+    }
+    let kernel_dir = kernel_path.join("kernel");
+    if !kernel_dir.join("treasury.py").exists() {
+        return Ok(BudgetReservationCapture {
+            reservation_id: reservation_id.to_string(),
+            status: "not_available".to_string(),
+            reason: format!("treasury.py not found under {}", kernel_dir.display()),
+        });
+    }
+    let script = if commit {
+        r#"import json, sys
+kernel_dir = sys.argv[1]
+reservation_id = sys.argv[2]
+actual_cost = float(sys.argv[3])
+reason = sys.argv[4]
+sys.path.insert(0, kernel_dir)
+import treasury
+print(json.dumps(treasury.commit_runtime_budget(reservation_id, actual_cost, note=reason)))"#
+    } else {
+        r#"import json, sys
+kernel_dir = sys.argv[1]
+reservation_id = sys.argv[2]
+reason = sys.argv[3]
+sys.path.insert(0, kernel_dir)
+import treasury
+print(json.dumps(treasury.release_runtime_budget(reservation_id, reason=reason)))"#
+    };
+    let mut command = Command::new("python3");
+    command.arg("-c").arg(script).arg(&kernel_dir).arg(reservation_id);
+    if commit {
+        command.arg(format!("{:.6}", actual_cost_usd)).arg(reason);
+    } else {
+        command.arg(reason);
+    }
+    let output = command.output().map_err(io_err)?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Ok(BudgetReservationCapture {
+            reservation_id: reservation_id.to_string(),
+            status: if commit { "commit_failed" } else { "release_failed" }.to_string(),
+            reason: if stderr.is_empty() {
+                "runtime budget finalization failed".to_string()
+            } else {
+                stderr
+            },
+        });
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    Ok(BudgetReservationCapture {
+        reservation_id: extract_json_string(&stdout, "\"reservation_id\"").unwrap_or_else(|| reservation_id.to_string()),
+        status: extract_json_string(&stdout, "\"status\"")
+            .unwrap_or_else(|| if commit { "committed".to_string() } else { "released".to_string() }),
+        reason: extract_json_string(&stdout, "\"commit_reason\"")
+            .or_else(|| extract_json_string(&stdout, "\"release_reason\""))
+            .unwrap_or_else(|| reason.to_string()),
+    })
+}
+
 fn emit_kernel_audit_preview(
     kernel_path: &Path,
     audit_preview_log: &Path,
@@ -3237,6 +3780,15 @@ fn emit_runtime_audit(
     worker: &WorkerExecutionCapture,
 ) -> ShadowResult<String> {
     let kernel_dir = kernel_path.join("kernel");
+    let job_id = canonical_job_id(&envelope.org_id, &envelope.agent_id, &envelope.action_type, &decision.input_hash);
+    let execution_id = canonical_execution_id(&job_id, &decision.effective_stage, outcome);
+    let decision_id = canonical_decision_id(&job_id, &decision.effective_stage, &decision.overall_decision);
+    let parity_id = canonical_parity_id(
+        &job_id,
+        &execution_id,
+        if decision.effective_source == "reference_gate" { "match" } else { "divergence" },
+    );
+    let audit_id = canonical_audit_id(&job_id, &execution_id, &envelope.action_type);
     if let Some(parent) = audit_log_path.parent() {
         fs::create_dir_all(parent).map_err(io_err)?;
     }
@@ -3276,6 +3828,18 @@ fn emit_runtime_audit(
             } else {
                 "unknown"
             })
+            .arg("--event_schema_version")
+            .arg("loom.runtime.v1")
+            .arg("--job_id")
+            .arg(&job_id)
+            .arg("--execution_id")
+            .arg(&execution_id)
+            .arg("--decision_id")
+            .arg(&decision_id)
+            .arg("--parity_id")
+            .arg(&parity_id)
+            .arg("--audit_id")
+            .arg(&audit_id)
             .arg("--session_id")
             .arg(&envelope.session_id)
             .output()
@@ -3288,14 +3852,19 @@ fn emit_runtime_audit(
     append_line(
         audit_log_path,
         &format!(
-            "{{\"id\":{},\"timestamp\":{},\"org_id\":{},\"agent_id\":{},\"actor_type\":\"agent\",\"action\":{},\"resource\":{},\"outcome\":{},\"details\":{{\"source\":\"loom_runtime_execute\",\"input_hash\":{},\"estimated_cost_usd\":{:.6},\"effective_source\":{},\"effective_stage\":{},\"reference_stage\":{},\"runtime_outcome\":{},\"worker_status\":{},\"worker_kind\":{},\"experimental\":true}},\"policy_ref\":\"experimental_runtime_rehearsal\"}}\n",
-            json_string(&format!("runtime_{}", &decision.input_hash[..8])),
+            "{{\"id\":{},\"timestamp\":{},\"org_id\":{},\"agent_id\":{},\"actor_type\":\"agent\",\"action\":{},\"resource\":{},\"outcome\":{},\"details\":{{\"source\":\"loom_runtime_execute\",\"event_schema_version\":\"loom.runtime.v1\",\"job_id\":{},\"execution_id\":{},\"decision_id\":{},\"parity_id\":{},\"audit_id\":{},\"input_hash\":{},\"estimated_cost_usd\":{:.6},\"effective_source\":{},\"effective_stage\":{},\"reference_stage\":{},\"runtime_outcome\":{},\"worker_status\":{},\"worker_kind\":{},\"experimental\":true}},\"policy_ref\":\"experimental_runtime_rehearsal\"}}\n",
+            json_string(&audit_id),
             json_string(&timestamp_now()),
             json_string(&envelope.org_id),
             json_string(&envelope.agent_id),
             json_string(&envelope.action_type),
             json_string(&envelope.resource),
             json_string(outcome),
+            json_string(&job_id),
+            json_string(&execution_id),
+            json_string(&decision_id),
+            json_string(&parity_id),
+            json_string(&audit_id),
             json_string(&decision.input_hash),
             envelope.estimated_cost_usd,
             json_string(&decision.effective_source),
@@ -3453,9 +4022,24 @@ fn extract_json_number(section: &str, key: &str) -> Option<f64> {
 }
 
 fn extract_optional_path(section: &str, key: &str) -> Option<PathBuf> {
-    extract_json_string(section, key)
-        .filter(|value| !value.trim().is_empty())
-        .map(PathBuf::from)
+    let idx = section.find(key)?;
+    let after = &section[idx + key.len()..];
+    let colon = after.find(':')?;
+    let rest = after[colon + 1..].trim_start();
+    if rest.starts_with("null") {
+        return None;
+    }
+    if !rest.starts_with('"') {
+        return None;
+    }
+    let remainder = &rest[1..];
+    let end_quote = remainder.find('"')?;
+    let value = remainder[..end_quote].trim();
+    if value.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(value))
+    }
 }
 
 fn json_string(input: &str) -> String {

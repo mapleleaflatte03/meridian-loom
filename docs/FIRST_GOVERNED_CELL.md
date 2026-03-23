@@ -3,6 +3,18 @@
 This tutorial walks through creating your first governed execution cell: a
 complete path from action envelope through queue, supervisor, and job inspection.
 
+## Fast path
+
+If you only want the operational path, run this:
+
+```bash
+./scripts/bootstrap_embedded.sh
+./scripts/rehearse_first_governed_cell.sh
+```
+
+That gets you from a clean checkout to a real governed action rehearsal with
+artifacts on disk. The rest of this document explains what those artifacts are.
+
 ## Prerequisites
 
 You have already run the bootstrap:
@@ -25,13 +37,23 @@ A governed cell is the smallest unit of governed execution in Loom:
 
 Every step leaves an artifact. Every step is inspectable. That is the point.
 
+## Artifact map
+
+| Surface | What it tells you | Where it lands |
+|---|---|---|
+| Envelope | identity, resource, cost, action | `.loom/shadow/decision.json` and runtime request artifacts |
+| Queue | pending work and policy bucket | `.loom/runtime/queue/pending/<policy_class>/` |
+| Job ledger | persisted job lifecycle | `.loom/runtime/jobs/<input_hash>/job.json` |
+| Audit | kernel-owned runtime event trail | `kernel/runtime_audit/loom_runtime_events.jsonl` |
+| Parity | reference vs runtime truth | `.loom/parity/stream.jsonl` and `.loom/parity/latest.json` |
+
 ## Setup
 
 This tutorial uses a fixture-backed kernel so the governance gates have real
 allow/deny behavior without needing the full Meridian Kernel deployment.
 
-The rehearsal script at `scripts/rehearse_first_governed_cell.sh` handles all
-setup automatically. The steps below show what it does and why.
+The rehearsal script at `scripts/rehearse_first_governed_cell.sh` handles the
+full setup automatically. The steps below show the exact sequence.
 
 ### Variables
 
@@ -77,9 +99,8 @@ EOF
 
 Create the agent registry, court, authority, treasury, metering, and adapter
 fixtures. These are minimal Python scripts that Loom calls through the kernel
-contract surface.
-
-(See `scripts/rehearse_first_governed_cell.sh` for the complete fixture setup.)
+contract surface. The rehearsal script creates them for you; the snippets below
+show the important shape only.
 
 ## Step 2: Initialize the workspace
 
@@ -105,7 +126,7 @@ status:      initialized experimental scaffold
 next_step:   loom doctor --root /tmp/loom-first-cell --format human
 ```
 
-**What happened:** Loom created `loom.toml`, the `.loom` state directory, worker
+What happened: Loom created `loom.toml`, the `.loom` state directory, worker
 paths, and the capsule manifest for your org.
 
 ## Step 3: Build an action envelope
@@ -140,7 +161,7 @@ source:              loom_experimental_preflight
 input_hash:          a1b2c3d4e5f67890
 ```
 
-**What happened:** Loom resolved the agent identity from the kernel registry,
+What happened: Loom resolved the agent identity from the kernel registry,
 built a normalized envelope with the action parameters, and computed an input
 hash. The governance checks that will happen later use this envelope.
 
@@ -182,11 +203,11 @@ next_step:            loom job inspect --job-id a1b2c3d4e5f67890 --root <path>
 then:                 loom supervisor run --root <path> --max-jobs 1
 ```
 
-**What happened:** Loom wrote a pending queue file under
+What happened: Loom wrote a pending queue file under
 `.loom/runtime/queue/pending/<policy_class>/` and created a job record under
 `.loom/runtime/jobs/<input_hash>/`. The job status is now `queued`.
 
-**Governance at this step:** The envelope was built and validated. The agent
+Governance at this step: the envelope was built and validated. The agent
 identity was resolved through the kernel registry. No execution happened yet.
 
 ## Step 5: Inspect the queued job
@@ -245,7 +266,7 @@ Processing: a1b2c3d4e5f67890
 Completed: 1 job(s) processed
 ```
 
-**What happened:** The supervisor:
+What happened: the supervisor:
 
 1. Scanned `.loom/runtime/queue/pending/<policy_class>/` for queued actions
 2. For each action, evaluated the governance decision surface:
@@ -258,8 +279,6 @@ Completed: 1 job(s) processed
 6. Updated the parity stream
 
 ## Step 7: Inspect the completed job
-
-First, get the job ID (the input hash from the enqueue step):
 
 ```bash
 ${LOOM} job inspect \
@@ -327,10 +346,16 @@ By completing this tutorial, you proved that:
 This is one governed cell. A real runtime is many governed cells, scheduled,
 isolated, and audited at scale. That is the path Loom is building toward.
 
-## Next steps
+## If you want to continue
 
-- Run `./scripts/rehearse_local_sanction_preview.sh` to see what happens when
-  an agent is denied by governance.
-- Run `./scripts/rehearse_supervisor_watch.sh` to see the bounded supervisor
-  polling loop.
-- Read `docs/LOOM_100_IMPROVEMENTS.md` for the full improvement docket.
+```bash
+./scripts/rehearse_local_sanction_preview.sh
+./scripts/rehearse_supervisor_queue.sh
+./scripts/rehearse_supervisor_watch.sh
+./scripts/rehearse_supervisor_daemon.sh
+```
+
+If you are choosing an everyday operating mode, start with `profiles/solo.toml`
+and move up only when you need more ceremony, approvals, or isolation.
+
+Read `docs/LOOM_100_IMPROVEMENTS.md` for the full improvement docket.
