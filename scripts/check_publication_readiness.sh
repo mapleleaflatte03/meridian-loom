@@ -37,7 +37,8 @@ cargo build --workspace
 
 echo
 echo "== setup rehearsal =="
-./scripts/rehearse_setup.sh >/tmp/meridian-loom-publication-rehearsal.txt
+REHEARSAL_ROOT="$(mktemp -d /tmp/meridian-loom-publication.XXXXXX)"
+./scripts/rehearse_setup.sh "$REHEARSAL_ROOT" >/tmp/meridian-loom-publication-rehearsal.txt
 echo "[OK]   rehearsal transcript refreshed at /tmp/meridian-loom-publication-rehearsal.txt"
 
 echo

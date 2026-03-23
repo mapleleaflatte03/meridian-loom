@@ -7,11 +7,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub type LoomResult<T> = Result<T, String>;
 
 const DEFAULT_STATE_DIR: &str = ".loom";
-const EXPERIMENTAL_PRELIGHT_HOOKS: [&str; 5] = [
+const EXPERIMENTAL_PRELIGHT_HOOKS: [&str; 7] = [
     "agent_identity",
     "action_envelope",
     "cost_attribution",
     "approval_hook",
+    "audit_emission",
+    "sanction_controls",
     "budget_gate",
 ];
 
@@ -60,6 +62,8 @@ pub struct AgentIdentityResolution {
     pub economy_key: String,
     pub approval_required: bool,
     pub max_per_run_usd: Option<f64>,
+    pub restrictions: Vec<String>,
+    pub sanction_decision: String,
     pub runtime_id: String,
     pub runtime_label: String,
     pub bound_org_id: String,
@@ -487,19 +491,35 @@ pub fn resolve_agent_identity(
 
     let runtime_binding = find_named_object(&stdout, "\"runtime_binding\"")
         .ok_or_else(|| "runtime_binding missing from agent record".to_string())?;
+    let agent_id = extract_json_string(&stdout, "\"id\"")
+        .ok_or_else(|| "agent id missing".to_string())?;
+    let agent_name = extract_json_string(&stdout, "\"name\"")
+        .ok_or_else(|| "agent name missing".to_string())?;
+    let org_id = extract_json_string(&stdout, "\"org_id\"")
+        .ok_or_else(|| "org_id missing".to_string())?;
+    let role = extract_json_string(&stdout, "\"role\"").unwrap_or_default();
+    let economy_key = extract_json_string(&stdout, "\"economy_key\"").unwrap_or_default();
+    let approval_required = extract_json_bool(&stdout, "\"approval_required\"").unwrap_or(false);
+    let max_per_run_usd = find_named_object(&stdout, "\"budget\"")
+        .and_then(|budget| extract_json_f64(&budget, "\"max_per_run_usd\""));
+    let restriction_lookup = if economy_key.is_empty() {
+        agent_id.as_str()
+    } else {
+        economy_key.as_str()
+    };
+    let (restrictions, sanction_decision) =
+        query_agent_restrictions(&kernel_path, restriction_lookup, Some(&org_id));
 
     Ok(AgentIdentityResolution {
-        agent_id: extract_json_string(&stdout, "\"id\"")
-            .ok_or_else(|| "agent id missing".to_string())?,
-        agent_name: extract_json_string(&stdout, "\"name\"")
-            .ok_or_else(|| "agent name missing".to_string())?,
-        org_id: extract_json_string(&stdout, "\"org_id\"")
-            .ok_or_else(|| "org_id missing".to_string())?,
-        role: extract_json_string(&stdout, "\"role\"").unwrap_or_default(),
-        economy_key: extract_json_string(&stdout, "\"economy_key\"").unwrap_or_default(),
-        approval_required: extract_json_bool(&stdout, "\"approval_required\"").unwrap_or(false),
-        max_per_run_usd: find_named_object(&stdout, "\"budget\"")
-            .and_then(|budget| extract_json_f64(&budget, "\"max_per_run_usd\"")),
+        agent_id,
+        agent_name,
+        org_id,
+        role,
+        economy_key,
+        approval_required,
+        max_per_run_usd,
+        restrictions,
+        sanction_decision,
         runtime_id: extract_json_string(&runtime_binding, "\"runtime_id\"")
             .ok_or_else(|| "runtime_id missing".to_string())?,
         runtime_label: extract_json_string(&runtime_binding, "\"runtime_label\"").unwrap_or_default(),
@@ -545,9 +565,56 @@ fn run_agent_registry_lookup(
     Ok(stdout)
 }
 
+fn query_agent_restrictions(
+    kernel_path: &Path,
+    agent_lookup: &str,
+    org_hint: Option<&str>,
+) -> (Vec<String>, String) {
+    let kernel_dir = kernel_path.join("kernel");
+    let script = r#"import sys
+kernel_dir = sys.argv[1]
+agent_id = sys.argv[2]
+org_id = sys.argv[3] if len(sys.argv) > 3 and sys.argv[3] else None
+sys.path.insert(0, kernel_dir)
+from court import get_restrictions
+for item in get_restrictions(agent_id, org_id=org_id) or []:
+    print(item)
+"#;
+
+    let mut cmd = Command::new("python3");
+    cmd.arg("-c")
+        .arg(script)
+        .arg(&kernel_dir)
+        .arg(agent_lookup);
+    if let Some(org_id) = org_hint {
+        cmd.arg(org_id);
+    }
+
+    match cmd.output() {
+        Ok(output) if output.status.success() => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let restrictions = stdout
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(|line| line.to_string())
+                .collect::<Vec<_>>();
+            let decision = if restrictions.is_empty() {
+                "clear"
+            } else if restrictions.iter().any(|value| value == "execute") {
+                "restricted_execute"
+            } else {
+                "restricted"
+            };
+            (restrictions, decision.to_string())
+        }
+        _ => (Vec::new(), "unknown".to_string()),
+    }
+}
+
 pub fn render_identity_human(identity: &AgentIdentityResolution) -> String {
     format!(
-        "Meridian Loom agent identity\n============================\nagent_id:            {}\nagent_name:          {}\norg_id:              {}\nrole:                {}\neconomy_key:         {}\napproval_required:   {}\nmax_per_run_usd:     {}\nruntime_id:          {}\nruntime_label:       {}\nbound_org_id:        {}\nboundary_name:       {}\nidentity_model:      {}\nruntime_registered:  {}\nregistration_status: {}\nsource:              {}\n",
+        "Meridian Loom agent identity\n============================\nagent_id:            {}\nagent_name:          {}\norg_id:              {}\nrole:                {}\neconomy_key:         {}\napproval_required:   {}\nmax_per_run_usd:     {}\nrestrictions:        {}\nsanction_decision:   {}\nruntime_id:          {}\nruntime_label:       {}\nbound_org_id:        {}\nboundary_name:       {}\nidentity_model:      {}\nruntime_registered:  {}\nregistration_status: {}\nsource:              {}\n",
         identity.agent_id,
         identity.agent_name,
         identity.org_id,
@@ -558,6 +625,12 @@ pub fn render_identity_human(identity: &AgentIdentityResolution) -> String {
             .max_per_run_usd
             .map(|value| format!("{:.4}", value))
             .unwrap_or_else(|| "(unknown)".to_string()),
+        if identity.restrictions.is_empty() {
+            "(none)".to_string()
+        } else {
+            identity.restrictions.join(", ")
+        },
+        identity.sanction_decision,
         identity.runtime_id,
         identity.runtime_label,
         identity.bound_org_id,
@@ -571,7 +644,7 @@ pub fn render_identity_human(identity: &AgentIdentityResolution) -> String {
 
 pub fn render_identity_json(identity: &AgentIdentityResolution) -> String {
     format!(
-        "{{\n  \"agent_id\": {},\n  \"agent_name\": {},\n  \"org_id\": {},\n  \"role\": {},\n  \"economy_key\": {},\n  \"approval_required\": {},\n  \"max_per_run_usd\": {},\n  \"runtime_id\": {},\n  \"runtime_label\": {},\n  \"bound_org_id\": {},\n  \"boundary_name\": {},\n  \"identity_model\": {},\n  \"runtime_registered\": {},\n  \"registration_status\": {},\n  \"source\": {}\n}}\n",
+        "{{\n  \"agent_id\": {},\n  \"agent_name\": {},\n  \"org_id\": {},\n  \"role\": {},\n  \"economy_key\": {},\n  \"approval_required\": {},\n  \"max_per_run_usd\": {},\n  \"restrictions\": {},\n  \"sanction_decision\": {},\n  \"runtime_id\": {},\n  \"runtime_label\": {},\n  \"bound_org_id\": {},\n  \"boundary_name\": {},\n  \"identity_model\": {},\n  \"runtime_registered\": {},\n  \"registration_status\": {},\n  \"source\": {}\n}}\n",
         json_string(&identity.agent_id),
         json_string(&identity.agent_name),
         json_string(&identity.org_id),
@@ -582,6 +655,8 @@ pub fn render_identity_json(identity: &AgentIdentityResolution) -> String {
             .max_per_run_usd
             .map(|value| format!("{:.6}", value))
             .unwrap_or_else(|| "null".to_string()),
+        render_json_string_array(&identity.restrictions),
+        json_string(&identity.sanction_decision),
         json_string(&identity.runtime_id),
         json_string(&identity.runtime_label),
         json_string(&identity.bound_org_id),
@@ -863,12 +938,12 @@ fn extract_json_literal(section: &str, key: &str) -> Option<String> {
     Some(rest[..end].trim().trim_matches('"').to_string())
 }
 
-fn render_json_string_array(values: &[&str]) -> String {
+fn render_json_string_array<T: AsRef<str>>(values: &[T]) -> String {
     format!(
         "[{}]",
         values
             .iter()
-            .map(|value| json_string(value))
+            .map(|value| json_string(value.as_ref()))
             .collect::<Vec<_>>()
             .join(", ")
     )
@@ -935,6 +1010,8 @@ mod tests {
         assert_eq!(identity.agent_id, "agent_atlas");
         assert_eq!(identity.max_per_run_usd, Some(0.5));
         assert!(!identity.approval_required);
+        assert_eq!(identity.restrictions, vec!["lead".to_string()]);
+        assert_eq!(identity.sanction_decision, "restricted");
         assert_eq!(identity.runtime_id, "local_kernel");
         assert!(identity.runtime_registered);
 
@@ -988,6 +1065,7 @@ mod tests {
         assert_eq!(identity.agent_id, "agent_atlas");
         assert_eq!(identity.org_id, "org_demo");
         assert_eq!(identity.max_per_run_usd, Some(0.5));
+        assert_eq!(identity.restrictions, vec!["lead".to_string()]);
     }
 
     fn temp_path(prefix: &str) -> PathBuf {
@@ -1020,6 +1098,11 @@ mod tests {
             ),
         )
         .expect("write agent_registry");
+        fs::write(
+            kernel_dir.join("court.py"),
+            "def get_restrictions(agent_id, org_id=None):\n    if agent_id in ('atlas', 'agent_atlas'):\n        return ['lead']\n    return []\n",
+        )
+        .expect("write court");
         root
     }
 }

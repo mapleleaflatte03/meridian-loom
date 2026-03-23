@@ -16,11 +16,14 @@ The rehearsal verifies:
 7. `loom agent resolve` resolves a governed agent identity against the kernel registry.
 8. `loom envelope build` constructs a normalized action envelope.
 9. `loom capsule inspect` surfaces the local capsule state boundary.
-10. `loom shadow preflight` captures experimental shadow events for
-    `agent_identity`, `action_envelope`, `cost_attribution`, `approval_hook`,
-    and `budget_gate`.
-11. `loom shadow compare` can verify the comparison surface against captured event logs.
-12. `loom shadow report` surfaces the latest shadow capture or comparison report honestly.
+10. `loom shadow preflight` captures experimental shadow events for all seven
+    contract surfaces.
+11. `audit_emission` is currently exercised as a local audit preview file, not
+    the kernel's canonical audit log.
+12. `sanction_controls` is currently exercised as a restriction snapshot, not
+    native runtime enforcement.
+13. `loom shadow compare` can verify the comparison surface against captured event logs.
+14. `loom shadow report` surfaces the latest shadow capture or comparison report honestly.
 
 ## What the rehearsal does not prove
 

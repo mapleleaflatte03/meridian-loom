@@ -8,10 +8,13 @@ pub type ShadowResult<T> = Result<T, String>;
 #[derive(Clone, Debug, PartialEq)]
 pub struct PreflightCapture {
     pub event_log: PathBuf,
+    pub audit_preview_log: PathBuf,
     pub latest_report: PathBuf,
     pub input_hash: String,
     pub hooks: Vec<String>,
     pub estimated_cost_usd: f64,
+    pub restrictions: Vec<String>,
+    pub sanction_decision: String,
     pub budget_limit_usd: Option<f64>,
     pub budget_gate_decision: String,
     pub approval_decision: String,
@@ -45,9 +48,16 @@ pub fn capture_preflight(
     envelope: &ActionEnvelope,
 ) -> ShadowResult<PreflightCapture> {
     let shadow_dir = ensure_shadow_dir(root)?;
+    let audit_dir = ensure_audit_dir(root)?;
     let event_log = shadow_dir.join("events.jsonl");
+    let audit_preview_log = audit_dir.join("preview.jsonl");
     let latest_report = shadow_dir.join("latest.json");
     let input_hash = envelope_input_hash(envelope);
+    let sanction_decision = if identity.sanction_decision.is_empty() {
+        "unknown"
+    } else {
+        identity.sanction_decision.as_str()
+    };
     let budget_limit_usd = identity.max_per_run_usd;
     let budget_gate_decision = match budget_limit_usd {
         Some(limit) if envelope.estimated_cost_usd <= limit => "allow",
@@ -82,6 +92,19 @@ pub fn capture_preflight(
             json_string(&envelope.action_type),
             json_string(&envelope.resource),
             envelope.estimated_cost_usd,
+            json_string(&input_hash),
+        ),
+    )?;
+    append_line(
+        &event_log,
+        &format!(
+            "{{\"timestamp\":{},\"source\":\"loom_shadow_preflight\",\"hook_name\":\"sanction_controls\",\"decision\":{},\"agent_id\":{},\"org_id\":{},\"runtime_id\":{},\"restrictions\":{},\"input_hash\":{},\"note\":\"experimental restriction snapshot\"}}\n",
+            json_string(&timestamp_now()),
+            json_string(sanction_decision),
+            json_string(&identity.agent_id),
+            json_string(&identity.org_id),
+            json_string(&identity.runtime_id),
+            render_json_string_array(&identity.restrictions),
             json_string(&input_hash),
         ),
     )?;
@@ -125,25 +148,55 @@ pub fn capture_preflight(
             json_string(&input_hash),
         ),
     )?;
+    append_line(
+        &audit_preview_log,
+        &format!(
+            "{{\"id\":{},\"timestamp\":{},\"org_id\":{},\"agent_id\":{},\"actor_type\":\"agent\",\"action\":{},\"resource\":{},\"outcome\":\"simulated_success\",\"details\":{{\"source\":\"loom_shadow_preflight\",\"input_hash\":{},\"estimated_cost_usd\":{:.6},\"experimental\":true}},\"policy_ref\":\"experimental_preflight_preview\"}}\n",
+            json_string(&format!("preview_{}", &input_hash[..8])),
+            json_string(&timestamp_now()),
+            json_string(&envelope.org_id),
+            json_string(&envelope.agent_id),
+            json_string(&envelope.action_type),
+            json_string(&envelope.resource),
+            json_string(&input_hash),
+            envelope.estimated_cost_usd,
+        ),
+    )?;
+    append_line(
+        &event_log,
+        &format!(
+            "{{\"timestamp\":{},\"source\":\"loom_shadow_preflight\",\"hook_name\":\"audit_emission\",\"decision\":\"preview_written\",\"agent_id\":{},\"org_id\":{},\"runtime_id\":{},\"input_hash\":{},\"preview_log\":{},\"note\":\"experimental audit preview written locally\"}}\n",
+            json_string(&timestamp_now()),
+            json_string(&envelope.agent_id),
+            json_string(&envelope.org_id),
+            json_string(&envelope.runtime_id),
+            json_string(&input_hash),
+            json_string(&audit_preview_log.display().to_string()),
+        ),
+    )?;
 
     fs::write(
         &latest_report,
         format!(
-            "{{\n  \"status\": \"preflight_captured\",\n  \"events_compared\": 0,\n  \"divergences\": 0,\n  \"captured_hooks\": [\"agent_identity\", \"action_envelope\", \"cost_attribution\", \"approval_hook\", \"budget_gate\"],\n  \"input_hash\": {},\n  \"estimated_cost_usd\": {:.6},\n  \"budget_limit_usd\": {},\n  \"budget_gate_decision\": {},\n  \"approval_decision\": {},\n  \"event_log\": {},\n  \"note\": \"experimental preflight captured; no primary comparison run yet\"\n}}\n",
+            "{{\n  \"status\": \"preflight_captured\",\n  \"events_compared\": 0,\n  \"divergences\": 0,\n  \"captured_hooks\": [\"agent_identity\", \"action_envelope\", \"cost_attribution\", \"approval_hook\", \"audit_emission\", \"sanction_controls\", \"budget_gate\"],\n  \"input_hash\": {},\n  \"estimated_cost_usd\": {:.6},\n  \"restrictions\": {},\n  \"sanction_decision\": {},\n  \"budget_limit_usd\": {},\n  \"budget_gate_decision\": {},\n  \"approval_decision\": {},\n  \"event_log\": {},\n  \"audit_preview_log\": {},\n  \"note\": \"experimental preflight captured; no primary comparison run yet\"\n}}\n",
             json_string(&input_hash),
             envelope.estimated_cost_usd,
+            render_json_string_array(&identity.restrictions),
+            json_string(sanction_decision),
             budget_limit_usd
                 .map(|value| format!("{:.6}", value))
                 .unwrap_or_else(|| "null".to_string()),
             json_string(budget_gate_decision),
             json_string(approval_decision),
             json_string(&event_log.display().to_string()),
+            json_string(&audit_preview_log.display().to_string()),
         ),
     )
     .map_err(io_err)?;
 
     Ok(PreflightCapture {
         event_log,
+        audit_preview_log,
         latest_report,
         input_hash,
         hooks: vec![
@@ -151,9 +204,13 @@ pub fn capture_preflight(
             "action_envelope".to_string(),
             "cost_attribution".to_string(),
             "approval_hook".to_string(),
+            "audit_emission".to_string(),
+            "sanction_controls".to_string(),
             "budget_gate".to_string(),
         ],
         estimated_cost_usd: envelope.estimated_cost_usd,
+        restrictions: identity.restrictions.clone(),
+        sanction_decision: sanction_decision.to_string(),
         budget_limit_usd,
         budget_gate_decision: budget_gate_decision.to_string(),
         approval_decision: approval_decision.to_string(),
@@ -215,11 +272,18 @@ pub fn compare_logs(
 
 pub fn render_preflight_human(capture: &PreflightCapture) -> String {
     format!(
-        "Shadow preflight capture\n========================\nevent_log:           {}\nlatest_report:       {}\ninput_hash:          {}\nestimated_cost_usd:  {:.4}\nbudget_limit_usd:    {}\nbudget_gate:         {}\napproval_hook:       {}\ncaptured_hooks:      {}\n",
+        "Shadow preflight capture\n========================\nevent_log:           {}\naudit_preview_log:   {}\nlatest_report:       {}\ninput_hash:          {}\nestimated_cost_usd:  {:.4}\nrestrictions:        {}\nsanction_controls:   {}\nbudget_limit_usd:    {}\nbudget_gate:         {}\napproval_hook:       {}\ncaptured_hooks:      {}\n",
         capture.event_log.display(),
+        capture.audit_preview_log.display(),
         capture.latest_report.display(),
         capture.input_hash,
         capture.estimated_cost_usd,
+        if capture.restrictions.is_empty() {
+            "(none)".to_string()
+        } else {
+            capture.restrictions.join(", ")
+        },
+        capture.sanction_decision,
         capture
             .budget_limit_usd
             .map(|value| format!("{:.4}", value))
@@ -232,11 +296,14 @@ pub fn render_preflight_human(capture: &PreflightCapture) -> String {
 
 pub fn render_preflight_json(capture: &PreflightCapture) -> String {
     format!(
-        "{{\n  \"event_log\": {},\n  \"latest_report\": {},\n  \"input_hash\": {},\n  \"estimated_cost_usd\": {:.6},\n  \"budget_limit_usd\": {},\n  \"budget_gate_decision\": {},\n  \"approval_decision\": {},\n  \"captured_hooks\": [\"agent_identity\", \"action_envelope\", \"cost_attribution\", \"approval_hook\", \"budget_gate\"]\n}}\n",
+        "{{\n  \"event_log\": {},\n  \"audit_preview_log\": {},\n  \"latest_report\": {},\n  \"input_hash\": {},\n  \"estimated_cost_usd\": {:.6},\n  \"restrictions\": {},\n  \"sanction_decision\": {},\n  \"budget_limit_usd\": {},\n  \"budget_gate_decision\": {},\n  \"approval_decision\": {},\n  \"captured_hooks\": [\"agent_identity\", \"action_envelope\", \"cost_attribution\", \"approval_hook\", \"audit_emission\", \"sanction_controls\", \"budget_gate\"]\n}}\n",
         json_string(&capture.event_log.display().to_string()),
+        json_string(&capture.audit_preview_log.display().to_string()),
         json_string(&capture.latest_report.display().to_string()),
         json_string(&capture.input_hash),
         capture.estimated_cost_usd,
+        render_json_string_array(&capture.restrictions),
+        json_string(&capture.sanction_decision),
         capture
             .budget_limit_usd
             .map(|value| format!("{:.6}", value))
@@ -293,6 +360,12 @@ fn ensure_shadow_dir(root: &Path) -> ShadowResult<PathBuf> {
     Ok(shadow_dir)
 }
 
+fn ensure_audit_dir(root: &Path) -> ShadowResult<PathBuf> {
+    let audit_dir = root.join(".loom/audit");
+    fs::create_dir_all(&audit_dir).map_err(io_err)?;
+    Ok(audit_dir)
+}
+
 fn append_line(path: &Path, line: &str) -> ShadowResult<()> {
     let mut existing = if path.exists() {
         fs::read_to_string(path).map_err(io_err)?
@@ -341,6 +414,15 @@ fn json_string(input: &str) -> String {
     format!("{:?}", input)
 }
 
+fn render_json_string_array(values: &[String]) -> String {
+    let items = values
+        .iter()
+        .map(|value| json_string(value))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{}]", items)
+}
+
 fn io_err(error: impl std::fmt::Display) -> String {
     error.to_string()
 }
@@ -367,11 +449,15 @@ mod tests {
 
         let capture = capture_preflight(&root, &identity, &envelope).expect("capture");
         assert!(capture.event_log.exists());
+        assert!(capture.audit_preview_log.exists());
+        assert_eq!(capture.sanction_decision, "clear");
+        assert_eq!(capture.restrictions, Vec::<String>::new());
         assert_eq!(capture.budget_gate_decision, "allow");
         assert_eq!(capture.approval_decision, "not_required");
         let report = render_shadow_report(&root).expect("report");
         assert!(report.contains("preflight_captured"));
         assert!(report.contains("budget_gate"));
+        assert!(report.contains("audit_preview_log"));
     }
 
     #[test]
@@ -412,6 +498,8 @@ mod tests {
             economy_key: "atlas".to_string(),
             approval_required: false,
             max_per_run_usd: Some(0.5),
+            restrictions: vec![],
+            sanction_decision: "clear".to_string(),
             runtime_id: "local_kernel".to_string(),
             runtime_label: "Local Kernel Runtime".to_string(),
             bound_org_id: "org_demo".to_string(),
