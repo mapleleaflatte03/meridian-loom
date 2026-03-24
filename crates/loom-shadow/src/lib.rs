@@ -1041,6 +1041,16 @@ pub fn capture_runtime_execution(
     Ok(capture)
 }
 
+struct EventIds {
+    job_id: String,
+    execution_id: String,
+    decision_id: String,
+    parity_id: String,
+    audit_id: String,
+    subject_id: String,
+    source_event_id: String,
+}
+
 fn artifact_spec(
     artifact_kind: &str,
     label: &str,
@@ -1062,7 +1072,7 @@ fn artifact_spec(
     }
 }
 
-fn runtime_event_for_capture(capture: &RuntimeExecutionCapture) -> RuntimeEventV1 {
+fn generate_capture_ids(capture: &RuntimeExecutionCapture) -> EventIds {
     let job_id = canonical_job_id(
         &capture.org_id,
         &capture.agent_id,
@@ -1089,95 +1099,109 @@ fn runtime_event_for_capture(capture: &RuntimeExecutionCapture) -> RuntimeEventV
         &job_id,
         &execution_id,
     );
+
+    EventIds {
+        job_id,
+        execution_id,
+        decision_id,
+        parity_id,
+        audit_id,
+        subject_id,
+        source_event_id,
+    }
+}
+
+fn runtime_event_for_capture(capture: &RuntimeExecutionCapture) -> RuntimeEventV1 {
+    let ids = generate_capture_ids(capture);
     let mut artifact_refs = vec![
         artifact_spec(
             "execution_receipt",
             "runtime_execution",
             &capture.execution_path,
-            &source_event_id,
-            &job_id,
-            &execution_id,
+            &ids.source_event_id,
+            &ids.job_id,
+            &ids.execution_id,
             "runtime execution receipt",
         ),
         artifact_spec(
             "decision_receipt",
             "runtime_decision",
             &capture.decision_path,
-            &source_event_id,
-            &job_id,
-            &execution_id,
+            &ids.source_event_id,
+            &ids.job_id,
+            &ids.execution_id,
             "pre-execution decision artifact",
         ),
         artifact_spec(
             "audit_log",
             "runtime_audit",
             &capture.audit_log_path,
-            &source_event_id,
-            &job_id,
-            &execution_id,
+            &ids.source_event_id,
+            &ids.job_id,
+            &ids.execution_id,
             &format!("kernel-owned runtime audit status={}", capture.audit_emission_status),
         ),
         artifact_spec(
             "parity_stream",
             "runtime_parity_stream",
             &capture.parity_stream_path,
-            &source_event_id,
-            &job_id,
-            &execution_id,
+            &ids.source_event_id,
+            &ids.job_id,
+            &ids.execution_id,
             &format!("parity_status={}", capture.parity_status),
         ),
         artifact_spec(
             "parity_report",
             "runtime_parity_report",
             &capture.parity_report_path,
-            &source_event_id,
-            &job_id,
-            &execution_id,
+            &ids.source_event_id,
+            &ids.job_id,
+            &ids.execution_id,
             &capture.parity_reason,
         ),
         artifact_spec(
             "runtime_event",
             "runtime_event",
             &capture.runtime_event_path,
-            &source_event_id,
-            &job_id,
-            &execution_id,
+            &ids.source_event_id,
+            &ids.job_id,
+            &ids.execution_id,
             "canonical runtime event receipt",
         ),
         artifact_spec(
             "runtime_event_stream",
             "runtime_event_stream",
             &capture.runtime_event_stream_path,
-            &source_event_id,
-            &job_id,
-            &execution_id,
+            &ids.source_event_id,
+            &ids.job_id,
+            &ids.execution_id,
             "runtime event stream entry appended",
         ),
         artifact_spec(
             "worker_request",
             "worker_request",
             &capture.worker_request_path,
-            &source_event_id,
-            &job_id,
-            &execution_id,
+            &ids.source_event_id,
+            &ids.job_id,
+            &ids.execution_id,
             "worker dispatch envelope",
         ),
         artifact_spec(
             "worker_result",
             "worker_result",
             &capture.worker_result_path,
-            &source_event_id,
-            &job_id,
-            &execution_id,
+            &ids.source_event_id,
+            &ids.job_id,
+            &ids.execution_id,
             &format!("worker_status={}", capture.worker_status),
         ),
         artifact_spec(
             "worker_log",
             "worker_log",
             &capture.worker_log_path,
-            &source_event_id,
-            &job_id,
-            &execution_id,
+            &ids.source_event_id,
+            &ids.job_id,
+            &ids.execution_id,
             &capture.worker_note,
         ),
     ];
@@ -1186,9 +1210,9 @@ fn runtime_event_for_capture(capture: &RuntimeExecutionCapture) -> RuntimeEventV
             "openclaw_live_probe",
             "openclaw_live_probe",
             path,
-            &source_event_id,
-            &job_id,
-            &execution_id,
+            &ids.source_event_id,
+            &ids.job_id,
+            &ids.execution_id,
             &capture.openclaw_live_probe_note,
         ));
     }
@@ -1197,9 +1221,9 @@ fn runtime_event_for_capture(capture: &RuntimeExecutionCapture) -> RuntimeEventV
             "openclaw_live_probe_stream",
             "openclaw_live_probe_stream",
             path,
-            &source_event_id,
-            &job_id,
-            &execution_id,
+            &ids.source_event_id,
+            &ids.job_id,
+            &ids.execution_id,
             "live OpenClaw probe stream entries",
         ));
     }
@@ -1213,19 +1237,19 @@ fn runtime_event_for_capture(capture: &RuntimeExecutionCapture) -> RuntimeEventV
         stage: capture.effective_stage.clone(),
         source: "loom_runtime_execute".to_string(),
         subject_kind: "action_envelope".to_string(),
-        subject_id,
-        job_id,
-        execution_id,
-        decision_id,
-        parity_id,
-        audit_id,
+        subject_id: ids.subject_id,
+        job_id: ids.job_id,
+        execution_id: ids.execution_id,
+        decision_id: ids.decision_id,
+        parity_id: ids.parity_id,
+        audit_id: ids.audit_id,
         note: "runtime execution receipt with canonical proof identifiers".to_string(),
         artifact_refs,
     }
     .into_event()
 }
 
-fn runtime_event_for_job(job: &JobSnapshot) -> RuntimeEventV1 {
+fn generate_job_ids(job: &JobSnapshot) -> EventIds {
     let job_id = canonical_job_id(&job.org_id, &job.agent_id, &job.action_type, &job.job_id);
     let execution_id = canonical_execution_id(&job_id, &job.stage, &job.runtime_outcome);
     let decision_id = canonical_decision_id(&job_id, &job.stage, &job.status);
@@ -1246,13 +1270,27 @@ fn runtime_event_for_job(job: &JobSnapshot) -> RuntimeEventV1 {
         &job_id,
         &execution_id,
     );
+
+    EventIds {
+        job_id,
+        execution_id,
+        decision_id,
+        parity_id,
+        audit_id,
+        subject_id,
+        source_event_id,
+    }
+}
+
+fn runtime_event_for_job(job: &JobSnapshot) -> RuntimeEventV1 {
+    let ids = generate_job_ids(job);
     let mut artifact_refs = vec![artifact_spec(
         "job_snapshot",
         "job_snapshot",
         &job.job_path,
-        &source_event_id,
-        &job_id,
-        &execution_id,
+        &ids.source_event_id,
+        &ids.job_id,
+        &ids.execution_id,
         &job.note,
     )];
     if let Some(path) = job.queue_path.as_ref() {
@@ -1260,9 +1298,9 @@ fn runtime_event_for_job(job: &JobSnapshot) -> RuntimeEventV1 {
             "queue_entry",
             "queue_entry",
             path,
-            &source_event_id,
-            &job_id,
-            &execution_id,
+            &ids.source_event_id,
+            &ids.job_id,
+            &ids.execution_id,
             "queue artifact for this job",
         ));
     }
@@ -1271,9 +1309,9 @@ fn runtime_event_for_job(job: &JobSnapshot) -> RuntimeEventV1 {
             "decision_receipt",
             "job_decision",
             path,
-            &source_event_id,
-            &job_id,
-            &execution_id,
+            &ids.source_event_id,
+            &ids.job_id,
+            &ids.execution_id,
             "decision artifact linked from job ledger",
         ));
     }
@@ -1282,9 +1320,9 @@ fn runtime_event_for_job(job: &JobSnapshot) -> RuntimeEventV1 {
             "execution_receipt",
             "job_execution",
             path,
-            &source_event_id,
-            &job_id,
-            &execution_id,
+            &ids.source_event_id,
+            &ids.job_id,
+            &ids.execution_id,
             "execution artifact linked from job ledger",
         ));
     }
@@ -1293,9 +1331,9 @@ fn runtime_event_for_job(job: &JobSnapshot) -> RuntimeEventV1 {
             "runtime_event",
             "job_runtime_event",
             path,
-            &source_event_id,
-            &job_id,
-            &execution_id,
+            &ids.source_event_id,
+            &ids.job_id,
+            &ids.execution_id,
             "canonical runtime event linked from job ledger",
         ));
     }
@@ -1304,9 +1342,9 @@ fn runtime_event_for_job(job: &JobSnapshot) -> RuntimeEventV1 {
             "runtime_event_stream",
             "job_runtime_event_stream",
             path,
-            &source_event_id,
-            &job_id,
-            &execution_id,
+            &ids.source_event_id,
+            &ids.job_id,
+            &ids.execution_id,
             "runtime event stream linked from job ledger",
         ));
     }
@@ -1315,9 +1353,9 @@ fn runtime_event_for_job(job: &JobSnapshot) -> RuntimeEventV1 {
             "audit_log",
             "job_audit",
             path,
-            &source_event_id,
-            &job_id,
-            &execution_id,
+            &ids.source_event_id,
+            &ids.job_id,
+            &ids.execution_id,
             "kernel-owned runtime audit linked from job ledger",
         ));
     }
@@ -1326,9 +1364,9 @@ fn runtime_event_for_job(job: &JobSnapshot) -> RuntimeEventV1 {
             "parity_report",
             "job_parity",
             path,
-            &source_event_id,
-            &job_id,
-            &execution_id,
+            &ids.source_event_id,
+            &ids.job_id,
+            &ids.execution_id,
             "parity report linked from job ledger",
         ));
     }
@@ -1342,12 +1380,12 @@ fn runtime_event_for_job(job: &JobSnapshot) -> RuntimeEventV1 {
         stage: job.stage.clone(),
         source: "loom_runtime_job_ledger".to_string(),
         subject_kind: "job_snapshot".to_string(),
-        subject_id,
-        job_id,
-        execution_id,
-        decision_id,
-        parity_id,
-        audit_id,
+        subject_id: ids.subject_id,
+        job_id: ids.job_id,
+        execution_id: ids.execution_id,
+        decision_id: ids.decision_id,
+        parity_id: ids.parity_id,
+        audit_id: ids.audit_id,
         note: if job.budget_reservation_status.is_empty() {
             "job ledger view with canonical proof identifiers".to_string()
         } else {
@@ -6707,6 +6745,56 @@ mod tests {
         assert!(parity.contains("Runtime event latest"));
         assert!(parity.contains("OpenClaw live probe stream"));
         assert!(parity.contains("\"parity_status\": \"match\""));
+    }
+
+    #[test]
+    fn test_generate_capture_ids() {
+        let capture = RuntimeExecutionCapture {
+            execution_path: PathBuf::new(),
+            runtime_event_path: PathBuf::new(),
+            runtime_event_stream_path: PathBuf::new(),
+            worker_request_path: PathBuf::new(),
+            worker_result_path: PathBuf::new(),
+            worker_log_path: PathBuf::new(),
+            audit_log_path: PathBuf::new(),
+            parity_stream_path: PathBuf::new(),
+            parity_report_path: PathBuf::new(),
+            openclaw_live_probe_path: None,
+            openclaw_live_probe_stream_path: None,
+            decision_path: PathBuf::new(),
+            input_hash: "test_hash".to_string(),
+            agent_id: "agent_test".to_string(),
+            org_id: "org_test".to_string(),
+            action_type: "action_test".to_string(),
+            resource: "resource_test".to_string(),
+            estimated_cost_usd: 0.0,
+            runtime_outcome: "outcome_test".to_string(),
+            budget_reservation_id: "".to_string(),
+            budget_reservation_status: "".to_string(),
+            budget_reservation_reason: "".to_string(),
+            worker_status: "".to_string(),
+            worker_kind: "".to_string(),
+            worker_note: "".to_string(),
+            overall_decision: "decision_test".to_string(),
+            effective_source: "".to_string(),
+            effective_stage: "stage_test".to_string(),
+            reference_decision: "".to_string(),
+            reference_stage: "".to_string(),
+            audit_emission_status: "".to_string(),
+            openclaw_live_probe_status: "".to_string(),
+            openclaw_live_probe_note: "".to_string(),
+            parity_status: "parity_test".to_string(),
+            parity_reason: "".to_string(),
+        };
+
+        let ids = generate_capture_ids(&capture);
+        assert!(ids.job_id.starts_with("job::"));
+        assert!(ids.execution_id.starts_with("execution::"));
+        assert!(ids.decision_id.starts_with("decision::"));
+        assert!(ids.parity_id.starts_with("parity::"));
+        assert!(ids.audit_id.starts_with("audit::"));
+        assert!(ids.subject_id.starts_with("envelope::"));
+        assert!(ids.source_event_id.starts_with("loom_runtime_v1::") || ids.source_event_id.starts_with("loom.runtime.v1::"));
     }
 
     #[test]
