@@ -1,10 +1,13 @@
 use loom_core::{
-    build_action_envelope, envelope_input_hash, ensure_runtime_worker_scaffold,
-    evaluate_reference_gates, kernel_path_for, preview_local_sanction_controls, read_config,
-    resolve_agent_identity, runtime_worker_entry, ActionEnvelope, AgentIdentityResolution, Config,
-    ReferenceGateCheck,
+    build_action_envelope, build_action_envelope_with_options, enforce_sanction_controls, envelope_input_hash,
+    ensure_runtime_worker_scaffold, evaluate_reference_gates, kernel_path_for,
+    preview_local_sanction_controls, read_config, resolve_agent_identity, runtime_worker_entry,
+    capabilities::{resolve_capability_for_request, CapabilityDescriptor},
+    wasm_host::{run_wasm_guest, WasmExecutionRequest, WasmGuestSource, WasmHostBuilder},
+    ActionEnvelope, AgentIdentityResolution, Config, ReferenceGateCheck,
 };
 mod event_schema;
+mod openclaw_seam;
 mod policy_queue;
 mod reservations;
 mod proof_views;
@@ -22,6 +25,10 @@ use scheduler_state::{
     transition_job, update_job_metadata, JobStatus, SchedulerState,
 };
 use proof_views::render_proof_first_status_human;
+pub use openclaw_seam::{
+    check_delivery_queue, route_delivery, render_routing_result_human, render_routing_result_json,
+    DeliveryRoutingRequest, DeliveryRoutingResult, IntegrationMode,
+};
 use serde_json::Value;
 use std::fs;
 use std::io::{self, ErrorKind, Read, Write};
@@ -132,6 +139,7 @@ pub struct RuntimeExecutionCapture {
     pub reference_decision: String,
     pub reference_stage: String,
     pub audit_emission_status: String,
+    pub economy_hook_status: String,
     pub openclaw_live_probe_status: String,
     pub openclaw_live_probe_note: String,
     pub parity_status: String,
@@ -179,6 +187,9 @@ pub struct JobSnapshot {
     pub event_stream_path: Option<PathBuf>,
     pub audit_log_path: Option<PathBuf>,
     pub parity_report_path: Option<PathBuf>,
+    pub reservation_id: String,
+    pub reservation_state: String,
+    pub attempt_count: u32,
     pub note: String,
 }
 
@@ -267,6 +278,9 @@ pub struct SupervisorDaemonSnapshot {
 pub struct RuntimeServiceSnapshot {
     pub root: PathBuf,
     pub service_dir: PathBuf,
+    pub service_lock_path: PathBuf,
+    pub metrics_path: PathBuf,
+    pub config_path: PathBuf,
     pub socket_path: PathBuf,
     pub http_address: String,
     pub http_token_required: bool,
@@ -287,6 +301,7 @@ pub struct RuntimeServiceSnapshot {
     pub max_jobs: usize,
     pub max_iterations: usize,
     pub iterations_completed: usize,
+    pub requests_received: usize,
     pub submitted: usize,
     pub processed: usize,
     pub allowed: usize,
@@ -694,14 +709,15 @@ pub fn capture_decision(
     reference: &ReferenceGateCheck,
 ) -> ShadowResult<DecisionCapture> {
     let decision_path = ensure_shadow_dir(root)?.join("decision.json");
+    let sanction = enforce_sanction_controls(identity);
     let local_preview = preview_local_sanction_controls(identity);
     let (overall_decision, effective_source, effective_stage, effective_reason) =
-        if !local_preview.allowed {
+        if !sanction.allowed {
             (
-                "deny".to_string(),
-                "local_sanction_preview".to_string(),
-                "sanction_controls_preview".to_string(),
-                local_preview.reason.clone(),
+                sanction.decision.clone(),
+                "sanction_enforcement".to_string(),
+                "sanction_controls".to_string(),
+                sanction.reason.clone(),
             )
         } else if reference.allowed {
             (
@@ -839,6 +855,13 @@ pub fn capture_runtime_execution(
         &worker_capture,
         &budget_capture,
     )?;
+    let economy_hook_status = emit_economy_hook(
+        kernel_path,
+        envelope,
+        decision,
+        &runtime_outcome,
+        &budget_capture,
+    );
     let reference_decision = if reference.allowed { "allow" } else { "deny" }.to_string();
     let effective_runtime_decision = if worker_capture.runtime_outcome == "budget_reservation_denied" {
         "deny".to_string()
@@ -964,6 +987,7 @@ pub fn capture_runtime_execution(
         reference_decision,
         reference_stage: decision.reference_stage.clone(),
         audit_emission_status,
+        economy_hook_status: economy_hook_status.unwrap_or_else(|e| format!("error: {}", e)),
         openclaw_live_probe_status,
         openclaw_live_probe_note,
         parity_status,
@@ -1031,6 +1055,9 @@ pub fn capture_runtime_execution(
             event_stream_path: Some(capture.runtime_event_stream_path.clone()),
             audit_log_path: Some(capture.audit_log_path.clone()),
             parity_report_path: Some(capture.parity_report_path.clone()),
+            reservation_id: String::new(),
+            reservation_state: String::new(),
+            attempt_count: 0,
             note: if capture.worker_note.is_empty() {
                 format!("runtime execution {} via {}", capture.runtime_outcome, capture.effective_stage)
             } else {
@@ -1432,7 +1459,7 @@ pub fn enqueue_action(
     fs::write(
         &queue_path,
         format!(
-            "{{\n  \"status\": \"queued\",\n  \"queued_at\": {},\n  \"input_hash\": {},\n  \"policy_class\": {},\n  \"agent_id\": {},\n  \"org_id\": {},\n  \"action_type\": {},\n  \"resource\": {},\n  \"estimated_cost_usd\": {:.6},\n  \"run_id\": {},\n  \"session_id\": {},\n  \"kernel_path\": {}\n}}\n",
+            "{{\n  \"status\": \"queued\",\n  \"queued_at\": {},\n  \"input_hash\": {},\n  \"policy_class\": {},\n  \"agent_id\": {},\n  \"org_id\": {},\n  \"action_type\": {},\n  \"resource\": {},\n  \"capability_name\": {},\n  \"payload_json\": {},\n  \"estimated_cost_usd\": {:.6},\n  \"run_id\": {},\n  \"session_id\": {},\n  \"kernel_path\": {}\n}}\n",
             json_string(&timestamp_now()),
             json_string(&input_hash),
             json_string(policy_class.label()),
@@ -1440,6 +1467,8 @@ pub fn enqueue_action(
             json_string(&envelope.org_id),
             json_string(&envelope.action_type),
             json_string(&envelope.resource),
+            json_string(&envelope.capability_name),
+            json_string(&envelope.payload_json),
             envelope.estimated_cost_usd,
             json_string(&envelope.run_id),
             json_string(&envelope.session_id),
@@ -1488,6 +1517,9 @@ pub fn enqueue_action(
             event_stream_path: None,
             audit_log_path: None,
             parity_report_path: None,
+            reservation_id: String::new(),
+            reservation_state: "none".to_string(),
+            attempt_count: 0,
             note: format!(
                 "queued for local supervisor rehearsal in {} lane",
                 policy_class.label()
@@ -1557,8 +1589,18 @@ pub fn run_supervisor(
 
     for (policy_class, path) in pending.drain(..).take(max_jobs.max(1)) {
         let contents = fs::read_to_string(&path).map_err(io_err)?;
-        let kernel_path_string = extract_json_string(&contents, "\"kernel_path\"")
-            .filter(|value| !value.trim().is_empty())
+        let queue_body = serde_json::from_str::<Value>(&contents).unwrap_or(Value::Null);
+        let kernel_path_string = value_string(queue_body.get("kernel_path"))
+            .trim()
+            .to_string()
+            .split_once('\0')
+            .map(|(head, _)| head.to_string())
+            .unwrap_or_else(|| value_string(queue_body.get("kernel_path")))
+            .trim()
+            .to_string();
+        let kernel_path_string = (!kernel_path_string.is_empty())
+            .then_some(kernel_path_string)
+            .or_else(|| extract_json_string(&contents, "\"kernel_path\""))
             .or_else(|| override_kernel_path.map(|value| value.to_string()))
             .unwrap_or_else(|| kernel_path_for(root, override_kernel_path).map(|p| p.display().to_string()).unwrap_or_default());
         if kernel_path_string.is_empty() {
@@ -1567,21 +1609,94 @@ pub fn run_supervisor(
                 path.display()
             ));
         }
-        let input_hash = extract_json_string(&contents, "\"input_hash\"")
-            .ok_or_else(|| format!("input_hash missing in {}", path.display()))?;
-        let agent_id = extract_json_string(&contents, "\"agent_id\"")
-            .ok_or_else(|| format!("agent_id missing in {}", path.display()))?;
-        let org_id = extract_json_string(&contents, "\"org_id\"")
-            .ok_or_else(|| format!("org_id missing in {}", path.display()))?;
-        let action_type = extract_json_string(&contents, "\"action_type\"")
-            .ok_or_else(|| format!("action_type missing in {}", path.display()))?;
-        let resource = extract_json_string(&contents, "\"resource\"")
-            .ok_or_else(|| format!("resource missing in {}", path.display()))?;
-        let estimated_cost_usd = extract_json_number(&contents, "\"estimated_cost_usd\"")
+        let input_hash = {
+            let value = value_string(queue_body.get("input_hash"));
+            if value.is_empty() {
+                extract_json_string(&contents, "\"input_hash\"")
+                    .ok_or_else(|| format!("input_hash missing in {}", path.display()))?
+            } else {
+                value
+            }
+        };
+        let agent_id = {
+            let value = value_string(queue_body.get("agent_id"));
+            if value.is_empty() {
+                extract_json_string(&contents, "\"agent_id\"")
+                    .ok_or_else(|| format!("agent_id missing in {}", path.display()))?
+            } else {
+                value
+            }
+        };
+        let org_id = {
+            let value = value_string(queue_body.get("org_id"));
+            if value.is_empty() {
+                extract_json_string(&contents, "\"org_id\"")
+                    .ok_or_else(|| format!("org_id missing in {}", path.display()))?
+            } else {
+                value
+            }
+        };
+        let action_type = {
+            let value = value_string(queue_body.get("action_type"));
+            if value.is_empty() {
+                extract_json_string(&contents, "\"action_type\"")
+                    .ok_or_else(|| format!("action_type missing in {}", path.display()))?
+            } else {
+                value
+            }
+        };
+        let resource = {
+            let value = value_string(queue_body.get("resource"));
+            if value.is_empty() {
+                extract_json_string(&contents, "\"resource\"")
+                    .ok_or_else(|| format!("resource missing in {}", path.display()))?
+            } else {
+                value
+            }
+        };
+        let estimated_cost_usd = queue_body
+            .get("estimated_cost_usd")
+            .and_then(Value::as_f64)
+            .or_else(|| extract_json_number(&contents, "\"estimated_cost_usd\""))
             .ok_or_else(|| format!("estimated_cost_usd missing in {}", path.display()))?;
-        let run_id = extract_json_string(&contents, "\"run_id\"").unwrap_or_default();
-        let session_id = extract_json_string(&contents, "\"session_id\"").unwrap_or_default();
-        let policy_label = extract_json_string(&contents, "\"policy_class\"")
+        let run_id = {
+            let value = value_string(queue_body.get("run_id"));
+            if value.is_empty() {
+                extract_json_string(&contents, "\"run_id\"").unwrap_or_default()
+            } else {
+                value
+            }
+        };
+        let session_id = {
+            let value = value_string(queue_body.get("session_id"));
+            if value.is_empty() {
+                extract_json_string(&contents, "\"session_id\"").unwrap_or_default()
+            } else {
+                value
+            }
+        };
+        let capability_name = {
+            let value = value_string(queue_body.get("capability_name"));
+            if value.is_empty() {
+                extract_json_string(&contents, "\"capability_name\"").unwrap_or_default()
+            } else {
+                value
+            }
+        };
+        let payload_json = {
+            let value = value_json_string(queue_body.get("payload_json"));
+            if value.is_empty() {
+                extract_json_string(&contents, "\"payload_json\"").unwrap_or_default()
+            } else {
+                value
+            }
+        };
+        let policy_label = value_string(queue_body.get("policy_class"))
+            .trim()
+            .to_string();
+        let policy_label = (!policy_label.is_empty())
+            .then_some(policy_label)
+            .or_else(|| extract_json_string(&contents, "\"policy_class\""))
             .unwrap_or_else(|| policy_class.label().to_string());
 
         if !scheduler_state.jobs.contains_key(&input_hash) {
@@ -1649,6 +1764,35 @@ pub fn run_supervisor(
                     Some(session_id.as_str())
                 },
             )?;
+            let envelope = if capability_name.is_empty() && payload_json.is_empty() {
+                envelope
+            } else {
+                build_action_envelope_with_options(
+                    root,
+                    Some(&kernel_path_string),
+                    &agent_id,
+                    Some(&org_id),
+                    &action_type,
+                    &resource,
+                    estimated_cost_usd,
+                    if run_id.is_empty() { None } else { Some(run_id.as_str()) },
+                    if session_id.is_empty() {
+                        None
+                    } else {
+                        Some(session_id.as_str())
+                    },
+                    if capability_name.is_empty() {
+                        None
+                    } else {
+                        Some(capability_name.as_str())
+                    },
+                    if payload_json.is_empty() {
+                        None
+                    } else {
+                        Some(payload_json.as_str())
+                    },
+                )?
+            };
             transition_job(&mut scheduler_state, &input_hash, JobStatus::Running)
                 .map_err(|error| format!("failed to mark running for {}: {}", input_hash, error))?;
             update_job_metadata(
@@ -1735,6 +1879,10 @@ pub fn run_supervisor(
                         event_stream_path: Some(capture.runtime_event_stream_path.clone()),
                         audit_log_path: Some(capture.audit_log_path.clone()),
                         parity_report_path: Some(capture.parity_report_path.clone()),
+                        reservation_id: reservation.reservation_id.clone(),
+                        reservation_state: "acked".to_string(),
+                        attempt_count: scheduler_state.jobs.get(&capture.input_hash)
+                            .map(|j| j.attempt_count).unwrap_or(1),
                         note: capture.worker_note.clone(),
                     });
                 snapshot.queue_bucket = format!("processed:{}", policy_label);
@@ -1752,6 +1900,10 @@ pub fn run_supervisor(
                 snapshot.budget_reservation_status = capture.budget_reservation_status.clone();
                 snapshot.budget_reservation_reason = capture.budget_reservation_reason.clone();
                 snapshot.worker_status = capture.worker_status.clone();
+                snapshot.reservation_id = reservation.reservation_id.clone();
+                snapshot.reservation_state = "acked".to_string();
+                snapshot.attempt_count = scheduler_state.jobs.get(&capture.input_hash)
+                    .map(|j| j.attempt_count).unwrap_or(1);
                 snapshot.status = if capture.overall_decision == "allow" {
                     if capture.worker_status == "completed" {
                         "completed".to_string()
@@ -1759,7 +1911,7 @@ pub fn run_supervisor(
                         "failed".to_string()
                     }
                 } else {
-                    "denied".to_string()
+                    capture.overall_decision.clone()
                 };
                 snapshot.note = if capture.worker_note.is_empty() {
                     format!(
@@ -1829,6 +1981,10 @@ pub fn run_supervisor(
                             event_stream_path: None,
                             audit_log_path: None,
                             parity_report_path: None,
+                            reservation_id: reservation.reservation_id.clone(),
+                            reservation_state: "nacked".to_string(),
+                            attempt_count: scheduler_state.jobs.get(&input_hash)
+                                .map(|j| j.attempt_count).unwrap_or(1),
                             note: error,
                         },
                     )?;
@@ -1878,6 +2034,39 @@ pub fn list_jobs(
 
 pub fn inspect_job(root: &Path, job_id: &str) -> ShadowResult<JobSnapshot> {
     read_job_snapshot(root, job_id)
+}
+
+/// Approve a suspended job, moving it back to Queued so the supervisor can re-process it.
+pub fn approve_job(root: &Path, job_id: &str) -> ShadowResult<String> {
+    let mut scheduler_state = load_scheduler_state_or_default(root)?;
+    let job = scheduler_state.jobs.get(job_id)
+        .ok_or_else(|| format!("job {} not found in scheduler state", job_id))?;
+    if job.status != JobStatus::Suspended {
+        return Err(format!(
+            "job {} is in state {:?}, not suspended — only suspended jobs can be approved",
+            job_id, job.status
+        ));
+    }
+    transition_job(&mut scheduler_state, job_id, JobStatus::Queued)
+        .map_err(|e| format!("failed to transition job {} to queued: {}", job_id, e))?;
+    update_job_metadata(
+        &mut scheduler_state,
+        job_id,
+        Some("pending:approved"),
+        Some(None),
+        Some(Some("job approved via loom job approve, re-queued for processing")),
+    )
+    .map_err(|e| format!("failed to update job metadata: {}", e))?;
+    save_scheduler_state_checked(root, &scheduler_state)?;
+    // Also update job snapshot if it exists
+    if let Ok(mut snapshot) = read_job_snapshot(root, job_id) {
+        snapshot.status = "queued".to_string();
+        snapshot.queue_bucket = "pending:approved".to_string();
+        snapshot.updated_at = timestamp_now();
+        snapshot.note = "approved and re-queued for supervisor processing".to_string();
+        write_job_snapshot(root, snapshot)?;
+    }
+    Ok(format!("job {} approved and re-queued", job_id))
 }
 
 pub fn watch_supervisor(
@@ -2391,6 +2580,8 @@ pub fn run_runtime_service_loop(
     ensure_runtime_service_dir(root)?;
     let socket_path = service_socket_path(root, socket_override)?;
     let runtime_state_path = runtime_service_state_path(root)?;
+    let service_lock_path = service_lock_path(root)?;
+    let metrics_path = service_metrics_path(root)?;
     let stop_request_path = service_stop_request_path(root)?;
     let event_log_path = runtime_service_event_log_path(root)?;
     let _ingress_stream_path = runtime_ingress_stream_path(root)?;
@@ -2400,17 +2591,53 @@ pub fn run_runtime_service_loop(
     if stop_request_path.exists() {
         fs::remove_file(&stop_request_path).map_err(io_err)?;
     }
+    if service_lock_path.exists() {
+        let existing = fs::read_to_string(&service_lock_path).unwrap_or_default();
+        let existing_pid = extract_json_number(&existing, "\"pid\"")
+            .map(|value| value as u32)
+            .unwrap_or(0);
+        if existing_pid > 0 && PathBuf::from(format!("/proc/{}", existing_pid)).exists() {
+            return Err(format!(
+                "runtime service already appears to be running with pid {}",
+                existing_pid
+            ));
+        }
+        let _ = fs::remove_file(&service_lock_path);
+    }
     if socket_path.exists() && !socket_path.is_dir() {
         fs::remove_file(&socket_path).map_err(io_err)?;
     }
     if let Some(parent) = socket_path.parent() {
-        fs::create_dir_all(parent).map_err(io_err)?;
+        if parent.starts_with(root) {
+            ensure_private_dir(parent)?;
+        } else {
+            fs::create_dir_all(parent).map_err(io_err)?;
+        }
     }
 
     let listener = match UnixListener::bind(&socket_path) {
         Ok(listener) => {
-            listener.set_nonblocking(true).map_err(io_err)?;
-            Some(listener)
+            match listener.set_nonblocking(true) {
+                Ok(()) => Some(listener),
+                Err(error) if error.kind() == ErrorKind::PermissionDenied => {
+                    append_line(
+                        &event_log_path,
+                        &format!(
+                            "{{\"timestamp\":{},\"session_id\":{},\"status\":\"socket_nonblocking_unavailable\",\"socket_path\":{},\"note\":{}}}\n",
+                            json_string(&timestamp_now()),
+                            json_string(session_id),
+                            json_string(&socket_path.display().to_string()),
+                            json_string(&format!(
+                                "socket ingress disabled because nonblocking mode is unavailable: {}",
+                                error
+                            )),
+                        ),
+                    )?;
+                    let _ = fs::remove_file(&socket_path);
+                    None
+                }
+                Err(error) => return Err(io_err(error)),
+            }
         }
         Err(error) => {
             append_line(
@@ -2464,6 +2691,7 @@ pub fn run_runtime_service_loop(
         .unwrap_or(false);
 
     let mut iterations_completed = 0usize;
+    let mut requests_received = 0usize;
     let mut submitted = 0usize;
     let mut processed = 0usize;
     let mut allowed = 0usize;
@@ -2473,8 +2701,27 @@ pub fn run_runtime_service_loop(
     let mut last_job_id = String::new();
     let mut stop_reason = "max_iterations_completed".to_string();
 
+    fs::write(
+        &service_lock_path,
+        format!(
+            "{{\n  \"status\": \"locked\",\n  \"session_id\": {},\n  \"pid\": {},\n  \"created_at\": {},\n  \"socket_path\": {},\n  \"http_address\": {}\n}}\n",
+            json_string(session_id),
+            pid,
+            json_string(&booted_at),
+            json_string(&socket_path.display().to_string()),
+            if resolved_http_address.is_empty() {
+                "null".to_string()
+            } else {
+                json_string(&resolved_http_address)
+            },
+        ),
+    )
+    .map_err(io_err)?;
+    ensure_private_file(&service_lock_path)?;
+
     write_runtime_service_state(
         &runtime_state_path,
+        &metrics_path,
         &socket_path,
         if resolved_http_address.is_empty() {
             None
@@ -2492,6 +2739,7 @@ pub fn run_runtime_service_loop(
         max_jobs,
         max_iterations,
         iterations_completed,
+        requests_received,
         submitted,
         processed,
         allowed,
@@ -2527,14 +2775,23 @@ pub fn run_runtime_service_loop(
             loop {
                 match listener.accept() {
                     Ok((mut stream, _addr)) => {
+                        let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+                        let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
                         let request_contents = read_stream_string(&mut stream)?;
-                        let reply = handle_runtime_service_request(
+                        let reply = match handle_runtime_service_request(
                             root,
                             override_kernel_path,
                             &socket_path.display().to_string(),
                             "socket",
                             &request_contents,
-                        )?;
+                        ) {
+                            Ok(reply) => reply,
+                            Err(error) => RuntimeServiceReply::bad_request(
+                                "socket",
+                                format!("rejected malformed socket request: {}", error),
+                            ),
+                        };
+                        requests_received += 1;
                         if reply.status == "accepted" {
                             submitted += 1;
                             last_request_id = reply.request_id.clone();
@@ -2571,6 +2828,8 @@ pub fn run_runtime_service_loop(
             loop {
                 match http_listener.accept() {
                     Ok((mut stream, _addr)) => {
+                        let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+                        let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
                         let request_contents = read_http_request_stream(&mut stream)?;
                         let reply = handle_runtime_service_http_request(
                             root,
@@ -2579,6 +2838,7 @@ pub fn run_runtime_service_loop(
                             service_token,
                             &request_contents,
                         )?;
+                        requests_received += 1;
                         if reply.status == "accepted" || reply.status == "commitment_imported" {
                             submitted += 1;
                             last_request_id = reply.request_id.clone();
@@ -2614,13 +2874,24 @@ pub fn run_runtime_service_loop(
 
         for request_path in collect_pending_runtime_ingress_requests(root)? {
             let request_contents = fs::read_to_string(&request_path).map_err(io_err)?;
-            let reply = handle_runtime_service_request(
+            let reply = match handle_runtime_service_request(
                 root,
                 override_kernel_path,
                 &socket_path.display().to_string(),
                 "file_ingress",
                 &request_contents,
-            )?;
+            ) {
+                Ok(reply) => reply,
+                Err(error) => RuntimeServiceReply::bad_request(
+                    "file_ingress",
+                    format!(
+                        "rejected malformed file ingress request {}: {}",
+                        request_path.display(),
+                        error
+                    ),
+                ),
+            };
+            requests_received += 1;
             if reply.status == "accepted" {
                 submitted += 1;
                 last_request_id = reply.request_id.clone();
@@ -2683,6 +2954,7 @@ pub fn run_runtime_service_loop(
         let failed_jobs = count_runtime_queue_entries(root, "failed")?;
         write_runtime_service_state(
             &runtime_state_path,
+            &metrics_path,
             &socket_path,
             if resolved_http_address.is_empty() {
                 None
@@ -2700,6 +2972,7 @@ pub fn run_runtime_service_loop(
             max_jobs,
             max_iterations,
             iterations_completed,
+            requests_received,
             submitted,
             processed,
             allowed,
@@ -2756,6 +3029,7 @@ pub fn run_runtime_service_loop(
     let stopped_at = timestamp_now();
     write_runtime_service_state(
         &runtime_state_path,
+        &metrics_path,
         &socket_path,
         if resolved_http_address.is_empty() {
             None
@@ -2773,6 +3047,7 @@ pub fn run_runtime_service_loop(
         max_jobs,
         max_iterations,
         iterations_completed,
+        requests_received,
         submitted,
         processed,
         allowed,
@@ -2792,6 +3067,9 @@ pub fn run_runtime_service_loop(
     if stop_request_path.exists() {
         fs::remove_file(&stop_request_path).map_err(io_err)?;
     }
+    if service_lock_path.exists() {
+        let _ = fs::remove_file(&service_lock_path);
+    }
 
     runtime_service_status(root, socket_override)
 }
@@ -2803,15 +3081,21 @@ pub fn runtime_service_status(
     let service_dir = ensure_runtime_service_dir(root)?;
     let socket_path = service_socket_path(root, socket_override)?;
     let runtime_state_path = runtime_service_state_path(root)?;
+    let service_lock_path = service_lock_path(root)?;
+    let metrics_path = service_metrics_path(root)?;
     let stop_request_path = service_stop_request_path(root)?;
     let stdout_log_path = service_stdout_log_path(root)?;
     let event_log_path = runtime_service_event_log_path(root)?;
     let ingress_stream_path = runtime_ingress_stream_path(root)?;
+    let config_path = root.join("loom.toml");
 
     if !runtime_state_path.exists() {
         return Ok(RuntimeServiceSnapshot {
             root: root.to_path_buf(),
             service_dir,
+            service_lock_path,
+            metrics_path,
+            config_path,
             socket_path,
             http_address: String::new(),
             http_token_required: false,
@@ -2832,6 +3116,7 @@ pub fn runtime_service_status(
             max_jobs: 0,
             max_iterations: 0,
             iterations_completed: 0,
+            requests_received: 0,
             submitted: 0,
             processed: 0,
             allowed: 0,
@@ -2856,10 +3141,29 @@ pub fn runtime_service_status(
     } else {
         false
     };
+    let recorded_status =
+        extract_json_string(&contents, "\"status\"").unwrap_or_else(|| "unknown".to_string());
+    let derived_status = if running_flag && !alive {
+        "crashed".to_string()
+    } else {
+        recorded_status
+    };
+    let recorded_note = extract_json_string(&contents, "\"note\"").unwrap_or_default();
+    let derived_note = if running_flag && !alive && pid > 0 {
+        format!(
+            "runtime service state claims pid {} is running, but the process is gone; clean stale state before reusing the root",
+            pid
+        )
+    } else {
+        recorded_note
+    };
 
     Ok(RuntimeServiceSnapshot {
         root: root.to_path_buf(),
         service_dir,
+        service_lock_path,
+        metrics_path,
+        config_path,
         socket_path,
         http_address: extract_optional_string(&contents, "\"http_address\"").unwrap_or_default(),
         http_token_required: extract_json_bool(&contents, "\"http_token_required\"").unwrap_or(false),
@@ -2872,7 +3176,7 @@ pub fn runtime_service_status(
         session_id: extract_json_string(&contents, "\"session_id\"").unwrap_or_default(),
         pid,
         running: running_flag && alive,
-        status: extract_json_string(&contents, "\"status\"").unwrap_or_else(|| "unknown".to_string()),
+        status: derived_status,
         updated_at: extract_json_string(&contents, "\"updated_at\"").unwrap_or_default(),
         booted_at: extract_json_string(&contents, "\"booted_at\"").unwrap_or_default(),
         stopped_at: extract_json_string(&contents, "\"stopped_at\"").unwrap_or_default(),
@@ -2886,6 +3190,9 @@ pub fn runtime_service_status(
             .map(|value| value as usize)
             .unwrap_or(0),
         iterations_completed: extract_json_number(&contents, "\"iterations_completed\"")
+            .map(|value| value as usize)
+            .unwrap_or(0),
+        requests_received: extract_json_number(&contents, "\"requests_received\"")
             .map(|value| value as usize)
             .unwrap_or(0),
         submitted: extract_json_number(&contents, "\"submitted\"")
@@ -2914,7 +3221,7 @@ pub fn runtime_service_status(
             .unwrap_or(0),
         last_request_id: extract_json_string(&contents, "\"last_request_id\"").unwrap_or_default(),
         last_job_id: extract_json_string(&contents, "\"last_job_id\"").unwrap_or_default(),
-        note: extract_json_string(&contents, "\"note\"").unwrap_or_default(),
+        note: derived_note,
     })
 }
 
@@ -2931,6 +3238,7 @@ pub fn request_runtime_service_stop(
         ),
     )
     .map_err(io_err)?;
+    ensure_private_file(&stop_request_path)?;
     let mut snapshot = runtime_service_status(root, socket_override)?;
     snapshot.note = format!(
         "{}; stop request recorded at {}",
@@ -2962,13 +3270,15 @@ pub fn submit_runtime_service_action(
         &timestamp_now(),
     ]);
     let request = format!(
-        "{{\"request_type\":{},\"request_id\":{},\"agent_id\":{},\"org_id\":{},\"action_type\":{},\"resource\":{},\"estimated_cost_usd\":{:.6},\"run_id\":{},\"session_id\":{},\"kernel_path\":{}}}\n",
+        "{{\"request_type\":{},\"request_id\":{},\"agent_id\":{},\"org_id\":{},\"action_type\":{},\"resource\":{},\"capability_name\":{},\"payload_json\":{},\"estimated_cost_usd\":{:.6},\"run_id\":{},\"session_id\":{},\"kernel_path\":{}}}\n",
         json_string("submit_action"),
         json_string(&request_id),
         json_string(&envelope.agent_id),
         json_string(&envelope.org_id),
         json_string(&envelope.action_type),
         json_string(&envelope.resource),
+        json_string(&envelope.capability_name),
+        json_string(&envelope.payload_json),
         envelope.estimated_cost_usd,
         json_string(&envelope.run_id),
         json_string(&envelope.session_id),
@@ -3062,7 +3372,7 @@ pub fn submit_runtime_service_action(
     fs::write(
         &ingress_request_path,
         format!(
-            "{{\n  \"status\": \"staged\",\n  \"request_id\": {},\n  \"request_type\": {},\n  \"received_at\": {},\n  \"transport\": \"file_ingress\",\n  \"socket_path\": {},\n  \"agent_id\": {},\n  \"org_id\": {},\n  \"action_type\": {},\n  \"resource\": {},\n  \"estimated_cost_usd\": {:.6},\n  \"run_id\": {},\n  \"session_id\": {},\n  \"kernel_path\": {}\n}}\n",
+            "{{\n  \"status\": \"staged\",\n  \"request_id\": {},\n  \"request_type\": {},\n  \"received_at\": {},\n  \"transport\": \"file_ingress\",\n  \"socket_path\": {},\n  \"agent_id\": {},\n  \"org_id\": {},\n  \"action_type\": {},\n  \"resource\": {},\n  \"capability_name\": {},\n  \"payload_json\": {},\n  \"estimated_cost_usd\": {:.6},\n  \"run_id\": {},\n  \"session_id\": {},\n  \"kernel_path\": {}\n}}\n",
             json_string(&request_id),
             json_string("submit_action"),
             json_string(&timestamp_now()),
@@ -3071,6 +3381,8 @@ pub fn submit_runtime_service_action(
             json_string(&envelope.org_id),
             json_string(&envelope.action_type),
             json_string(&envelope.resource),
+            json_string(&envelope.capability_name),
+            json_string(&envelope.payload_json),
             envelope.estimated_cost_usd,
             json_string(&envelope.run_id),
             json_string(&envelope.session_id),
@@ -3145,6 +3457,44 @@ struct RuntimeServiceReply {
     payload: String,
 }
 
+impl RuntimeServiceReply {
+    fn bad_request(transport: &str, note: String) -> Self {
+        let request_id = canonical_join_runtime(&[transport, "bad-request", &timestamp_now()]);
+        let payload = format!(
+            "{{\"status\":\"bad_request\",\"request_id\":{},\"note\":{}}}\n",
+            json_string(&request_id),
+            json_string(&note),
+        );
+        Self {
+            status: "bad_request".to_string(),
+            transport: transport.to_string(),
+            request_id,
+            job_id: String::new(),
+            note,
+            http_status_code: 400,
+            payload,
+        }
+    }
+
+    fn unsupported_media_type(transport: &str, note: String) -> Self {
+        let request_id = canonical_join_runtime(&[transport, "unsupported-media-type", &timestamp_now()]);
+        let payload = format!(
+            "{{\"status\":\"unsupported_media_type\",\"request_id\":{},\"note\":{}}}\n",
+            json_string(&request_id),
+            json_string(&note),
+        );
+        Self {
+            status: "unsupported_media_type".to_string(),
+            transport: transport.to_string(),
+            request_id,
+            job_id: String::new(),
+            note,
+            http_status_code: 415,
+            payload,
+        }
+    }
+}
+
 fn handle_runtime_service_request(
     root: &Path,
     override_kernel_path: Option<&str>,
@@ -3152,30 +3502,113 @@ fn handle_runtime_service_request(
     transport: &str,
     request_contents: &str,
 ) -> ShadowResult<RuntimeServiceReply> {
-    let request_type = extract_json_string(request_contents, "\"request_type\"")
-        .unwrap_or_else(|| "unknown".to_string());
-    let request_id = extract_json_string(request_contents, "\"request_id\"")
-        .unwrap_or_else(|| canonical_join_runtime(&["ingress", &timestamp_now()]));
+    let request_body = serde_json::from_str::<Value>(request_contents).unwrap_or(Value::Null);
+    let request_type = {
+        let parsed = value_string(request_body.get("request_type"));
+        if parsed.is_empty() {
+            extract_json_string(request_contents, "\"request_type\"")
+                .unwrap_or_else(|| "unknown".to_string())
+        } else {
+            parsed
+        }
+    };
+    let request_id = {
+        let parsed = value_string(request_body.get("request_id"));
+        if parsed.is_empty() {
+            extract_json_string(request_contents, "\"request_id\"")
+                .unwrap_or_else(|| canonical_join_runtime(&["ingress", &timestamp_now()]))
+        } else {
+            parsed
+        }
+    };
 
     match request_type.as_str() {
         "submit_action" => {
-            let agent_id = extract_json_string(request_contents, "\"agent_id\"")
-                .ok_or_else(|| "service request missing agent_id".to_string())?;
-            let org_id = extract_json_string(request_contents, "\"org_id\"")
-                .unwrap_or_else(|| "local_foundry".to_string());
-            let action_type = extract_json_string(request_contents, "\"action_type\"")
-                .ok_or_else(|| "service request missing action_type".to_string())?;
-            let resource = extract_json_string(request_contents, "\"resource\"")
-                .ok_or_else(|| "service request missing resource".to_string())?;
-            let estimated_cost_usd = extract_json_number(request_contents, "\"estimated_cost_usd\"")
+            let agent_id = {
+                let value = value_string(request_body.get("agent_id"));
+                if value.is_empty() {
+                    extract_json_string(request_contents, "\"agent_id\"")
+                        .ok_or_else(|| "service request missing agent_id".to_string())?
+                } else {
+                    value
+                }
+            };
+            let org_id = {
+                let value = value_string(request_body.get("org_id"));
+                if value.is_empty() {
+                    extract_json_string(request_contents, "\"org_id\"")
+                        .unwrap_or_else(|| "local_foundry".to_string())
+                } else {
+                    value
+                }
+            };
+            let action_type = {
+                let value = value_string(request_body.get("action_type"));
+                if value.is_empty() {
+                    extract_json_string(request_contents, "\"action_type\"")
+                        .ok_or_else(|| "service request missing action_type".to_string())?
+                } else {
+                    value
+                }
+            };
+            let resource = {
+                let value = value_string(request_body.get("resource"));
+                if value.is_empty() {
+                    extract_json_string(request_contents, "\"resource\"")
+                        .ok_or_else(|| "service request missing resource".to_string())?
+                } else {
+                    value
+                }
+            };
+            let estimated_cost_usd = request_body
+                .get("estimated_cost_usd")
+                .and_then(Value::as_f64)
+                .or_else(|| extract_json_number(request_contents, "\"estimated_cost_usd\""))
                 .unwrap_or(0.0);
-            let run_id = extract_json_string(request_contents, "\"run_id\"");
-            let session_id = extract_json_string(request_contents, "\"session_id\"");
-            let kernel_path_raw = extract_json_string(request_contents, "\"kernel_path\"")
-                .or_else(|| override_kernel_path.map(|value| value.to_string()))
-                .unwrap_or_default();
+            let run_id = {
+                let value = value_string(request_body.get("run_id"));
+                if value.is_empty() {
+                    extract_json_string(request_contents, "\"run_id\"")
+                } else {
+                    Some(value)
+                }
+            };
+            let session_id = {
+                let value = value_string(request_body.get("session_id"));
+                if value.is_empty() {
+                    extract_json_string(request_contents, "\"session_id\"")
+                } else {
+                    Some(value)
+                }
+            };
+            let capability_name = {
+                let value = value_string(request_body.get("capability_name"));
+                if value.is_empty() {
+                    extract_json_string(request_contents, "\"capability_name\"")
+                } else {
+                    Some(value)
+                }
+            };
+            let payload_json = {
+                let value = value_json_string(request_body.get("payload_json").or_else(|| request_body.get("payload")));
+                if value.is_empty() {
+                    extract_json_string(request_contents, "\"payload_json\"")
+                } else {
+                    Some(value)
+                }
+            };
+            let kernel_path_raw = {
+                let value = value_string(request_body.get("kernel_path"));
+                if value.is_empty() {
+                    extract_json_string(request_contents, "\"kernel_path\"")
+                        .or_else(|| override_kernel_path.map(|value| value.to_string()))
+                        .unwrap_or_default()
+                } else {
+                    value
+                }
+            };
             let effective_kernel_path = kernel_path_for(root, Some(kernel_path_raw.as_str()))?;
-            let envelope = build_action_envelope(
+            let envelope = build_action_envelope_with_options(
                 root,
                 Some(effective_kernel_path.to_string_lossy().as_ref()),
                 &agent_id,
@@ -3185,12 +3618,14 @@ fn handle_runtime_service_request(
                 estimated_cost_usd,
                 run_id.as_deref(),
                 session_id.as_deref(),
+                capability_name.as_deref(),
+                payload_json.as_deref(),
             )?;
             let ingress_request_path = runtime_ingress_request_path(root, &request_id)?;
             fs::write(
                 &ingress_request_path,
                 format!(
-                    "{{\n  \"status\": \"received\",\n  \"request_id\": {},\n  \"request_type\": {},\n  \"received_at\": {},\n  \"transport\": {},\n  \"ingress_target\": {},\n  \"agent_id\": {},\n  \"org_id\": {},\n  \"action_type\": {},\n  \"resource\": {},\n  \"estimated_cost_usd\": {:.6}\n}}\n",
+                    "{{\n  \"status\": \"received\",\n  \"request_id\": {},\n  \"request_type\": {},\n  \"received_at\": {},\n  \"transport\": {},\n  \"ingress_target\": {},\n  \"agent_id\": {},\n  \"org_id\": {},\n  \"action_type\": {},\n  \"resource\": {},\n  \"capability_name\": {},\n  \"payload_json\": {},\n  \"estimated_cost_usd\": {:.6}\n}}\n",
                     json_string(&request_id),
                     json_string(&request_type),
                     json_string(&timestamp_now()),
@@ -3200,6 +3635,8 @@ fn handle_runtime_service_request(
                     json_string(&org_id),
                     json_string(&action_type),
                     json_string(&resource),
+                    json_string(&envelope.capability_name),
+                    json_string(&envelope.payload_json),
                     estimated_cost_usd,
                 ),
             )
@@ -3336,6 +3773,12 @@ fn send_runtime_service_http_request(
     };
     let resolved_path = format!("{}{}", base_path, path);
     let mut stream = TcpStream::connect(host_port).map_err(io_err)?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .map_err(io_err)?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(5)))
+        .map_err(io_err)?;
     let payload = body.unwrap_or("");
     let mut request = format!(
         "{} {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n",
@@ -3364,7 +3807,10 @@ fn handle_runtime_service_http_request(
     service_token: Option<&str>,
     raw_request: &str,
 ) -> ShadowResult<RuntimeServiceReply> {
-    let request = parse_http_request(raw_request)?;
+    let request = match parse_http_request(raw_request) {
+        Ok(request) => request,
+        Err(error) => return Ok(RuntimeServiceReply::bad_request("http", error)),
+    };
     if let Some(expected) = service_token {
         let presented = request
             .authorization
@@ -3388,7 +3834,7 @@ fn handle_runtime_service_http_request(
     }
 
     match (request.method.as_str(), request.path.as_str()) {
-        ("GET", "/status") | ("GET", "/health") => {
+        ("GET", "/status") => {
             let snapshot = runtime_service_status(root, None)?;
             Ok(RuntimeServiceReply {
                 status: "status".to_string(),
@@ -3400,16 +3846,106 @@ fn handle_runtime_service_http_request(
                 payload: render_runtime_service_json(&snapshot),
             })
         }
+        ("GET", "/health") => {
+            let snapshot = runtime_service_status(root, None)?;
+            let health = runtime_service_health(&snapshot);
+            Ok(RuntimeServiceReply {
+                status: "health".to_string(),
+                transport: "http".to_string(),
+                request_id: canonical_join_runtime(&["http", "health", &timestamp_now()]),
+                job_id: snapshot.last_job_id.clone(),
+                note: "service health rendered over local http control plane".to_string(),
+                http_status_code: if health == "healthy" { 200 } else { 503 },
+                payload: render_runtime_service_health_json(&snapshot),
+            })
+        }
+        ("GET", "/metrics") => {
+            let snapshot = runtime_service_status(root, None)?;
+            Ok(RuntimeServiceReply {
+                status: "metrics".to_string(),
+                transport: "http".to_string(),
+                request_id: canonical_join_runtime(&["http", "metrics", &timestamp_now()]),
+                job_id: snapshot.last_job_id.clone(),
+                note: "service metrics rendered over local http control plane".to_string(),
+                http_status_code: 200,
+                payload: render_runtime_service_metrics_json(&snapshot),
+            })
+        }
+        ("GET", "/config") => {
+            let snapshot = runtime_service_status(root, None)?;
+            Ok(RuntimeServiceReply {
+                status: "config".to_string(),
+                transport: "http".to_string(),
+                request_id: canonical_join_runtime(&["http", "config", &timestamp_now()]),
+                job_id: snapshot.last_job_id.clone(),
+                note: "service config rendered over local http control plane".to_string(),
+                http_status_code: 200,
+                payload: render_runtime_service_config_json(root, &snapshot),
+            })
+        }
+        ("GET", path) if path.starts_with("/jobs/") => {
+            let job_id = path.trim_start_matches("/jobs/").trim();
+            if job_id.is_empty() {
+                return Ok(RuntimeServiceReply::bad_request(
+                    "http",
+                    "job id is required for /jobs/<id>".to_string(),
+                ));
+            }
+            match inspect_job(root, job_id) {
+                Ok(job) => Ok(RuntimeServiceReply {
+                    status: "job".to_string(),
+                    transport: "http".to_string(),
+                    request_id: canonical_join_runtime(&["http", "job", job_id, &timestamp_now()]),
+                    job_id: job.job_id.clone(),
+                    note: "runtime job snapshot rendered over local http control plane".to_string(),
+                    http_status_code: 200,
+                    payload: render_job_inspect_json(&job),
+                }),
+                Err(error) => Ok(RuntimeServiceReply {
+                    status: "not_found".to_string(),
+                    transport: "http".to_string(),
+                    request_id: canonical_join_runtime(&["http", "job-not-found", job_id, &timestamp_now()]),
+                    job_id: job_id.to_string(),
+                    note: error.clone(),
+                    http_status_code: 404,
+                    payload: format!(
+                        "{{\"status\":\"not_found\",\"job_id\":{},\"note\":{}}}\n",
+                        json_string(job_id),
+                        json_string(&error),
+                    ),
+                }),
+            }
+        }
         ("POST", "/submit") => {
-            let body = serde_json::from_str::<Value>(&request.body).map_err(|error| error.to_string())?;
+            let content_type = request
+                .content_type
+                .as_deref()
+                .unwrap_or("")
+                .split(';')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_ascii_lowercase();
+            if content_type != "application/json" {
+                return Ok(RuntimeServiceReply::unsupported_media_type(
+                    "http",
+                    "POST /submit requires Content-Type: application/json".to_string(),
+                ));
+            }
+            let body = match serde_json::from_str::<Value>(&request.body) {
+                Ok(body) => body,
+                Err(error) => return Ok(RuntimeServiceReply::bad_request("http", error.to_string())),
+            };
             let payload = format!(
-                "{{\"request_type\":{},\"request_id\":{},\"agent_id\":{},\"org_id\":{},\"action_type\":{},\"resource\":{},\"estimated_cost_usd\":{:.6},\"run_id\":{},\"session_id\":{},\"kernel_path\":{}}}\n",
+                "{{\"request_type\":{},\"request_id\":{},\"agent_id\":{},\"org_id\":{},\"action_type\":{},\"resource\":{},\"capability_name\":{},\"payload_json\":{},\"estimated_cost_usd\":{:.6},\"run_id\":{},\"session_id\":{},\"kernel_path\":{}}}\n",
                 json_string("submit_action"),
                 json_string(&value_string(body.get("request_id"))),
                 json_string(&value_string(body.get("agent_id"))),
                 json_string(&value_string(body.get("org_id"))),
                 json_string(&value_string(body.get("action_type"))),
                 json_string(&value_string(body.get("resource"))),
+                json_string(&value_string(body.get("capability_name"))),
+                json_string(&value_json_string(body.get("payload_json").or_else(|| body.get("payload")))),
                 body.get("estimated_cost_usd").and_then(Value::as_f64).unwrap_or(0.0),
                 json_string(&value_string(body.get("run_id"))),
                 json_string(&value_string(body.get("session_id"))),
@@ -3424,7 +3960,25 @@ fn handle_runtime_service_http_request(
             )
         }
         ("POST", "/import-commitments") => {
-            let body = serde_json::from_str::<Value>(&request.body).map_err(|error| error.to_string())?;
+            let content_type = request
+                .content_type
+                .as_deref()
+                .unwrap_or("")
+                .split(';')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_ascii_lowercase();
+            if content_type != "application/json" {
+                return Ok(RuntimeServiceReply::unsupported_media_type(
+                    "http",
+                    "POST /import-commitments requires Content-Type: application/json".to_string(),
+                ));
+            }
+            let body = match serde_json::from_str::<Value>(&request.body) {
+                Ok(body) => body,
+                Err(error) => return Ok(RuntimeServiceReply::bad_request("http", error.to_string())),
+            };
             let commitments_source = value_string(body.get("commitments_source"));
             let kernel_path = value_string(body.get("kernel_path"));
             if commitments_source.is_empty() {
@@ -3471,6 +4025,146 @@ fn handle_runtime_service_http_request(
                 json_string(&canonical_join_runtime(&["http", "stop", &timestamp_now()])),
             ),
         ),
+        // S3: MCP server adapter — tools/list returns kernel capabilities as MCP tool objects
+        ("POST", "/mcp/tools/list") => {
+            let effective_kernel = kernel_path_for(root, override_kernel_path).ok();
+            let tools = mcp_tools_list(root, effective_kernel.as_deref());
+            let payload = format!(
+                "{{\"jsonrpc\":\"2.0\",\"result\":{{\"tools\":{}}}}}\n",
+                tools,
+            );
+            Ok(RuntimeServiceReply {
+                status: "mcp_tools_list".to_string(),
+                transport: "http".to_string(),
+                request_id: canonical_join_runtime(&["http", "mcp-tools-list", &timestamp_now()]),
+                job_id: String::new(),
+                note: "MCP tools/list response".to_string(),
+                http_status_code: 200,
+                payload,
+            })
+        }
+        // S3: MCP server adapter — tools/call routes to /submit
+        ("POST", "/mcp/tools/call") => {
+            let content_type = request
+                .content_type
+                .as_deref()
+                .unwrap_or("")
+                .split(';')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_ascii_lowercase();
+            if content_type != "application/json" {
+                return Ok(RuntimeServiceReply::unsupported_media_type(
+                    "http",
+                    "POST /mcp/tools/call requires Content-Type: application/json".to_string(),
+                ));
+            }
+            let body = match serde_json::from_str::<Value>(&request.body) {
+                Ok(body) => body,
+                Err(error) => return Ok(RuntimeServiceReply::bad_request("http", error.to_string())),
+            };
+            // MCP tools/call expects: {"name": "tool_name", "arguments": {...}}
+            // or {"params": {"name": "tool_name", "arguments": {...}}}
+            let tool_name = body.get("params")
+                .and_then(|p| p.get("name"))
+                .or_else(|| body.get("name"))
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            let arguments = body.get("params")
+                .and_then(|p| p.get("arguments"))
+                .or_else(|| body.get("arguments"))
+                .cloned()
+                .unwrap_or(Value::Object(Default::default()));
+            match tool_name {
+                "loom_submit" => {
+                    let payload = format!(
+                        "{{\"request_type\":{},\"request_id\":{},\"agent_id\":{},\"org_id\":{},\"action_type\":{},\"resource\":{},\"capability_name\":{},\"payload_json\":{},\"estimated_cost_usd\":{:.6},\"run_id\":{},\"session_id\":{},\"kernel_path\":{}}}\n",
+                        json_string("submit_action"),
+                        json_string(&canonical_join_runtime(&["mcp", "tools-call", &timestamp_now()])),
+                        json_string(&value_string(arguments.get("agent_id"))),
+                        json_string(&value_string(arguments.get("org_id"))),
+                        json_string(&value_string(arguments.get("action_type"))),
+                        json_string(&value_string(arguments.get("resource"))),
+                        json_string(&value_string(arguments.get("capability_name"))),
+                        json_string(&value_json_string(arguments.get("payload_json").or_else(|| arguments.get("payload")))),
+                        arguments.get("estimated_cost_usd").and_then(Value::as_f64).unwrap_or(0.0),
+                        json_string(&value_string(arguments.get("run_id"))),
+                        json_string(&value_string(arguments.get("session_id"))),
+                        json_string(&value_string(arguments.get("kernel_path"))),
+                    );
+                    handle_runtime_service_request(
+                        root,
+                        override_kernel_path,
+                        http_address,
+                        "http",
+                        &payload,
+                    )
+                }
+                "loom_status" => {
+                    let snapshot = runtime_service_status(root, None)?;
+                    let payload = render_runtime_service_json(&snapshot);
+                    Ok(RuntimeServiceReply {
+                        status: "mcp_tool_result".to_string(),
+                        transport: "http".to_string(),
+                        request_id: canonical_join_runtime(&["mcp", "tools-call", "status", &timestamp_now()]),
+                        job_id: String::new(),
+                        note: "loom_status tool result".to_string(),
+                        http_status_code: 200,
+                        payload,
+                    })
+                }
+                "loom_job_inspect" => {
+                    let job_id = value_string(arguments.get("job_id"));
+                    if job_id.is_empty() {
+                        return Ok(RuntimeServiceReply::bad_request("http", "loom_job_inspect requires job_id argument".to_string()));
+                    }
+                    match inspect_job(root, &job_id) {
+                        Ok(snapshot) => {
+                            let payload = render_job_inspect_json(&snapshot);
+                            Ok(RuntimeServiceReply {
+                                status: "mcp_tool_result".to_string(),
+                                transport: "http".to_string(),
+                                request_id: canonical_join_runtime(&["mcp", "tools-call", "job-inspect", &timestamp_now()]),
+                                job_id: job_id.to_string(),
+                                note: "loom_job_inspect tool result".to_string(),
+                                http_status_code: 200,
+                                payload,
+                            })
+                        }
+                        Err(e) => Ok(RuntimeServiceReply::bad_request("http", format!("job inspect failed: {}", e))),
+                    }
+                }
+                _ => {
+                    let payload = format!(
+                        "{{\"error\":\"unknown_tool\",\"tool_name\":{},\"note\":\"available tools: loom_submit, loom_status, loom_job_inspect\"}}\n",
+                        json_string(tool_name),
+                    );
+                    Ok(RuntimeServiceReply {
+                        status: "unknown_tool".to_string(),
+                        transport: "http".to_string(),
+                        request_id: canonical_join_runtime(&["mcp", "tools-call", "error", &timestamp_now()]),
+                        job_id: String::new(),
+                        note: format!("unknown MCP tool: {}", tool_name),
+                        http_status_code: 400,
+                        payload,
+                    })
+                }
+            }
+        }
+        // S4: A2A agent cards
+        ("GET", "/.well-known/agent.json") => {
+            let agent_card = a2a_agent_card(root, override_kernel_path);
+            Ok(RuntimeServiceReply {
+                status: "agent_card".to_string(),
+                transport: "http".to_string(),
+                request_id: canonical_join_runtime(&["http", "a2a-agent-card", &timestamp_now()]),
+                job_id: String::new(),
+                note: "A2A agent card".to_string(),
+                http_status_code: 200,
+                payload: agent_card,
+            })
+        }
         _ => {
             let payload = format!(
                 "{{\"status\":\"not_found\",\"note\":{}}}\n",
@@ -3487,6 +4181,69 @@ fn handle_runtime_service_http_request(
             })
         }
     }
+}
+
+/// S3: Generate MCP tools/list response from kernel capabilities.
+fn mcp_tools_list(root: &Path, _kernel_path: Option<&Path>) -> String {
+    let config = read_config(root).ok();
+    let org_id = config
+        .as_ref()
+        .and_then(|c| Some(c.org_id.clone()))
+        .unwrap_or_else(|| "unknown".to_string());
+    let mut tools = Vec::new();
+    // Core tool: submit an action through the governed pipeline
+    tools.push(format!(
+        concat!(
+            "{{\"name\":\"loom_submit\",\"description\":\"Submit an action through the Meridian Loom governed pipeline. ",
+            "All actions pass through identity resolution, sanction enforcement, budget gate, and audit emission.\",",
+            "\"inputSchema\":{{\"type\":\"object\",\"properties\":{{",
+            "\"agent_id\":{{\"type\":\"string\",\"description\":\"Agent identifier\"}},",
+            "\"org_id\":{{\"type\":\"string\",\"description\":\"Organization identifier\",\"default\":{}}},",
+            "\"action_type\":{{\"type\":\"string\",\"description\":\"Type of action (e.g. research, execute)\"}},",
+            "\"resource\":{{\"type\":\"string\",\"description\":\"Target resource\"}},",
+            "\"estimated_cost_usd\":{{\"type\":\"number\",\"description\":\"Estimated cost in USD\"}}",
+            "}},\"required\":[\"agent_id\",\"action_type\",\"resource\"]}}}}"
+        ),
+        json_string(&org_id),
+    ));
+    // Status tool
+    tools.push(
+        "{\"name\":\"loom_status\",\"description\":\"Get the current status of the Meridian Loom runtime service.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{}}}".to_string()
+    );
+    // Job inspect tool
+    tools.push(
+        "{\"name\":\"loom_job_inspect\",\"description\":\"Inspect a job by ID, showing status, reservation state, and audit trail.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"job_id\":{\"type\":\"string\",\"description\":\"Job identifier\"}},\"required\":[\"job_id\"]}}".to_string()
+    );
+    format!("[{}]", tools.join(","))
+}
+
+/// S4: Generate A2A agent card JSON.
+fn a2a_agent_card(root: &Path, _override_kernel_path: Option<&str>) -> String {
+    let config = read_config(root).ok();
+    let org_id = config
+        .as_ref()
+        .map(|c| c.org_id.clone())
+        .unwrap_or_else(|| "unknown".to_string());
+    format!(
+        concat!(
+            "{{\n",
+            "  \"name\": \"Meridian Loom\",\n",
+            "  \"description\": \"Governance-first execution runtime for operator-scale AI. ",
+            "Policy, economy, and isolation are in the execution loop.\",\n",
+            "  \"url\": \"http://localhost:3120\",\n",
+            "  \"version\": \"0.1.0-alpha.1\",\n",
+            "  \"capabilities\": [\"governed_execution\", \"budget_gate\", \"sanction_enforcement\", \"audit_emission\", \"economy_hook\"],\n",
+            "  \"defaultInputModes\": [\"application/json\"],\n",
+            "  \"defaultOutputModes\": [\"application/json\"],\n",
+            "  \"skills\": [\n",
+            "    {{\"id\": \"submit_action\", \"name\": \"Submit Governed Action\", \"description\": \"Submit an action through the governed pipeline with identity, sanctions, budget, and audit.\"}},\n",
+            "    {{\"id\": \"job_inspect\", \"name\": \"Inspect Job\", \"description\": \"Query the lifecycle state of a job.\"}}\n",
+            "  ],\n",
+            "  \"org_id\": {}\n",
+            "}}\n"
+        ),
+        json_string(&org_id),
+    )
 }
 
 fn collect_pending_runtime_ingress_requests(root: &Path) -> ShadowResult<Vec<PathBuf>> {
@@ -3685,14 +4442,26 @@ fn value_string(value: Option<&Value>) -> String {
         .to_string()
 }
 
+fn value_json_string(value: Option<&Value>) -> String {
+    match value {
+        Some(Value::String(raw)) => raw.trim().to_string(),
+        Some(other) => other.to_string(),
+        None => String::new(),
+    }
+}
+
 fn read_stream_string(stream: &mut UnixStream) -> ShadowResult<String> {
     let mut buffer = String::new();
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
     stream.read_to_string(&mut buffer).map_err(io_err)?;
     Ok(buffer)
 }
 
 fn read_tcp_stream_string(stream: &mut TcpStream) -> ShadowResult<String> {
     let mut buffer = String::new();
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
     stream.read_to_string(&mut buffer).map_err(io_err)?;
     Ok(buffer)
 }
@@ -3762,6 +4531,7 @@ struct HttpRequest {
     path: String,
     body: String,
     authorization: Option<String>,
+    content_type: Option<String>,
 }
 
 fn parse_http_request(raw: &str) -> ShadowResult<HttpRequest> {
@@ -3785,12 +4555,51 @@ fn parse_http_request(raw: &str) -> ShadowResult<HttpRequest> {
         .next()
         .ok_or_else(|| "http request missing path".to_string())?
         .to_string();
+    let version = parts
+        .next()
+        .ok_or_else(|| "http request missing version".to_string())?;
+    if parts.next().is_some() {
+        return Err("http request request line contains unexpected fields".to_string());
+    }
+    if !matches!(method.as_str(), "GET" | "POST") {
+        return Err(format!("unsupported http method '{}'", method));
+    }
+    if !path.starts_with('/') {
+        return Err("http request path must start with '/'".to_string());
+    }
+    if !version.starts_with("HTTP/1.") {
+        return Err(format!("unsupported http version '{}'", version));
+    }
     let mut authorization = None;
+    let mut content_type = None;
+    let mut content_length = None;
     for line in lines {
+        if line.trim().is_empty() {
+            continue;
+        }
         if let Some((name, value)) = line.split_once(':') {
             if name.trim().eq_ignore_ascii_case("authorization") {
                 authorization = Some(value.trim().to_string());
+            } else if name.trim().eq_ignore_ascii_case("content-type") {
+                content_type = Some(value.trim().to_string());
+            } else if name.trim().eq_ignore_ascii_case("content-length") {
+                let parsed = value
+                    .trim()
+                    .parse::<usize>()
+                    .map_err(|_| "http request content-length must be an unsigned integer".to_string())?;
+                content_length = Some(parsed);
             }
+        } else {
+            return Err(format!("malformed http header '{}'", line.trim()));
+        }
+    }
+    if let Some(expected) = content_length {
+        let actual = body.as_bytes().len();
+        if actual != expected {
+            return Err(format!(
+                "http request content-length mismatch: declared {} bytes but received {}",
+                expected, actual
+            ));
         }
     }
     Ok(HttpRequest {
@@ -3798,6 +4607,7 @@ fn parse_http_request(raw: &str) -> ShadowResult<HttpRequest> {
         path,
         body: body.to_string(),
         authorization,
+        content_type,
     })
 }
 
@@ -3809,6 +4619,7 @@ fn build_http_response(status_code: u16, body: &str) -> String {
         401 => "Unauthorized",
         404 => "Not Found",
         405 => "Method Not Allowed",
+        415 => "Unsupported Media Type",
         500 => "Internal Server Error",
         _ => "OK",
     };
@@ -4197,7 +5008,7 @@ pub fn render_job_list_json(jobs: &[JobSnapshot]) -> String {
 pub fn render_job_inspect_human(job: &JobSnapshot) -> String {
     let event = runtime_event_for_job(job);
     format!(
-        "Meridian Loom // JOB INSPECT\n=============================\nphase:       experimental runtime-owned job ledger\nboundary:    job lifecycle is locally inspectable; hosted scheduler remains future work\n\nCurrent state\n=============\njob_id:              {}\nstatus:              {}\nstage:               {}\nqueue_bucket:        {}\nqueued_at:           {}\nupdated_at:          {}\nagent_id:            {}\norg_id:              {}\naction_type:         {}\nresource:            {}\nestimated_cost_usd:  {}\nruntime_outcome:     {}\nbudget_reservation:  {} {}\nworker_status:       {}\nnote:                {}\n\n{}\nArtifacts\n=========\n{}\njob_path:            {}\nqueue_path:          {}\ndecision_path:       {}\nexecution_path:      {}\nevent_path:          {}\nevent_stream_path:   {}\naudit_log_path:      {}\nparity_report_path:  {}\n\nNext\n====\n1. loom parity report --root {}\n2. loom shadow report --root {}\n3. Inspect {} for the latest persisted job state.\n",
+        "Meridian Loom // JOB INSPECT\n=============================\nphase:       experimental runtime-owned job ledger\nboundary:    job lifecycle is locally inspectable; hosted scheduler remains future work\n\nCurrent state\n=============\njob_id:              {}\nstatus:              {}\nstage:               {}\nqueue_bucket:        {}\nqueued_at:           {}\nupdated_at:          {}\nagent_id:            {}\norg_id:              {}\naction_type:         {}\nresource:            {}\nestimated_cost_usd:  {}\nruntime_outcome:     {}\nbudget_reservation:  {} {}\nworker_status:       {}\nreservation_id:      {}\nreservation_state:   {}\nattempt_count:       {}\nnote:                {}\n\n{}\nArtifacts\n=========\n{}\njob_path:            {}\nqueue_path:          {}\ndecision_path:       {}\nexecution_path:      {}\nevent_path:          {}\nevent_stream_path:   {}\naudit_log_path:      {}\nparity_report_path:  {}\n\nNext\n====\n1. loom parity report --root {}\n2. loom shadow report --root {}\n3. Inspect {} for the latest persisted job state.\n",
         job.job_id,
         job.status,
         job.stage,
@@ -4217,6 +5028,9 @@ pub fn render_job_inspect_human(job: &JobSnapshot) -> String {
             format!("({})", job.budget_reservation_reason)
         },
         job.worker_status,
+        if job.reservation_id.is_empty() { "(none)" } else { &job.reservation_id },
+        job.reservation_state,
+        job.attempt_count,
         job.note,
         render_proof_first_status_human("Proof-first status", &event),
         render_artifact_refs_human(&event.artifact_refs),
@@ -4562,11 +5376,16 @@ pub fn render_supervisor_daemon_json(snapshot: &SupervisorDaemonSnapshot) -> Str
 }
 
 pub fn render_runtime_service_human(snapshot: &RuntimeServiceSnapshot) -> String {
+    let transport = runtime_service_transport(snapshot);
+    let health = runtime_service_health(snapshot);
     if !snapshot.available {
         return format!(
-            "Meridian Loom // RUNTIME SERVICE\n=================================\nphase:       experimental local runtime service\nboundary:    no service state captured yet; transport replacement remains future work\n\nCurrent state\n=============\nroot:                {}\nservice_dir:         {}\nsocket_path:         {}\nhttp_address:        {}\nhttp_token_required: {}\nruntime_state:       {}\nstdout_log:          {}\nevent_log:           {}\ningress_stream:      {}\npending_jobs:        {}\nprocessed_jobs:      {}\nfailed_jobs:         {}\nnote:                {}\n\nNext\n====\n1. loom service start --root {} --http-address 127.0.0.1:0 --max-jobs 1 --poll-seconds 1 --iterations 20\n2. loom service submit --root {} --agent-id agent_atlas --action-type research --resource web_search --estimated-cost-usd 0.05\n3. loom service status --root {}\n",
+            "Meridian Loom // RUNTIME SERVICE\n=================================\nphase:       experimental local runtime service\nboundary:    no service state captured yet; transport replacement remains future work\n\nCurrent state\n=============\nroot:                {}\nconfig:              {}\nservice_dir:         {}\nservice_lock:        {}\nmetrics:             {}\nsocket_path:         {}\nhttp_address:        {}\nhttp_token_required: {}\nruntime_state:       {}\nstdout_log:          {}\nevent_log:           {}\ningress_stream:      {}\nhealth:              {}\ntransport:           {}\npending_jobs:        {}\nprocessed_jobs:      {}\nfailed_jobs:         {}\nnote:                {}\n\nNext\n====\n1. loom service start --root {} --http-address 127.0.0.1:0 --max-jobs 1 --poll-seconds 1\n2. loom service submit --root {} --agent-id agent_atlas --action-type research --resource web_search --estimated-cost-usd 0.05\n3. loom service status --root {}\n",
             snapshot.root.display(),
+            snapshot.config_path.display(),
             snapshot.service_dir.display(),
+            snapshot.service_lock_path.display(),
+            snapshot.metrics_path.display(),
             snapshot.socket_path.display(),
             "(none)",
             "false",
@@ -4574,6 +5393,8 @@ pub fn render_runtime_service_human(snapshot: &RuntimeServiceSnapshot) -> String
             snapshot.stdout_log_path.display(),
             snapshot.event_log_path.display(),
             snapshot.ingress_stream_path.display(),
+            health,
+            transport,
             snapshot.pending_jobs,
             snapshot.processed_jobs,
             snapshot.failed_jobs,
@@ -4585,12 +5406,17 @@ pub fn render_runtime_service_human(snapshot: &RuntimeServiceSnapshot) -> String
     }
 
     format!(
-        "Meridian Loom // RUNTIME SERVICE\n=================================\nphase:       experimental local runtime service\nboundary:    service-owned ingress is locally real; live OpenClaw replacement is not\n\nCurrent state\n=============\nroot:                {}\nservice_dir:         {}\nsocket_path:         {}\nhttp_address:        {}\nhttp_token_required: {}\nsession_id:          {}\npid:                 {}\nrunning:             {}\nstatus:              {}\nbooted_at:           {}\nupdated_at:          {}\nstopped_at:          {}\npoll_seconds:        {}\nmax_jobs:            {}\nmax_iterations:      {}\niterations_completed:{}\nsubmitted:           {}\nprocessed:           {}\nallowed:             {}\ndenied:              {}\nfailed:              {}\npending_jobs:        {}\nprocessed_jobs:      {}\nfailed_jobs:         {}\nlast_request_id:     {}\nlast_job_id:         {}\nruntime_state:       {}\nstdout_log:          {}\nevent_log:           {}\ningress_stream:      {}\nstop_request:        {}\nnote:                {}\n\nNext\n====\n1. loom service submit --root {} --agent-id agent_atlas --action-type research --resource web_search --estimated-cost-usd 0.05\n2. loom service status --root {}\n3. loom parity report --root {}\n4. loom job inspect --job-id {} --root {}\n",
+        "Meridian Loom // RUNTIME SERVICE\n=================================\nphase:       experimental local runtime service\nboundary:    service-owned ingress is locally real; live OpenClaw replacement is not\n\nCurrent state\n=============\nroot:                {}\nconfig:              {}\nservice_dir:         {}\nservice_lock:        {}\nmetrics:             {}\nsocket_path:         {}\nhttp_address:        {}\nhttp_token_required: {}\ntransport:           {}\nhealth:              {}\nsession_id:          {}\npid:                 {}\nrunning:             {}\nstatus:              {}\nbooted_at:           {}\nupdated_at:          {}\nstopped_at:          {}\npoll_seconds:        {}\nmax_jobs:            {}\nmax_iterations:      {}\niterations_completed:{}\nrequests_received:   {}\nsubmitted:           {}\nprocessed:           {}\nallowed:             {}\ndenied:              {}\nfailed:              {}\npending_jobs:        {}\nprocessed_jobs:      {}\nfailed_jobs:         {}\nlast_request_id:     {}\nlast_job_id:         {}\nruntime_state:       {}\nstdout_log:          {}\nevent_log:           {}\ningress_stream:      {}\nstop_request:        {}\nnote:                {}\n\nNext\n====\n1. loom service submit --root {} --agent-id agent_atlas --action-type research --resource web_search --estimated-cost-usd 0.05\n2. loom service status --root {}\n3. loom parity report --root {}\n4. loom job inspect --job-id {} --root {}\n",
         snapshot.root.display(),
+        snapshot.config_path.display(),
         snapshot.service_dir.display(),
+        snapshot.service_lock_path.display(),
+        snapshot.metrics_path.display(),
         snapshot.socket_path.display(),
         if snapshot.http_address.is_empty() { "(none)".to_string() } else { snapshot.http_address.clone() },
         if snapshot.http_token_required { "true" } else { "false" },
+        transport,
+        health,
         if snapshot.session_id.is_empty() { "(none)".to_string() } else { snapshot.session_id.clone() },
         snapshot.pid,
         if snapshot.running { "true" } else { "false" },
@@ -4602,6 +5428,7 @@ pub fn render_runtime_service_human(snapshot: &RuntimeServiceSnapshot) -> String
         snapshot.max_jobs,
         snapshot.max_iterations,
         snapshot.iterations_completed,
+        snapshot.requests_received,
         snapshot.submitted,
         snapshot.processed,
         snapshot.allowed,
@@ -4628,10 +5455,13 @@ pub fn render_runtime_service_human(snapshot: &RuntimeServiceSnapshot) -> String
 
 pub fn render_runtime_service_json(snapshot: &RuntimeServiceSnapshot) -> String {
     format!(
-        "{{\n  \"status\": {},\n  \"root\": {},\n  \"service_dir\": {},\n  \"socket_path\": {},\n  \"http_address\": {},\n  \"http_token_required\": {},\n  \"runtime_state_path\": {},\n  \"stop_request_path\": {},\n  \"stdout_log_path\": {},\n  \"event_log_path\": {},\n  \"ingress_stream_path\": {},\n  \"available\": {},\n  \"session_id\": {},\n  \"pid\": {},\n  \"running\": {},\n  \"service_status\": {},\n  \"updated_at\": {},\n  \"booted_at\": {},\n  \"stopped_at\": {},\n  \"poll_seconds\": {},\n  \"max_jobs\": {},\n  \"max_iterations\": {},\n  \"iterations_completed\": {},\n  \"submitted\": {},\n  \"processed\": {},\n  \"allowed\": {},\n  \"denied\": {},\n  \"failed\": {},\n  \"pending_jobs\": {},\n  \"processed_jobs\": {},\n  \"failed_jobs\": {},\n  \"last_request_id\": {},\n  \"last_job_id\": {},\n  \"note\": {}\n}}\n",
+        "{{\n  \"status\": {},\n  \"root\": {},\n  \"config_path\": {},\n  \"service_dir\": {},\n  \"service_lock_path\": {},\n  \"metrics_path\": {},\n  \"socket_path\": {},\n  \"http_address\": {},\n  \"http_token_required\": {},\n  \"transport\": {},\n  \"health\": {},\n  \"runtime_state_path\": {},\n  \"stop_request_path\": {},\n  \"stdout_log_path\": {},\n  \"event_log_path\": {},\n  \"ingress_stream_path\": {},\n  \"available\": {},\n  \"session_id\": {},\n  \"pid\": {},\n  \"running\": {},\n  \"service_status\": {},\n  \"updated_at\": {},\n  \"booted_at\": {},\n  \"stopped_at\": {},\n  \"poll_seconds\": {},\n  \"max_jobs\": {},\n  \"max_iterations\": {},\n  \"iterations_completed\": {},\n  \"requests_received\": {},\n  \"submitted\": {},\n  \"processed\": {},\n  \"allowed\": {},\n  \"denied\": {},\n  \"failed\": {},\n  \"pending_jobs\": {},\n  \"processed_jobs\": {},\n  \"failed_jobs\": {},\n  \"last_request_id\": {},\n  \"last_job_id\": {},\n  \"note\": {}\n}}\n",
         json_string(if snapshot.available { "runtime_service_status_available" } else { "runtime_service_not_started" }),
         json_string(&snapshot.root.display().to_string()),
+        json_string(&snapshot.config_path.display().to_string()),
         json_string(&snapshot.service_dir.display().to_string()),
+        json_string(&snapshot.service_lock_path.display().to_string()),
+        json_string(&snapshot.metrics_path.display().to_string()),
         json_string(&snapshot.socket_path.display().to_string()),
         if snapshot.http_address.is_empty() {
             "null".to_string()
@@ -4639,6 +5469,8 @@ pub fn render_runtime_service_json(snapshot: &RuntimeServiceSnapshot) -> String 
             json_string(&snapshot.http_address)
         },
         if snapshot.http_token_required { "true" } else { "false" },
+        json_string(&runtime_service_transport(snapshot)),
+        json_string(&runtime_service_health(snapshot)),
         json_string(&snapshot.runtime_state_path.display().to_string()),
         json_string(&snapshot.stop_request_path.display().to_string()),
         json_string(&snapshot.stdout_log_path.display().to_string()),
@@ -4656,6 +5488,7 @@ pub fn render_runtime_service_json(snapshot: &RuntimeServiceSnapshot) -> String 
         snapshot.max_jobs,
         snapshot.max_iterations,
         snapshot.iterations_completed,
+        snapshot.requests_received,
         snapshot.submitted,
         snapshot.processed,
         snapshot.allowed,
@@ -4668,6 +5501,111 @@ pub fn render_runtime_service_json(snapshot: &RuntimeServiceSnapshot) -> String 
         json_string(&snapshot.last_job_id),
         json_string(&snapshot.note),
     )
+}
+
+fn runtime_service_transport(snapshot: &RuntimeServiceSnapshot) -> String {
+    if !snapshot.http_address.trim().is_empty() && snapshot.socket_path.exists() {
+        "socket+http".to_string()
+    } else if !snapshot.http_address.trim().is_empty() {
+        "http".to_string()
+    } else if snapshot.socket_path.exists() {
+        "socket".to_string()
+    } else {
+        "file_ingress".to_string()
+    }
+}
+
+fn runtime_service_health(snapshot: &RuntimeServiceSnapshot) -> String {
+    if !snapshot.available {
+        "not_started".to_string()
+    } else if snapshot.status == "crashed" {
+        "crashed".to_string()
+    } else if snapshot.running && runtime_service_transport(snapshot) == "file_ingress" {
+        "degraded".to_string()
+    } else if snapshot.running {
+        "healthy".to_string()
+    } else if snapshot.status == "stop_requested" || !snapshot.stopped_at.is_empty() {
+        "stopped".to_string()
+    } else {
+        "degraded".to_string()
+    }
+}
+
+fn render_runtime_service_health_json(snapshot: &RuntimeServiceSnapshot) -> String {
+    format!(
+        "{{\n  \"status\": {},\n  \"running\": {},\n  \"service_status\": {},\n  \"transport\": {},\n  \"pid\": {},\n  \"updated_at\": {},\n  \"pending_jobs\": {},\n  \"processed_jobs\": {},\n  \"failed_jobs\": {},\n  \"note\": {}\n}}\n",
+        json_string(&runtime_service_health(snapshot)),
+        if snapshot.running { "true" } else { "false" },
+        json_string(&snapshot.status),
+        json_string(&runtime_service_transport(snapshot)),
+        snapshot.pid,
+        json_string(&snapshot.updated_at),
+        snapshot.pending_jobs,
+        snapshot.processed_jobs,
+        snapshot.failed_jobs,
+        json_string(&snapshot.note),
+    )
+}
+
+fn render_runtime_service_metrics_json(snapshot: &RuntimeServiceSnapshot) -> String {
+    format!(
+        "{{\n  \"uptime_seconds\": {},\n  \"requests_received\": {},\n  \"jobs_submitted\": {},\n  \"jobs_processed\": {},\n  \"jobs_allowed\": {},\n  \"jobs_denied\": {},\n  \"jobs_failed\": {},\n  \"queue_depth\": {},\n  \"processed_jobs\": {},\n  \"failed_jobs\": {},\n  \"last_request_id\": {},\n  \"last_job_id\": {}\n}}\n",
+        runtime_uptime_seconds(&snapshot.booted_at, &snapshot.updated_at),
+        snapshot.requests_received,
+        snapshot.submitted,
+        snapshot.processed,
+        snapshot.allowed,
+        snapshot.denied,
+        snapshot.failed,
+        snapshot.pending_jobs,
+        snapshot.processed_jobs,
+        snapshot.failed_jobs,
+        json_string(&snapshot.last_request_id),
+        json_string(&snapshot.last_job_id),
+    )
+}
+
+fn render_runtime_service_config_json(root: &Path, snapshot: &RuntimeServiceSnapshot) -> String {
+    let config = read_config(root).ok();
+    let config_mode = config.as_ref().map(|value| value.mode.clone()).unwrap_or_default();
+    let org_id = config.as_ref().map(|value| value.org_id.clone()).unwrap_or_default();
+    let kernel_path = config.as_ref().map(|value| value.kernel_path.clone()).unwrap_or_default();
+    let service_token_env = config
+        .as_ref()
+        .map(|value| value.service_token_env.clone())
+        .unwrap_or_else(|| "LOOM_SERVICE_TOKEN".to_string());
+    let token_present = std::env::var(&service_token_env)
+        .ok()
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false);
+    format!(
+        "{{\n  \"config_path\": {},\n  \"mode\": {},\n  \"org_id\": {},\n  \"kernel_path\": {},\n  \"service_http_address\": {},\n  \"service_token_env\": {},\n  \"service_token_present\": {},\n  \"state_dir\": {},\n  \"run_dir\": {},\n  \"log_dir\": {},\n  \"artifact_dir\": {},\n  \"runtime_state_path\": {},\n  \"log_path\": {}\n}}\n",
+        json_string(&snapshot.config_path.display().to_string()),
+        json_string(&config_mode),
+        json_string(&org_id),
+        json_string(&kernel_path),
+        if snapshot.http_address.is_empty() {
+            "null".to_string()
+        } else {
+            json_string(&snapshot.http_address)
+        },
+        json_string(&service_token_env),
+        if token_present { "true" } else { "false" },
+        json_string(&state_root(root).unwrap_or_else(|_| root.join("state")).display().to_string()),
+        json_string(&run_root(root).unwrap_or_else(|_| root.join("run")).display().to_string()),
+        json_string(&log_root(root).unwrap_or_else(|_| root.join("logs")).display().to_string()),
+        json_string(&artifact_root(root).unwrap_or_else(|_| root.join("artifacts")).display().to_string()),
+        json_string(&snapshot.runtime_state_path.display().to_string()),
+        json_string(&snapshot.stdout_log_path.display().to_string()),
+    )
+}
+
+fn runtime_uptime_seconds(booted_at: &str, updated_at: &str) -> u64 {
+    unix_seconds(updated_at).saturating_sub(unix_seconds(booted_at))
+}
+
+fn unix_seconds(value: &str) -> u64 {
+    value.parse::<u64>().unwrap_or(0)
 }
 
 pub fn render_runtime_service_submit_human(capture: &RuntimeServiceSubmitCapture) -> String {
@@ -4808,17 +5746,17 @@ pub fn render_compare_json(summary: &ComparisonSummary) -> String {
 }
 
 pub fn render_shadow_report(root: &Path) -> ShadowResult<String> {
-    let report_path = root.join(".loom/shadow/latest.json");
+    let report_path = ensure_shadow_dir(root)?.join("latest.json");
     let contents = fs::read_to_string(&report_path).ok();
-    let reference_path = root.join(".loom/shadow/reference.json");
+    let reference_path = ensure_shadow_dir(root)?.join("reference.json");
     let reference = fs::read_to_string(&reference_path).ok();
-    let decision_path = root.join(".loom/shadow/decision.json");
+    let decision_path = ensure_shadow_dir(root)?.join("decision.json");
     let decision = fs::read_to_string(&decision_path).ok();
-    let runtime_path = root.join(".loom/runtime/last_execution.json");
+    let runtime_path = ensure_runtime_dir(root)?.join("last_execution.json");
     let runtime = fs::read_to_string(&runtime_path).ok();
-    let runtime_event_path = root.join(".loom/runtime/events/latest.json");
+    let runtime_event_path = runtime_event_latest_path(root)?;
     let runtime_event = fs::read_to_string(&runtime_event_path).ok();
-    let parity_path = root.join(".loom/parity/latest.json");
+    let parity_path = ensure_parity_dir(root)?.join("latest.json");
     let parity = fs::read_to_string(&parity_path).ok();
     if contents.is_none()
         && reference.is_none()
@@ -4829,7 +5767,7 @@ pub fn render_shadow_report(root: &Path) -> ShadowResult<String> {
     {
         return Err(format!(
             "could not read any shadow artifacts under {}",
-            root.join(".loom/shadow").display()
+            ensure_shadow_dir(root)?.display()
         ));
     }
     let mut out = String::from(
@@ -4913,25 +5851,26 @@ pub fn render_shadow_report(root: &Path) -> ShadowResult<String> {
 }
 
 pub fn render_parity_report(root: &Path) -> ShadowResult<String> {
-    let report_path = root.join(".loom/parity/latest.json");
+    let parity_dir = ensure_parity_dir(root)?;
+    let report_path = parity_dir.join("latest.json");
     let contents = fs::read_to_string(&report_path).ok();
-    let stream_path = root.join(".loom/parity/stream.jsonl");
+    let stream_path = parity_dir.join("stream.jsonl");
     let stream = fs::read_to_string(&stream_path).ok();
-    let reference_latest_path = root.join(".loom/parity/reference_latest.json");
+    let reference_latest_path = parity_dir.join("reference_latest.json");
     let reference_latest = fs::read_to_string(&reference_latest_path).ok();
-    let reference_stream_path = root.join(".loom/parity/reference_stream.jsonl");
+    let reference_stream_path = parity_dir.join("reference_stream.jsonl");
     let reference_stream = fs::read_to_string(&reference_stream_path).ok();
-    let comparison_latest_path = root.join(".loom/parity/comparison_latest.json");
+    let comparison_latest_path = parity_dir.join("comparison_latest.json");
     let comparison_latest = fs::read_to_string(&comparison_latest_path).ok();
-    let comparison_stream_path = root.join(".loom/parity/comparison_stream.jsonl");
+    let comparison_stream_path = parity_dir.join("comparison_stream.jsonl");
     let comparison_stream = fs::read_to_string(&comparison_stream_path).ok();
-    let event_latest_path = root.join(".loom/runtime/events/latest.json");
+    let event_latest_path = runtime_event_latest_path(root)?;
     let event_latest = fs::read_to_string(&event_latest_path).ok();
-    let event_stream_path = root.join(".loom/runtime/events/stream.jsonl");
+    let event_stream_path = runtime_event_stream_path(root)?;
     let event_stream = fs::read_to_string(&event_stream_path).ok();
-    let openclaw_live_path = root.join(".loom/parity/openclaw_live.json");
+    let openclaw_live_path = parity_dir.join("openclaw_live.json");
     let openclaw_live = fs::read_to_string(&openclaw_live_path).ok();
-    let openclaw_stream_path = root.join(".loom/parity/openclaw_live_stream.jsonl");
+    let openclaw_stream_path = parity_dir.join("openclaw_live_stream.jsonl");
     let openclaw_stream = fs::read_to_string(&openclaw_stream_path).ok();
     if contents.is_none()
         && stream.is_none()
@@ -5129,8 +6068,8 @@ fn render_parity_report_json(capture: &RuntimeExecutionCapture) -> String {
         json_string(&capture.decision_path.display().to_string()),
         json_string(&capture.audit_log_path.display().to_string()),
         json_string(&capture.parity_stream_path.display().to_string()),
-        json_string(&format!(".loom/parity/comparison_latest.json")),
-        json_string(&format!(".loom/parity/comparison_stream.jsonl")),
+        json_string("artifacts/parity/comparison_latest.json"),
+        json_string("artifacts/parity/comparison_stream.jsonl"),
         capture
             .openclaw_live_probe_path
             .as_ref()
@@ -5153,58 +6092,58 @@ fn render_parity_report_json(capture: &RuntimeExecutionCapture) -> String {
 }
 
 fn ensure_shadow_dir(root: &Path) -> ShadowResult<PathBuf> {
-    let shadow_dir = root.join(".loom/shadow");
-    fs::create_dir_all(&shadow_dir).map_err(io_err)?;
+    let shadow_dir = artifact_root(root)?.join("shadow");
+    ensure_private_dir(&shadow_dir)?;
     Ok(shadow_dir)
 }
 
 fn ensure_runtime_dir(root: &Path) -> ShadowResult<PathBuf> {
-    let runtime_dir = root.join(".loom/runtime");
-    fs::create_dir_all(&runtime_dir).map_err(io_err)?;
+    let runtime_dir = state_root(root)?.join("runtime");
+    ensure_private_dir(&runtime_dir)?;
     Ok(runtime_dir)
 }
 
 fn ensure_runtime_jobs_dir(root: &Path) -> ShadowResult<PathBuf> {
     let jobs_dir = ensure_runtime_dir(root)?.join("jobs");
-    fs::create_dir_all(&jobs_dir).map_err(io_err)?;
+    ensure_private_dir(&jobs_dir)?;
     Ok(jobs_dir)
 }
 
 fn ensure_runtime_events_dir(root: &Path) -> ShadowResult<PathBuf> {
-    let events_dir = ensure_runtime_dir(root)?.join("events");
-    fs::create_dir_all(&events_dir).map_err(io_err)?;
+    let events_dir = artifact_root(root)?.join("runtime").join("events");
+    ensure_private_dir(&events_dir)?;
     Ok(events_dir)
 }
 
 fn ensure_runtime_scheduler_dir(root: &Path) -> ShadowResult<PathBuf> {
     let scheduler_dir = ensure_runtime_dir(root)?.join("scheduler");
-    fs::create_dir_all(&scheduler_dir).map_err(io_err)?;
+    ensure_private_dir(&scheduler_dir)?;
     Ok(scheduler_dir)
 }
 
 fn ensure_runtime_service_dir(root: &Path) -> ShadowResult<PathBuf> {
-    let service_dir = ensure_runtime_dir(root)?.join("service");
-    fs::create_dir_all(&service_dir).map_err(io_err)?;
+    let service_dir = run_root(root)?.join("service");
+    ensure_private_dir(&service_dir)?;
     Ok(service_dir)
 }
 
 fn ensure_runtime_ingress_dir(root: &Path) -> ShadowResult<PathBuf> {
-    let ingress_dir = ensure_runtime_dir(root)?.join("ingress");
-    fs::create_dir_all(&ingress_dir).map_err(io_err)?;
-    fs::create_dir_all(ingress_dir.join("requests")).map_err(io_err)?;
-    fs::create_dir_all(ingress_dir.join("receipts")).map_err(io_err)?;
+    let ingress_dir = run_root(root)?.join("ingress");
+    ensure_private_dir(&ingress_dir)?;
+    ensure_private_dir(&ingress_dir.join("requests"))?;
+    ensure_private_dir(&ingress_dir.join("receipts"))?;
     Ok(ingress_dir)
 }
 
 fn ensure_runtime_imports_dir(root: &Path) -> ShadowResult<PathBuf> {
     let imports_dir = ensure_runtime_dir(root)?.join("imports");
-    fs::create_dir_all(&imports_dir).map_err(io_err)?;
+    ensure_private_dir(&imports_dir)?;
     Ok(imports_dir)
 }
 
 fn ensure_audit_dir(root: &Path) -> ShadowResult<PathBuf> {
-    let audit_dir = root.join(".loom/audit");
-    fs::create_dir_all(&audit_dir).map_err(io_err)?;
+    let audit_dir = artifact_root(root)?.join("audit");
+    ensure_private_dir(&audit_dir)?;
     Ok(audit_dir)
 }
 
@@ -5221,12 +6160,20 @@ fn runtime_event_stream_path(root: &Path) -> ShadowResult<PathBuf> {
 }
 
 fn runtime_audit_log_path(root: &Path, override_kernel_path: Option<&str>) -> PathBuf {
+    if let Ok(override_path) = std::env::var("MERIDIAN_RUNTIME_AUDIT_FILE") {
+        let trimmed = override_path.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
     match kernel_path_for(root, override_kernel_path) {
         Ok(kernel_path) => kernel_path
             .join("kernel")
             .join("runtime_audit")
             .join("loom_runtime_events.jsonl"),
-        Err(_) => root.join(".loom/audit/runtime_events.jsonl"),
+        Err(_) => ensure_audit_dir(root)
+            .unwrap_or_else(|_| root.join("artifacts").join("audit"))
+            .join("loom_runtime_events.jsonl"),
     }
 }
 
@@ -5237,6 +6184,10 @@ fn service_socket_path(root: &Path, socket_override: Option<&str>) -> ShadowResu
             fs::create_dir_all(parent).map_err(io_err)?;
         }
         return Ok(path);
+    }
+    let preferred = ensure_runtime_service_dir(root)?.join("runtime.sock");
+    if preferred.as_os_str().len() < 96 {
+        return Ok(preferred);
     }
     let root_token = sanitize_filename(&root.display().to_string());
     let suffix = if root_token.len() > 32 {
@@ -5251,16 +6202,28 @@ fn runtime_service_state_path(root: &Path) -> ShadowResult<PathBuf> {
     Ok(ensure_runtime_service_dir(root)?.join("runtime_state.json"))
 }
 
+fn service_lock_path(root: &Path) -> ShadowResult<PathBuf> {
+    Ok(ensure_runtime_service_dir(root)?.join("service.lock"))
+}
+
+fn service_metrics_path(root: &Path) -> ShadowResult<PathBuf> {
+    Ok(ensure_runtime_service_dir(root)?.join("metrics.json"))
+}
+
 fn service_stop_request_path(root: &Path) -> ShadowResult<PathBuf> {
     Ok(ensure_runtime_service_dir(root)?.join("stop.requested"))
 }
 
 fn service_stdout_log_path(root: &Path) -> ShadowResult<PathBuf> {
-    Ok(ensure_runtime_service_dir(root)?.join("service.log"))
+    let log_dir = log_root(root)?;
+    fs::create_dir_all(&log_dir).map_err(io_err)?;
+    Ok(log_dir.join("service.log"))
 }
 
 fn runtime_service_event_log_path(root: &Path) -> ShadowResult<PathBuf> {
-    Ok(ensure_runtime_service_dir(root)?.join("service_events.jsonl"))
+    let log_dir = log_root(root)?;
+    fs::create_dir_all(&log_dir).map_err(io_err)?;
+    Ok(log_dir.join("service_events.jsonl"))
 }
 
 fn runtime_ingress_stream_path(root: &Path) -> ShadowResult<PathBuf> {
@@ -5321,12 +6284,15 @@ fn write_supervisor_runtime_state(
             json_string(&note),
         ),
     )
-    .map_err(io_err)
+    .map_err(io_err)?;
+    ensure_private_file(runtime_state_path)?;
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
 fn write_runtime_service_state(
     runtime_state_path: &Path,
+    metrics_path: &Path,
     socket_path: &Path,
     http_address: Option<&str>,
     http_token_required: bool,
@@ -5340,6 +6306,7 @@ fn write_runtime_service_state(
     max_jobs: usize,
     max_iterations: usize,
     iterations_completed: usize,
+    requests_received: usize,
     submitted: usize,
     processed: usize,
     allowed: usize,
@@ -5352,26 +6319,48 @@ fn write_runtime_service_state(
     last_job_id: &str,
     note: String,
 ) -> ShadowResult<()> {
+    let updated_at = timestamp_now();
+    let http_address_json = http_address
+        .map(json_string)
+        .unwrap_or_else(|| "null".to_string());
+    let state_json = format!(
+        "{{\n  \"status\": {},\n  \"updated_at\": {},\n  \"session_id\": {},\n  \"pid\": {},\n  \"running\": {},\n  \"socket_path\": {},\n  \"http_address\": {},\n  \"http_token_required\": {},\n  \"booted_at\": {},\n  \"stopped_at\": {},\n  \"poll_seconds\": {},\n  \"max_jobs\": {},\n  \"max_iterations\": {},\n  \"iterations_completed\": {},\n  \"requests_received\": {},\n  \"submitted\": {},\n  \"processed\": {},\n  \"allowed\": {},\n  \"denied\": {},\n  \"failed\": {},\n  \"pending_jobs\": {},\n  \"processed_jobs\": {},\n  \"failed_jobs\": {},\n  \"last_request_id\": {},\n  \"last_job_id\": {},\n  \"note\": {}\n}}\n",
+        json_string(status),
+        json_string(&updated_at),
+        json_string(session_id),
+        pid,
+        if running { "true" } else { "false" },
+        json_string(&socket_path.display().to_string()),
+        http_address_json,
+        if http_token_required { "true" } else { "false" },
+        json_string(booted_at),
+        json_string(stopped_at),
+        poll_seconds,
+        max_jobs,
+        max_iterations,
+        iterations_completed,
+        requests_received,
+        submitted,
+        processed,
+        allowed,
+        denied,
+        failed,
+        pending_jobs,
+        processed_jobs,
+        failed_jobs,
+        json_string(last_request_id),
+        json_string(last_job_id),
+        json_string(&note),
+    );
+    fs::write(runtime_state_path, &state_json).map_err(io_err)?;
     fs::write(
-        runtime_state_path,
+        metrics_path,
         format!(
-            "{{\n  \"status\": {},\n  \"updated_at\": {},\n  \"session_id\": {},\n  \"pid\": {},\n  \"running\": {},\n  \"socket_path\": {},\n  \"http_address\": {},\n  \"http_token_required\": {},\n  \"booted_at\": {},\n  \"stopped_at\": {},\n  \"poll_seconds\": {},\n  \"max_jobs\": {},\n  \"max_iterations\": {},\n  \"iterations_completed\": {},\n  \"submitted\": {},\n  \"processed\": {},\n  \"allowed\": {},\n  \"denied\": {},\n  \"failed\": {},\n  \"pending_jobs\": {},\n  \"processed_jobs\": {},\n  \"failed_jobs\": {},\n  \"last_request_id\": {},\n  \"last_job_id\": {},\n  \"note\": {}\n}}\n",
+            "{{\n  \"status\": {},\n  \"updated_at\": {},\n  \"uptime_seconds\": {},\n  \"requests_received\": {},\n  \"jobs_submitted\": {},\n  \"jobs_processed\": {},\n  \"jobs_allowed\": {},\n  \"jobs_denied\": {},\n  \"jobs_failed\": {},\n  \"queue_depth\": {},\n  \"processed_jobs\": {},\n  \"failed_jobs\": {},\n  \"last_request_id\": {},\n  \"last_job_id\": {}\n}}\n",
             json_string(status),
-            json_string(&timestamp_now()),
-            json_string(session_id),
-            pid,
-            if running { "true" } else { "false" },
-            json_string(&socket_path.display().to_string()),
-            http_address
-                .map(json_string)
-                .unwrap_or_else(|| "null".to_string()),
-            if http_token_required { "true" } else { "false" },
-            json_string(booted_at),
-            json_string(stopped_at),
-            poll_seconds,
-            max_jobs,
-            max_iterations,
-            iterations_completed,
+            json_string(&updated_at),
+            runtime_uptime_seconds(booted_at, &updated_at),
+            requests_received,
             submitted,
             processed,
             allowed,
@@ -5382,7 +6371,6 @@ fn write_runtime_service_state(
             failed_jobs,
             json_string(last_request_id),
             json_string(last_job_id),
-            json_string(&note),
         ),
     )
     .map_err(io_err)
@@ -5492,21 +6480,130 @@ fn collect_pending_queue_paths(root: &Path) -> ShadowResult<Vec<(PolicyClass, Pa
 }
 
 fn ensure_parity_dir(root: &Path) -> ShadowResult<PathBuf> {
-    let parity_dir = root.join(".loom/parity");
+    let parity_dir = artifact_root(root)?.join("parity");
     fs::create_dir_all(&parity_dir).map_err(io_err)?;
     Ok(parity_dir)
 }
 
+fn runtime_layout_config(root: &Path) -> Config {
+    read_config(root).unwrap_or_else(|_| Config {
+        mode: "embedded".to_string(),
+        kernel_path: String::new(),
+        org_id: "local_foundry".to_string(),
+        state_dir: "state".to_string(),
+        run_dir: "run".to_string(),
+        log_dir: "logs".to_string(),
+        artifact_dir: "artifacts".to_string(),
+        capabilities_dir: "capabilities".to_string(),
+        python_path: "workers/python".to_string(),
+        typescript_path: "workers/typescript".to_string(),
+        wasm_dir: "workers/wasm".to_string(),
+        service_http_address: "127.0.0.1:18910".to_string(),
+        service_token_env: "LOOM_SERVICE_TOKEN".to_string(),
+        service_max_jobs: 8,
+        service_poll_seconds: 1,
+        service_max_iterations: 0,
+        log_level: "info".to_string(),
+        log_format: "jsonl".to_string(),
+        log_max_bytes: 5 * 1024 * 1024,
+        log_max_files: 5,
+        openclaw_integration: "off".to_string(),
+        openclaw_delivery_queue: "/root/.openclaw/delivery-queue".to_string(),
+    })
+}
+
+fn state_root(root: &Path) -> ShadowResult<PathBuf> {
+    let path = root.join(&runtime_layout_config(root).state_dir);
+    ensure_private_dir(&path)?;
+    Ok(path)
+}
+
+fn run_root(root: &Path) -> ShadowResult<PathBuf> {
+    let path = root.join(&runtime_layout_config(root).run_dir);
+    ensure_private_dir(&path)?;
+    Ok(path)
+}
+
+fn log_root(root: &Path) -> ShadowResult<PathBuf> {
+    let path = root.join(&runtime_layout_config(root).log_dir);
+    ensure_private_dir(&path)?;
+    Ok(path)
+}
+
+fn artifact_root(root: &Path) -> ShadowResult<PathBuf> {
+    let path = root.join(&runtime_layout_config(root).artifact_dir);
+    ensure_private_dir(&path)?;
+    Ok(path)
+}
+
 fn ensure_parity_reference_dir(root: &Path) -> ShadowResult<PathBuf> {
     let path = ensure_parity_dir(root)?.join("reference");
-    fs::create_dir_all(&path).map_err(io_err)?;
+    ensure_private_dir(&path)?;
     Ok(path)
+}
+
+fn render_capability_descriptor_json(capability: Option<&CapabilityDescriptor>) -> String {
+    match capability {
+        Some(capability) => format!(
+            "{{\"name\":{},\"description\":{},\"action_type\":{},\"resource\":{},\"worker_kind\":{},\"worker_entry\":{},\"wasm_module\":{},\"payload_mode\":{},\"source_kind\":{},\"source_path\":{},\"adapter_kind\":{},\"verification_status\":{},\"last_verified_at\":{},\"last_verification_job_id\":{},\"last_verification_execution_id\":{},\"verification_note\":{},\"promotion_state\":{},\"promoted_at\":{},\"enabled\":{}}}",
+            json_string(&capability.name),
+            json_string(&capability.description),
+            json_string(&capability.action_type),
+            json_string(&capability.resource),
+            json_string(&capability.worker_kind),
+            json_string(&capability.worker_entry),
+            json_string(&capability.wasm_module),
+            json_string(&capability.payload_mode),
+            json_string(&capability.source_kind),
+            json_string(&capability.source_path),
+            json_string(&capability.adapter_kind),
+            json_string(&capability.verification_status),
+            json_string(&capability.last_verified_at),
+            json_string(&capability.last_verification_job_id),
+            json_string(&capability.last_verification_execution_id),
+            json_string(&capability.verification_note),
+            json_string(&capability.promotion_state),
+            json_string(&capability.promoted_at),
+            if capability.enabled { "true" } else { "false" },
+        ),
+        None => "null".to_string(),
+    }
 }
 
 fn ensure_parity_comparison_dir(root: &Path) -> ShadowResult<PathBuf> {
     let path = ensure_parity_dir(root)?.join("comparisons");
-    fs::create_dir_all(&path).map_err(io_err)?;
+    ensure_private_dir(&path)?;
     Ok(path)
+}
+
+fn ensure_private_dir(path: &Path) -> ShadowResult<()> {
+    fs::create_dir_all(path).map_err(io_err)?;
+    set_mode_if_supported(path, 0o700)
+}
+
+fn ensure_private_file(path: &Path) -> ShadowResult<()> {
+    if path.exists() {
+        set_mode_if_supported(path, 0o600)?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_mode_if_supported(path: &Path, mode: u32) -> ShadowResult<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut permissions = fs::metadata(path).map_err(io_err)?.permissions();
+    permissions.set_mode(mode);
+    match fs::set_permissions(path, permissions) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::PermissionDenied => Ok(()),
+        Err(error) => Err(io_err(error)),
+    }
+}
+
+#[cfg(not(unix))]
+fn set_mode_if_supported(_path: &Path, _mode: u32) -> ShadowResult<()> {
+    Ok(())
 }
 
 fn parity_reference_action_path(root: &Path, input_hash: &str) -> ShadowResult<PathBuf> {
@@ -5632,18 +6729,7 @@ fn write_parity_comparison_artifacts(
 }
 
 fn supervisor_config(root: &Path) -> ShadowResult<Config> {
-    if let Ok(config) = read_config(root) {
-        return Ok(config);
-    }
-    Ok(Config {
-        mode: "embedded".to_string(),
-        kernel_path: String::new(),
-        org_id: "local_foundry".to_string(),
-        state_dir: ".loom".to_string(),
-        python_path: "workers/python".to_string(),
-        typescript_path: "workers/typescript".to_string(),
-        wasm_dir: "workers/wasm".to_string(),
-    })
+    Ok(runtime_layout_config(root))
 }
 
 fn run_worker_supervisor(
@@ -5652,7 +6738,18 @@ fn run_worker_supervisor(
     decision: &DecisionCapture,
 ) -> ShadowResult<WorkerExecutionCapture> {
     let config = supervisor_config(root)?;
-    let worker_entry = ensure_runtime_worker_scaffold(root, &config)?;
+    let _ = ensure_runtime_worker_scaffold(root, &config)?;
+    let capability = resolve_capability_for_request(
+        root,
+        &config,
+        if envelope.capability_name.is_empty() {
+            None
+        } else {
+            Some(envelope.capability_name.as_str())
+        },
+        &envelope.action_type,
+        &envelope.resource,
+    )?;
     let jobs_dir = ensure_runtime_dir(root)?
         .join("jobs")
         .join(&decision.input_hash);
@@ -5660,19 +6757,21 @@ fn run_worker_supervisor(
     let worker_request_path = jobs_dir.join("request.json");
     let worker_result_path = jobs_dir.join("result.json");
     let worker_log_path = jobs_dir.join("worker.log");
-    let worker_kind = "python_reference_worker".to_string();
 
     fs::write(
         &worker_request_path,
         format!(
-            "{{\n  \"input_hash\": {},\n  \"envelope\": {{\n    \"agent_id\": {},\n    \"org_id\": {},\n    \"runtime_id\": {},\n    \"action_type\": {},\n    \"resource\": {},\n    \"estimated_cost_usd\": {:.6}\n  }},\n  \"decision\": {{\n    \"overall_decision\": {},\n    \"effective_source\": {},\n    \"effective_stage\": {},\n    \"reference_stage\": {}\n  }}\n}}\n",
+            "{{\n  \"worker_contract_version\": \"loom.worker.v0\",\n  \"input_hash\": {},\n  \"envelope\": {{\n    \"agent_id\": {},\n    \"org_id\": {},\n    \"runtime_id\": {},\n    \"action_type\": {},\n    \"resource\": {},\n    \"capability_name\": {},\n    \"payload_json\": {},\n    \"estimated_cost_usd\": {:.6}\n  }},\n  \"capability\": {},\n  \"decision\": {{\n    \"overall_decision\": {},\n    \"effective_source\": {},\n    \"effective_stage\": {},\n    \"reference_stage\": {}\n  }}\n}}\n",
             json_string(&decision.input_hash),
             json_string(&envelope.agent_id),
             json_string(&envelope.org_id),
             json_string(&envelope.runtime_id),
             json_string(&envelope.action_type),
             json_string(&envelope.resource),
+            json_string(&envelope.capability_name),
+            json_string(&envelope.payload_json),
             envelope.estimated_cost_usd,
+            render_capability_descriptor_json(capability.as_ref()),
             json_string(&decision.overall_decision),
             json_string(&decision.effective_source),
             json_string(&decision.effective_stage),
@@ -5695,14 +6794,101 @@ fn run_worker_supervisor(
             worker_result_path,
             worker_log_path,
             worker_status: "not_dispatched".to_string(),
-            worker_kind,
+            worker_kind: capability
+                .as_ref()
+                .map(|item| format!("{}:not_dispatched", item.name))
+                .unwrap_or_else(|| "python_reference_worker".to_string()),
             worker_note: "effective decision denied; supervisor did not dispatch worker".to_string(),
             runtime_outcome: "denied".to_string(),
         });
     }
 
+    if let Some(capability) = capability.as_ref() {
+        if capability.worker_kind == "wasm" {
+            return dispatch_wasm_worker(
+                capability,
+                &envelope.resource,
+                &jobs_dir,
+                &worker_request_path,
+                &worker_result_path,
+                &worker_log_path,
+            );
+        }
+        if capability.worker_kind == "python" {
+            return dispatch_python_worker(
+                root,
+                &config,
+                Some(capability),
+                &worker_request_path,
+                &worker_result_path,
+                &worker_log_path,
+            );
+        }
+    }
+
+    // Wasm dispatch remains available for direct resource-based execution too.
+    if envelope.resource.starts_with("wasm:") || envelope.resource.starts_with("builtin:") {
+        return dispatch_wasm_worker(
+            &CapabilityDescriptor {
+                name: "resource_direct_wasm".to_string(),
+                description: "resource-directed wasm execution".to_string(),
+                action_type: envelope.action_type.clone(),
+                resource: envelope.resource.clone(),
+                worker_kind: "wasm".to_string(),
+                worker_entry: String::new(),
+                wasm_module: envelope.resource.clone(),
+                payload_mode: "none".to_string(),
+                source_kind: "loom_runtime_direct".to_string(),
+                source_path: envelope.resource.clone(),
+                source_manifest: String::new(),
+                adapter_kind: "loom_wasm_guest_v0".to_string(),
+                import_provenance: "loom_runtime_direct_contract_v0".to_string(),
+                verification_status: "runtime_direct".to_string(),
+                last_verified_at: String::new(),
+                last_verification_job_id: String::new(),
+                last_verification_execution_id: String::new(),
+                verification_note: "resource-directed wasm execution".to_string(),
+                promotion_state: "runtime_direct".to_string(),
+                promoted_at: String::new(),
+                enabled: true,
+            },
+            &envelope.resource,
+            &jobs_dir,
+            &worker_request_path,
+            &worker_result_path,
+            &worker_log_path,
+        );
+    }
+
+    dispatch_python_worker(
+        root,
+        &config,
+        capability.as_ref(),
+        &worker_request_path,
+        &worker_result_path,
+        &worker_log_path,
+    )
+}
+
+fn dispatch_python_worker(
+    root: &Path,
+    config: &Config,
+    capability: Option<&CapabilityDescriptor>,
+    worker_request_path: &Path,
+    worker_result_path: &Path,
+    worker_log_path: &Path,
+) -> ShadowResult<WorkerExecutionCapture> {
+    let worker_entry = capability
+        .and_then(|item| {
+            if item.worker_entry.trim().is_empty() {
+                None
+            } else {
+                Some(root.join(&item.worker_entry))
+            }
+        })
+        .unwrap_or_else(|| runtime_worker_entry(root, config));
     let output = Command::new("python3")
-        .arg(runtime_worker_entry(root, &config))
+        .arg(&worker_entry)
         .arg("--input")
         .arg(&worker_request_path)
         .arg("--output")
@@ -5727,21 +6913,27 @@ fn run_worker_supervisor(
 
     if output.status.success() && worker_result_path.exists() {
         Ok(WorkerExecutionCapture {
-            worker_request_path,
-            worker_result_path,
-            worker_log_path,
+            worker_request_path: worker_request_path.to_path_buf(),
+            worker_result_path: worker_result_path.to_path_buf(),
+            worker_log_path: worker_log_path.to_path_buf(),
             worker_status: "completed".to_string(),
-            worker_kind,
-            worker_note: format!("experimental supervisor dispatched {}", worker_entry.display()),
+            worker_kind: capability
+                .map(|item| format!("python_capability/{}", item.name))
+                .unwrap_or_else(|| "python_reference_worker".to_string()),
+            worker_note: capability
+                .map(|item| format!("capability {} dispatched via {}", item.name, worker_entry.display()))
+                .unwrap_or_else(|| format!("experimental supervisor dispatched {}", worker_entry.display())),
             runtime_outcome: "worker_executed".to_string(),
         })
     } else {
         Ok(WorkerExecutionCapture {
-            worker_request_path,
-            worker_result_path,
-            worker_log_path,
+            worker_request_path: worker_request_path.to_path_buf(),
+            worker_result_path: worker_result_path.to_path_buf(),
+            worker_log_path: worker_log_path.to_path_buf(),
             worker_status: "failed".to_string(),
-            worker_kind,
+            worker_kind: capability
+                .map(|item| format!("python_capability/{}", item.name))
+                .unwrap_or_else(|| "python_reference_worker".to_string()),
             worker_note: if stderr.trim().is_empty() {
                 "worker supervisor command failed".to_string()
             } else {
@@ -5749,6 +6941,115 @@ fn run_worker_supervisor(
             },
             runtime_outcome: "worker_failed".to_string(),
         })
+    }
+}
+
+/// Dispatch a job to a WASM worker via Wasmtime. Used when resource is "wasm:*" or "builtin:*".
+fn dispatch_wasm_worker(
+    capability: &CapabilityDescriptor,
+    resource: &str,
+    _jobs_dir: &Path,
+    worker_request_path: &Path,
+    worker_result_path: &Path,
+    worker_log_path: &Path,
+) -> ShadowResult<WorkerExecutionCapture> {
+    let module_source = if !capability.wasm_module.trim().is_empty() {
+        capability.wasm_module.as_str()
+    } else {
+        resource
+    };
+    let wasm_bytes = if module_source == "builtin:minimal" {
+        // Inline minimal WASM module: exports "run" -> i32 (returns 7)
+        vec![
+            0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x05, 0x01, 0x60, 0x00, 0x01,
+            0x7f, 0x03, 0x02, 0x01, 0x00, 0x07, 0x07, 0x01, 0x03, 0x72, 0x75, 0x6e, 0x00, 0x00,
+            0x0a, 0x06, 0x01, 0x04, 0x00, 0x41, 0x07, 0x0b,
+        ]
+    } else if let Some(module_path) = module_source.strip_prefix("wasm:") {
+        fs::read(module_path).map_err(|e| format!("failed to read wasm module {}: {}", module_path, e))?
+    } else {
+        return Err(format!("unsupported wasm resource: {}", module_source));
+    };
+
+    let fuel_budget: u64 = 100_000;
+    let host_config = WasmHostBuilder::default()
+        .build()
+        .map_err(|errors| format!("wasm host config: {}", errors.join("; ")))?;
+
+    let request = WasmExecutionRequest {
+        host: host_config,
+        source: WasmGuestSource::WasmBytes {
+            name: capability.name.clone(),
+            bytes: wasm_bytes,
+        },
+        entrypoint: "run".to_string(),
+        entrypoint_args: vec![],
+        memory_probe: None,
+        fuel_budget,
+    };
+
+    match run_wasm_guest(&request) {
+        Ok(result) => {
+            let result_json = format!(
+                "{{\n  \"status\": \"completed\",\n  \"worker_type\": \"wasm\",\n  \"module\": {},\n  \"entrypoint\": \"run\",\n  \"entrypoint_result\": {},\n  \"fuel_budget\": {},\n  \"host_backend\": {},\n  \"pooling_profile\": {}\n}}\n",
+                json_string(&result.module_name),
+                result.entrypoint_result.map(|v| v.to_string()).unwrap_or_else(|| "null".to_string()),
+                fuel_budget,
+                json_string(&result.host_backend),
+                json_string(&result.pooling_profile),
+            );
+            fs::write(worker_result_path, &result_json).map_err(io_err)?;
+            let log_msg = format!(
+                "wasm worker completed: module={} entrypoint=run result={} backend={}\n",
+                result.module_name,
+                result.entrypoint_result.map(|v| v.to_string()).unwrap_or_else(|| "null".to_string()),
+                result.host_backend,
+            );
+            fs::write(worker_log_path, &log_msg).map_err(io_err)?;
+            Ok(WorkerExecutionCapture {
+                worker_request_path: worker_request_path.to_path_buf(),
+                worker_result_path: worker_result_path.to_path_buf(),
+                worker_log_path: worker_log_path.to_path_buf(),
+                worker_status: "completed".to_string(),
+                worker_kind: format!("wasm_wasmtime/{}", capability.name),
+                worker_note: format!(
+                    "wasm capability {} executed: module={} entrypoint_result={} fuel_budget={}",
+                    capability.name,
+                    result.module_name,
+                    result.entrypoint_result.map(|v| v.to_string()).unwrap_or_else(|| "null".to_string()),
+                    fuel_budget,
+                ),
+                runtime_outcome: "worker_executed".to_string(),
+            })
+        }
+        Err(error) => {
+            let is_fuel_exhaustion = error.contains("fuel") || error.contains("out of fuel");
+            let result_json = format!(
+                "{{\n  \"status\": \"failed\",\n  \"worker_type\": \"wasm\",\n  \"module\": {},\n  \"error\": {},\n  \"fuel_exhaustion\": {}\n}}\n",
+                json_string(module_source),
+                json_string(&error),
+                if is_fuel_exhaustion { "true" } else { "false" },
+            );
+            fs::write(worker_result_path, &result_json).map_err(io_err)?;
+            fs::write(worker_log_path, format!("wasm worker failed: {}\n", error)).map_err(io_err)?;
+            Ok(WorkerExecutionCapture {
+                worker_request_path: worker_request_path.to_path_buf(),
+                worker_result_path: worker_result_path.to_path_buf(),
+                worker_log_path: worker_log_path.to_path_buf(),
+                worker_status: "failed".to_string(),
+                worker_kind: format!("wasm_wasmtime/{}", capability.name),
+                worker_note: if is_fuel_exhaustion {
+                    format!("wasm fuel exhaustion: {}", error)
+                } else {
+                    format!("wasm worker failed: {}", error)
+                },
+                runtime_outcome: if is_fuel_exhaustion {
+                    "fuel_exhausted".to_string()
+                } else {
+                    "worker_failed".to_string()
+                },
+            })
+        }
     }
 }
 
@@ -6004,6 +7305,71 @@ print(json.dumps(treasury.release_runtime_budget(reservation_id, reason=reason))
     })
 }
 
+/// Economy post-execution hook (S1). Calls kernel economy adapter with
+/// {agent_id, outcome, cost_actual} after job completes. Writes REP/AUTH
+/// delta to kernel state files via economy.py if present.
+fn emit_economy_hook(
+    kernel_path: &Path,
+    envelope: &ActionEnvelope,
+    decision: &DecisionCapture,
+    runtime_outcome: &str,
+    budget_capture: &BudgetReservationCapture,
+) -> ShadowResult<String> {
+    let kernel_dir = kernel_path.join("kernel");
+    let economy_script = kernel_dir.join("economy.py");
+    if !economy_script.exists() {
+        return Ok("not_available".to_string());
+    }
+    let script = r#"import json, sys
+kernel_dir = sys.argv[1]
+agent_id = sys.argv[2]
+org_id = sys.argv[3]
+outcome = sys.argv[4]
+cost_actual = float(sys.argv[5])
+action_type = sys.argv[6]
+decision = sys.argv[7]
+input_hash = sys.argv[8]
+sys.path.insert(0, kernel_dir)
+import economy
+result = economy.post_execution_hook(
+    agent_id=agent_id,
+    org_id=org_id,
+    outcome=outcome,
+    cost_actual_usd=cost_actual,
+    action_type=action_type,
+    decision=decision,
+    input_hash=input_hash,
+)
+print(json.dumps(result))
+"#;
+    let actual_cost = if budget_capture.status == "committed" {
+        envelope.estimated_cost_usd
+    } else {
+        0.0
+    };
+    let output = Command::new("python3")
+        .arg("-c")
+        .arg(script)
+        .arg(&kernel_dir)
+        .arg(&envelope.agent_id)
+        .arg(&envelope.org_id)
+        .arg(runtime_outcome)
+        .arg(format!("{:.6}", actual_cost))
+        .arg(&envelope.action_type)
+        .arg(&decision.overall_decision)
+        .arg(&decision.input_hash)
+        .output()
+        .map_err(io_err)?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Ok(format!("economy_hook_failed: {}", if stderr.is_empty() { "unknown error" } else { &stderr }));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let status = extract_json_string(&stdout, "\"status\"")
+        .unwrap_or_else(|| "economy_hook_called".to_string());
+    Ok(status)
+}
+
 fn emit_kernel_audit_preview(
     kernel_path: &Path,
     audit_preview_log: &Path,
@@ -6167,6 +7533,7 @@ fn emit_runtime_audit(
             .arg(&budget.reason)
             .arg("--session_id")
             .arg(&envelope.session_id)
+            .env("MERIDIAN_RUNTIME_AUDIT_FILE", audit_log_path)
             .output()
             .map_err(io_err)?;
         if output.status.success() {
@@ -6219,6 +7586,7 @@ fn append_line(path: &Path, line: &str) -> ShadowResult<()> {
     };
     existing.push_str(line);
     fs::write(path, existing).map_err(io_err)?;
+    ensure_private_file(path)?;
     Ok(())
 }
 
@@ -6238,7 +7606,11 @@ fn write_runtime_event_artifacts(
 }
 
 fn job_snapshot_path(root: &Path, job_id: &str) -> PathBuf {
-    root.join(".loom/runtime/jobs").join(job_id).join("job.json")
+    root.join(&runtime_layout_config(root).state_dir)
+        .join("runtime")
+        .join("jobs")
+        .join(job_id)
+        .join("job.json")
 }
 
 fn write_job_snapshot(root: &Path, snapshot: JobSnapshot) -> ShadowResult<()> {
@@ -6304,6 +7676,10 @@ fn read_job_snapshot(root: &Path, job_id: &str) -> ShadowResult<JobSnapshot> {
         event_stream_path: extract_optional_path(&contents, "\"event_stream_path\""),
         audit_log_path: extract_optional_path(&contents, "\"audit_log_path\""),
         parity_report_path: extract_optional_path(&contents, "\"parity_report_path\""),
+        reservation_id: extract_json_string(&contents, "\"reservation_id\"").unwrap_or_default(),
+        reservation_state: extract_json_string(&contents, "\"reservation_state\"").unwrap_or_else(|| "unknown".to_string()),
+        attempt_count: extract_json_string(&contents, "\"attempt_count\"")
+            .and_then(|s| s.parse::<u32>().ok()).unwrap_or(0),
         note: extract_json_string(&contents, "\"note\"").unwrap_or_default(),
     })
 }
@@ -6447,7 +7823,7 @@ fn display_optional_path(path: Option<&PathBuf>) -> String {
 
 fn render_job_snapshot_json(snapshot: &JobSnapshot) -> String {
     format!(
-        "    {{\n      \"job_id\": {},\n      \"job_path\": {},\n      \"job_status\": {},\n      \"job_stage\": {},\n      \"queue_bucket\": {},\n      \"queued_at\": {},\n      \"updated_at\": {},\n      \"agent_id\": {},\n      \"org_id\": {},\n      \"action_type\": {},\n      \"resource\": {},\n      \"estimated_cost_usd\": {},\n      \"runtime_outcome\": {},\n      \"budget_reservation_id\": {},\n      \"budget_reservation_status\": {},\n      \"budget_reservation_reason\": {},\n      \"worker_status\": {},\n      \"queue_path\": {},\n      \"decision_path\": {},\n      \"execution_path\": {},\n      \"event_path\": {},\n      \"event_stream_path\": {},\n      \"audit_log_path\": {},\n      \"parity_report_path\": {},\n      \"note\": {}\n    }}",
+        "    {{\n      \"job_id\": {},\n      \"job_path\": {},\n      \"job_status\": {},\n      \"job_stage\": {},\n      \"queue_bucket\": {},\n      \"queued_at\": {},\n      \"updated_at\": {},\n      \"agent_id\": {},\n      \"org_id\": {},\n      \"action_type\": {},\n      \"resource\": {},\n      \"estimated_cost_usd\": {},\n      \"runtime_outcome\": {},\n      \"budget_reservation_id\": {},\n      \"budget_reservation_status\": {},\n      \"budget_reservation_reason\": {},\n      \"worker_status\": {},\n      \"queue_path\": {},\n      \"decision_path\": {},\n      \"execution_path\": {},\n      \"event_path\": {},\n      \"event_stream_path\": {},\n      \"audit_log_path\": {},\n      \"parity_report_path\": {},\n      \"reservation_id\": {},\n      \"reservation_state\": {},\n      \"attempt_count\": {},\n      \"note\": {}\n    }}",
         json_string(&snapshot.job_id),
         json_string(&snapshot.job_path.display().to_string()),
         json_string(&snapshot.status),
@@ -6504,6 +7880,13 @@ fn render_job_snapshot_json(snapshot: &JobSnapshot) -> String {
             .as_ref()
             .map(|path| json_string(&path.display().to_string()))
             .unwrap_or_else(|| "null".to_string()),
+        if snapshot.reservation_id.is_empty() {
+            "null".to_string()
+        } else {
+            json_string(&snapshot.reservation_id)
+        },
+        json_string(&snapshot.reservation_state),
+        snapshot.attempt_count,
         json_string(&snapshot.note),
     )
 }
@@ -6524,7 +7907,7 @@ mod tests {
     #[test]
     fn records_preflight_and_renders_report() {
         let root = temp_path("loom-shadow-capture");
-        fs::create_dir_all(root.join(".loom/shadow")).expect("shadow dir");
+        ensure_shadow_dir(&root).expect("shadow dir");
         let identity = sample_identity();
         let envelope = sample_envelope();
         let reference = ReferenceGateCheck {
@@ -6563,7 +7946,7 @@ mod tests {
     #[test]
     fn decision_capture_surfaces_gate_outcome() {
         let root = temp_path("loom-shadow-decision");
-        fs::create_dir_all(root.join(".loom/shadow")).expect("shadow dir");
+        ensure_shadow_dir(&root).expect("shadow dir");
         let identity = sample_identity();
         let envelope = sample_envelope();
         let reference = ReferenceGateCheck {
@@ -6608,7 +7991,7 @@ mod tests {
     #[test]
     fn decision_capture_prefers_local_sanction_preview_when_execute_is_restricted() {
         let root = temp_path("loom-shadow-decision-sanction");
-        fs::create_dir_all(root.join(".loom/shadow")).expect("shadow dir");
+        ensure_shadow_dir(&root).expect("shadow dir");
         let mut identity = sample_identity();
         identity.restrictions = vec!["execute".to_string()];
         identity.sanction_decision = "restricted_execute".to_string();
@@ -6625,21 +8008,21 @@ mod tests {
         };
 
         let capture = capture_decision(&root, &identity, &envelope, &reference).expect("decision");
-        assert_eq!(capture.overall_decision, "deny");
+        assert_eq!(capture.overall_decision, "hard_deny");
         assert_eq!(capture.identity_restrictions, vec!["execute".to_string()]);
         assert_eq!(capture.reference_restrictions, vec!["execute".to_string()]);
         assert!(!capture.local_sanction_allowed);
         assert_eq!(capture.local_sanction_decision, "deny");
-        assert_eq!(capture.effective_source, "local_sanction_preview");
-        assert_eq!(capture.effective_stage, "sanction_controls_preview");
-        assert!(capture.effective_reason.contains("restricted from execute"));
+        assert_eq!(capture.effective_source, "sanction_enforcement");
+        assert_eq!(capture.effective_stage, "sanction_controls");
+        assert!(capture.effective_reason.contains("restricted"));
         assert_eq!(decision_exit_code(&capture, 0, 2), 2);
     }
 
     #[test]
     fn compares_identical_logs_without_divergence() {
         let root = temp_path("loom-shadow-compare");
-        let shadow_dir = root.join(".loom/shadow");
+        let shadow_dir = ensure_shadow_dir(&root).expect("shadow dir");
         fs::create_dir_all(&shadow_dir).expect("shadow dir");
         let log_a = shadow_dir.join("primary.jsonl");
         let log_b = shadow_dir.join("shadow.jsonl");
@@ -6660,7 +8043,7 @@ mod tests {
     #[test]
     fn compare_report_surfaces_hook_level_divergence_details() {
         let root = temp_path("loom-shadow-divergence");
-        let shadow_dir = root.join(".loom/shadow");
+        let shadow_dir = ensure_shadow_dir(&root).expect("shadow dir");
         fs::create_dir_all(&shadow_dir).expect("shadow dir");
         let primary = shadow_dir.join("primary.jsonl");
         let shadow = shadow_dir.join("shadow.jsonl");
@@ -6692,7 +8075,7 @@ mod tests {
     #[test]
     fn runtime_execution_capture_writes_runtime_and_parity_artifacts() {
         let root = temp_path("loom-shadow-runtime");
-        fs::create_dir_all(root.join(".loom/shadow")).expect("shadow dir");
+        ensure_shadow_dir(&root).expect("shadow dir");
         let identity = sample_identity();
         let envelope = sample_envelope();
         let reference = ReferenceGateCheck {
@@ -6800,7 +8183,7 @@ mod tests {
     #[test]
     fn runtime_execution_respects_sanction_deny_without_dispatch() {
         let root = temp_path("loom-shadow-runtime-sanction-deny");
-        fs::create_dir_all(root.join(".loom/shadow")).expect("shadow dir");
+        ensure_shadow_dir(&root).expect("shadow dir");
         let mut identity = sample_identity();
         identity.restrictions = vec!["execute".to_string()];
         identity.sanction_decision = "restricted_execute".to_string();
@@ -6822,32 +8205,32 @@ mod tests {
 
         assert_eq!(capture.runtime_outcome, "denied");
         assert_eq!(capture.worker_status, "not_dispatched");
-        assert_eq!(capture.effective_stage, "sanction_controls_preview");
+        assert_eq!(capture.effective_stage, "sanction_controls");
         assert_eq!(capture.budget_reservation_status, "decision_denied");
         let human = render_runtime_execution_human(&capture);
         assert!(human.contains("runtime_outcome:     denied"));
         assert!(human.contains("budget_reservation:  decision_denied"));
-        assert!(human.contains("effective_stage:     sanction_controls_preview"));
+        assert!(human.contains("effective_stage:     sanction_controls"));
     }
 
     #[test]
     fn shadow_report_deprioritizes_stale_not_started_marker_when_runtime_exists() {
         let root = temp_path("loom-shadow-stale-latest");
-        fs::create_dir_all(root.join(".loom/shadow")).expect("shadow dir");
-        fs::create_dir_all(root.join(".loom/runtime")).expect("runtime dir");
-        fs::create_dir_all(root.join(".loom/parity")).expect("parity dir");
+        let shadow_dir = ensure_shadow_dir(&root).expect("shadow dir");
+        let runtime_dir = ensure_runtime_dir(&root).expect("runtime dir");
+        let parity_dir = ensure_parity_dir(&root).expect("parity dir");
         fs::write(
-            root.join(".loom/shadow/latest.json"),
+            shadow_dir.join("latest.json"),
             "{\n  \"status\": \"not_started\",\n  \"note\": \"shadow mode is not implemented in this scaffold\"\n}\n",
         )
         .expect("write latest");
         fs::write(
-            root.join(".loom/runtime/last_execution.json"),
+            runtime_dir.join("last_execution.json"),
             "{\n  \"status\": \"runtime_execution_captured\"\n}\n",
         )
         .expect("write runtime");
         fs::write(
-            root.join(".loom/parity/latest.json"),
+            parity_dir.join("latest.json"),
             "{\n  \"status\": \"parity_report_captured\"\n}\n",
         )
         .expect("write parity");
@@ -6862,9 +8245,9 @@ mod tests {
     #[test]
     fn shadow_report_guides_next_steps_when_only_legacy_marker_exists() {
         let root = temp_path("loom-shadow-guidance");
-        fs::create_dir_all(root.join(".loom/shadow")).expect("shadow dir");
+        let shadow_dir = ensure_shadow_dir(&root).expect("shadow dir");
         fs::write(
-            root.join(".loom/shadow/latest.json"),
+            shadow_dir.join("latest.json"),
             "{\n  \"status\": \"not_started\",\n  \"note\": \"shadow mode is not implemented in this scaffold\"\n}\n",
         )
         .expect("write latest");
@@ -6879,7 +8262,7 @@ mod tests {
     #[test]
     fn parity_report_guides_next_steps_when_no_artifacts_exist() {
         let root = temp_path("loom-parity-guidance");
-        fs::create_dir_all(root.join(".loom/parity")).expect("parity dir");
+        ensure_parity_dir(&root).expect("parity dir");
 
         let report = render_parity_report(&root).expect("render parity");
         assert!(report.contains("Current state"));
@@ -7109,8 +8492,9 @@ if __name__ == '__main__':
         );
         assert!(summary.audit_log_path.exists());
         assert!(summary.last_execution_path.exists());
-        let pending_dir = root.join(".loom/runtime/queue/pending");
-        let processed_dir = root.join(".loom/runtime/queue/processed");
+        let runtime_dir = ensure_runtime_dir(&root).expect("runtime dir");
+        let pending_dir = runtime_dir.join("queue/pending");
+        let processed_dir = runtime_dir.join("queue/processed");
         assert_eq!(count_json_files_recursive(&pending_dir).expect("pending dir"), 0);
         assert_eq!(
             fs::read_dir(&processed_dir).expect("processed dir").count(),
@@ -7481,23 +8865,22 @@ if __name__ == '__main__':
                 None,
                 1,
                 0,
-                100,
+                1_000_000,
                 "service-file-test",
             )
         });
 
-        for _ in 0..20 {
+        let mut running = false;
+        for _ in 0..40 {
             if let Ok(snapshot) = runtime_service_status(&root, Some(&socket_override)) {
                 if snapshot.available && snapshot.running {
+                    running = true;
                     break;
                 }
             }
-            let state_path = root.join(".loom/runtime/service/runtime_state.json");
-            if state_path.exists() {
-                break;
-            }
             thread::sleep(Duration::from_millis(50));
         }
+        assert!(running, "runtime service did not report running before submit");
 
         let capture = submit_runtime_service_action(
             &root,
@@ -7518,6 +8901,97 @@ if __name__ == '__main__':
         assert!(capture.note.contains("file"));
         let service_events = fs::read_to_string(snapshot.event_log_path).expect("service events");
         assert!(service_events.contains("socket_bind_failed"));
+    }
+
+    #[test]
+    fn runtime_service_file_ingress_preserves_capability_job_identity() {
+        let root = temp_path("loom-shadow-runtime-service-capability-file");
+        fs::create_dir_all(&root).expect("root");
+        let kernel = temp_path("loom-shadow-runtime-service-capability-file-kernel");
+        let kernel_dir = kernel.join("kernel");
+        fs::create_dir_all(kernel_dir.join("adapters")).expect("kernel dirs");
+        fs::write(
+            kernel_dir.join("runtimes.json"),
+            "{\n  \"runtimes\": {\n    \"local_kernel\": {\"id\": \"local_kernel\", \"label\": \"Local Kernel Runtime\"},\n    \"meridian_loom\": {\"status\": \"experimental\", \"notes\": \"capability file ingress fixture\", \"contract_compliance\": {\"agent_identity\": null, \"action_envelope\": null, \"cost_attribution\": null, \"approval_hook\": null, \"audit_emission\": null, \"sanction_controls\": null, \"budget_gate\": null}}\n  }\n}\n",
+        )
+        .expect("write runtimes");
+        fs::write(
+            kernel_dir.join("agent_registry.py"),
+            "import json, sys\nagent_id = sys.argv[sys.argv.index('--agent_id') + 1]\norg_id = sys.argv[sys.argv.index('--org_id') + 1] if '--org_id' in sys.argv else 'org_demo'\nprint(json.dumps({'id': agent_id, 'name': 'Atlas', 'org_id': org_id, 'role': 'analyst', 'economy_key': 'atlas', 'approval_required': False, 'budget': {'max_per_run_usd': 0.5}, 'runtime_binding': {'runtime_id': 'local_kernel', 'runtime_label': 'Local Kernel Runtime', 'bound_org_id': org_id, 'boundary_name': 'workspace', 'identity_model': 'session', 'runtime_registered': True, 'registration_status': 'registered'}}, indent=2))\n",
+        )
+        .expect("write registry");
+        fs::write(kernel_dir.join("court.py"), "def get_restrictions(agent_id, org_id=None):\n    return []\n").expect("write court");
+        fs::write(kernel_dir.join("authority.py"), "def check_authority(agent_id, action, org_id=None):\n    return True, 'ok'\n").expect("write authority");
+        fs::write(
+            kernel_dir.join("treasury.py"),
+            "def check_budget(agent_id, cost_usd, org_id=None):\n    return True, 'ok'\n\ndef reserve_runtime_budget(*args, **kwargs):\n    return {'allowed': True, 'reservation_id': 'bud_service', 'reservation': {'reservation_id': 'bud_service'}, 'reason': 'ok'}\n\ndef commit_runtime_budget(reservation_id, actual_cost_usd, note=''):\n    return {'reservation_id': reservation_id, 'status': 'committed', 'commit_reason': note}\n\ndef release_runtime_budget(reservation_id, reason=''):\n    return {'reservation_id': reservation_id, 'status': 'released', 'release_reason': reason}\n",
+        )
+        .expect("write treasury");
+        fs::write(kernel_dir.join("audit.py"), "def log_event(*args, **kwargs):\n    return 'evt_service'\n").expect("write audit");
+        fs::write(kernel_dir.join("adapters/__init__.py"), "").expect("write adapter init");
+        fs::write(
+            kernel_dir.join("adapters/openclaw_compatible.py"),
+            "def pre_action_check(org_id, envelope):\n    return {'allowed': True, 'stage': 'ok', 'reason': 'ok', 'restrictions': []}\n",
+        )
+        .expect("write adapter");
+        init_workspace(
+            &root,
+            "embedded",
+            Some(kernel.to_string_lossy().as_ref()),
+            "org_demo",
+        )
+        .expect("init workspace");
+
+        let socket_override = ensure_runtime_service_dir(&root)
+            .expect("service dir")
+            .display()
+            .to_string();
+        let root_for_service = root.clone();
+        let kernel_for_service = kernel.clone();
+        let socket_override_for_service = socket_override.clone();
+        let handle = thread::spawn(move || {
+            run_runtime_service_loop(
+                &root_for_service,
+                Some(kernel_for_service.to_string_lossy().as_ref()),
+                Some(&socket_override_for_service),
+                None,
+                None,
+                None,
+                None,
+                1,
+                0,
+                100,
+                "service-capability-file-test",
+            )
+        });
+
+        for _ in 0..20 {
+            if let Ok(snapshot) = runtime_service_status(&root, Some(&socket_override)) {
+                if snapshot.available && snapshot.running {
+                    break;
+                }
+            }
+            let state_path = runtime_service_state_path(&root).expect("service state path");
+            if state_path.exists() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+
+        let envelope = sample_capability_envelope();
+        let expected_job_id = envelope_input_hash(&envelope);
+        let capture = submit_runtime_service_action(&root, None, None, None, &kernel, &envelope)
+            .expect("submit via file ingress fallback");
+        request_runtime_service_stop(&root, None).expect("request stop");
+        let snapshot = handle.join().expect("join service thread").expect("service loop");
+        assert!(snapshot.available);
+        assert_eq!(capture.job_id, expected_job_id);
+        let job = inspect_job(&root, &capture.job_id).expect("inspect job");
+        assert_eq!(job.status, "completed");
+        let result_path = job.job_path.parent().expect("job dir").join("result.json");
+        let result_contents = fs::read_to_string(result_path).expect("result");
+        assert!(result_contents.contains("\"capability_name\": \"loom.echo.v1\""));
+        assert!(result_contents.contains("hello from capability lane"));
     }
 
     #[test]
@@ -7637,8 +9111,140 @@ if __name__ == '__main__':
         assert!(snapshot.available);
         assert_eq!(snapshot.submitted, 1);
         assert_eq!(snapshot.processed, 1);
-        let marker_dir = root.join(".loom/runtime/imports/commitment_execution");
+        let marker_dir = ensure_runtime_imports_dir(&root)
+            .expect("imports dir")
+            .join("commitment_execution");
         assert!(marker_dir.exists());
+    }
+
+    #[test]
+    fn runtime_service_http_rejects_missing_token_and_handles_bad_requests() {
+        let root = temp_path("loom-shadow-http-auth");
+        init_workspace(&root, "embedded", None, "org_demo").expect("init workspace");
+
+        let unauthorized = handle_runtime_service_http_request(
+            &root,
+            None,
+            "127.0.0.1:18910",
+            Some("secret-token"),
+            "GET /status HTTP/1.1\r\nHost: local\r\n\r\n",
+        )
+        .expect("unauthorized reply");
+        assert_eq!(unauthorized.http_status_code, 401);
+        assert_eq!(unauthorized.status, "unauthorized");
+
+        let bad = handle_runtime_service_http_request(
+            &root,
+            None,
+            "127.0.0.1:18910",
+            Some("secret-token"),
+            "BROKEN REQUEST\r\n\r\n",
+        )
+        .expect("bad request reply");
+        assert_eq!(bad.http_status_code, 400);
+        assert_eq!(bad.status, "bad_request");
+
+        let malformed_header = handle_runtime_service_http_request(
+            &root,
+            None,
+            "127.0.0.1:18910",
+            Some("secret-token"),
+            "GET /status HTTP/1.1\r\nHost local\r\nAuthorization: Bearer secret-token\r\n\r\n",
+        )
+        .expect("malformed header reply");
+        assert_eq!(malformed_header.http_status_code, 400);
+        assert_eq!(malformed_header.status, "bad_request");
+
+        let bad_length = handle_runtime_service_http_request(
+            &root,
+            None,
+            "127.0.0.1:18910",
+            Some("secret-token"),
+            "POST /submit HTTP/1.1\r\nHost: local\r\nAuthorization: Bearer secret-token\r\nContent-Type: application/json\r\nContent-Length: 25\r\n\r\n{}",
+        )
+        .expect("content-length reply");
+        assert_eq!(bad_length.http_status_code, 400);
+        assert_eq!(bad_length.status, "bad_request");
+
+        let wrong_content_type = handle_runtime_service_http_request(
+            &root,
+            None,
+            "127.0.0.1:18910",
+            Some("secret-token"),
+            "POST /submit HTTP/1.1\r\nHost: local\r\nAuthorization: Bearer secret-token\r\nContent-Type: text/plain\r\nContent-Length: 2\r\n\r\n{}",
+        )
+        .expect("wrong content-type reply");
+        assert_eq!(wrong_content_type.http_status_code, 415);
+        assert_eq!(wrong_content_type.status, "unsupported_media_type");
+
+        let metrics = handle_runtime_service_http_request(
+            &root,
+            None,
+            "127.0.0.1:18910",
+            Some("secret-token"),
+            "GET /metrics HTTP/1.1\r\nHost: local\r\nAuthorization: Bearer secret-token\r\n\r\n",
+        )
+        .expect("metrics reply");
+        assert_eq!(metrics.http_status_code, 200);
+        assert!(metrics.payload.contains("\"requests_received\""));
+
+        let config = handle_runtime_service_http_request(
+            &root,
+            None,
+            "127.0.0.1:18910",
+            Some("secret-token"),
+            "GET /config HTTP/1.1\r\nHost: local\r\nAuthorization: Bearer secret-token\r\n\r\n",
+        )
+        .expect("config reply");
+        assert_eq!(config.http_status_code, 200);
+        assert!(config.payload.contains("\"service_token_present\""));
+    }
+
+    #[test]
+    fn runtime_service_status_marks_dead_pid_unhealthy() {
+        let root = temp_path("loom-shadow-service-status-dead-pid");
+        init_workspace(&root, "embedded", None, "org_demo").expect("init workspace");
+
+        let runtime_state_path = runtime_service_state_path(&root).expect("runtime state path");
+        let metrics_path = service_metrics_path(&root).expect("metrics path");
+        let socket_path = service_socket_path(&root, None).expect("socket path");
+        write_runtime_service_state(
+            &runtime_state_path,
+            &metrics_path,
+            &socket_path,
+            Some("127.0.0.1:18910"),
+            true,
+            "service-dead",
+            999_999,
+            true,
+            "running",
+            "100",
+            "",
+            1,
+            1,
+            100,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            "",
+            "",
+            "simulated dead pid".to_string(),
+        )
+        .expect("write runtime state");
+
+        let snapshot = runtime_service_status(&root, None).expect("status");
+        assert!(snapshot.available);
+        assert!(!snapshot.running);
+        assert_eq!(snapshot.status, "crashed");
+        let health = render_runtime_service_health_json(&snapshot);
+        assert!(health.contains("\"status\": \"crashed\""));
     }
 
     fn temp_path(prefix: &str) -> PathBuf {
@@ -7683,10 +9289,20 @@ if __name__ == '__main__':
             runtime_label: "Local Kernel Runtime".to_string(),
             action_type: "research".to_string(),
             resource: "web_search".to_string(),
+            capability_name: String::new(),
+            payload_json: String::new(),
             estimated_cost_usd: 0.25,
             run_id: "run_1".to_string(),
             session_id: "session_1".to_string(),
             source: "loom_experimental_preflight".to_string(),
+        }
+    }
+
+    fn sample_capability_envelope() -> ActionEnvelope {
+        ActionEnvelope {
+            capability_name: "loom.echo.v1".to_string(),
+            payload_json: "{\"message\":\"hello from capability lane\"}".to_string(),
+            ..sample_envelope()
         }
     }
 }

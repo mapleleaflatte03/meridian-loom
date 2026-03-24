@@ -53,7 +53,7 @@ Meridian Loom // INIT
 root:        /tmp/loom-rehearsal
 mode:        embedded
 org_id:      org_b7d95bae
-state_dir:   .loom
+state_dir:   state
 kernel_path: /tmp/meridian-kernel
 status:      initialized experimental scaffold
 next_step:   loom doctor --root /tmp/loom-rehearsal --format human
@@ -69,7 +69,7 @@ Checks
 [OK      ] python_workers     python worker path present (/tmp/loom-rehearsal/workers/python)
 [OK      ] typescript_workers typescript worker path present (/tmp/loom-rehearsal/workers/typescript)
 [OK      ] wasm_modules       wasm module path present (/tmp/loom-rehearsal/workers/wasm)
-[OK      ] capsule_manifest   capsule manifest present (/tmp/loom-rehearsal/.loom/capsules/org_b7d95bae/manifest.json)
+[OK      ] capsule_manifest   capsule manifest present (/tmp/loom-rehearsal/state/capsules/org_b7d95bae/manifest.json)
 [OK      ] kernel_path        kernel path present (/tmp/meridian-kernel)
 [OK      ] runtime_registry   Meridian runtime registry available (/tmp/meridian-kernel/kernel/runtimes.json)
 [OK      ] agent_registry     Meridian agent registry CLI available (/tmp/meridian-kernel/kernel/agent_registry.py)
@@ -87,9 +87,9 @@ mode:        embedded
 org_id:      org_b7d95bae
 state_dir:   /tmp/loom-rehearsal/.loom
 kernel_path: /tmp/meridian-kernel
-capsule:     /tmp/loom-rehearsal/.loom/capsules/org_b7d95bae/manifest.json
-shadow:      /tmp/loom-rehearsal/.loom/shadow/latest.json
-queue:       /tmp/loom-rehearsal/.loom/runtime/queue/pending
+capsule:     /tmp/loom-rehearsal/state/capsules/org_b7d95bae/manifest.json
+shadow:      /tmp/loom-rehearsal/artifacts/shadow/latest.json
+queue:       /tmp/loom-rehearsal/state/runtime/queue/pending
 runtime:     experimental local queue supervisor + one-shot rehearsal
 experimental_hooks: agent_identity, action_envelope, cost_attribution, approval_hook, audit_emission, sanction_controls, budget_gate
 Meridian Loom // CONFIG
@@ -97,7 +97,7 @@ Meridian Loom // CONFIG
 root:        /tmp/loom-rehearsal
 mode:        embedded
 org_id:      org_b7d95bae
-state_dir:   .loom
+state_dir:   state
 kernel_path: /tmp/meridian-kernel
 python_path: workers/python
 typescript:  workers/typescript
@@ -167,7 +167,7 @@ Meridian Loom // CAPSULE INSPECT
 =================================
 org_id:       org_b7d95bae
 state_dir:    /tmp/loom-rehearsal/.loom
-manifest:     /tmp/loom-rehearsal/.loom/capsules/org_b7d95bae/manifest.json
+manifest:     /tmp/loom-rehearsal/state/capsules/org_b7d95bae/manifest.json
 files:        manifest.json
 Meridian Loom // AGENT IDENTITY
 ================================
@@ -208,11 +208,11 @@ input_hash:          bba40f20f386cb46
 
 Meridian Loom // SHADOW PREFLIGHT
 ===================================
-event_log:              /tmp/loom-rehearsal/.loom/shadow/events.jsonl
-audit_preview_log:      /tmp/loom-rehearsal/.loom/audit/preview.jsonl
-reference_report:       /tmp/loom-rehearsal/.loom/shadow/reference.json
-reference_event_log:    /tmp/loom-rehearsal/.loom/shadow/reference_events.jsonl
-latest_report:          /tmp/loom-rehearsal/.loom/shadow/latest.json
+event_log:              /tmp/loom-rehearsal/artifacts/shadow/events.jsonl
+audit_preview_log:      /tmp/loom-rehearsal/artifacts/audit/preview.jsonl
+reference_report:       /tmp/loom-rehearsal/artifacts/shadow/reference.json
+reference_event_log:    /tmp/loom-rehearsal/artifacts/shadow/reference_events.jsonl
+latest_report:          /tmp/loom-rehearsal/artifacts/shadow/latest.json
 input_hash:             bba40f20f386cb46
 estimated_cost_usd:     0.0500
 identity_restrictions:  (none)
@@ -228,7 +228,7 @@ reference_reason:       Treasury below reserve floor (runway $-50.00). Recapital
 captured_hooks:         agent_identity, action_envelope, cost_attribution, approval_hook, audit_emission, sanction_controls, budget_gate
 Meridian Loom // SHADOW DECISION
 ==================================
-decision_path:          /tmp/loom-rehearsal/.loom/shadow/decision.json
+decision_path:          /tmp/loom-rehearsal/artifacts/shadow/decision.json
 source:                 experimental_preflight_gate
 agent_id:               agent_atlas
 org_id:                 org_b7d95bae
@@ -251,7 +251,7 @@ reference_stage:        budget_gate
 reference_reason:       Treasury below reserve floor (runway $-50.00). Recapitalize before spending.
 Meridian Loom // SHADOW DECISION
 ==================================
-decision_path:          /tmp/loom-rehearsal/.loom/shadow/decision.json
+decision_path:          /tmp/loom-rehearsal/artifacts/shadow/decision.json
 source:                 experimental_preflight_gate
 agent_id:               agent_atlas
 org_id:                 org_b7d95bae
@@ -312,7 +312,7 @@ input_hash:          bba40f20f386cb46
 
 Meridian Loom // SHADOW DECISION
 ==================================
-decision_path:          /tmp/loom-rehearsal/.loom/shadow/decision.json
+decision_path:          /tmp/loom-rehearsal/artifacts/shadow/decision.json
 source:                 experimental_preflight_gate
 agent_id:               agent_atlas
 org_id:                 org_b7d95bae
@@ -362,31 +362,31 @@ parity_reason:       reference and loom agreed on deny at stage budget_gate
 
 worker supervisor artifacts
 ===========================
-worker_request:      /tmp/loom-rehearsal/.loom/runtime/jobs/bba40f20f386cb46/request.json
-worker_result:       /tmp/loom-rehearsal/.loom/runtime/jobs/bba40f20f386cb46/result.json
-worker_log:          /tmp/loom-rehearsal/.loom/runtime/jobs/bba40f20f386cb46/worker.log
+worker_request:      /tmp/loom-rehearsal/state/runtime/jobs/bba40f20f386cb46/request.json
+worker_result:       /tmp/loom-rehearsal/state/runtime/jobs/bba40f20f386cb46/result.json
+worker_log:          /tmp/loom-rehearsal/state/runtime/jobs/bba40f20f386cb46/worker.log
 
 audit / parity artifacts
 ========================
-execution_path:      /tmp/loom-rehearsal/.loom/runtime/last_execution.json
-decision_path:       /tmp/loom-rehearsal/.loom/shadow/decision.json
+execution_path:      /tmp/loom-rehearsal/state/runtime/last_execution.json
+decision_path:       /tmp/loom-rehearsal/artifacts/shadow/decision.json
 audit_log:           /tmp/meridian-kernel/kernel/runtime_audit/loom_runtime_events.jsonl (kernel_cli_runtime_event_written)
-parity_stream:       /tmp/loom-rehearsal/.loom/parity/stream.jsonl
-parity_report:       /tmp/loom-rehearsal/.loom/parity/latest.json
-openclaw_live_probe: /tmp/loom-rehearsal/.loom/parity/openclaw/bba40f20f386cb46.json (ok)
-openclaw_probe_log:  /tmp/loom-rehearsal/.loom/parity/openclaw_live_stream.jsonl
+parity_stream:       /tmp/loom-rehearsal/artifacts/parity/stream.jsonl
+parity_report:       /tmp/loom-rehearsal/artifacts/parity/latest.json
+openclaw_live_probe: /tmp/loom-rehearsal/artifacts/parity/openclaw/bba40f20f386cb46.json (ok)
+openclaw_probe_log:  /tmp/loom-rehearsal/artifacts/parity/openclaw_live_stream.jsonl
 
 Next
 ====
 1. loom parity report --root /tmp/loom-rehearsal
 2. loom shadow report --root /tmp/loom-rehearsal
-3. Inspect /tmp/loom-rehearsal/.loom/runtime/jobs/bba40f20f386cb46/worker.log for worker execution details.
+3. Inspect /tmp/loom-rehearsal/state/runtime/jobs/bba40f20f386cb46/worker.log for worker execution details.
 4. Inspect /tmp/meridian-kernel/kernel/runtime_audit/loom_runtime_events.jsonl for runtime-side audit details.
 action_execute_exit_code: 2
 Meridian Loom // SHADOW COMPARE
 ================================
-primary_log:     /tmp/loom-rehearsal/.loom/shadow/reference_events.jsonl
-shadow_log:      /tmp/loom-rehearsal/.loom/shadow/events.jsonl
+primary_log:     /tmp/loom-rehearsal/artifacts/shadow/reference_events.jsonl
+shadow_log:      /tmp/loom-rehearsal/artifacts/shadow/events.jsonl
 primary_events:  7
 shadow_events:   7
 pairs_compared:  7
@@ -404,20 +404,20 @@ phase:       experimental shadow + parity surface
 boundary:    report artifacts are real; governed runtime is not
 Runtime execution
 =================
-source: /tmp/loom-rehearsal/.loom/runtime/last_execution.json
+source: /tmp/loom-rehearsal/state/runtime/last_execution.json
 
 {
   "status": "runtime_execution_captured",
-  "execution_path": "/tmp/loom-rehearsal/.loom/runtime/last_execution.json",
-  "worker_request_path": "/tmp/loom-rehearsal/.loom/runtime/jobs/bba40f20f386cb46/request.json",
-  "worker_result_path": "/tmp/loom-rehearsal/.loom/runtime/jobs/bba40f20f386cb46/result.json",
-  "worker_log_path": "/tmp/loom-rehearsal/.loom/runtime/jobs/bba40f20f386cb46/worker.log",
-  "decision_path": "/tmp/loom-rehearsal/.loom/shadow/decision.json",
+  "execution_path": "/tmp/loom-rehearsal/state/runtime/last_execution.json",
+  "worker_request_path": "/tmp/loom-rehearsal/state/runtime/jobs/bba40f20f386cb46/request.json",
+  "worker_result_path": "/tmp/loom-rehearsal/state/runtime/jobs/bba40f20f386cb46/result.json",
+  "worker_log_path": "/tmp/loom-rehearsal/state/runtime/jobs/bba40f20f386cb46/worker.log",
+  "decision_path": "/tmp/loom-rehearsal/artifacts/shadow/decision.json",
   "audit_log_path": "/tmp/meridian-kernel/kernel/runtime_audit/loom_runtime_events.jsonl",
-  "parity_stream_path": "/tmp/loom-rehearsal/.loom/parity/stream.jsonl",
-  "parity_report_path": "/tmp/loom-rehearsal/.loom/parity/latest.json",
-  "openclaw_live_probe_path": "/tmp/loom-rehearsal/.loom/parity/openclaw/bba40f20f386cb46.json",
-  "openclaw_live_probe_stream_path": "/tmp/loom-rehearsal/.loom/parity/openclaw_live_stream.jsonl",
+  "parity_stream_path": "/tmp/loom-rehearsal/artifacts/parity/stream.jsonl",
+  "parity_report_path": "/tmp/loom-rehearsal/artifacts/parity/latest.json",
+  "openclaw_live_probe_path": "/tmp/loom-rehearsal/artifacts/parity/openclaw/bba40f20f386cb46.json",
+  "openclaw_live_probe_stream_path": "/tmp/loom-rehearsal/artifacts/parity/openclaw_live_stream.jsonl",
   "agent_id": "agent_atlas",
   "org_id": "org_b7d95bae",
   "action_type": "research",
@@ -444,16 +444,16 @@ source: /tmp/loom-rehearsal/.loom/runtime/last_execution.json
 
 Parity latest
 =============
-source: /tmp/loom-rehearsal/.loom/parity/latest.json
+source: /tmp/loom-rehearsal/artifacts/parity/latest.json
 
 {
   "status": "parity_report_captured",
-  "execution_path": "/tmp/loom-rehearsal/.loom/runtime/last_execution.json",
-  "decision_path": "/tmp/loom-rehearsal/.loom/shadow/decision.json",
+  "execution_path": "/tmp/loom-rehearsal/state/runtime/last_execution.json",
+  "decision_path": "/tmp/loom-rehearsal/artifacts/shadow/decision.json",
   "audit_log_path": "/tmp/meridian-kernel/kernel/runtime_audit/loom_runtime_events.jsonl",
-  "parity_stream_path": "/tmp/loom-rehearsal/.loom/parity/stream.jsonl",
-  "openclaw_live_probe_path": "/tmp/loom-rehearsal/.loom/parity/openclaw/bba40f20f386cb46.json",
-  "openclaw_live_probe_stream_path": "/tmp/loom-rehearsal/.loom/parity/openclaw_live_stream.jsonl",
+  "parity_stream_path": "/tmp/loom-rehearsal/artifacts/parity/stream.jsonl",
+  "openclaw_live_probe_path": "/tmp/loom-rehearsal/artifacts/parity/openclaw/bba40f20f386cb46.json",
+  "openclaw_live_probe_stream_path": "/tmp/loom-rehearsal/artifacts/parity/openclaw_live_stream.jsonl",
   "reference_decision": "deny",
   "reference_stage": "budget_gate",
   "overall_decision": "deny",
@@ -468,11 +468,11 @@ source: /tmp/loom-rehearsal/.loom/parity/latest.json
 
 Decision artifact
 =================
-source: /tmp/loom-rehearsal/.loom/shadow/decision.json
+source: /tmp/loom-rehearsal/artifacts/shadow/decision.json
 
 {
   "status": "decision_captured",
-  "decision_path": "/tmp/loom-rehearsal/.loom/shadow/decision.json",
+  "decision_path": "/tmp/loom-rehearsal/artifacts/shadow/decision.json",
   "source": "experimental_preflight_gate",
   "agent_id": "agent_atlas",
   "org_id": "org_b7d95bae",
@@ -501,7 +501,7 @@ source: /tmp/loom-rehearsal/.loom/shadow/decision.json
 
 Reference gates
 ===============
-source: /tmp/loom-rehearsal/.loom/shadow/reference.json
+source: /tmp/loom-rehearsal/artifacts/shadow/reference.json
 
 {
   "source": "kernel_reference_adapter_read_only",
@@ -517,12 +517,12 @@ source: /tmp/loom-rehearsal/.loom/shadow/reference.json
 
 Shadow latest
 =============
-source: /tmp/loom-rehearsal/.loom/shadow/latest.json
+source: /tmp/loom-rehearsal/artifacts/shadow/latest.json
 
 {
   "status": "comparison_complete",
-  "primary_log": "/tmp/loom-rehearsal/.loom/shadow/reference_events.jsonl",
-  "shadow_log": "/tmp/loom-rehearsal/.loom/shadow/events.jsonl",
+  "primary_log": "/tmp/loom-rehearsal/artifacts/shadow/reference_events.jsonl",
+  "shadow_log": "/tmp/loom-rehearsal/artifacts/shadow/events.jsonl",
   "primary_events": 7,
   "shadow_events": 7,
   "pairs_compared": 7,
@@ -548,16 +548,16 @@ boundary:    parity report is real; per-action live runtime parity is still futu
 
 Parity latest
 =============
-source: /tmp/loom-rehearsal/.loom/parity/latest.json
+source: /tmp/loom-rehearsal/artifacts/parity/latest.json
 
 {
   "status": "parity_report_captured",
-  "execution_path": "/tmp/loom-rehearsal/.loom/runtime/last_execution.json",
-  "decision_path": "/tmp/loom-rehearsal/.loom/shadow/decision.json",
+  "execution_path": "/tmp/loom-rehearsal/state/runtime/last_execution.json",
+  "decision_path": "/tmp/loom-rehearsal/artifacts/shadow/decision.json",
   "audit_log_path": "/tmp/meridian-kernel/kernel/runtime_audit/loom_runtime_events.jsonl",
-  "parity_stream_path": "/tmp/loom-rehearsal/.loom/parity/stream.jsonl",
-  "openclaw_live_probe_path": "/tmp/loom-rehearsal/.loom/parity/openclaw/bba40f20f386cb46.json",
-  "openclaw_live_probe_stream_path": "/tmp/loom-rehearsal/.loom/parity/openclaw_live_stream.jsonl",
+  "parity_stream_path": "/tmp/loom-rehearsal/artifacts/parity/stream.jsonl",
+  "openclaw_live_probe_path": "/tmp/loom-rehearsal/artifacts/parity/openclaw/bba40f20f386cb46.json",
+  "openclaw_live_probe_stream_path": "/tmp/loom-rehearsal/artifacts/parity/openclaw_live_stream.jsonl",
   "reference_decision": "deny",
   "reference_stage": "budget_gate",
   "overall_decision": "deny",
@@ -571,16 +571,16 @@ source: /tmp/loom-rehearsal/.loom/parity/latest.json
 
 Parity stream
 =============
-source: /tmp/loom-rehearsal/.loom/parity/stream.jsonl
+source: /tmp/loom-rehearsal/artifacts/parity/stream.jsonl
 
 {"timestamp":"1774280261","source":"openclaw_reference_stream","phase":"reference_gate","hook_name":"budget_gate","decision":"deny","stage":"budget_gate","agent_id":"agent_atlas","org_id":"org_b7d95bae","input_hash":"bba40f20f386cb46","reason":"Treasury below reserve floor (runway $-50.00). Recapitalize before spending."}
-{"timestamp":"1774280261","source":"loom_runtime_stream","phase":"worker_supervisor","hook_name":"budget_gate","decision":"deny","stage":"budget_gate","agent_id":"agent_atlas","org_id":"org_b7d95bae","input_hash":"bba40f20f386cb46","reason":"Treasury below reserve floor (runway $-50.00). Recapitalize before spending.","worker_status":"not_dispatched","worker_kind":"python_reference_worker","worker_result_path":"/tmp/loom-rehearsal/.loom/runtime/jobs/bba40f20f386cb46/result.json"}
+{"timestamp":"1774280261","source":"loom_runtime_stream","phase":"worker_supervisor","hook_name":"budget_gate","decision":"deny","stage":"budget_gate","agent_id":"agent_atlas","org_id":"org_b7d95bae","input_hash":"bba40f20f386cb46","reason":"Treasury below reserve floor (runway $-50.00). Recapitalize before spending.","worker_status":"not_dispatched","worker_kind":"python_reference_worker","worker_result_path":"/tmp/loom-rehearsal/state/runtime/jobs/bba40f20f386cb46/result.json"}
 {"timestamp":"1774280261","source":"loom_runtime_stream","phase":"audit_emission","hook_name":"audit_emission","decision":"kernel_cli_runtime_event_written","stage":"runtime_audit","agent_id":"agent_atlas","org_id":"org_b7d95bae","input_hash":"bba40f20f386cb46","reason":"denied","audit_log":"/tmp/meridian-kernel/kernel/runtime_audit/loom_runtime_events.jsonl"}
-{"timestamp":"1774280261","source":"openclaw_live_probe","phase":"live_runtime_probe","hook_name":"runtime_health","decision":"ok","stage":"live_single_host_openclaw","agent_id":"agent_atlas","org_id":"org_b7d95bae","input_hash":"bba40f20f386cb46","reason":"live OpenClaw probe healthy with proof_level=read_only deployment_mode=live","probe_path":"/tmp/loom-rehearsal/.loom/parity/openclaw/bba40f20f386cb46.json","probe_stream_path":"/tmp/loom-rehearsal/.loom/parity/openclaw_live_stream.jsonl"}
+{"timestamp":"1774280261","source":"openclaw_live_probe","phase":"live_runtime_probe","hook_name":"runtime_health","decision":"ok","stage":"live_single_host_openclaw","agent_id":"agent_atlas","org_id":"org_b7d95bae","input_hash":"bba40f20f386cb46","reason":"live OpenClaw probe healthy with proof_level=read_only deployment_mode=live","probe_path":"/tmp/loom-rehearsal/artifacts/parity/openclaw/bba40f20f386cb46.json","probe_stream_path":"/tmp/loom-rehearsal/artifacts/parity/openclaw_live_stream.jsonl"}
 
 OpenClaw live probe
 ===================
-source: /tmp/loom-rehearsal/.loom/parity/openclaw_live.json
+source: /tmp/loom-rehearsal/artifacts/parity/openclaw_live.json
 
 {
   "checked_at": "2026-03-23T15:37:41Z",
@@ -796,9 +796,9 @@ source: /tmp/loom-rehearsal/.loom/parity/openclaw_live.json
 
 OpenClaw live probe stream
 ==========================
-source: /tmp/loom-rehearsal/.loom/parity/openclaw_live_stream.jsonl
+source: /tmp/loom-rehearsal/artifacts/parity/openclaw_live_stream.jsonl
 
-{"timestamp":"1774280261","input_hash":"bba40f20f386cb46","status":"ok","proof_level":"read_only","deployment_mode":"live","probe_path":"/tmp/loom-rehearsal/.loom/parity/openclaw/bba40f20f386cb46.json"}
+{"timestamp":"1774280261","input_hash":"bba40f20f386cb46","status":"ok","proof_level":"read_only","deployment_mode":"live","probe_path":"/tmp/loom-rehearsal/artifacts/parity/openclaw/bba40f20f386cb46.json"}
 
 
 == Rehearsal complete ==

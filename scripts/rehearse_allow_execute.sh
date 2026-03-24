@@ -207,13 +207,13 @@ export MERIDIAN_OPENCLAW_PROOF_SCRIPT="${KERNEL_PATH}/kernel/missing_openclaw_ru
 ./target/debug/loom init --mode embedded --kernel-path "${KERNEL_PATH}" --root "${ROOT_DIR}" --org-id org_demo
 ./target/debug/loom doctor --root "${ROOT_DIR}" --format human
 ./target/debug/loom action execute --root "${ROOT_DIR}" --agent-id agent_allow --org-id org_demo --action-type research --resource web_search --estimated-cost-usd 0.05 --format human
-JOB_ID="$(basename "$(find "${ROOT_DIR}/.loom/runtime/jobs" -mindepth 1 -maxdepth 1 -type d | head -n1)")"
+JOB_ID="$(basename "$(find "${ROOT_DIR}/state/runtime/jobs" -mindepth 1 -maxdepth 1 -type d | head -n1)")"
 ./target/debug/loom job inspect --root "${ROOT_DIR}" --job-id "${JOB_ID}" --format human
 ./target/debug/loom parity report --root "${ROOT_DIR}"
 ./target/debug/loom shadow report --root "${ROOT_DIR}"
 
 echo "worker_result:"
-cat "${ROOT_DIR}/.loom/runtime/jobs/"*/result.json
+cat "${ROOT_DIR}/state/runtime/jobs/"*/result.json
 echo "audit_rows:"
 cat "${KERNEL_PATH}/kernel/runtime_audit/loom_runtime_events.jsonl"
 

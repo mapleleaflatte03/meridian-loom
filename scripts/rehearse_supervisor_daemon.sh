@@ -87,6 +87,13 @@ EOF
 cat > "${KERNEL_PATH}/kernel/treasury.py" <<'EOF'
 def check_budget(agent_id, cost_usd, org_id=None):
     return True, 'ok'
+def reserve_runtime_budget(agent_id, estimated_cost, org_id=None, action=None, resource=None, context=None, policy_ref=None):
+    ih = context.get('input_hash','') if context else ''
+    return {"allowed": True, "reservation_id": f"res_{agent_id}_{ih}", "reason": "fixture budget ok"}
+def commit_runtime_budget(reservation_id, actual_cost=0.0, note=''):
+    return {"status": "committed", "reservation_id": reservation_id, "actual_cost": actual_cost}
+def release_runtime_budget(reservation_id, reason=''):
+    return {"status": "released", "reservation_id": reservation_id}
 EOF
 
 cp "${SOURCE_KERNEL}/kernel/audit.py" "${KERNEL_PATH}/kernel/audit.py"
@@ -133,7 +140,7 @@ export MERIDIAN_OPENCLAW_PROOF_SCRIPT="${KERNEL_PATH}/kernel/missing_openclaw_ru
 ./target/debug/loom action enqueue --root "${ROOT_DIR}" --agent-id agent_allow --org-id org_demo --action-type research --resource web_search --estimated-cost-usd 0.05 --format human
 ./target/debug/loom supervisor daemon start --root "${ROOT_DIR}" --kernel-path "${KERNEL_PATH}" --max-jobs 1 --poll-seconds 1 --iterations 20 --format human
 for _ in $(seq 1 20); do
-  if [[ -f "${ROOT_DIR}/.loom/runtime/supervisor/runtime_state.json" ]]; then
+  if [[ -f "${ROOT_DIR}/state/runtime/supervisor/runtime_state.json" ]]; then
     break
   fi
   sleep 0.2
@@ -148,10 +155,10 @@ sleep 2
 ./target/debug/loom shadow report --root "${ROOT_DIR}"
 
 echo "daemon_runtime_state:"
-cat "${ROOT_DIR}/.loom/runtime/supervisor/runtime_state.json"
+cat "${ROOT_DIR}/state/runtime/supervisor/runtime_state.json"
 echo "daemon_status:"
-cat "${ROOT_DIR}/.loom/runtime/supervisor/status.json"
+cat "${ROOT_DIR}/state/runtime/supervisor/status.json"
 echo "daemon_heartbeat:"
-cat "${ROOT_DIR}/.loom/runtime/supervisor/heartbeat.jsonl"
+cat "${ROOT_DIR}/state/runtime/supervisor/heartbeat.jsonl"
 
 echo "== Supervisor daemon rehearsal complete =="

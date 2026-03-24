@@ -2,12 +2,31 @@
 mode = "embedded"
 kernel_path = "/tmp/meridian-kernel"
 org_id = "local_foundry"
-state_dir = ".loom"
+state_dir = "state"
+run_dir = "run"
+log_dir = "logs"
+artifact_dir = "artifacts"
+
+[capabilities]
+capabilities_dir = "capabilities"
 
 [workers]
 python_path = "workers/python"
 typescript_path = "workers/typescript"
 wasm_dir = "workers/wasm"
+
+[service]
+service_http_address = "127.0.0.1:18910"
+service_token_env = "LOOM_SERVICE_TOKEN"
+service_max_jobs = 8
+service_poll_seconds = 1
+service_max_iterations = 0
+
+[logging]
+log_level = "info"
+log_format = "jsonl"
+log_max_bytes = 5242880
+log_max_files = 5
 
 [operator]
 # Use one of the checked-in operator profiles as a starting point:

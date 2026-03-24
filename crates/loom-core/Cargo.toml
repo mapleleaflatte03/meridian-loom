@@ -15,4 +15,5 @@ categories = ["command-line-utilities", "development-tools"]
 path = "src/lib.rs"
 
 [dependencies]
+serde_json = "1"
 wasmtime = { version = "14.0.4", default-features = false, features = ["cranelift", "pooling-allocator", "component-model"] }

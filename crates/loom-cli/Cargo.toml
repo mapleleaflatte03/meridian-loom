@@ -15,6 +15,7 @@ categories = ["command-line-utilities", "development-tools"]
 [dependencies]
 loom-core = { path = "../loom-core" }
 loom-shadow = { path = "../loom-shadow" }
+serde_json = "1"
 
 [[bin]]
 name = "loom"

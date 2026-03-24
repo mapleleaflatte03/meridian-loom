@@ -5,13 +5,24 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub mod capability_shims;
+pub mod capabilities;
 pub mod wasm_host;
 pub mod wasm_limits;
 pub mod wasm_profiles;
 
 pub type LoomResult<T> = Result<T, String>;
 
-const DEFAULT_STATE_DIR: &str = ".loom";
+const DEFAULT_STATE_DIR: &str = "state";
+const DEFAULT_RUN_DIR: &str = "run";
+const DEFAULT_LOG_DIR: &str = "logs";
+const DEFAULT_ARTIFACT_DIR: &str = "artifacts";
+const DEFAULT_CAPABILITIES_DIR: &str = "capabilities";
+const DEFAULT_SERVICE_HTTP_ADDRESS: &str = "127.0.0.1:18910";
+const DEFAULT_SERVICE_TOKEN_ENV: &str = "LOOM_SERVICE_TOKEN";
+const DEFAULT_LOG_LEVEL: &str = "info";
+const DEFAULT_LOG_FORMAT: &str = "jsonl";
+const DEFAULT_LOG_MAX_BYTES: usize = 5 * 1024 * 1024;
+const DEFAULT_LOG_MAX_FILES: usize = 5;
 const DEFAULT_PYTHON_WORKER_FILE: &str = "loom_runtime_worker.py";
 const DEFAULT_PYTHON_WORKER_SOURCE: &str = r#"#!/usr/bin/env python3
 import argparse
@@ -29,10 +40,24 @@ def main():
         payload = json.load(handle)
 
     envelope = payload.get("envelope", {})
+    capability = payload.get("capability") or {}
     decision = payload.get("decision", {})
+    raw_payload = envelope.get("payload_json", "") or payload.get("payload_json", "")
+    parsed_payload = {}
+    if raw_payload:
+        try:
+            parsed_payload = json.loads(raw_payload)
+        except json.JSONDecodeError:
+            parsed_payload = {"raw_payload": raw_payload}
+    summary = parsed_payload.get(
+        "message",
+        f"capability {capability.get('name', 'default')} handled {envelope.get('action_type', 'unknown')}::{envelope.get('resource', 'unknown')}",
+    )
     result = {
         "status": "completed",
-        "worker_kind": "python_reference_worker",
+        "worker_kind": capability.get("worker_kind", "python_reference_worker"),
+        "worker_contract_version": payload.get("worker_contract_version", "loom.worker.v0"),
+        "capability_name": capability.get("name", ""),
         "completed_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "agent_id": envelope.get("agent_id", ""),
         "org_id": envelope.get("org_id", ""),
@@ -41,7 +66,8 @@ def main():
         "input_hash": payload.get("input_hash", ""),
         "decision": decision.get("overall_decision", ""),
         "effective_stage": decision.get("effective_stage", ""),
-        "summary": f"experimental worker handled {envelope.get('action_type', 'unknown')}::{envelope.get('resource', 'unknown')}",
+        "summary": summary,
+        "payload": parsed_payload,
     }
 
     with open(args.output, "w", encoding="utf-8") as handle:
@@ -70,9 +96,24 @@ pub struct Config {
     pub kernel_path: String,
     pub org_id: String,
     pub state_dir: String,
+    pub run_dir: String,
+    pub log_dir: String,
+    pub artifact_dir: String,
+    pub capabilities_dir: String,
     pub python_path: String,
     pub typescript_path: String,
     pub wasm_dir: String,
+    pub service_http_address: String,
+    pub service_token_env: String,
+    pub service_max_jobs: usize,
+    pub service_poll_seconds: u64,
+    pub service_max_iterations: usize,
+    pub log_level: String,
+    pub log_format: String,
+    pub log_max_bytes: usize,
+    pub log_max_files: usize,
+    pub openclaw_integration: String,
+    pub openclaw_delivery_queue: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -130,6 +171,8 @@ pub struct ActionEnvelope {
     pub runtime_label: String,
     pub action_type: String,
     pub resource: String,
+    pub capability_name: String,
+    pub payload_json: String,
     pub estimated_cost_usd: f64,
     pub run_id: String,
     pub session_id: String,
@@ -155,6 +198,31 @@ pub struct LocalSanctionPreview {
     pub reason: String,
 }
 
+/// Hard enforcement result for sanction controls.
+/// Unlike preview, this produces `hard_deny` when an agent is restricted.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SanctionEnforcement {
+    pub allowed: bool,
+    pub decision: String,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct HookVerification {
+    pub hook_name: String,
+    pub passed: bool,
+    pub detail: String,
+    pub artifact_path: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ContractVerifyResult {
+    pub kernel_path: PathBuf,
+    pub hooks: Vec<HookVerification>,
+    pub passed: usize,
+    pub total: usize,
+}
+
 pub fn init_workspace(
     root: &Path,
     mode: &str,
@@ -172,14 +240,24 @@ pub fn init_workspace(
     }
 
     let state_dir = root.join(DEFAULT_STATE_DIR);
+    let run_dir = root.join(DEFAULT_RUN_DIR);
+    let log_dir = root.join(DEFAULT_LOG_DIR);
+    let artifact_dir = root.join(DEFAULT_ARTIFACT_DIR);
+    let capabilities_dir = root.join(DEFAULT_CAPABILITIES_DIR);
     let capsule_dir = state_dir.join("capsules").join(org_id);
-    let shadow_dir = state_dir.join("shadow");
+    let shadow_dir = artifact_dir.join("shadow");
     let workers_python = root.join("workers/python");
     let workers_typescript = root.join("workers/typescript");
     let workers_wasm = root.join("workers/wasm");
 
     fs::create_dir_all(&capsule_dir).map_err(io_err)?;
     fs::create_dir_all(&shadow_dir).map_err(io_err)?;
+    fs::create_dir_all(run_dir.join("service")).map_err(io_err)?;
+    fs::create_dir_all(run_dir.join("ingress")).map_err(io_err)?;
+    fs::create_dir_all(&log_dir).map_err(io_err)?;
+    fs::create_dir_all(artifact_dir.join("audit")).map_err(io_err)?;
+    fs::create_dir_all(artifact_dir.join("parity")).map_err(io_err)?;
+    fs::create_dir_all(&capabilities_dir).map_err(io_err)?;
     fs::create_dir_all(&workers_python).map_err(io_err)?;
     fs::create_dir_all(&workers_typescript).map_err(io_err)?;
     fs::create_dir_all(&workers_wasm).map_err(io_err)?;
@@ -190,11 +268,27 @@ pub fn init_workspace(
         kernel_path,
         org_id: org_id.to_string(),
         state_dir: DEFAULT_STATE_DIR.to_string(),
+        run_dir: DEFAULT_RUN_DIR.to_string(),
+        log_dir: DEFAULT_LOG_DIR.to_string(),
+        artifact_dir: DEFAULT_ARTIFACT_DIR.to_string(),
+        capabilities_dir: DEFAULT_CAPABILITIES_DIR.to_string(),
         python_path: "workers/python".to_string(),
         typescript_path: "workers/typescript".to_string(),
         wasm_dir: "workers/wasm".to_string(),
+        service_http_address: DEFAULT_SERVICE_HTTP_ADDRESS.to_string(),
+        service_token_env: DEFAULT_SERVICE_TOKEN_ENV.to_string(),
+        service_max_jobs: 8,
+        service_poll_seconds: 1,
+        service_max_iterations: 0,
+        log_level: DEFAULT_LOG_LEVEL.to_string(),
+        log_format: DEFAULT_LOG_FORMAT.to_string(),
+        log_max_bytes: DEFAULT_LOG_MAX_BYTES,
+        log_max_files: DEFAULT_LOG_MAX_FILES,
+        openclaw_integration: "off".to_string(),
+        openclaw_delivery_queue: "/root/.openclaw/delivery-queue".to_string(),
     };
     ensure_runtime_worker_scaffold(&root, &config)?;
+    capabilities::ensure_capability_registry_scaffold(&root, &config)?;
 
     fs::write(&config_path, render_config(&config)).map_err(io_err)?;
     fs::write(
@@ -208,7 +302,7 @@ pub fn init_workspace(
     )
     .map_err(io_err)?;
     fs::write(
-        state_dir.join("audit.log"),
+        log_dir.join("bootstrap.log"),
         format!(
             "{} init mode={} org_id={}\n",
             unix_now(),
@@ -220,7 +314,7 @@ pub fn init_workspace(
     fs::write(
         capsule_dir.join("manifest.json"),
         format!(
-            "{{\n  \"org_id\": {},\n  \"state\": \"local_embedded_capsule\",\n  \"provenance\": \"experimental_scaffold\",\n  \"created_at\": {},\n  \"files\": [\"state.json\", \"audit.log\"]\n}}\n",
+            "{{\n  \"org_id\": {},\n  \"state\": \"local_embedded_capsule\",\n  \"provenance\": \"experimental_scaffold\",\n  \"created_at\": {},\n  \"files\": [\"state/state.json\", \"logs/bootstrap.log\"]\n}}\n",
             json_string(&config.org_id),
             unix_now()
         ),
@@ -254,6 +348,8 @@ pub fn read_config(root: &Path) -> LoomResult<Config> {
         );
     }
 
+    let legacy_layout = root.join(".loom").exists() && !values.contains_key("state_dir");
+
     let config = Config {
         mode: values
             .get("mode")
@@ -267,7 +363,47 @@ pub fn read_config(root: &Path) -> LoomResult<Config> {
         state_dir: values
             .get("state_dir")
             .cloned()
-            .unwrap_or_else(|| DEFAULT_STATE_DIR.to_string()),
+            .unwrap_or_else(|| {
+                if legacy_layout {
+                    ".loom".to_string()
+                } else {
+                    DEFAULT_STATE_DIR.to_string()
+                }
+            }),
+        run_dir: values
+            .get("run_dir")
+            .cloned()
+            .unwrap_or_else(|| {
+                if legacy_layout {
+                    ".loom/runtime".to_string()
+                } else {
+                    DEFAULT_RUN_DIR.to_string()
+                }
+            }),
+        log_dir: values
+            .get("log_dir")
+            .cloned()
+            .unwrap_or_else(|| {
+                if legacy_layout {
+                    ".loom/runtime/service".to_string()
+                } else {
+                    DEFAULT_LOG_DIR.to_string()
+                }
+            }),
+        artifact_dir: values
+            .get("artifact_dir")
+            .cloned()
+            .unwrap_or_else(|| {
+                if legacy_layout {
+                    ".loom".to_string()
+                } else {
+                    DEFAULT_ARTIFACT_DIR.to_string()
+                }
+            }),
+        capabilities_dir: values
+            .get("capabilities_dir")
+            .cloned()
+            .unwrap_or_else(|| DEFAULT_CAPABILITIES_DIR.to_string()),
         python_path: values
             .get("python_path")
             .cloned()
@@ -280,6 +416,50 @@ pub fn read_config(root: &Path) -> LoomResult<Config> {
             .get("wasm_dir")
             .cloned()
             .unwrap_or_else(|| "workers/wasm".to_string()),
+        service_http_address: values
+            .get("service_http_address")
+            .cloned()
+            .unwrap_or_else(|| DEFAULT_SERVICE_HTTP_ADDRESS.to_string()),
+        service_token_env: values
+            .get("service_token_env")
+            .cloned()
+            .unwrap_or_else(|| DEFAULT_SERVICE_TOKEN_ENV.to_string()),
+        service_max_jobs: values
+            .get("service_max_jobs")
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(8),
+        service_poll_seconds: values
+            .get("service_poll_seconds")
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(1),
+        service_max_iterations: values
+            .get("service_max_iterations")
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(0),
+        log_level: values
+            .get("log_level")
+            .cloned()
+            .unwrap_or_else(|| DEFAULT_LOG_LEVEL.to_string()),
+        log_format: values
+            .get("log_format")
+            .cloned()
+            .unwrap_or_else(|| DEFAULT_LOG_FORMAT.to_string()),
+        log_max_bytes: values
+            .get("log_max_bytes")
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(DEFAULT_LOG_MAX_BYTES),
+        log_max_files: values
+            .get("log_max_files")
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(DEFAULT_LOG_MAX_FILES),
+        openclaw_integration: values
+            .get("openclaw_integration")
+            .cloned()
+            .unwrap_or_else(|| "off".to_string()),
+        openclaw_delivery_queue: values
+            .get("openclaw_delivery_queue")
+            .cloned()
+            .unwrap_or_else(|| "/root/.openclaw/delivery-queue".to_string()),
     };
 
     normalize_mode(&config.mode)?;
@@ -316,12 +496,51 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
     });
 
     let state_dir = root.join(&config.state_dir);
+    let run_dir = root.join(&config.run_dir);
+    let log_dir = root.join(&config.log_dir);
+    let artifact_dir = root.join(&config.artifact_dir);
+    let capabilities_dir = root.join(&config.capabilities_dir);
     push_path_check(
         &mut checks,
         "state_dir",
         &state_dir,
         true,
         "state directory present",
+    );
+    push_path_check(
+        &mut checks,
+        "run_dir",
+        &run_dir,
+        true,
+        "runtime run directory present",
+    );
+    push_path_check(
+        &mut checks,
+        "log_dir",
+        &log_dir,
+        true,
+        "log directory present",
+    );
+    push_path_check(
+        &mut checks,
+        "artifact_dir",
+        &artifact_dir,
+        true,
+        "artifact directory present",
+    );
+    push_path_check(
+        &mut checks,
+        "capabilities_dir",
+        &capabilities_dir,
+        true,
+        "capability registry directory present",
+    );
+    push_path_check(
+        &mut checks,
+        "capability_registry",
+        &capabilities::capability_registry_path(&root, &config),
+        true,
+        "capability registry manifest present",
     );
     push_path_check(
         &mut checks,
@@ -468,13 +687,17 @@ pub fn status_human(root: &Path) -> LoomResult<String> {
         .join(&config.org_id)
         .join("manifest.json");
     Ok(format!(
-        "Meridian Loom // STATUS\n=======================\nmode:        {}\norg_id:      {}\nstate_dir:   {}\nkernel_path: {}\ncapsule:     {}\nshadow:      {}\nqueue:       {}\nruntime:     experimental local queue supervisor + one-shot rehearsal\nexperimental_hooks: {}\n",
+        "Meridian Loom // STATUS\n=======================\nmode:        {}\norg_id:      {}\nroot:        {}\nstate_dir:   {}\nrun_dir:     {}\nlog_dir:     {}\nartifact_dir:{}\nkernel_path: {}\ncapsule:     {}\nshadow:      {}\nqueue:       {}\nruntime:     experimental local queue supervisor + service shell\nexperimental_hooks: {}\n",
         config.mode,
         config.org_id,
+        root.display(),
         state_dir.display(),
+        root.join(&config.run_dir).display(),
+        root.join(&config.log_dir).display(),
+        root.join(&config.artifact_dir).display(),
         if config.kernel_path.is_empty() { "(not set)" } else { &config.kernel_path },
         manifest.display(),
-        state_dir.join("shadow/latest.json").display(),
+        root.join(&config.artifact_dir).join("shadow/latest.json").display(),
         state_dir.join("runtime/queue/pending").display(),
         EXPERIMENTAL_PRELIGHT_HOOKS.join(", ")
     ))
@@ -482,11 +705,15 @@ pub fn status_human(root: &Path) -> LoomResult<String> {
 
 pub fn render_config_human(config: &Config, root: &Path) -> String {
     format!(
-        "Meridian Loom // CONFIG\n=======================\nroot:        {}\nmode:        {}\norg_id:      {}\nstate_dir:   {}\nkernel_path: {}\npython_path: {}\ntypescript:  {}\nwasm_dir:    {}\nboundary:    local config only; experimental queue supervisor is available\n",
+        "Meridian Loom // CONFIG\n=======================\nroot:         {}\nmode:         {}\norg_id:       {}\nstate_dir:    {}\nrun_dir:      {}\nlog_dir:      {}\nartifact_dir: {}\ncapability_dir:{}\nkernel_path:  {}\npython_path:  {}\ntypescript:   {}\nwasm_dir:     {}\nservice_http: {}\nservice_env:  {}\nservice_jobs: {}\nservice_poll: {}\nservice_iters:{}\nlog_level:    {}\nlog_format:   {}\nlog_max_b:    {}\nlog_max_f:    {}\nopenclaw:     {}\nopenclaw_dq:  {}\nboundary:     local-first config; hosted runtime remains future work\n",
         root.display(),
         config.mode,
         config.org_id,
         config.state_dir,
+        config.run_dir,
+        config.log_dir,
+        config.artifact_dir,
+        config.capabilities_dir,
         if config.kernel_path.is_empty() {
             "(not set)"
         } else {
@@ -495,6 +722,21 @@ pub fn render_config_human(config: &Config, root: &Path) -> String {
         config.python_path,
         config.typescript_path,
         config.wasm_dir,
+        config.service_http_address,
+        config.service_token_env,
+        config.service_max_jobs,
+        config.service_poll_seconds,
+        if config.service_max_iterations == 0 {
+            "unbounded".to_string()
+        } else {
+            config.service_max_iterations.to_string()
+        },
+        config.log_level,
+        config.log_format,
+        config.log_max_bytes,
+        config.log_max_files,
+        config.openclaw_integration,
+        config.openclaw_delivery_queue,
     )
 }
 
@@ -584,6 +826,337 @@ pub fn render_contract_json(snapshot: &ContractSnapshot) -> String {
         experimental,
         json_string(&snapshot.notes)
     )
+}
+
+pub fn contract_verify(
+    root: &Path,
+    override_kernel_path: Option<&str>,
+    agent_ref: &str,
+    org_hint: Option<&str>,
+) -> LoomResult<ContractVerifyResult> {
+    let config = read_config(root)?;
+    let kernel_path = resolve_kernel_path(root, override_kernel_path, Some(&config))?;
+    let evidence_dir = root.join("artifacts").join("contract");
+    fs::create_dir_all(&evidence_dir).map_err(io_err)?;
+
+    let org_id = org_hint.unwrap_or(&config.org_id);
+    let mut hooks: Vec<HookVerification> = Vec::new();
+
+    // Hook 1: agent_identity
+    let identity_result = resolve_agent_identity(root, override_kernel_path, agent_ref, Some(org_id));
+    let identity = match &identity_result {
+        Ok(id) => {
+            let artifact = evidence_dir.join("agent_identity.json");
+            let body = format!(
+                "{{\n  \"agent_id\": {},\n  \"agent_name\": {},\n  \"org_id\": {},\n  \"role\": {},\n  \"restrictions\": [{}],\n  \"sanction_decision\": {},\n  \"runtime_id\": {},\n  \"source\": {}\n}}\n",
+                json_string(&id.agent_id), json_string(&id.agent_name),
+                json_string(&id.org_id), json_string(&id.role),
+                id.restrictions.iter().map(|r| json_string(r)).collect::<Vec<_>>().join(", "),
+                json_string(&id.sanction_decision), json_string(&id.runtime_id),
+                json_string(&id.source),
+            );
+            fs::write(&artifact, &body).map_err(io_err)?;
+            hooks.push(HookVerification {
+                hook_name: "agent_identity".to_string(),
+                passed: true,
+                detail: format!("resolved {}", id.agent_id),
+                artifact_path: Some(artifact),
+            });
+            Some(id.clone())
+        }
+        Err(err) => {
+            hooks.push(HookVerification {
+                hook_name: "agent_identity".to_string(),
+                passed: false,
+                detail: err.clone(),
+                artifact_path: None,
+            });
+            None
+        }
+    };
+
+    // Hook 2: action_envelope
+    let envelope = if let Some(ref id) = identity {
+        let envelope = ActionEnvelope {
+            agent_id: id.agent_id.clone(),
+            agent_name: id.agent_name.clone(),
+            org_id: id.org_id.clone(),
+            runtime_id: id.runtime_id.clone(),
+            runtime_label: id.runtime_label.clone(),
+            action_type: "contract_verify".to_string(),
+            resource: "self_test".to_string(),
+            capability_name: String::new(),
+            payload_json: String::new(),
+            estimated_cost_usd: 0.01,
+            run_id: String::new(),
+            session_id: String::new(),
+            source: "loom_contract_verify".to_string(),
+        };
+        let hash = envelope_input_hash(&envelope);
+        let artifact = evidence_dir.join("action_envelope.json");
+        let body = format!(
+            "{{\n  \"agent_id\": {},\n  \"org_id\": {},\n  \"action_type\": {},\n  \"resource\": {},\n  \"estimated_cost_usd\": {:.6},\n  \"input_hash\": {},\n  \"source\": {}\n}}\n",
+            json_string(&envelope.agent_id), json_string(&envelope.org_id),
+            json_string(&envelope.action_type), json_string(&envelope.resource),
+            envelope.estimated_cost_usd, json_string(&hash),
+            json_string(&envelope.source),
+        );
+        fs::write(&artifact, &body).map_err(io_err)?;
+        hooks.push(HookVerification {
+            hook_name: "action_envelope".to_string(),
+            passed: true,
+            detail: format!("hash={}", hash),
+            artifact_path: Some(artifact),
+        });
+        Some(envelope)
+    } else {
+        hooks.push(HookVerification {
+            hook_name: "action_envelope".to_string(),
+            passed: false,
+            detail: "skipped: no identity".to_string(),
+            artifact_path: None,
+        });
+        None
+    };
+
+    // Hook 3: cost_attribution
+    if let Some(ref env) = envelope {
+        let artifact = evidence_dir.join("cost_attribution.json");
+        let has_budget = identity.as_ref().and_then(|id| id.max_per_run_usd).unwrap_or(0.0);
+        let body = format!(
+            "{{\n  \"estimated_cost_usd\": {:.6},\n  \"agent_budget_limit_usd\": {:.6},\n  \"within_limit\": {},\n  \"source\": \"loom_contract_verify\"\n}}\n",
+            env.estimated_cost_usd, has_budget,
+            if has_budget <= 0.0 || env.estimated_cost_usd <= has_budget { "true" } else { "false" },
+        );
+        fs::write(&artifact, &body).map_err(io_err)?;
+        hooks.push(HookVerification {
+            hook_name: "cost_attribution".to_string(),
+            passed: true,
+            detail: format!("cost={:.4} limit={:.2}", env.estimated_cost_usd, has_budget),
+            artifact_path: Some(artifact),
+        });
+    } else {
+        hooks.push(HookVerification {
+            hook_name: "cost_attribution".to_string(),
+            passed: false,
+            detail: "skipped: no envelope".to_string(),
+            artifact_path: None,
+        });
+    }
+
+    // Hook 4: approval_hook (via reference gates)
+    let reference = if let (Some(ref id), Some(ref env)) = (&identity, &envelope) {
+        match evaluate_reference_gates(root, override_kernel_path, id, env) {
+            Ok(gate) => {
+                let artifact = evidence_dir.join("approval_hook.json");
+                let body = format!(
+                    "{{\n  \"allowed\": {},\n  \"stage\": {},\n  \"reason\": {},\n  \"approval_gate_decision\": {},\n  \"source\": {}\n}}\n",
+                    gate.allowed, json_string(&gate.stage), json_string(&gate.reason),
+                    json_string(&gate.approval_gate_decision), json_string(&gate.source),
+                );
+                fs::write(&artifact, &body).map_err(io_err)?;
+                hooks.push(HookVerification {
+                    hook_name: "approval_hook".to_string(),
+                    passed: true,
+                    detail: format!("decision={}", gate.approval_gate_decision),
+                    artifact_path: Some(artifact),
+                });
+                Some(gate)
+            }
+            Err(err) => {
+                hooks.push(HookVerification {
+                    hook_name: "approval_hook".to_string(),
+                    passed: false,
+                    detail: err,
+                    artifact_path: None,
+                });
+                None
+            }
+        }
+    } else {
+        hooks.push(HookVerification {
+            hook_name: "approval_hook".to_string(),
+            passed: false,
+            detail: "skipped: no identity or envelope".to_string(),
+            artifact_path: None,
+        });
+        None
+    };
+
+    // Hook 5: audit_emission
+    if let Some(ref env) = envelope {
+        let audit_dir = root.join("artifacts").join("audit");
+        fs::create_dir_all(&audit_dir).map_err(io_err)?;
+        let audit_verify_log = audit_dir.join("contract_verify.jsonl");
+        let input_hash = envelope_input_hash(env);
+        let ts = timestamp_now();
+        let entry = format!(
+            "{{\"id\":{},\"timestamp\":{},\"org_id\":{},\"agent_id\":{},\"actor_type\":\"agent\",\"action\":{},\"resource\":{},\"outcome\":\"contract_verify\",\"details\":{{\"source\":\"loom_contract_verify\",\"input_hash\":{},\"estimated_cost_usd\":{:.6}}},\"policy_ref\":\"contract_verify\"}}\n",
+            json_string(&format!("cv_{}", &input_hash[..8.min(input_hash.len())])),
+            json_string(&ts), json_string(&env.org_id), json_string(&env.agent_id),
+            json_string(&env.action_type), json_string(&env.resource),
+            json_string(&input_hash), env.estimated_cost_usd,
+        );
+        fs::write(&audit_verify_log, &entry).map_err(io_err)?;
+        // Verify the file was written and is readable
+        let readback = fs::read_to_string(&audit_verify_log).map_err(io_err)?;
+        if readback.contains("contract_verify") {
+            let artifact = evidence_dir.join("audit_emission.json");
+            fs::write(&artifact, format!(
+                "{{\n  \"audit_log_path\": {},\n  \"entry_written\": true,\n  \"readback_verified\": true,\n  \"source\": \"loom_contract_verify\"\n}}\n",
+                json_string(&audit_verify_log.display().to_string()),
+            )).map_err(io_err)?;
+            hooks.push(HookVerification {
+                hook_name: "audit_emission".to_string(),
+                passed: true,
+                detail: format!("log={}", audit_verify_log.display()),
+                artifact_path: Some(artifact),
+            });
+        } else {
+            hooks.push(HookVerification {
+                hook_name: "audit_emission".to_string(),
+                passed: false,
+                detail: "audit entry not readable after write".to_string(),
+                artifact_path: None,
+            });
+        }
+    } else {
+        hooks.push(HookVerification {
+            hook_name: "audit_emission".to_string(),
+            passed: false,
+            detail: "skipped: no envelope".to_string(),
+            artifact_path: None,
+        });
+    }
+
+    // Hook 6: sanction_controls
+    if let Some(ref id) = identity {
+        let preview = preview_local_sanction_controls(id);
+        let ref_sanction = reference.as_ref()
+            .map(|r| r.sanction_gate_decision.as_str())
+            .unwrap_or("not_evaluated");
+        let artifact = evidence_dir.join("sanction_controls.json");
+        let body = format!(
+            "{{\n  \"local_allowed\": {},\n  \"local_decision\": {},\n  \"local_reason\": {},\n  \"reference_sanction_decision\": {},\n  \"source\": \"loom_contract_verify\"\n}}\n",
+            preview.allowed, json_string(&preview.decision),
+            json_string(&preview.reason), json_string(ref_sanction),
+        );
+        fs::write(&artifact, &body).map_err(io_err)?;
+        hooks.push(HookVerification {
+            hook_name: "sanction_controls".to_string(),
+            passed: true,
+            detail: format!("local={} ref={}", preview.decision, ref_sanction),
+            artifact_path: Some(artifact),
+        });
+    } else {
+        hooks.push(HookVerification {
+            hook_name: "sanction_controls".to_string(),
+            passed: false,
+            detail: "skipped: no identity".to_string(),
+            artifact_path: None,
+        });
+    }
+
+    // Hook 7: budget_gate
+    if let Some(ref gate) = reference {
+        let artifact = evidence_dir.join("budget_gate.json");
+        let body = format!(
+            "{{\n  \"budget_gate_decision\": {},\n  \"overall_allowed\": {},\n  \"stage\": {},\n  \"source\": \"loom_contract_verify\"\n}}\n",
+            json_string(&gate.budget_gate_decision), gate.allowed,
+            json_string(&gate.stage),
+        );
+        fs::write(&artifact, &body).map_err(io_err)?;
+        hooks.push(HookVerification {
+            hook_name: "budget_gate".to_string(),
+            passed: true,
+            detail: format!("decision={}", gate.budget_gate_decision),
+            artifact_path: Some(artifact),
+        });
+    } else {
+        hooks.push(HookVerification {
+            hook_name: "budget_gate".to_string(),
+            passed: false,
+            detail: "skipped: reference gates not reached".to_string(),
+            artifact_path: None,
+        });
+    }
+
+    let passed = hooks.iter().filter(|h| h.passed).count();
+    let total = hooks.len();
+
+    Ok(ContractVerifyResult {
+        kernel_path,
+        hooks,
+        passed,
+        total,
+    })
+}
+
+pub fn render_contract_verify_human(result: &ContractVerifyResult) -> String {
+    let mut out = format!(
+        "Meridian Loom // CONTRACT VERIFY\n================================\nkernel:  {}\nresult:  {}/{} hooks proven\n\n",
+        result.kernel_path.display(), result.passed, result.total,
+    );
+    out.push_str(&format!(
+        "{:<20} {:<6} {:<40} {}\n",
+        "hook", "status", "detail", "artifact"
+    ));
+    out.push_str(&format!("{}\n", "-".repeat(100)));
+    for hook in &result.hooks {
+        let status = if hook.passed { "pass" } else { "FAIL" };
+        let artifact = hook
+            .artifact_path
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "-".to_string());
+        out.push_str(&format!(
+            "{:<20} {:<6} {:<40} {}\n",
+            hook.hook_name, status, hook.detail, artifact
+        ));
+    }
+    if result.passed == result.total {
+        out.push_str(&format!("\nall {} hooks proven\n", result.total));
+    } else {
+        out.push_str(&format!(
+            "\n{} of {} hooks failed\n",
+            result.total - result.passed,
+            result.total
+        ));
+    }
+    out
+}
+
+pub fn render_contract_verify_json(result: &ContractVerifyResult) -> String {
+    let hooks_json = result
+        .hooks
+        .iter()
+        .map(|h| {
+            let artifact = h
+                .artifact_path
+                .as_ref()
+                .map(|p| json_string(&p.display().to_string()))
+                .unwrap_or_else(|| "null".to_string());
+            format!(
+                "    {{\n      \"hook\": {},\n      \"passed\": {},\n      \"detail\": {},\n      \"artifact\": {}\n    }}",
+                json_string(&h.hook_name), h.passed,
+                json_string(&h.detail), artifact,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",\n");
+    format!(
+        "{{\n  \"kernel_path\": {},\n  \"passed\": {},\n  \"total\": {},\n  \"hooks\": [\n{}\n  ]\n}}\n",
+        json_string(&result.kernel_path.display().to_string()),
+        result.passed, result.total, hooks_json,
+    )
+}
+
+fn timestamp_now() -> String {
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    format!("{}", secs)
 }
 
 pub fn resolve_agent_identity(
@@ -813,6 +1386,34 @@ pub fn build_action_envelope(
     run_id: Option<&str>,
     session_id: Option<&str>,
 ) -> LoomResult<ActionEnvelope> {
+    build_action_envelope_with_options(
+        root,
+        override_kernel_path,
+        agent_ref,
+        org_hint,
+        action_type,
+        resource,
+        estimated_cost_usd,
+        run_id,
+        session_id,
+        None,
+        None,
+    )
+}
+
+pub fn build_action_envelope_with_options(
+    root: &Path,
+    override_kernel_path: Option<&str>,
+    agent_ref: &str,
+    org_hint: Option<&str>,
+    action_type: &str,
+    resource: &str,
+    estimated_cost_usd: f64,
+    run_id: Option<&str>,
+    session_id: Option<&str>,
+    capability_name: Option<&str>,
+    payload_json: Option<&str>,
+) -> LoomResult<ActionEnvelope> {
     let action_type = action_type.trim();
     let resource = resource.trim();
     if action_type.is_empty() {
@@ -834,6 +1435,8 @@ pub fn build_action_envelope(
         runtime_label: identity.runtime_label,
         action_type: action_type.to_string(),
         resource: resource.to_string(),
+        capability_name: capability_name.unwrap_or("").trim().to_string(),
+        payload_json: payload_json.unwrap_or("").trim().to_string(),
         estimated_cost_usd,
         run_id: run_id.unwrap_or("").trim().to_string(),
         session_id: session_id.unwrap_or("").trim().to_string(),
@@ -855,6 +1458,31 @@ pub fn preview_local_sanction_controls(identity: &AgentIdentityResolution) -> Lo
     }
 
     LocalSanctionPreview {
+        allowed: true,
+        decision: "allow".to_string(),
+        reason: "no execute restriction".to_string(),
+    }
+}
+
+/// Hard enforcement of sanction controls. Returns `hard_deny` for restricted agents.
+/// This is the production enforcement path — no preview, no soft-fail.
+pub fn enforce_sanction_controls(identity: &AgentIdentityResolution) -> SanctionEnforcement {
+    if identity
+        .restrictions
+        .iter()
+        .any(|value| value == "execute" || value == "remediation_only")
+    {
+        return SanctionEnforcement {
+            allowed: false,
+            decision: "hard_deny".to_string(),
+            reason: format!(
+                "sanction enforcement: agent {} is restricted (restrictions: {:?})",
+                identity.agent_id, identity.restrictions
+            ),
+        };
+    }
+
+    SanctionEnforcement {
         allowed: true,
         decision: "allow".to_string(),
         reason: "no execute restriction".to_string(),
@@ -892,6 +1520,8 @@ print(json.dumps(pre_action_check(org_id, envelope)))
         runtime_label: envelope.runtime_label.clone(),
         action_type: envelope.action_type.clone(),
         resource: envelope.resource.clone(),
+        capability_name: envelope.capability_name.clone(),
+        payload_json: envelope.payload_json.clone(),
         estimated_cost_usd: envelope.estimated_cost_usd,
         run_id: envelope.run_id.clone(),
         session_id: envelope.session_id.clone(),
@@ -963,11 +1593,13 @@ print(json.dumps(pre_action_check(org_id, envelope)))
 
 pub fn envelope_input_hash(envelope: &ActionEnvelope) -> String {
     let raw = format!(
-        "{}|{}|{}|{}|{:.6}|{}|{}",
+        "{}|{}|{}|{}|{}|{}|{:.6}|{}|{}",
         envelope.agent_id,
         envelope.org_id,
         envelope.runtime_id,
         envelope.action_type,
+        envelope.capability_name,
+        envelope.payload_json,
         envelope.estimated_cost_usd,
         envelope.resource,
         envelope.source,
@@ -977,7 +1609,7 @@ pub fn envelope_input_hash(envelope: &ActionEnvelope) -> String {
 
 pub fn render_envelope_human(envelope: &ActionEnvelope) -> String {
     format!(
-        "Meridian Loom // ACTION ENVELOPE\n=================================\nagent_id:            {}\nagent_name:          {}\norg_id:              {}\nruntime_id:          {}\nruntime_label:       {}\naction_type:         {}\nresource:            {}\nestimated_cost_usd:  {:.4}\nrun_id:              {}\nsession_id:          {}\nsource:              {}\ninput_hash:          {}\n",
+        "Meridian Loom // ACTION ENVELOPE\n=================================\nagent_id:            {}\nagent_name:          {}\norg_id:              {}\nruntime_id:          {}\nruntime_label:       {}\naction_type:         {}\nresource:            {}\ncapability_name:     {}\npayload_json:        {}\nestimated_cost_usd:  {:.4}\nrun_id:              {}\nsession_id:          {}\nsource:              {}\ninput_hash:          {}\n",
         envelope.agent_id,
         envelope.agent_name,
         envelope.org_id,
@@ -985,6 +1617,8 @@ pub fn render_envelope_human(envelope: &ActionEnvelope) -> String {
         envelope.runtime_label,
         envelope.action_type,
         envelope.resource,
+        if envelope.capability_name.is_empty() { "(none)" } else { &envelope.capability_name },
+        if envelope.payload_json.is_empty() { "(none)" } else { &envelope.payload_json },
         envelope.estimated_cost_usd,
         if envelope.run_id.is_empty() { "(none)" } else { &envelope.run_id },
         if envelope.session_id.is_empty() { "(none)" } else { &envelope.session_id },
@@ -995,7 +1629,7 @@ pub fn render_envelope_human(envelope: &ActionEnvelope) -> String {
 
 pub fn render_envelope_json(envelope: &ActionEnvelope) -> String {
     format!(
-        "{{\n  \"agent_id\": {},\n  \"agent_name\": {},\n  \"org_id\": {},\n  \"runtime_id\": {},\n  \"runtime_label\": {},\n  \"action_type\": {},\n  \"resource\": {},\n  \"estimated_cost_usd\": {:.6},\n  \"run_id\": {},\n  \"session_id\": {},\n  \"source\": {},\n  \"input_hash\": {}\n}}\n",
+        "{{\n  \"agent_id\": {},\n  \"agent_name\": {},\n  \"org_id\": {},\n  \"runtime_id\": {},\n  \"runtime_label\": {},\n  \"action_type\": {},\n  \"resource\": {},\n  \"capability_name\": {},\n  \"payload_json\": {},\n  \"estimated_cost_usd\": {:.6},\n  \"run_id\": {},\n  \"session_id\": {},\n  \"source\": {},\n  \"input_hash\": {}\n}}\n",
         json_string(&envelope.agent_id),
         json_string(&envelope.agent_name),
         json_string(&envelope.org_id),
@@ -1003,6 +1637,8 @@ pub fn render_envelope_json(envelope: &ActionEnvelope) -> String {
         json_string(&envelope.runtime_label),
         json_string(&envelope.action_type),
         json_string(&envelope.resource),
+        json_string(&envelope.capability_name),
+        json_string(&envelope.payload_json),
         envelope.estimated_cost_usd,
         json_string(&envelope.run_id),
         json_string(&envelope.session_id),
@@ -1046,11 +1682,16 @@ pub fn render_capsule_human(inspection: &CapsuleInspection) -> String {
 }
 
 pub fn root_from(opt: Option<&str>) -> LoomResult<PathBuf> {
-    let root = opt
-        .map(PathBuf::from)
-        .map(Ok)
-        .unwrap_or_else(std::env::current_dir)
-        .map_err(io_err)?;
+    let root = if let Some(raw) = opt {
+        PathBuf::from(raw)
+    } else {
+        let current_dir = std::env::current_dir().map_err(io_err)?;
+        if current_dir.join("loom.toml").exists() {
+            current_dir
+        } else {
+            default_app_home()?
+        }
+    };
     ensure_root(&root)
 }
 
@@ -1083,15 +1724,55 @@ fn ensure_root(root: &Path) -> LoomResult<PathBuf> {
 
 fn render_config(config: &Config) -> String {
     format!(
-        "[runtime]\nmode = {}\nkernel_path = {}\norg_id = {}\nstate_dir = {}\n\n[workers]\npython_path = {}\ntypescript_path = {}\nwasm_dir = {}\n",
+        "[runtime]\nmode = {}\nkernel_path = {}\norg_id = {}\nstate_dir = {}\nrun_dir = {}\nlog_dir = {}\nartifact_dir = {}\n\n[capabilities]\ncapabilities_dir = {}\n\n[workers]\npython_path = {}\ntypescript_path = {}\nwasm_dir = {}\n\n[service]\nservice_http_address = {}\nservice_token_env = {}\nservice_max_jobs = {}\nservice_poll_seconds = {}\nservice_max_iterations = {}\n\n[logging]\nlog_level = {}\nlog_format = {}\nlog_max_bytes = {}\nlog_max_files = {}\n\n[openclaw]\nopenclaw_integration = {}\nopenclaw_delivery_queue = {}\n",
         json_string(&config.mode),
         json_string(&config.kernel_path),
         json_string(&config.org_id),
         json_string(&config.state_dir),
+        json_string(&config.run_dir),
+        json_string(&config.log_dir),
+        json_string(&config.artifact_dir),
+        json_string(&config.capabilities_dir),
         json_string(&config.python_path),
         json_string(&config.typescript_path),
         json_string(&config.wasm_dir),
+        json_string(&config.service_http_address),
+        json_string(&config.service_token_env),
+        config.service_max_jobs,
+        config.service_poll_seconds,
+        config.service_max_iterations,
+        json_string(&config.log_level),
+        json_string(&config.log_format),
+        config.log_max_bytes,
+        config.log_max_files,
+        json_string(&config.openclaw_integration),
+        json_string(&config.openclaw_delivery_queue),
     )
+}
+
+fn default_app_home() -> LoomResult<PathBuf> {
+    if let Ok(value) = std::env::var("LOOM_ROOT") {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return Ok(PathBuf::from(trimmed));
+        }
+    }
+    if let Ok(value) = std::env::var("XDG_DATA_HOME") {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return Ok(
+                PathBuf::from(trimmed)
+                    .join("meridian-loom")
+                    .join("runtime")
+                    .join("default"),
+            );
+        }
+    }
+    let home = std::env::var("HOME").map_err(|_| "HOME is not set and --root was not provided".to_string())?;
+    Ok(PathBuf::from(home)
+        .join(".local/share/meridian-loom")
+        .join("runtime")
+        .join("default"))
 }
 
 fn normalize_mode(mode: &str) -> LoomResult<String> {
@@ -1280,7 +1961,7 @@ mod tests {
         let loaded = read_config(&root).expect("read config");
         assert_eq!(loaded.org_id, "org_demo");
         assert_eq!(loaded.kernel_path, "/tmp/meridian-kernel");
-        assert!(root.join(".loom/shadow/events.jsonl").exists());
+        assert!(root.join("artifacts/shadow/events.jsonl").exists());
     }
 
     #[test]
@@ -1401,6 +2082,33 @@ mod tests {
         )
         .expect_err("negative cost should fail");
         assert!(error.contains("non-negative"));
+    }
+
+    #[test]
+    fn build_envelope_with_options_preserves_capability_and_payload() {
+        let kernel = fake_kernel_root("atlas");
+        let root = temp_path("loom-core-envelope-capability");
+        init_workspace(&root, "shadow", Some(&kernel.display().to_string()), "org_demo")
+            .expect("init workspace");
+        let envelope = build_action_envelope_with_options(
+            &root,
+            None,
+            "atlas",
+            None,
+            "respond",
+            "capability:loom.echo.v1",
+            0.1,
+            Some("run_cap"),
+            Some("session_cap"),
+            Some("loom.echo.v1"),
+            Some("{\"message\":\"hello\"}"),
+        )
+        .expect("build capability envelope");
+        assert_eq!(envelope.capability_name, "loom.echo.v1");
+        assert_eq!(envelope.payload_json, "{\"message\":\"hello\"}");
+        assert_eq!(envelope.action_type, "respond");
+        assert_eq!(envelope.resource, "capability:loom.echo.v1");
+        assert!(!envelope_input_hash(&envelope).is_empty());
     }
 
     #[test]

@@ -105,6 +105,13 @@ EOF
 cat > "${KERNEL_PATH}/kernel/treasury.py" <<'EOF'
 def check_budget(agent_id, cost_usd, org_id=None):
     return True, 'ok'
+def reserve_runtime_budget(agent_id, estimated_cost, org_id=None, action=None, resource=None, context=None, policy_ref=None):
+    ih = context.get('input_hash','') if context else ''
+    return {"allowed": True, "reservation_id": f"res_{agent_id}_{ih}", "reason": "fixture budget ok"}
+def commit_runtime_budget(reservation_id, actual_cost=0.0, note=''):
+    return {"status": "committed", "reservation_id": reservation_id, "actual_cost": actual_cost}
+def release_runtime_budget(reservation_id, reason=''):
+    return {"status": "released", "reservation_id": reservation_id}
 EOF
 
 # Copy audit.py from source kernel if available, otherwise create stub
@@ -230,7 +237,7 @@ import pathlib
 import sys
 
 root = pathlib.Path(sys.argv[1])
-payload = json.loads((root / ".loom" / "runtime" / "last_execution.json").read_text())
+payload = json.loads((root / "state" / "runtime" / "last_execution.json").read_text())
 print(payload["input_hash"])
 PY
 )"

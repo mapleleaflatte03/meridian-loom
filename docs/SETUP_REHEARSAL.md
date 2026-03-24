@@ -93,8 +93,8 @@ The rehearsal verifies:
 20. A fixture-backed rehearsal proves that `execute` / `remediation_only`
     restrictions deny locally even when the reference gate would otherwise allow.
 21. `loom supervisor watch` now drives the queue supervisor through a bounded
-    polling loop, writes `.loom/runtime/supervisor/status.json`, and appends
-    heartbeat history into `.loom/runtime/supervisor/heartbeat.jsonl`.
+    polling loop, writes `state/runtime/supervisor/status.json`, and appends
+    heartbeat history into `state/runtime/supervisor/heartbeat.jsonl`.
 22. `loom supervisor daemon start/status/stop` now wrap that same queue
     supervisor in a real local lifecycle shell with `runtime_state.json`,
     background logging, and stop-request handling.
@@ -105,7 +105,7 @@ The rehearsal verifies:
     shell with service state, service events, ingress receipts, and truthful
     transport reporting.
 25. When the local Unix socket boundary is unavailable, the runtime service
-    falls back to file-backed ingress under `.loom/runtime/ingress/` instead of
+    falls back to file-backed ingress under `run/ingress/` instead of
     failing silently.
 26. `loom service start --http-address ... --service-token ...` can now expose
     a tokenized local HTTP control plane with `GET /status`, `POST /submit`,
@@ -113,7 +113,7 @@ The rehearsal verifies:
 27. `loom service import-commitments` can now import sender-side
     `execution_request` delivery refs from a commitments snapshot into the
     local Loom queue, creating import markers under
-    `.loom/runtime/imports/commitment_execution/`.
+    `state/runtime/imports/commitment_execution/`.
 
 ## What the rehearsal does not prove
 
@@ -175,7 +175,7 @@ The current founder-host rehearsal now exercises both the old and new surfaces:
 That is still not a claim of per-action runtime parity. It is a stronger,
 runtime-side rehearsal surface than the previous file-only diff.
 
-The rehearsal also emits `.loom/shadow/decision.json`, which records the
+The rehearsal also emits `artifacts/shadow/decision.json`, which records the
 current gate outcome using the same reference stage and reason that drove the
 preflight result. That decision artifact is still experimental and adapter-
 backed; it does not make Loom a governed execution runtime.
@@ -189,7 +189,7 @@ There is now a separate allow-path rehearsal:
 That script proves the current local supervisor path:
 - the effective decision is `allow`
 - `loom action execute` dispatches the default Python worker
-- the worker writes a result artifact under `.loom/runtime/jobs/<input_hash>/`
+- the worker writes a result artifact under `state/runtime/jobs/<input_hash>/`
 - runtime audit emission uses the kernel-owned `audit.py log-runtime` path and
   lands in `kernel/runtime_audit/loom_runtime_events.jsonl`
 - parity artifacts include a per-action OpenClaw probe stream entry, even when
@@ -203,12 +203,12 @@ There is now a separate queue-backed supervisor rehearsal:
 
 That script proves the current queue supervisor path:
 - `loom action enqueue` materializes a pending queue artifact under
-  `.loom/runtime/queue/pending/<policy_class>/`
+  `state/runtime/queue/pending/<policy_class>/`
 - `loom job list` surfaces that queued action through the runtime-owned job
   ledger before the supervisor runs
 - `loom supervisor run` processes the queued action through the same effective
   decision surface used by `loom action execute`
-- the processed queue entry moves to `.loom/runtime/queue/processed/`
+- the processed queue entry moves to `state/runtime/queue/processed/`
 - `loom job inspect --job-id <input_hash>` then surfaces the persisted job
   snapshot with queue, decision, execution, parity, and audit artifact paths
 - the runtime audit lands in `kernel/runtime_audit/loom_runtime_events.jsonl`
@@ -224,9 +224,9 @@ That script proves the current watch-loop surface:
 - `loom supervisor watch` repeatedly invokes the same queue supervisor boundary
   for a fixed number of iterations
 - `loom supervisor status` reads that stored loop state back as an operator surface
-- the loop writes `.loom/runtime/supervisor/status.json`
+- the loop writes `state/runtime/supervisor/status.json`
 - the loop appends per-iteration state into
-  `.loom/runtime/supervisor/heartbeat.jsonl`
+  `state/runtime/supervisor/heartbeat.jsonl`
 - queue counts, allow/deny counts, and processed counts stay inspectable across
   iterations
 - the result is still a bounded local rehearsal loop, not a hosted or daemonized
@@ -248,8 +248,8 @@ That script proves the current daemon-lifecycle surface:
   session, PID, heartbeat count, and queue totals
 - `loom supervisor daemon stop` records a local stop request that the daemon
   loop honors cleanly
-- the daemon appends to `.loom/runtime/supervisor/heartbeat.jsonl` and writes
-  `.loom/runtime/supervisor/runtime_state.json`
+- the daemon appends to `state/runtime/supervisor/heartbeat.jsonl` and writes
+  `state/runtime/supervisor/runtime_state.json`
 - the result is still a bounded local daemon rehearsal, not a hosted runtime
   supervisor
 
@@ -263,7 +263,7 @@ There is now a separate local runtime service rehearsal:
 ```
 
 That script proves the current local service shell:
-- `loom service start` writes `.loom/runtime/service/runtime_state.json`
+- `loom service start` writes `run/service/runtime_state.json`
   and background log state
 - `loom service submit` can deliver a governed action through the service
   boundary and wait for a receipt
@@ -306,7 +306,7 @@ That script proves the current sender-side import seam:
 - `loom service import-commitments` can materialize those sender-side
   `delivery_refs` into the Loom queue
 - the import writes marker files under
-  `.loom/runtime/imports/commitment_execution/`
+  `state/runtime/imports/commitment_execution/`
 - the queued result is then inspectable through `loom job list` and
   `loom job inspect`
 

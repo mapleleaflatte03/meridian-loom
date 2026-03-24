@@ -48,7 +48,7 @@
   <text x="456" y="416" class="body">Kernel canonical audit still future-facing.</text>
 
   <text x="824" y="118" class="tag">Parity Surface</text>
-  <text x="824" y="160" class="title">.loom/parity/latest.json</text>
+  <text x="824" y="160" class="title">artifacts/parity/latest.json</text>
   <text x="824" y="208" class="body">reference_gate        kernel adapter truth</text>
   <text x="824" y="240" class="body">loom_runtime_stream   runtime rehearsal truth</text>
   <text x="824" y="272" class="body">openclaw_live_probe   founder-host snapshot</text>

@@ -49,7 +49,7 @@ if [[ "${EXECUTE_CODE}" -ne 2 ]]; then
   echo "expected action execute to fail closed with exit code 2"
   exit 1
 fi
-./target/debug/loom shadow compare --root "${ROOT_DIR}" --primary "${ROOT_DIR}/.loom/shadow/reference_events.jsonl" --shadow "${ROOT_DIR}/.loom/shadow/events.jsonl" --format human
+./target/debug/loom shadow compare --root "${ROOT_DIR}" --primary "${ROOT_DIR}/artifacts/shadow/reference_events.jsonl" --shadow "${ROOT_DIR}/artifacts/shadow/events.jsonl" --format human
 ./target/debug/loom shadow report --root "${ROOT_DIR}"
 ./target/debug/loom parity report --root "${ROOT_DIR}"
 

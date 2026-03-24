@@ -41,11 +41,11 @@ Every step leaves an artifact. Every step is inspectable. That is the point.
 
 | Surface | What it tells you | Where it lands |
 |---|---|---|
-| Envelope | identity, resource, cost, action | `.loom/shadow/decision.json` and runtime request artifacts |
-| Queue | pending work and policy bucket | `.loom/runtime/queue/pending/<policy_class>/` |
-| Job ledger | persisted job lifecycle | `.loom/runtime/jobs/<input_hash>/job.json` |
+| Envelope | identity, resource, cost, action | `artifacts/shadow/decision.json` and runtime request artifacts |
+| Queue | pending work and policy bucket | `state/runtime/queue/pending/<policy_class>/` |
+| Job ledger | persisted job lifecycle | `state/runtime/jobs/<input_hash>/job.json` |
 | Audit | kernel-owned runtime event trail | `kernel/runtime_audit/loom_runtime_events.jsonl` |
-| Parity | reference vs runtime truth | `.loom/parity/stream.jsonl` and `.loom/parity/latest.json` |
+| Parity | reference vs runtime truth | `artifacts/parity/stream.jsonl` and `artifacts/parity/latest.json` |
 
 ## Setup
 
@@ -118,15 +118,20 @@ Expected output:
 Meridian Loom // INIT
 ====================
 root:        /tmp/loom-first-cell
+config:      /tmp/loom-first-cell/loom.toml
 mode:        embedded
 org_id:      org_tutorial
-state_dir:   .loom
+state_dir:   state
+run_dir:     run
+log_dir:     logs
+artifact_dir:artifacts
 kernel_path: /tmp/loom-first-cell-kernel.XXXXXX
-status:      initialized experimental scaffold
+status:      initialized local-first runtime root
 next_step:   loom doctor --root /tmp/loom-first-cell --format human
 ```
 
-What happened: Loom created `loom.toml`, the `.loom` state directory, worker
+What happened: Loom created `loom.toml`, the `state` runtime ledger, the `run`
+and `logs` service directories, the `artifacts` proof surfaces, worker
 paths, and the capsule manifest for your org.
 
 ## Step 3: Build an action envelope
@@ -190,8 +195,8 @@ input_hash:          a1b2c3d4e5f67890
 
 Meridian Loom // ACTION ENQUEUED
 =================================
-queue_path:           /tmp/loom-first-cell/.loom/runtime/queue/pending/standard/TIMESTAMP-agent_tutorial-a1b2c3d4.json
-job_path:             /tmp/loom-first-cell/.loom/runtime/jobs/a1b2c3d4e5f67890/job.json
+queue_path:           /tmp/loom-first-cell/state/runtime/queue/pending/standard/TIMESTAMP-agent_tutorial-a1b2c3d4.json
+job_path:             /tmp/loom-first-cell/state/runtime/jobs/a1b2c3d4e5f67890/job.json
 input_hash:           a1b2c3d4e5f67890
 agent_id:             agent_tutorial
 org_id:               org_tutorial
@@ -204,8 +209,8 @@ then:                 loom supervisor run --root <path> --max-jobs 1
 ```
 
 What happened: Loom wrote a pending queue file under
-`.loom/runtime/queue/pending/<policy_class>/` and created a job record under
-`.loom/runtime/jobs/<input_hash>/`. The job status is now `queued`.
+`state/runtime/queue/pending/<policy_class>/` and created a job record under
+`state/runtime/jobs/<input_hash>/`. The job status is now `queued`.
 
 Governance at this step: the envelope was built and validated. The agent
 identity was resolved through the kernel registry. No execution happened yet.
@@ -254,7 +259,7 @@ Meridian Loom // SUPERVISOR RUN
 ================================
 root:            /tmp/loom-first-cell
 max_jobs:        1
-queue_path:      /tmp/loom-first-cell/.loom/runtime/queue
+queue_path:      /tmp/loom-first-cell/state/runtime/queue
 ...
 
 Processing: a1b2c3d4e5f67890
@@ -268,7 +273,7 @@ Completed: 1 job(s) processed
 
 What happened: the supervisor:
 
-1. Scanned `.loom/runtime/queue/pending/<policy_class>/` for queued actions
+1. Scanned `state/runtime/queue/pending/<policy_class>/` for queued actions
 2. For each action, evaluated the governance decision surface:
    - **Sanction controls** -- checked court restrictions (none for this agent)
    - **Authority check** -- verified the agent has authority for this action type
@@ -302,10 +307,10 @@ resource:        web_search
 estimated_cost:  0.0500
 decision:        allow
 worker_exit:     0
-queue_path:      .loom/runtime/queue/pending/standard/TIMESTAMP-agent_tutorial-a1b2c3d4.json
-runtime_path:    .loom/runtime/jobs/a1b2c3d4e5f67890/
+queue_path:      state/runtime/queue/pending/standard/TIMESTAMP-agent_tutorial-a1b2c3d4.json
+runtime_path:    state/runtime/jobs/a1b2c3d4e5f67890/
 audit_path:      kernel/runtime_audit/loom_runtime_events.jsonl
-parity_path:     .loom/parity/stream.jsonl
+parity_path:     artifacts/parity/stream.jsonl
 ```
 
 ## Step 8: Verify the audit and parity trails

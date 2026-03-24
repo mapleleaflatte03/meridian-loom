@@ -8,7 +8,7 @@ Meridian Loom // INIT
 root:        /tmp/loom-local-sanction-preview
 mode:        embedded
 org_id:      org_demo
-state_dir:   .loom
+state_dir:   state
 kernel_path: /tmp/loom-local-kernel.jxh47M
 status:      initialized experimental scaffold
 next_step:   loom doctor --root /tmp/loom-local-sanction-preview --format human
@@ -33,7 +33,7 @@ registration_status: registered
 source:              kernel_agent_registry
 Meridian Loom // SHADOW DECISION
 ==================================
-decision_path:          /tmp/loom-local-sanction-preview/.loom/shadow/decision.json
+decision_path:          /tmp/loom-local-sanction-preview/artifacts/shadow/decision.json
 source:                 experimental_preflight_gate
 agent_id:               agent_sanction
 org_id:                 org_demo
@@ -56,7 +56,7 @@ reference_stage:        ok
 reference_reason:       ok
 Meridian Loom // SHADOW DECISION
 ==================================
-decision_path:          /tmp/loom-local-sanction-preview/.loom/shadow/decision.json
+decision_path:          /tmp/loom-local-sanction-preview/artifacts/shadow/decision.json
 source:                 experimental_preflight_gate
 agent_id:               agent_sanction
 org_id:                 org_demo
@@ -117,7 +117,7 @@ input_hash:          b7d2387503716f98
 
 Meridian Loom // SHADOW DECISION
 ==================================
-decision_path:          /tmp/loom-local-sanction-preview/.loom/shadow/decision.json
+decision_path:          /tmp/loom-local-sanction-preview/artifacts/shadow/decision.json
 source:                 experimental_preflight_gate
 agent_id:               agent_sanction
 org_id:                 org_demo
@@ -167,25 +167,25 @@ parity_reason:       reference returned allow at stage ok while loom enforced de
 
 worker supervisor artifacts
 ===========================
-worker_request:      /tmp/loom-local-sanction-preview/.loom/runtime/jobs/b7d2387503716f98/request.json
-worker_result:       /tmp/loom-local-sanction-preview/.loom/runtime/jobs/b7d2387503716f98/result.json
-worker_log:          /tmp/loom-local-sanction-preview/.loom/runtime/jobs/b7d2387503716f98/worker.log
+worker_request:      /tmp/loom-local-sanction-preview/state/runtime/jobs/b7d2387503716f98/request.json
+worker_result:       /tmp/loom-local-sanction-preview/state/runtime/jobs/b7d2387503716f98/result.json
+worker_log:          /tmp/loom-local-sanction-preview/state/runtime/jobs/b7d2387503716f98/worker.log
 
 audit / parity artifacts
 ========================
-execution_path:      /tmp/loom-local-sanction-preview/.loom/runtime/last_execution.json
-decision_path:       /tmp/loom-local-sanction-preview/.loom/shadow/decision.json
+execution_path:      /tmp/loom-local-sanction-preview/state/runtime/last_execution.json
+decision_path:       /tmp/loom-local-sanction-preview/artifacts/shadow/decision.json
 audit_log:           /tmp/loom-local-kernel.jxh47M/kernel/runtime_audit/loom_runtime_events.jsonl (kernel_cli_runtime_event_written)
-parity_stream:       /tmp/loom-local-sanction-preview/.loom/parity/stream.jsonl
-parity_report:       /tmp/loom-local-sanction-preview/.loom/parity/latest.json
+parity_stream:       /tmp/loom-local-sanction-preview/artifacts/parity/stream.jsonl
+parity_report:       /tmp/loom-local-sanction-preview/artifacts/parity/latest.json
 openclaw_live_probe: (not captured) (not_available)
-openclaw_probe_log:  /tmp/loom-local-sanction-preview/.loom/parity/openclaw_live_stream.jsonl
+openclaw_probe_log:  /tmp/loom-local-sanction-preview/artifacts/parity/openclaw_live_stream.jsonl
 
 Next
 ====
 1. loom parity report --root /tmp/loom-local-sanction-preview
 2. loom shadow report --root /tmp/loom-local-sanction-preview
-3. Inspect /tmp/loom-local-sanction-preview/.loom/runtime/jobs/b7d2387503716f98/worker.log for worker execution details.
+3. Inspect /tmp/loom-local-sanction-preview/state/runtime/jobs/b7d2387503716f98/worker.log for worker execution details.
 4. Inspect /tmp/loom-local-kernel.jxh47M/kernel/runtime_audit/loom_runtime_events.jsonl for runtime-side audit details.
 action_execute_exit_code: 2
 Meridian Loom // SHADOW REPORT
@@ -194,20 +194,20 @@ phase:       experimental shadow + parity surface
 boundary:    report artifacts are real; governed runtime is not
 Runtime execution
 =================
-source: /tmp/loom-local-sanction-preview/.loom/runtime/last_execution.json
+source: /tmp/loom-local-sanction-preview/state/runtime/last_execution.json
 
 {
   "status": "runtime_execution_captured",
-  "execution_path": "/tmp/loom-local-sanction-preview/.loom/runtime/last_execution.json",
-  "worker_request_path": "/tmp/loom-local-sanction-preview/.loom/runtime/jobs/b7d2387503716f98/request.json",
-  "worker_result_path": "/tmp/loom-local-sanction-preview/.loom/runtime/jobs/b7d2387503716f98/result.json",
-  "worker_log_path": "/tmp/loom-local-sanction-preview/.loom/runtime/jobs/b7d2387503716f98/worker.log",
-  "decision_path": "/tmp/loom-local-sanction-preview/.loom/shadow/decision.json",
+  "execution_path": "/tmp/loom-local-sanction-preview/state/runtime/last_execution.json",
+  "worker_request_path": "/tmp/loom-local-sanction-preview/state/runtime/jobs/b7d2387503716f98/request.json",
+  "worker_result_path": "/tmp/loom-local-sanction-preview/state/runtime/jobs/b7d2387503716f98/result.json",
+  "worker_log_path": "/tmp/loom-local-sanction-preview/state/runtime/jobs/b7d2387503716f98/worker.log",
+  "decision_path": "/tmp/loom-local-sanction-preview/artifacts/shadow/decision.json",
   "audit_log_path": "/tmp/loom-local-kernel.jxh47M/kernel/runtime_audit/loom_runtime_events.jsonl",
-  "parity_stream_path": "/tmp/loom-local-sanction-preview/.loom/parity/stream.jsonl",
-  "parity_report_path": "/tmp/loom-local-sanction-preview/.loom/parity/latest.json",
+  "parity_stream_path": "/tmp/loom-local-sanction-preview/artifacts/parity/stream.jsonl",
+  "parity_report_path": "/tmp/loom-local-sanction-preview/artifacts/parity/latest.json",
   "openclaw_live_probe_path": null,
-  "openclaw_live_probe_stream_path": "/tmp/loom-local-sanction-preview/.loom/parity/openclaw_live_stream.jsonl",
+  "openclaw_live_probe_stream_path": "/tmp/loom-local-sanction-preview/artifacts/parity/openclaw_live_stream.jsonl",
   "agent_id": "agent_sanction",
   "org_id": "org_demo",
   "action_type": "research",
@@ -234,16 +234,16 @@ source: /tmp/loom-local-sanction-preview/.loom/runtime/last_execution.json
 
 Parity latest
 =============
-source: /tmp/loom-local-sanction-preview/.loom/parity/latest.json
+source: /tmp/loom-local-sanction-preview/artifacts/parity/latest.json
 
 {
   "status": "parity_report_captured",
-  "execution_path": "/tmp/loom-local-sanction-preview/.loom/runtime/last_execution.json",
-  "decision_path": "/tmp/loom-local-sanction-preview/.loom/shadow/decision.json",
+  "execution_path": "/tmp/loom-local-sanction-preview/state/runtime/last_execution.json",
+  "decision_path": "/tmp/loom-local-sanction-preview/artifacts/shadow/decision.json",
   "audit_log_path": "/tmp/loom-local-kernel.jxh47M/kernel/runtime_audit/loom_runtime_events.jsonl",
-  "parity_stream_path": "/tmp/loom-local-sanction-preview/.loom/parity/stream.jsonl",
+  "parity_stream_path": "/tmp/loom-local-sanction-preview/artifacts/parity/stream.jsonl",
   "openclaw_live_probe_path": null,
-  "openclaw_live_probe_stream_path": "/tmp/loom-local-sanction-preview/.loom/parity/openclaw_live_stream.jsonl",
+  "openclaw_live_probe_stream_path": "/tmp/loom-local-sanction-preview/artifacts/parity/openclaw_live_stream.jsonl",
   "reference_decision": "allow",
   "reference_stage": "ok",
   "overall_decision": "deny",
@@ -258,11 +258,11 @@ source: /tmp/loom-local-sanction-preview/.loom/parity/latest.json
 
 Decision artifact
 =================
-source: /tmp/loom-local-sanction-preview/.loom/shadow/decision.json
+source: /tmp/loom-local-sanction-preview/artifacts/shadow/decision.json
 
 {
   "status": "decision_captured",
-  "decision_path": "/tmp/loom-local-sanction-preview/.loom/shadow/decision.json",
+  "decision_path": "/tmp/loom-local-sanction-preview/artifacts/shadow/decision.json",
   "source": "experimental_preflight_gate",
   "agent_id": "agent_sanction",
   "org_id": "org_demo",
@@ -291,7 +291,7 @@ source: /tmp/loom-local-sanction-preview/.loom/shadow/decision.json
 
 Legacy shadow marker
 ====================
-source: /tmp/loom-local-sanction-preview/.loom/shadow/latest.json
+source: /tmp/loom-local-sanction-preview/artifacts/shadow/latest.json
 
 {
   "status": "not_started",
@@ -310,16 +310,16 @@ boundary:    parity report is real; per-action live runtime parity is still futu
 
 Parity latest
 =============
-source: /tmp/loom-local-sanction-preview/.loom/parity/latest.json
+source: /tmp/loom-local-sanction-preview/artifacts/parity/latest.json
 
 {
   "status": "parity_report_captured",
-  "execution_path": "/tmp/loom-local-sanction-preview/.loom/runtime/last_execution.json",
-  "decision_path": "/tmp/loom-local-sanction-preview/.loom/shadow/decision.json",
+  "execution_path": "/tmp/loom-local-sanction-preview/state/runtime/last_execution.json",
+  "decision_path": "/tmp/loom-local-sanction-preview/artifacts/shadow/decision.json",
   "audit_log_path": "/tmp/loom-local-kernel.jxh47M/kernel/runtime_audit/loom_runtime_events.jsonl",
-  "parity_stream_path": "/tmp/loom-local-sanction-preview/.loom/parity/stream.jsonl",
+  "parity_stream_path": "/tmp/loom-local-sanction-preview/artifacts/parity/stream.jsonl",
   "openclaw_live_probe_path": null,
-  "openclaw_live_probe_stream_path": "/tmp/loom-local-sanction-preview/.loom/parity/openclaw_live_stream.jsonl",
+  "openclaw_live_probe_stream_path": "/tmp/loom-local-sanction-preview/artifacts/parity/openclaw_live_stream.jsonl",
   "reference_decision": "allow",
   "reference_stage": "ok",
   "overall_decision": "deny",
@@ -333,12 +333,12 @@ source: /tmp/loom-local-sanction-preview/.loom/parity/latest.json
 
 Parity stream
 =============
-source: /tmp/loom-local-sanction-preview/.loom/parity/stream.jsonl
+source: /tmp/loom-local-sanction-preview/artifacts/parity/stream.jsonl
 
 {"timestamp":"1774280253","source":"openclaw_reference_stream","phase":"reference_gate","hook_name":"ok","decision":"allow","stage":"ok","agent_id":"agent_sanction","org_id":"org_demo","input_hash":"b7d2387503716f98","reason":"ok"}
-{"timestamp":"1774280253","source":"loom_runtime_stream","phase":"worker_supervisor","hook_name":"sanction_controls_preview","decision":"deny","stage":"sanction_controls_preview","agent_id":"agent_sanction","org_id":"org_demo","input_hash":"b7d2387503716f98","reason":"Agent agent_sanction is restricted from execute","worker_status":"not_dispatched","worker_kind":"python_reference_worker","worker_result_path":"/tmp/loom-local-sanction-preview/.loom/runtime/jobs/b7d2387503716f98/result.json"}
+{"timestamp":"1774280253","source":"loom_runtime_stream","phase":"worker_supervisor","hook_name":"sanction_controls_preview","decision":"deny","stage":"sanction_controls_preview","agent_id":"agent_sanction","org_id":"org_demo","input_hash":"b7d2387503716f98","reason":"Agent agent_sanction is restricted from execute","worker_status":"not_dispatched","worker_kind":"python_reference_worker","worker_result_path":"/tmp/loom-local-sanction-preview/state/runtime/jobs/b7d2387503716f98/result.json"}
 {"timestamp":"1774280253","source":"loom_runtime_stream","phase":"audit_emission","hook_name":"audit_emission","decision":"kernel_cli_runtime_event_written","stage":"runtime_audit","agent_id":"agent_sanction","org_id":"org_demo","input_hash":"b7d2387503716f98","reason":"denied","audit_log":"/tmp/loom-local-kernel.jxh47M/kernel/runtime_audit/loom_runtime_events.jsonl"}
-{"timestamp":"1774280253","source":"openclaw_live_probe","phase":"live_runtime_probe","hook_name":"runtime_health","decision":"not_available","stage":"live_single_host_openclaw","agent_id":"agent_sanction","org_id":"org_demo","input_hash":"b7d2387503716f98","reason":"live OpenClaw proof script not found at /tmp/loom-local-kernel.jxh47M/kernel/missing_openclaw_runtime_proof.py","probe_path":"","probe_stream_path":"/tmp/loom-local-sanction-preview/.loom/parity/openclaw_live_stream.jsonl"}
+{"timestamp":"1774280253","source":"openclaw_live_probe","phase":"live_runtime_probe","hook_name":"runtime_health","decision":"not_available","stage":"live_single_host_openclaw","agent_id":"agent_sanction","org_id":"org_demo","input_hash":"b7d2387503716f98","reason":"live OpenClaw proof script not found at /tmp/loom-local-kernel.jxh47M/kernel/missing_openclaw_runtime_proof.py","probe_path":"","probe_stream_path":"/tmp/loom-local-sanction-preview/artifacts/parity/openclaw_live_stream.jsonl"}
 
 OpenClaw live probe
 ===================
@@ -347,7 +347,7 @@ source: (not captured)
 
 OpenClaw live probe stream
 ==========================
-source: /tmp/loom-local-sanction-preview/.loom/parity/openclaw_live_stream.jsonl
+source: /tmp/loom-local-sanction-preview/artifacts/parity/openclaw_live_stream.jsonl
 
 {"timestamp":"1774280253","input_hash":"b7d2387503716f98","status":"not_available","reason":"live OpenClaw proof script not found at /tmp/loom-local-kernel.jxh47M/kernel/missing_openclaw_runtime_proof.py","probe_path":null}
 

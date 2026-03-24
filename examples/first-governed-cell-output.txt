@@ -1,6 +1,6 @@
 == Meridian Loom // First Governed Cell Rehearsal ==
 root:   /tmp/loom-first-cell
-kernel: /tmp/loom-first-cell-kernel.SU8coT
+kernel: /tmp/loom-first-cell-kernel.PMd20P
 agent:  agent_tutorial
 org:    org_tutorial
 
@@ -10,11 +10,15 @@ org:    org_tutorial
 Meridian Loom // INIT
 ====================
 root:        /tmp/loom-first-cell
+config:      /tmp/loom-first-cell/loom.toml
 mode:        embedded
 org_id:      org_tutorial
-state_dir:   .loom
-kernel_path: /tmp/loom-first-cell-kernel.SU8coT
-status:      initialized experimental scaffold
+state_dir:   state
+run_dir:     run
+log_dir:     logs
+artifact_dir: artifacts
+kernel_path: /tmp/loom-first-cell-kernel.PMd20P
+status:      initialized local-first runtime root
 next_step:   loom doctor --root /tmp/loom-first-cell --format human
 
 --- Step 2: Doctor ---
@@ -26,14 +30,17 @@ boundary:    public scaffold, not governed runtime
 Checks
 ------
 [OK      ] config             loaded /tmp/loom-first-cell/loom.toml
-[OK      ] state_dir          state directory present (/tmp/loom-first-cell/.loom)
+[OK      ] state_dir          state directory present (/tmp/loom-first-cell/state)
+[OK      ] run_dir            runtime run directory present (/tmp/loom-first-cell/run)
+[OK      ] log_dir            log directory present (/tmp/loom-first-cell/logs)
+[OK      ] artifact_dir       artifact directory present (/tmp/loom-first-cell/artifacts)
 [OK      ] python_workers     python worker path present (/tmp/loom-first-cell/workers/python)
 [OK      ] typescript_workers typescript worker path present (/tmp/loom-first-cell/workers/typescript)
 [OK      ] wasm_modules       wasm module path present (/tmp/loom-first-cell/workers/wasm)
-[OK      ] capsule_manifest   capsule manifest present (/tmp/loom-first-cell/.loom/capsules/org_tutorial/manifest.json)
-[OK      ] kernel_path        kernel path present (/tmp/loom-first-cell-kernel.SU8coT)
-[OK      ] runtime_registry   Meridian runtime registry available (/tmp/loom-first-cell-kernel.SU8coT/kernel/runtimes.json)
-[OK      ] agent_registry     Meridian agent registry CLI available (/tmp/loom-first-cell-kernel.SU8coT/kernel/agent_registry.py)
+[OK      ] capsule_manifest   capsule manifest present (/tmp/loom-first-cell/state/capsules/org_tutorial/manifest.json)
+[OK      ] kernel_path        kernel path present (/tmp/loom-first-cell-kernel.PMd20P)
+[OK      ] runtime_registry   Meridian runtime registry available (/tmp/loom-first-cell-kernel.PMd20P/kernel/runtimes.json)
+[OK      ] agent_registry     Meridian agent registry CLI available (/tmp/loom-first-cell-kernel.PMd20P/kernel/agent_registry.py)
 
 --- Step 3: Build envelope ---
 Meridian Loom // ACTION ENVELOPE
@@ -70,8 +77,8 @@ input_hash:          e2a248e147077af0
 
 Meridian Loom // ACTION ENQUEUED
 =================================
-queue_path:           /tmp/loom-first-cell/.loom/runtime/queue/pending/standard/1774287653-agent_tutorial-e2a248e1.json
-job_path:             /tmp/loom-first-cell/.loom/runtime/jobs/e2a248e147077af0/job.json
+queue_path:           /tmp/loom-first-cell/state/runtime/queue/pending/standard/1774348455-agent_tutorial-e2a248e1.json
+job_path:             /tmp/loom-first-cell/state/runtime/jobs/e2a248e147077af0/job.json
 input_hash:           e2a248e147077af0
 policy_class:         standard
 agent_id:             agent_tutorial
@@ -79,7 +86,7 @@ org_id:               org_tutorial
 action_type:          research
 resource:             web_search
 estimated_cost_usd:   0.050000
-kernel_path:          /tmp/loom-first-cell-kernel.SU8coT
+kernel_path:          /tmp/loom-first-cell-kernel.PMd20P
 next_step:            loom job inspect --job-id e2a248e147077af0 --root <path>
 then:                 loom supervisor run --root <path> --max-jobs 1
 
@@ -97,7 +104,7 @@ jobs_found:          1
 
 Entries
 -------
-  e2a248e147077af0 | status=queued | stage=queue_pending | bucket=pending:standard | agent=agent_tutorial | action=research::web_search | updated_at=1774287653
+  e2a248e147077af0 | status=queued | stage=queue_pending | bucket=pending:standard | agent=agent_tutorial | action=research::web_search | updated_at=1774348455
 
 Next
 ====
@@ -114,21 +121,21 @@ boundary:    queued worker dispatch is real; hosted governed supervisor is not
 Current state
 =============
 root:                /tmp/loom-first-cell
-queue_dir:           /tmp/loom-first-cell/.loom/runtime/queue
+queue_dir:           /tmp/loom-first-cell/state/runtime/queue
 processed:           1
 allowed:             1
 denied:              0
 failed:              0
 last_input_hash:     e2a248e147077af0
-last_execution:      /tmp/loom-first-cell/.loom/runtime/last_execution.json
-audit_log:           /tmp/loom-first-cell-kernel.SU8coT/kernel/runtime_audit/loom_runtime_events.jsonl
+last_execution:      /tmp/loom-first-cell/state/runtime/last_execution.json
+audit_log:           /tmp/loom-first-cell-kernel.PMd20P/kernel/runtime_audit/loom_runtime_events.jsonl
 note:                processed=1 allowed=1 denied=0 failed=0
 
 Next
 ====
 1. loom parity report --root /tmp/loom-first-cell
 2. loom shadow report --root /tmp/loom-first-cell
-3. Inspect /tmp/loom-first-cell-kernel.SU8coT/kernel/runtime_audit/loom_runtime_events.jsonl for canonical runtime audit entries.
+3. Inspect /tmp/loom-first-cell-kernel.PMd20P/kernel/runtime_audit/loom_runtime_events.jsonl for canonical runtime audit entries.
 
 --- Step 7: Inspect completed job ---
 job_id: e2a248e147077af0
@@ -143,56 +150,87 @@ job_id:              e2a248e147077af0
 status:              completed
 stage:               local_queue_supervisor
 queue_bucket:        processed:standard
-queued_at:           1774287653
-updated_at:          1774287653
+queued_at:           1774348455
+updated_at:          1774348455
 agent_id:            agent_tutorial
 org_id:              org_tutorial
 action_type:         research
 resource:            web_search
 estimated_cost_usd:  0.050000
 runtime_outcome:     worker_executed
+budget_reservation:  committed (runtime worker completed)
 worker_status:       completed
+reservation_id:      res_e2a248e147077af0_1774348455
+reservation_state:   acked
+attempt_count:       0
 note:                experimental supervisor dispatched /tmp/loom-first-cell/workers/python/loom_runtime_worker.py [standard lane]
+
+Proof-first status
+==================
+schema_version:    loom.runtime.v1
+truth_class:       experimental_runtime_job_ledger
+event_id:          loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::completed::local_queue_supervisor::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__local_queue_supervisor__worker_executed
+job_id:            job::org_tutorial::agent_tutorial::research::e2a248e147077af0
+execution_id:      execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::local_queue_supervisor::worker_executed
+decision_id:       decision::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::local_queue_supervisor::completed
+parity_id:         parity::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__local_queue_supervisor__worker_executed::linked
+audit_id:          audit::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__local_queue_supervisor__worker_executed::research
+artifact_count:    8
 
 Artifacts
 =========
-job_path:            /tmp/loom-first-cell/.loom/runtime/jobs/e2a248e147077af0/job.json
-queue_path:          /tmp/loom-first-cell/.loom/runtime/queue/processed/1774287653-agent_tutorial-e2a248e1.json
-decision_path:       /tmp/loom-first-cell/.loom/shadow/decision.json
-execution_path:      /tmp/loom-first-cell/.loom/runtime/last_execution.json
-audit_log_path:      /tmp/loom-first-cell-kernel.SU8coT/kernel/runtime_audit/loom_runtime_events.jsonl
-parity_report_path:  /tmp/loom-first-cell/.loom/parity/latest.json
+- artifact::job_snapshot::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__local_queue_supervisor__worker_executed::job_snapshot | kind=job_snapshot | label=job_snapshot | path=/tmp/loom-first-cell/state/runtime/jobs/e2a248e147077af0/job.json | source=loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::local_queue_supervisor::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__local_queue_supervisor__worker_executed | note=experimental supervisor dispatched /tmp/loom-first-cell/workers/python/loom_runtime_worker.py [standard lane]
+- artifact::queue_entry::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__local_queue_supervisor__worker_executed::queue_entry | kind=queue_entry | label=queue_entry | path=/tmp/loom-first-cell/state/runtime/queue/processed/1774348455-agent_tutorial-e2a248e1.json | source=loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::local_queue_supervisor::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__local_queue_supervisor__worker_executed | note=queue artifact for this job
+- artifact::decision_receipt::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__local_queue_supervisor__worker_executed::job_decision | kind=decision_receipt | label=job_decision | path=/tmp/loom-first-cell/artifacts/shadow/decision.json | source=loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::local_queue_supervisor::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__local_queue_supervisor__worker_executed | note=decision artifact linked from job ledger
+- artifact::execution_receipt::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__local_queue_supervisor__worker_executed::job_execution | kind=execution_receipt | label=job_execution | path=/tmp/loom-first-cell/state/runtime/last_execution.json | source=loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::local_queue_supervisor::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__local_queue_supervisor__worker_executed | note=execution artifact linked from job ledger
+- artifact::runtime_event::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__local_queue_supervisor__worker_executed::job_runtime_event | kind=runtime_event | label=job_runtime_event | path=/tmp/loom-first-cell/artifacts/runtime/events/e2a248e147077af0.json | source=loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::local_queue_supervisor::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__local_queue_supervisor__worker_executed | note=canonical runtime event linked from job ledger
+- artifact::runtime_event_stream::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__local_queue_supervisor__worker_executed::job_runtime_event_stream | kind=runtime_event_stream | label=job_runtime_event_stream | path=/tmp/loom-first-cell/artifacts/runtime/events/stream.jsonl | source=loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::local_queue_supervisor::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__local_queue_supervisor__worker_executed | note=runtime event stream linked from job ledger
+- artifact::audit_log::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__local_queue_supervisor__worker_executed::job_audit | kind=audit_log | label=job_audit | path=/tmp/loom-first-cell-kernel.PMd20P/kernel/runtime_audit/loom_runtime_events.jsonl | source=loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::local_queue_supervisor::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__local_queue_supervisor__worker_executed | note=kernel-owned runtime audit linked from job ledger
+- artifact::parity_report::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__local_queue_supervisor__worker_executed::job_parity | kind=parity_report | label=job_parity | path=/tmp/loom-first-cell/artifacts/parity/latest.json | source=loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::local_queue_supervisor::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__local_queue_supervisor__worker_executed | note=parity report linked from job ledger
+
+job_path:            /tmp/loom-first-cell/state/runtime/jobs/e2a248e147077af0/job.json
+queue_path:          /tmp/loom-first-cell/state/runtime/queue/processed/1774348455-agent_tutorial-e2a248e1.json
+decision_path:       /tmp/loom-first-cell/artifacts/shadow/decision.json
+execution_path:      /tmp/loom-first-cell/state/runtime/last_execution.json
+event_path:          /tmp/loom-first-cell/artifacts/runtime/events/e2a248e147077af0.json
+event_stream_path:   /tmp/loom-first-cell/artifacts/runtime/events/stream.jsonl
+audit_log_path:      /tmp/loom-first-cell-kernel.PMd20P/kernel/runtime_audit/loom_runtime_events.jsonl
+parity_report_path:  /tmp/loom-first-cell/artifacts/parity/latest.json
 
 Next
 ====
 1. loom parity report --root /tmp/loom-first-cell
 2. loom shadow report --root /tmp/loom-first-cell
-3. Inspect /tmp/loom-first-cell/.loom/runtime/jobs/e2a248e147077af0/job.json for the latest persisted job state.
+3. Inspect /tmp/loom-first-cell/state/runtime/jobs/e2a248e147077af0/job.json for the latest persisted job state.
 
 --- Step 8: Parity and audit trails ---
 Meridian Loom // PARITY REPORT
 ===============================
 phase:       runtime-side parity surface
-boundary:    parity report is real; per-action live runtime parity is still future work
+boundary:    action-level parity now compares Loom runtime events to the OpenClaw-compatible reference adapter; live host probe remains supplementary
 
 Parity latest
 =============
-source: /tmp/loom-first-cell/.loom/parity/latest.json
+source: /tmp/loom-first-cell/artifacts/parity/latest.json
 
 {
   "status": "parity_report_captured",
-  "execution_path": "/tmp/loom-first-cell/.loom/runtime/last_execution.json",
-  "decision_path": "/tmp/loom-first-cell/.loom/shadow/decision.json",
-  "audit_log_path": "/tmp/loom-first-cell-kernel.SU8coT/kernel/runtime_audit/loom_runtime_events.jsonl",
-  "parity_stream_path": "/tmp/loom-first-cell/.loom/parity/stream.jsonl",
+  "execution_path": "/tmp/loom-first-cell/state/runtime/last_execution.json",
+  "runtime_event_path": "/tmp/loom-first-cell/artifacts/runtime/events/e2a248e147077af0.json",
+  "runtime_event_stream_path": "/tmp/loom-first-cell/artifacts/runtime/events/stream.jsonl",
+  "decision_path": "/tmp/loom-first-cell/artifacts/shadow/decision.json",
+  "audit_log_path": "/tmp/loom-first-cell-kernel.PMd20P/kernel/runtime_audit/loom_runtime_events.jsonl",
+  "parity_stream_path": "/tmp/loom-first-cell/artifacts/parity/stream.jsonl",
+  "comparison_latest_path": "artifacts/parity/comparison_latest.json",
+  "comparison_stream_path": "artifacts/parity/comparison_stream.jsonl",
   "openclaw_live_probe_path": null,
-  "openclaw_live_probe_stream_path": "/tmp/loom-first-cell/.loom/parity/openclaw_live_stream.jsonl",
+  "openclaw_live_probe_stream_path": "/tmp/loom-first-cell/artifacts/parity/openclaw_live_stream.jsonl",
   "reference_decision": "allow",
   "reference_stage": "ok",
   "overall_decision": "allow",
   "effective_stage": "ok",
   "openclaw_live_probe_status": "not_available",
-  "openclaw_live_probe_note": "live OpenClaw proof script not found at /tmp/loom-first-cell-kernel.SU8coT/kernel/missing_openclaw_runtime_proof.py",
+  "openclaw_live_probe_note": "live OpenClaw proof script not found at /tmp/loom-first-cell-kernel.PMd20P/kernel/missing_openclaw_runtime_proof.py",
   "parity_status": "match",
   "parity_reason": "reference and loom agreed on allow at stage ok",
   "note": "runtime-side parity stream now captures Loom execution plus a per-action OpenClaw live probe artifact when available; hosted per-action parity remains future work"
@@ -200,24 +238,141 @@ source: /tmp/loom-first-cell/.loom/parity/latest.json
 
 Parity stream
 =============
-source: /tmp/loom-first-cell/.loom/parity/stream.jsonl
+source: /tmp/loom-first-cell/artifacts/parity/stream.jsonl
 
-{"timestamp":"1774287653","source":"openclaw_reference_stream","phase":"reference_gate","hook_name":"ok","decision":"allow","stage":"ok","agent_id":"agent_tutorial","org_id":"org_tutorial","input_hash":"e2a248e147077af0","reason":"ok"}
-{"timestamp":"1774287653","source":"loom_runtime_stream","phase":"worker_supervisor","hook_name":"ok","decision":"allow","stage":"ok","agent_id":"agent_tutorial","org_id":"org_tutorial","input_hash":"e2a248e147077af0","reason":"ok","worker_status":"completed","worker_kind":"python_reference_worker","worker_result_path":"/tmp/loom-first-cell/.loom/runtime/jobs/e2a248e147077af0/result.json"}
-{"timestamp":"1774287653","source":"loom_runtime_stream","phase":"audit_emission","hook_name":"audit_emission","decision":"kernel_cli_runtime_event_written","stage":"runtime_audit","agent_id":"agent_tutorial","org_id":"org_tutorial","input_hash":"e2a248e147077af0","reason":"worker_executed","audit_log":"/tmp/loom-first-cell-kernel.SU8coT/kernel/runtime_audit/loom_runtime_events.jsonl"}
-{"timestamp":"1774287653","source":"openclaw_live_probe","phase":"live_runtime_probe","hook_name":"runtime_health","decision":"not_available","stage":"live_single_host_openclaw","agent_id":"agent_tutorial","org_id":"org_tutorial","input_hash":"e2a248e147077af0","reason":"live OpenClaw proof script not found at /tmp/loom-first-cell-kernel.SU8coT/kernel/missing_openclaw_runtime_proof.py","probe_path":"","probe_stream_path":"/tmp/loom-first-cell/.loom/parity/openclaw_live_stream.jsonl"}
+{"timestamp":"1774348455","source":"openclaw_reference_stream","phase":"reference_gate","hook_name":"ok","decision":"allow","stage":"ok","agent_id":"agent_tutorial","org_id":"org_tutorial","input_hash":"e2a248e147077af0","reason":"ok"}
+{"timestamp":"1774348455","source":"loom_runtime_stream","phase":"worker_supervisor","hook_name":"ok","decision":"allow","stage":"ok","agent_id":"agent_tutorial","org_id":"org_tutorial","input_hash":"e2a248e147077af0","reason":"ok","worker_status":"completed","worker_kind":"python_reference_worker","worker_result_path":"/tmp/loom-first-cell/state/runtime/jobs/e2a248e147077af0/result.json"}
+{"timestamp":"1774348455","source":"loom_runtime_stream","phase":"audit_emission","hook_name":"audit_emission","decision":"kernel_cli_runtime_event_written","stage":"runtime_audit","agent_id":"agent_tutorial","org_id":"org_tutorial","input_hash":"e2a248e147077af0","reason":"worker_executed","audit_log":"/tmp/loom-first-cell-kernel.PMd20P/kernel/runtime_audit/loom_runtime_events.jsonl"}
+{"timestamp":"1774348455","source":"openclaw_live_probe","phase":"live_runtime_probe","hook_name":"runtime_health","decision":"not_available","stage":"live_single_host_openclaw","agent_id":"agent_tutorial","org_id":"org_tutorial","input_hash":"e2a248e147077af0","reason":"live OpenClaw proof script not found at /tmp/loom-first-cell-kernel.PMd20P/kernel/missing_openclaw_runtime_proof.py","probe_path":"","probe_stream_path":"/tmp/loom-first-cell/artifacts/parity/openclaw_live_stream.jsonl"}
+
+Reference action latest
+=======================
+source: /tmp/loom-first-cell/artifacts/parity/reference_latest.json
+
+{
+  "status": "reference_action_captured",
+  "source": "openclaw_compatible_reference_adapter",
+  "input_hash": "e2a248e147077af0",
+  "agent_id": "agent_tutorial",
+  "org_id": "org_tutorial",
+  "action_type": "research",
+  "resource": "web_search",
+  "estimated_cost_usd": 0.050000,
+  "reference_allowed": true,
+  "reference_decision": "allow",
+  "reference_stage": "ok",
+  "reference_reason": "ok",
+  "effective_source": "reference_gate",
+  "effective_stage": "ok",
+  "overall_decision": "allow",
+  "note": "action-level OpenClaw-compatible reference snapshot for parity comparison"
+}
+
+Reference action stream
+=======================
+source: /tmp/loom-first-cell/artifacts/parity/reference_stream.jsonl
+
+{"timestamp":"1774348455","input_hash":"e2a248e147077af0","status":"reference_action_captured","reference_decision":"allow","reference_stage":"ok","action_type":"research","resource":"web_search","artifact_path":"/tmp/loom-first-cell/artifacts/parity/reference/e2a248e147077af0.json"}
+
+Action parity latest
+====================
+source: /tmp/loom-first-cell/artifacts/parity/comparison_latest.json
+
+{
+  "status": "action_parity_compared",
+  "comparison_id": "parity::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::match",
+  "event_schema_version": "loom.runtime.v1",
+  "input_hash": "e2a248e147077af0",
+  "job_id": "job::org_tutorial::agent_tutorial::research::e2a248e147077af0",
+  "execution_id": "execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed",
+  "decision_id": "decision::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::allow",
+  "parity_id": "parity::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::match",
+  "audit_id": "audit::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::research",
+  "runtime_event_id": "loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed",
+  "action_type": "research",
+  "resource": "web_search",
+  "reference_decision": "allow",
+  "reference_stage": "ok",
+  "runtime_decision": "allow",
+  "runtime_stage": "ok",
+  "runtime_outcome": "worker_executed",
+  "comparison_status": "match",
+  "openclaw_live_probe_status": "not_available",
+  "execution_path": "/tmp/loom-first-cell/state/runtime/last_execution.json",
+  "runtime_event_path": "/tmp/loom-first-cell/artifacts/runtime/events/e2a248e147077af0.json",
+  "audit_log_path": "/tmp/loom-first-cell-kernel.PMd20P/kernel/runtime_audit/loom_runtime_events.jsonl",
+  "note": "action-level parity comparison between Loom runtime execution and the OpenClaw-compatible reference adapter; live probe remains supplementary"
+}
+
+Action parity stream
+====================
+source: /tmp/loom-first-cell/artifacts/parity/comparison_stream.jsonl
+
+{"timestamp":"1774348455","comparison_id":"parity::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::match","input_hash":"e2a248e147077af0","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","runtime_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","reference_decision":"allow","runtime_decision":"allow","comparison_status":"match","openclaw_live_probe_status":"not_available","artifact_path":"/tmp/loom-first-cell/artifacts/parity/comparisons/e2a248e147077af0.json"}
+
+Action parity summary
+=====================
+status:      match
+expected:    allow via ok
+actual:      allow via ok
+action_type: research
+resource:    web_search
+live_probe:  not_captured
+note:        action-level parity is match against the OpenClaw-compatible reference adapter; live OpenClaw proof remains supplementary
+
+
+Runtime event latest
+====================
+source: /tmp/loom-first-cell/artifacts/runtime/events/latest.json
+
+{
+  "schema_version": "loom.runtime.v1",
+  "event_id": "loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed",
+  "truth_class": "experimental_runtime_local",
+  "org_id": "org_tutorial",
+  "agent_id": "agent_tutorial",
+  "action_type": "research",
+  "resource": "web_search",
+  "outcome": "worker_executed",
+  "stage": "ok",
+  "source": "loom_runtime_execute",
+  "subject_kind": "action_envelope",
+  "subject_id": "envelope::org_tutorial::agent_tutorial::research::e2a248e147077af0",
+  "job_id": "job::org_tutorial::agent_tutorial::research::e2a248e147077af0",
+  "execution_id": "execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed",
+  "decision_id": "decision::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::allow",
+  "parity_id": "parity::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::match",
+  "audit_id": "audit::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::research",
+  "note": "runtime execution receipt with canonical proof identifiers",
+  "artifact_refs": [
+    {"artifact_id":"artifact::execution_receipt::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::runtime_execution","artifact_kind":"execution_receipt","label":"runtime_execution","path":"/tmp/loom-first-cell/state/runtime/last_execution.json","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"runtime execution receipt"},
+    {"artifact_id":"artifact::decision_receipt::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::runtime_decision","artifact_kind":"decision_receipt","label":"runtime_decision","path":"/tmp/loom-first-cell/artifacts/shadow/decision.json","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"pre-execution decision artifact"},
+    {"artifact_id":"artifact::audit_log::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::runtime_audit","artifact_kind":"audit_log","label":"runtime_audit","path":"/tmp/loom-first-cell-kernel.PMd20P/kernel/runtime_audit/loom_runtime_events.jsonl","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"kernel-owned runtime audit status=kernel_cli_runtime_event_written"},
+    {"artifact_id":"artifact::parity_stream::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::runtime_parity_stream","artifact_kind":"parity_stream","label":"runtime_parity_stream","path":"/tmp/loom-first-cell/artifacts/parity/stream.jsonl","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"parity_status=match"},
+    {"artifact_id":"artifact::parity_report::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::runtime_parity_report","artifact_kind":"parity_report","label":"runtime_parity_report","path":"/tmp/loom-first-cell/artifacts/parity/latest.json","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"reference and loom agreed on allow at stage ok"},
+    {"artifact_id":"artifact::runtime_event::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::runtime_event","artifact_kind":"runtime_event","label":"runtime_event","path":"/tmp/loom-first-cell/artifacts/runtime/events/e2a248e147077af0.json","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"canonical runtime event receipt"},
+    {"artifact_id":"artifact::runtime_event_stream::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::runtime_event_stream","artifact_kind":"runtime_event_stream","label":"runtime_event_stream","path":"/tmp/loom-first-cell/artifacts/runtime/events/stream.jsonl","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"runtime event stream entry appended"},
+    {"artifact_id":"artifact::worker_request::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::worker_request","artifact_kind":"worker_request","label":"worker_request","path":"/tmp/loom-first-cell/state/runtime/jobs/e2a248e147077af0/request.json","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"worker dispatch envelope"},
+    {"artifact_id":"artifact::worker_result::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::worker_result","artifact_kind":"worker_result","label":"worker_result","path":"/tmp/loom-first-cell/state/runtime/jobs/e2a248e147077af0/result.json","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"worker_status=completed"},
+    {"artifact_id":"artifact::worker_log::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::worker_log","artifact_kind":"worker_log","label":"worker_log","path":"/tmp/loom-first-cell/state/runtime/jobs/e2a248e147077af0/worker.log","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"experimental supervisor dispatched /tmp/loom-first-cell/workers/python/loom_runtime_worker.py"},
+    {"artifact_id":"artifact::openclaw_live_probe_stream::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::openclaw_live_probe_stream","artifact_kind":"openclaw_live_probe_stream","label":"openclaw_live_probe_stream","path":"/tmp/loom-first-cell/artifacts/parity/openclaw_live_stream.jsonl","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"live OpenClaw probe stream entries"}
+  ]
+}
+Runtime event stream
+====================
+source: /tmp/loom-first-cell/artifacts/runtime/events/stream.jsonl
+
+{"schema_version":"loom.runtime.v1","event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","truth_class":"experimental_runtime_local","org_id":"org_tutorial","agent_id":"agent_tutorial","action_type":"research","resource":"web_search","outcome":"worker_executed","stage":"ok","source":"loom_runtime_execute","subject_kind":"action_envelope","subject_id":"envelope::org_tutorial::agent_tutorial::research::e2a248e147077af0","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","decision_id":"decision::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::allow","parity_id":"parity::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::match","audit_id":"audit::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::research","note":"runtime execution receipt with canonical proof identifiers","artifact_refs":[{"artifact_id":"artifact::execution_receipt::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::runtime_execution","artifact_kind":"execution_receipt","label":"runtime_execution","path":"/tmp/loom-first-cell/state/runtime/last_execution.json","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"runtime execution receipt"},{"artifact_id":"artifact::decision_receipt::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::runtime_decision","artifact_kind":"decision_receipt","label":"runtime_decision","path":"/tmp/loom-first-cell/artifacts/shadow/decision.json","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"pre-execution decision artifact"},{"artifact_id":"artifact::audit_log::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::runtime_audit","artifact_kind":"audit_log","label":"runtime_audit","path":"/tmp/loom-first-cell-kernel.PMd20P/kernel/runtime_audit/loom_runtime_events.jsonl","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"kernel-owned runtime audit status=kernel_cli_runtime_event_written"},{"artifact_id":"artifact::parity_stream::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::runtime_parity_stream","artifact_kind":"parity_stream","label":"runtime_parity_stream","path":"/tmp/loom-first-cell/artifacts/parity/stream.jsonl","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"parity_status=match"},{"artifact_id":"artifact::parity_report::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::runtime_parity_report","artifact_kind":"parity_report","label":"runtime_parity_report","path":"/tmp/loom-first-cell/artifacts/parity/latest.json","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"reference and loom agreed on allow at stage ok"},{"artifact_id":"artifact::runtime_event::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::runtime_event","artifact_kind":"runtime_event","label":"runtime_event","path":"/tmp/loom-first-cell/artifacts/runtime/events/e2a248e147077af0.json","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"canonical runtime event receipt"},{"artifact_id":"artifact::runtime_event_stream::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::runtime_event_stream","artifact_kind":"runtime_event_stream","label":"runtime_event_stream","path":"/tmp/loom-first-cell/artifacts/runtime/events/stream.jsonl","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"runtime event stream entry appended"},{"artifact_id":"artifact::worker_request::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::worker_request","artifact_kind":"worker_request","label":"worker_request","path":"/tmp/loom-first-cell/state/runtime/jobs/e2a248e147077af0/request.json","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"worker dispatch envelope"},{"artifact_id":"artifact::worker_result::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::worker_result","artifact_kind":"worker_result","label":"worker_result","path":"/tmp/loom-first-cell/state/runtime/jobs/e2a248e147077af0/result.json","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"worker_status=completed"},{"artifact_id":"artifact::worker_log::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::worker_log","artifact_kind":"worker_log","label":"worker_log","path":"/tmp/loom-first-cell/state/runtime/jobs/e2a248e147077af0/worker.log","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"experimental supervisor dispatched /tmp/loom-first-cell/workers/python/loom_runtime_worker.py"},{"artifact_id":"artifact::openclaw_live_probe_stream::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::openclaw_live_probe_stream","artifact_kind":"openclaw_live_probe_stream","label":"openclaw_live_probe_stream","path":"/tmp/loom-first-cell/artifacts/parity/openclaw_live_stream.jsonl","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"live OpenClaw probe stream entries"}]}
 
 OpenClaw live probe
 ===================
 source: (not captured)
 
-
 OpenClaw live probe stream
 ==========================
-source: /tmp/loom-first-cell/.loom/parity/openclaw_live_stream.jsonl
+source: /tmp/loom-first-cell/artifacts/parity/openclaw_live_stream.jsonl
 
-{"timestamp":"1774287653","input_hash":"e2a248e147077af0","status":"not_available","reason":"live OpenClaw proof script not found at /tmp/loom-first-cell-kernel.SU8coT/kernel/missing_openclaw_runtime_proof.py","probe_path":null}
-
+{"timestamp":"1774348455","input_hash":"e2a248e147077af0","status":"not_available","reason":"live OpenClaw proof script not found at /tmp/loom-first-cell-kernel.PMd20P/kernel/missing_openclaw_runtime_proof.py","probe_path":null}
 
 Meridian Loom // SHADOW REPORT
 ==============================
@@ -225,20 +380,22 @@ phase:       experimental shadow + parity surface
 boundary:    report artifacts are real; governed runtime is not
 Runtime execution
 =================
-source: /tmp/loom-first-cell/.loom/runtime/last_execution.json
+source: /tmp/loom-first-cell/state/runtime/last_execution.json
 
 {
   "status": "runtime_execution_captured",
-  "execution_path": "/tmp/loom-first-cell/.loom/runtime/last_execution.json",
-  "worker_request_path": "/tmp/loom-first-cell/.loom/runtime/jobs/e2a248e147077af0/request.json",
-  "worker_result_path": "/tmp/loom-first-cell/.loom/runtime/jobs/e2a248e147077af0/result.json",
-  "worker_log_path": "/tmp/loom-first-cell/.loom/runtime/jobs/e2a248e147077af0/worker.log",
-  "decision_path": "/tmp/loom-first-cell/.loom/shadow/decision.json",
-  "audit_log_path": "/tmp/loom-first-cell-kernel.SU8coT/kernel/runtime_audit/loom_runtime_events.jsonl",
-  "parity_stream_path": "/tmp/loom-first-cell/.loom/parity/stream.jsonl",
-  "parity_report_path": "/tmp/loom-first-cell/.loom/parity/latest.json",
+  "execution_path": "/tmp/loom-first-cell/state/runtime/last_execution.json",
+  "runtime_event_path": "/tmp/loom-first-cell/artifacts/runtime/events/e2a248e147077af0.json",
+  "runtime_event_stream_path": "/tmp/loom-first-cell/artifacts/runtime/events/stream.jsonl",
+  "worker_request_path": "/tmp/loom-first-cell/state/runtime/jobs/e2a248e147077af0/request.json",
+  "worker_result_path": "/tmp/loom-first-cell/state/runtime/jobs/e2a248e147077af0/result.json",
+  "worker_log_path": "/tmp/loom-first-cell/state/runtime/jobs/e2a248e147077af0/worker.log",
+  "decision_path": "/tmp/loom-first-cell/artifacts/shadow/decision.json",
+  "audit_log_path": "/tmp/loom-first-cell-kernel.PMd20P/kernel/runtime_audit/loom_runtime_events.jsonl",
+  "parity_stream_path": "/tmp/loom-first-cell/artifacts/parity/stream.jsonl",
+  "parity_report_path": "/tmp/loom-first-cell/artifacts/parity/latest.json",
   "openclaw_live_probe_path": null,
-  "openclaw_live_probe_stream_path": "/tmp/loom-first-cell/.loom/parity/openclaw_live_stream.jsonl",
+  "openclaw_live_probe_stream_path": "/tmp/loom-first-cell/artifacts/parity/openclaw_live_stream.jsonl",
   "agent_id": "agent_tutorial",
   "org_id": "org_tutorial",
   "action_type": "research",
@@ -246,6 +403,9 @@ source: /tmp/loom-first-cell/.loom/runtime/last_execution.json
   "input_hash": "e2a248e147077af0",
   "estimated_cost_usd": 0.050000,
   "runtime_outcome": "worker_executed",
+  "budget_reservation_id": "res_agent_tutorial_e2a248e147077af0",
+  "budget_reservation_status": "committed",
+  "budget_reservation_reason": "runtime worker completed",
   "worker_status": "completed",
   "worker_kind": "python_reference_worker",
   "worker_note": "experimental supervisor dispatched /tmp/loom-first-cell/workers/python/loom_runtime_worker.py",
@@ -256,31 +416,81 @@ source: /tmp/loom-first-cell/.loom/runtime/last_execution.json
   "reference_stage": "ok",
   "audit_emission_status": "kernel_cli_runtime_event_written",
   "openclaw_live_probe_status": "not_available",
-  "openclaw_live_probe_note": "live OpenClaw proof script not found at /tmp/loom-first-cell-kernel.SU8coT/kernel/missing_openclaw_runtime_proof.py",
+  "openclaw_live_probe_note": "live OpenClaw proof script not found at /tmp/loom-first-cell-kernel.PMd20P/kernel/missing_openclaw_runtime_proof.py",
   "parity_status": "match",
   "parity_reason": "reference and loom agreed on allow at stage ok",
+  "event_schema_version": "loom.runtime.v1",
+  "event_id": "loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed",
+  "job_id": "job::org_tutorial::agent_tutorial::research::e2a248e147077af0",
+  "execution_id": "execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed",
+  "decision_id": "decision::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::allow",
+  "parity_id": "parity::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::match",
+  "audit_id": "audit::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::research",
+  "artifact_refs": [{"artifact_id":"artifact::execution_receipt::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::runtime_execution","artifact_kind":"execution_receipt","label":"runtime_execution","path":"/tmp/loom-first-cell/state/runtime/last_execution.json","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"runtime execution receipt"}, {"artifact_id":"artifact::decision_receipt::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::runtime_decision","artifact_kind":"decision_receipt","label":"runtime_decision","path":"/tmp/loom-first-cell/artifacts/shadow/decision.json","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"pre-execution decision artifact"}, {"artifact_id":"artifact::audit_log::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::runtime_audit","artifact_kind":"audit_log","label":"runtime_audit","path":"/tmp/loom-first-cell-kernel.PMd20P/kernel/runtime_audit/loom_runtime_events.jsonl","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"kernel-owned runtime audit status=kernel_cli_runtime_event_written"}, {"artifact_id":"artifact::parity_stream::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::runtime_parity_stream","artifact_kind":"parity_stream","label":"runtime_parity_stream","path":"/tmp/loom-first-cell/artifacts/parity/stream.jsonl","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"parity_status=match"}, {"artifact_id":"artifact::parity_report::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::runtime_parity_report","artifact_kind":"parity_report","label":"runtime_parity_report","path":"/tmp/loom-first-cell/artifacts/parity/latest.json","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"reference and loom agreed on allow at stage ok"}, {"artifact_id":"artifact::runtime_event::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::runtime_event","artifact_kind":"runtime_event","label":"runtime_event","path":"/tmp/loom-first-cell/artifacts/runtime/events/e2a248e147077af0.json","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"canonical runtime event receipt"}, {"artifact_id":"artifact::runtime_event_stream::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::runtime_event_stream","artifact_kind":"runtime_event_stream","label":"runtime_event_stream","path":"/tmp/loom-first-cell/artifacts/runtime/events/stream.jsonl","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"runtime event stream entry appended"}, {"artifact_id":"artifact::worker_request::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::worker_request","artifact_kind":"worker_request","label":"worker_request","path":"/tmp/loom-first-cell/state/runtime/jobs/e2a248e147077af0/request.json","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"worker dispatch envelope"}, {"artifact_id":"artifact::worker_result::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::worker_result","artifact_kind":"worker_result","label":"worker_result","path":"/tmp/loom-first-cell/state/runtime/jobs/e2a248e147077af0/result.json","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"worker_status=completed"}, {"artifact_id":"artifact::worker_log::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::worker_log","artifact_kind":"worker_log","label":"worker_log","path":"/tmp/loom-first-cell/state/runtime/jobs/e2a248e147077af0/worker.log","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"experimental supervisor dispatched /tmp/loom-first-cell/workers/python/loom_runtime_worker.py"}, {"artifact_id":"artifact::openclaw_live_probe_stream::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::openclaw_live_probe_stream","artifact_kind":"openclaw_live_probe_stream","label":"openclaw_live_probe_stream","path":"/tmp/loom-first-cell/artifacts/parity/openclaw_live_stream.jsonl","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"live OpenClaw probe stream entries"}],
   "note": "experimental local supervisor path exists for allow decisions; governed hosted supervisor remains future work"
 }
 
 
+Runtime event latest
+====================
+source: /tmp/loom-first-cell/artifacts/runtime/events/latest.json
+
+{
+  "schema_version": "loom.runtime.v1",
+  "event_id": "loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed",
+  "truth_class": "experimental_runtime_local",
+  "org_id": "org_tutorial",
+  "agent_id": "agent_tutorial",
+  "action_type": "research",
+  "resource": "web_search",
+  "outcome": "worker_executed",
+  "stage": "ok",
+  "source": "loom_runtime_execute",
+  "subject_kind": "action_envelope",
+  "subject_id": "envelope::org_tutorial::agent_tutorial::research::e2a248e147077af0",
+  "job_id": "job::org_tutorial::agent_tutorial::research::e2a248e147077af0",
+  "execution_id": "execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed",
+  "decision_id": "decision::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::allow",
+  "parity_id": "parity::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::match",
+  "audit_id": "audit::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::research",
+  "note": "runtime execution receipt with canonical proof identifiers",
+  "artifact_refs": [
+    {"artifact_id":"artifact::execution_receipt::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::runtime_execution","artifact_kind":"execution_receipt","label":"runtime_execution","path":"/tmp/loom-first-cell/state/runtime/last_execution.json","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"runtime execution receipt"},
+    {"artifact_id":"artifact::decision_receipt::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::runtime_decision","artifact_kind":"decision_receipt","label":"runtime_decision","path":"/tmp/loom-first-cell/artifacts/shadow/decision.json","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"pre-execution decision artifact"},
+    {"artifact_id":"artifact::audit_log::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::runtime_audit","artifact_kind":"audit_log","label":"runtime_audit","path":"/tmp/loom-first-cell-kernel.PMd20P/kernel/runtime_audit/loom_runtime_events.jsonl","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"kernel-owned runtime audit status=kernel_cli_runtime_event_written"},
+    {"artifact_id":"artifact::parity_stream::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::runtime_parity_stream","artifact_kind":"parity_stream","label":"runtime_parity_stream","path":"/tmp/loom-first-cell/artifacts/parity/stream.jsonl","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"parity_status=match"},
+    {"artifact_id":"artifact::parity_report::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::runtime_parity_report","artifact_kind":"parity_report","label":"runtime_parity_report","path":"/tmp/loom-first-cell/artifacts/parity/latest.json","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"reference and loom agreed on allow at stage ok"},
+    {"artifact_id":"artifact::runtime_event::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::runtime_event","artifact_kind":"runtime_event","label":"runtime_event","path":"/tmp/loom-first-cell/artifacts/runtime/events/e2a248e147077af0.json","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"canonical runtime event receipt"},
+    {"artifact_id":"artifact::runtime_event_stream::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::runtime_event_stream","artifact_kind":"runtime_event_stream","label":"runtime_event_stream","path":"/tmp/loom-first-cell/artifacts/runtime/events/stream.jsonl","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"runtime event stream entry appended"},
+    {"artifact_id":"artifact::worker_request::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::worker_request","artifact_kind":"worker_request","label":"worker_request","path":"/tmp/loom-first-cell/state/runtime/jobs/e2a248e147077af0/request.json","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"worker dispatch envelope"},
+    {"artifact_id":"artifact::worker_result::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::worker_result","artifact_kind":"worker_result","label":"worker_result","path":"/tmp/loom-first-cell/state/runtime/jobs/e2a248e147077af0/result.json","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"worker_status=completed"},
+    {"artifact_id":"artifact::worker_log::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::worker_log","artifact_kind":"worker_log","label":"worker_log","path":"/tmp/loom-first-cell/state/runtime/jobs/e2a248e147077af0/worker.log","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"experimental supervisor dispatched /tmp/loom-first-cell/workers/python/loom_runtime_worker.py"},
+    {"artifact_id":"artifact::openclaw_live_probe_stream::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed::openclaw_live_probe_stream","artifact_kind":"openclaw_live_probe_stream","label":"openclaw_live_probe_stream","path":"/tmp/loom-first-cell/artifacts/parity/openclaw_live_stream.jsonl","source_event_id":"loom.runtime.v1::org_tutorial::agent_tutorial::research::web_search::worker_executed::ok::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::execution__job__org_tutorial__agent_tutorial__research__e2a248e147077af0__ok__worker_executed","job_id":"job::org_tutorial::agent_tutorial::research::e2a248e147077af0","execution_id":"execution::job__org_tutorial__agent_tutorial__research__e2a248e147077af0::ok::worker_executed","content_sha256":"unverified_local","note":"live OpenClaw probe stream entries"}
+  ]
+}
+
 Parity latest
 =============
-source: /tmp/loom-first-cell/.loom/parity/latest.json
+source: /tmp/loom-first-cell/artifacts/parity/latest.json
 
 {
   "status": "parity_report_captured",
-  "execution_path": "/tmp/loom-first-cell/.loom/runtime/last_execution.json",
-  "decision_path": "/tmp/loom-first-cell/.loom/shadow/decision.json",
-  "audit_log_path": "/tmp/loom-first-cell-kernel.SU8coT/kernel/runtime_audit/loom_runtime_events.jsonl",
-  "parity_stream_path": "/tmp/loom-first-cell/.loom/parity/stream.jsonl",
+  "execution_path": "/tmp/loom-first-cell/state/runtime/last_execution.json",
+  "runtime_event_path": "/tmp/loom-first-cell/artifacts/runtime/events/e2a248e147077af0.json",
+  "runtime_event_stream_path": "/tmp/loom-first-cell/artifacts/runtime/events/stream.jsonl",
+  "decision_path": "/tmp/loom-first-cell/artifacts/shadow/decision.json",
+  "audit_log_path": "/tmp/loom-first-cell-kernel.PMd20P/kernel/runtime_audit/loom_runtime_events.jsonl",
+  "parity_stream_path": "/tmp/loom-first-cell/artifacts/parity/stream.jsonl",
+  "comparison_latest_path": "artifacts/parity/comparison_latest.json",
+  "comparison_stream_path": "artifacts/parity/comparison_stream.jsonl",
   "openclaw_live_probe_path": null,
-  "openclaw_live_probe_stream_path": "/tmp/loom-first-cell/.loom/parity/openclaw_live_stream.jsonl",
+  "openclaw_live_probe_stream_path": "/tmp/loom-first-cell/artifacts/parity/openclaw_live_stream.jsonl",
   "reference_decision": "allow",
   "reference_stage": "ok",
   "overall_decision": "allow",
   "effective_stage": "ok",
   "openclaw_live_probe_status": "not_available",
-  "openclaw_live_probe_note": "live OpenClaw proof script not found at /tmp/loom-first-cell-kernel.SU8coT/kernel/missing_openclaw_runtime_proof.py",
+  "openclaw_live_probe_note": "live OpenClaw proof script not found at /tmp/loom-first-cell-kernel.PMd20P/kernel/missing_openclaw_runtime_proof.py",
   "parity_status": "match",
   "parity_reason": "reference and loom agreed on allow at stage ok",
   "note": "runtime-side parity stream now captures Loom execution plus a per-action OpenClaw live probe artifact when available; hosted per-action parity remains future work"
@@ -289,11 +499,11 @@ source: /tmp/loom-first-cell/.loom/parity/latest.json
 
 Decision artifact
 =================
-source: /tmp/loom-first-cell/.loom/shadow/decision.json
+source: /tmp/loom-first-cell/artifacts/shadow/decision.json
 
 {
   "status": "decision_captured",
-  "decision_path": "/tmp/loom-first-cell/.loom/shadow/decision.json",
+  "decision_path": "/tmp/loom-first-cell/artifacts/shadow/decision.json",
   "source": "experimental_preflight_gate",
   "agent_id": "agent_tutorial",
   "org_id": "org_tutorial",
@@ -322,7 +532,7 @@ source: /tmp/loom-first-cell/.loom/shadow/decision.json
 
 Legacy shadow marker
 ====================
-source: /tmp/loom-first-cell/.loom/shadow/latest.json
+source: /tmp/loom-first-cell/artifacts/shadow/latest.json
 
 {
   "status": "not_started",

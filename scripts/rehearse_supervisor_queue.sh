@@ -87,6 +87,13 @@ EOF
 cat > "${KERNEL_PATH}/kernel/treasury.py" <<'EOF'
 def check_budget(agent_id, cost_usd, org_id=None):
     return True, 'ok'
+def reserve_runtime_budget(agent_id, estimated_cost, org_id=None, action=None, resource=None, context=None, policy_ref=None):
+    ih = context.get('input_hash','') if context else ''
+    return {"allowed": True, "reservation_id": f"res_{agent_id}_{ih}", "reason": "fixture budget ok"}
+def commit_runtime_budget(reservation_id, actual_cost=0.0, note=''):
+    return {"status": "committed", "reservation_id": reservation_id, "actual_cost": actual_cost}
+def release_runtime_budget(reservation_id, reason=''):
+    return {"status": "released", "reservation_id": reservation_id}
 EOF
 
 cp "${SOURCE_KERNEL}/kernel/audit.py" "${KERNEL_PATH}/kernel/audit.py"
@@ -139,7 +146,7 @@ import pathlib
 import sys
 
 root = pathlib.Path(sys.argv[1])
-payload = json.loads((root / ".loom" / "runtime" / "last_execution.json").read_text())
+payload = json.loads((root / "state" / "runtime" / "last_execution.json").read_text())
 print(payload["input_hash"])
 PY
 )"
@@ -148,9 +155,9 @@ PY
 ./target/debug/loom shadow report --root "${ROOT_DIR}"
 
 echo "processed_queue_files:"
-find "${ROOT_DIR}/.loom/runtime/queue" -maxdepth 2 -type f | sort
+find "${ROOT_DIR}/state/runtime/queue" -maxdepth 2 -type f | sort
 echo "job_state:"
-find "${ROOT_DIR}/.loom/runtime/jobs" -maxdepth 2 -type f | sort
+find "${ROOT_DIR}/state/runtime/jobs" -maxdepth 2 -type f | sort
 echo "canonical_runtime_audit:"
 cat "${KERNEL_PATH}/kernel/runtime_audit/loom_runtime_events.jsonl"
 
