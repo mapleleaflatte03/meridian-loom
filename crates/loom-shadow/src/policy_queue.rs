@@ -194,4 +194,10 @@ mod tests {
         assert_eq!(depths["budget_heavy"], 1);
         assert_eq!(q.total_pending(), 3);
     }
+
+    #[test]
+    fn test_dequeue_empty() {
+        let mut q = PolicyQueue::new();
+        assert_eq!(q.dequeue_next(), None);
+    }
 }
