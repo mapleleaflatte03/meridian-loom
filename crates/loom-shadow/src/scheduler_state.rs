@@ -61,7 +61,6 @@ impl JobStatus {
 /// A single job tracked by the scheduler.
 #[derive(Clone, Debug)]
 pub struct SchedulerJob {
-    pub id: String,
     pub agent_id: String,
     pub org_id: String,
     pub action_type: String,
@@ -78,14 +77,14 @@ pub struct SchedulerJob {
 }
 
 impl SchedulerJob {
-    fn to_json(&self) -> String {
+    fn to_json(&self, id: &str) -> String {
         format!(
             concat!(
                 "{{\"id\":{},\"agent_id\":{},\"org_id\":{},\"action_type\":{},",
                 "\"resource\":{},\"policy_class\":{},\"queue_bucket\":{},\"status\":{},\"enqueued_at\":{},",
                 "\"started_at\":{},\"completed_at\":{},\"attempt_count\":{},\"lease_owner\":{},\"result_summary\":{}}}"
             ),
-            json_string(&self.id),
+            json_string(id),
             json_string(&self.agent_id),
             json_string(&self.org_id),
             json_string(&self.action_type),
@@ -102,7 +101,7 @@ impl SchedulerJob {
         )
     }
 
-    fn from_json(raw: &str) -> SchedulerResult<Self> {
+    fn from_json(raw: &str) -> SchedulerResult<(String, Self)> {
         let id = extract_json_string(raw, "\"id\"")
             .ok_or_else(|| "id missing".to_string())?;
         let agent_id = extract_json_string(raw, "\"agent_id\"")
@@ -127,8 +126,7 @@ impl SchedulerJob {
         let attempt_count = extract_json_u32(raw, "\"attempt_count\"").unwrap_or(0);
         let lease_owner = extract_json_optional_string(raw, "\"lease_owner\"");
         let result_summary = extract_json_optional_string(raw, "\"result_summary\"");
-        Ok(SchedulerJob {
-            id,
+        Ok((id, SchedulerJob {
             agent_id,
             org_id,
             action_type,
@@ -142,7 +140,7 @@ impl SchedulerJob {
             attempt_count,
             lease_owner,
             result_summary,
-        })
+        }))
     }
 }
 
@@ -167,7 +165,7 @@ impl SchedulerState {
     }
 
     fn to_json(&self) -> String {
-        let job_entries: Vec<String> = self.jobs.values().map(|j| j.to_json()).collect();
+        let job_entries: Vec<String> = self.jobs.iter().map(|(id, j)| j.to_json(id)).collect();
         format!(
             "{{\"next_job_id\":{},\"created_at\":{},\"last_modified_at\":{},\"jobs\":[{}]}}",
             self.next_job_id,
@@ -191,8 +189,8 @@ impl SchedulerState {
             let arr_end = find_matching_bracket(raw, start);
             let arr_body = &raw[start + 1..arr_end];
             for obj_str in split_json_objects(arr_body) {
-                let job = SchedulerJob::from_json(&obj_str)?;
-                jobs.insert(job.id.clone(), job);
+                let (id, job) = SchedulerJob::from_json(&obj_str)?;
+                jobs.insert(id, job);
             }
         }
 
@@ -241,7 +239,6 @@ pub fn append_job_with_id(
 ) {
     let now = epoch_now();
     let job = SchedulerJob {
-        id: job_id.to_string(),
         agent_id: agent_id.to_string(),
         org_id: org_id.to_string(),
         action_type: action_type.to_string(),
@@ -576,7 +573,6 @@ mod tests {
         state.jobs.insert(
             "job_1".to_string(),
             SchedulerJob {
-                id: "job_1".to_string(),
                 agent_id: "agent_a".to_string(),
                 org_id: "org_x".to_string(),
                 action_type: "scan".to_string(),
@@ -596,7 +592,6 @@ mod tests {
         state.jobs.insert(
             "job_2".to_string(),
             SchedulerJob {
-                id: "job_2".to_string(),
                 agent_id: "agent_b".to_string(),
                 org_id: "org_x".to_string(),
                 action_type: "research".to_string(),
