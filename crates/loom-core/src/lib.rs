@@ -1016,11 +1016,16 @@ pub fn capsule_inspect(root: &Path) -> LoomResult<CapsuleInspection> {
     let state_dir = root.join(&config.state_dir);
     let capsule_dir = state_dir.join("capsules").join(&config.org_id);
     let manifest_path = capsule_dir.join("manifest.json");
-    let mut files = Vec::new();
-    for entry in fs::read_dir(&capsule_dir).map_err(io_err)? {
-        let entry = entry.map_err(io_err)?;
-        files.push(entry.file_name().to_string_lossy().to_string());
-    }
+    let mut files: Vec<String> = fs::read_dir(&capsule_dir)
+        .map_err(io_err)?
+        .map(|entry| {
+            let entry = entry.map_err(io_err)?;
+            Ok(entry
+                .file_name()
+                .into_string()
+                .unwrap_or_else(|os_str| os_str.to_string_lossy().into_owned()))
+        })
+        .collect::<LoomResult<Vec<String>>>()?;
     files.sort();
     Ok(CapsuleInspection {
         org_id: config.org_id,
