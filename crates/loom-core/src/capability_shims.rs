@@ -242,6 +242,16 @@ mod tests {
     }
 
     #[test]
+    fn validate_shim_accepts_all_valid_cost_classes() {
+        let mut shim = generate_shim(&basic_spec());
+        let valid_cost_classes = ["per_call", "metered", "batch", "free"];
+        for cost_class in valid_cost_classes {
+            shim.cost_class = cost_class.to_string();
+            assert!(validate_shim(&shim).is_ok(), "failed on valid cost_class: {}", cost_class);
+        }
+    }
+
+    #[test]
     fn validate_shim_rejects_empty_tool_name() {
         let shim = CapabilityShim {
             tool_name: "".to_string(),
