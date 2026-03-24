@@ -430,4 +430,12 @@ unknown_future_key = 42\n";
         assert!(json.contains("\"max_memories\":8"));
         assert!(json.contains("\"fuel_limit\":2000000"));
     }
+
+    #[test]
+    fn test_validate_excessive_instances() {
+        let mut limits = default_limits();
+        limits.max_instances = MAX_INSTANCES_CEILING + 1;
+        let errs = validate_limits(&limits).unwrap_err();
+        assert!(errs.iter().any(|e| e.contains("max_instances") && e.contains("exceeds ceiling")));
+    }
 }
