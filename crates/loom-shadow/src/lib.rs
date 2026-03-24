@@ -4367,56 +4367,84 @@ pub fn render_supervisor_status_json(snapshot: &SupervisorStatusSnapshot) -> Str
 pub fn render_supervisor_lanes_human(root: &Path) -> ShadowResult<String> {
     let queue_root = ensure_runtime_dir(root)?.join("queue").join("pending");
     fs::create_dir_all(&queue_root).map_err(io_err)?;
-    let mut queue = policy_queue::PolicyQueue::new();
+
+    let mut handles = Vec::new();
     for class in PolicyClass::all() {
+        let class = *class;
         let class_dir = queue_root.join(class.label());
-        if !class_dir.exists() {
-            continue;
-        }
-        for entry in fs::read_dir(&class_dir).map_err(io_err)? {
-            let path = entry.map_err(io_err)?.path();
-            if !path.is_file()
-                || !path
-                    .extension()
-                    .map(|ext| ext == "json")
-                    .unwrap_or(false)
-            {
-                continue;
+
+        handles.push(std::thread::spawn(move || -> ShadowResult<(PolicyClass, Vec<String>)> {
+            let mut job_ids = Vec::new();
+            if !class_dir.exists() {
+                return Ok((class, job_ids));
             }
-            let job_id = path
-                .file_stem()
-                .map(|stem| stem.to_string_lossy().to_string())
-                .unwrap_or_else(|| "unknown".to_string());
-            queue.enqueue(*class, job_id);
+            for entry in fs::read_dir(&class_dir).map_err(io_err)? {
+                let path = entry.map_err(io_err)?.path();
+                if !path.is_file()
+                    || !path
+                        .extension()
+                        .map(|ext| ext == "json")
+                        .unwrap_or(false)
+                {
+                    continue;
+                }
+                let job_id = path
+                    .file_stem()
+                    .map(|stem| stem.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "unknown".to_string());
+                job_ids.push(job_id);
+            }
+            Ok((class, job_ids))
+        }));
+    }
+
+    let mut queue = policy_queue::PolicyQueue::new();
+    for handle in handles {
+        match handle.join() {
+            Ok(result) => {
+                let (class, job_ids) = result?;
+                for job_id in job_ids {
+                    queue.enqueue(class, job_id);
+                }
+            }
+            Err(e) => return Err(format!("thread panicked: {:?}", e)),
         }
     }
+
     Ok(policy_queue::render_queue_depths_human(&queue))
 }
 
 pub fn render_supervisor_lanes_json(root: &Path) -> ShadowResult<String> {
     let queue_root = ensure_runtime_dir(root)?.join("queue").join("pending");
     fs::create_dir_all(&queue_root).map_err(io_err)?;
-    let mut queue = policy_queue::PolicyQueue::new();
+
+    let mut handles = Vec::new();
+    let mut legacy_jobs = Vec::new();
+
     for entry in fs::read_dir(&queue_root).map_err(io_err)? {
         let path = entry.map_err(io_err)?.path();
         if path.is_dir() {
             if let Some(class_name) = path.file_name().map(|name| name.to_string_lossy().to_string())
             {
                 if let Some(class) = PolicyClass::from_label(&class_name) {
-                    for inner in fs::read_dir(&path).map_err(io_err)? {
-                        let inner_path = inner.map_err(io_err)?.path();
-                        if inner_path
-                            .extension()
-                            .map(|ext| ext == "json")
-                            .unwrap_or(false)
-                        {
-                            let job_id = inner_path
-                                .file_stem()
-                                .map(|stem| stem.to_string_lossy().to_string())
-                                .unwrap_or_else(|| "unknown".to_string());
-                            queue.enqueue(class, job_id);
+                    handles.push(std::thread::spawn(move || -> ShadowResult<(PolicyClass, Vec<String>)> {
+                        let mut job_ids = Vec::new();
+                        for inner in fs::read_dir(&path).map_err(io_err)? {
+                            let inner_path = inner.map_err(io_err)?.path();
+                            if inner_path
+                                .extension()
+                                .map(|ext| ext == "json")
+                                .unwrap_or(false)
+                            {
+                                let job_id = inner_path
+                                    .file_stem()
+                                    .map(|stem| stem.to_string_lossy().to_string())
+                                    .unwrap_or_else(|| "unknown".to_string());
+                                job_ids.push(job_id);
+                            }
                         }
-                    }
+                        Ok((class, job_ids))
+                    }));
                 }
             }
         } else if path
@@ -4428,9 +4456,26 @@ pub fn render_supervisor_lanes_json(root: &Path) -> ShadowResult<String> {
                 .file_stem()
                 .map(|stem| stem.to_string_lossy().to_string())
                 .unwrap_or_else(|| "unknown".to_string());
-            queue.enqueue(PolicyClass::Standard, job_id);
+            legacy_jobs.push(job_id);
         }
     }
+
+    let mut queue = policy_queue::PolicyQueue::new();
+    for job_id in legacy_jobs {
+        queue.enqueue(PolicyClass::Standard, job_id);
+    }
+    for handle in handles {
+        match handle.join() {
+            Ok(result) => {
+                let (class, job_ids) = result?;
+                for job_id in job_ids {
+                    queue.enqueue(class, job_id);
+                }
+            }
+            Err(e) => return Err(format!("thread panicked: {:?}", e)),
+        }
+    }
+
     Ok(policy_queue::render_queue_depths_json(&queue))
 }
 
@@ -5426,25 +5471,41 @@ fn pending_queue_dir(root: &Path, class: PolicyClass) -> ShadowResult<PathBuf> {
 fn collect_pending_queue_paths(root: &Path) -> ShadowResult<Vec<(PolicyClass, PathBuf)>> {
     let queue_root = ensure_runtime_dir(root)?.join("queue").join("pending");
     fs::create_dir_all(&queue_root).map_err(io_err)?;
-    let mut pending = Vec::new();
+
+    let mut handles = Vec::new();
     for class in PolicyClass::all() {
+        let class = *class;
         let class_dir = queue_root.join(class.label());
-        if class_dir.exists() {
-            let mut class_entries = fs::read_dir(&class_dir)
-                .map_err(io_err)?
-                .filter_map(|entry| entry.ok().map(|item| item.path()))
-                .filter(|path| path.extension().map(|ext| ext == "json").unwrap_or(false))
-                .collect::<Vec<_>>();
-            class_entries.sort();
-            pending.extend(class_entries.into_iter().map(|path| (*class, path)));
-        }
+        handles.push(std::thread::spawn(move || -> ShadowResult<Vec<(PolicyClass, PathBuf)>> {
+            let mut class_entries = Vec::new();
+            if class_dir.exists() {
+                let mut paths = fs::read_dir(&class_dir)
+                    .map_err(io_err)?
+                    .filter_map(|entry| entry.ok().map(|item| item.path()))
+                    .filter(|path| path.extension().map(|ext| ext == "json").unwrap_or(false))
+                    .collect::<Vec<_>>();
+                paths.sort();
+                class_entries.extend(paths.into_iter().map(|path| (class, path)));
+            }
+            Ok(class_entries)
+        }));
     }
+
     let mut legacy_entries = fs::read_dir(&queue_root)
         .map_err(io_err)?
         .filter_map(|entry| entry.ok().map(|item| item.path()))
         .filter(|path| path.is_file() && path.extension().map(|ext| ext == "json").unwrap_or(false))
         .collect::<Vec<_>>();
     legacy_entries.sort();
+
+    let mut pending = Vec::new();
+    for handle in handles {
+        match handle.join() {
+            Ok(result) => pending.extend(result?),
+            Err(e) => return Err(format!("thread panicked: {:?}", e)),
+        }
+    }
+
     pending.extend(
         legacy_entries
             .into_iter()
