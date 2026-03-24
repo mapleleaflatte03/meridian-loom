@@ -50,7 +50,11 @@ impl JobStatus {
                 JobStatus::Cancelled,
                 JobStatus::Failed,
             ],
-            JobStatus::Running => &[JobStatus::Completed, JobStatus::Failed, JobStatus::Cancelled],
+            JobStatus::Running => &[
+                JobStatus::Completed,
+                JobStatus::Failed,
+                JobStatus::Cancelled,
+            ],
             JobStatus::Completed => &[],
             JobStatus::Failed => &[JobStatus::Queued],
             JobStatus::Cancelled => &[],
@@ -103,12 +107,11 @@ impl SchedulerJob {
     }
 
     fn from_json(raw: &str) -> SchedulerResult<Self> {
-        let id = extract_json_string(raw, "\"id\"")
-            .ok_or_else(|| "id missing".to_string())?;
+        let id = extract_json_string(raw, "\"id\"").ok_or_else(|| "id missing".to_string())?;
         let agent_id = extract_json_string(raw, "\"agent_id\"")
             .ok_or_else(|| "agent_id missing".to_string())?;
-        let org_id = extract_json_string(raw, "\"org_id\"")
-            .ok_or_else(|| "org_id missing".to_string())?;
+        let org_id =
+            extract_json_string(raw, "\"org_id\"").ok_or_else(|| "org_id missing".to_string())?;
         let action_type = extract_json_string(raw, "\"action_type\"")
             .ok_or_else(|| "action_type missing".to_string())?;
         let resource = extract_json_string(raw, "\"resource\"")
@@ -117,8 +120,8 @@ impl SchedulerJob {
             extract_json_string(raw, "\"policy_class\"").unwrap_or_else(|| "standard".to_string());
         let queue_bucket =
             extract_json_string(raw, "\"queue_bucket\"").unwrap_or_else(|| "pending".to_string());
-        let status_str = extract_json_string(raw, "\"status\"")
-            .ok_or_else(|| "status missing".to_string())?;
+        let status_str =
+            extract_json_string(raw, "\"status\"").ok_or_else(|| "status missing".to_string())?;
         let status = JobStatus::from_str(&status_str)?;
         let enqueued_at = extract_json_u64(raw, "\"enqueued_at\"")
             .ok_or_else(|| "enqueued_at missing".to_string())?;
@@ -186,7 +189,9 @@ impl SchedulerState {
             .ok_or_else(|| "last_modified_at missing".to_string())?;
 
         let mut jobs = BTreeMap::new();
-        let arr_start = raw.find("\"jobs\"").and_then(|i| raw[i..].find('[').map(|j| i + j));
+        let arr_start = raw
+            .find("\"jobs\"")
+            .and_then(|i| raw[i..].find('[').map(|j| i + j));
         if let Some(start) = arr_start {
             let arr_end = find_matching_bracket(raw, start);
             let arr_body = &raw[start + 1..arr_end];
@@ -503,7 +508,13 @@ mod tests {
     #[test]
     fn append_and_transition_lifecycle() {
         let mut state = SchedulerState::new();
-        let id = append_job(&mut state, "agent_atlas", "org_demo", "research", "web_search");
+        let id = append_job(
+            &mut state,
+            "agent_atlas",
+            "org_demo",
+            "research",
+            "web_search",
+        );
         assert_eq!(state.jobs.get(&id).unwrap().status, JobStatus::Queued);
         assert_eq!(state.jobs.get(&id).unwrap().policy_class, "standard");
 

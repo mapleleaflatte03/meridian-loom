@@ -49,7 +49,7 @@ impl PoolingConfig {
                 max_instances: 4,
                 max_tables_per_instance: 1,
                 max_memories_per_instance: 1,
-                max_memory_pages: 16,       // 1 MB
+                max_memory_pages: 16, // 1 MB
                 max_table_elements: 256,
                 instance_timeout_ms: 5_000,
             },
@@ -58,7 +58,7 @@ impl PoolingConfig {
                 max_instances: 16,
                 max_tables_per_instance: 4,
                 max_memories_per_instance: 2,
-                max_memory_pages: 256,      // 16 MB
+                max_memory_pages: 256, // 16 MB
                 max_table_elements: 4096,
                 instance_timeout_ms: 30_000,
             },
@@ -67,7 +67,7 @@ impl PoolingConfig {
                 max_instances: 16,
                 max_tables_per_instance: 8,
                 max_memories_per_instance: 4,
-                max_memory_pages: 1024,     // 64 MB
+                max_memory_pages: 1024, // 64 MB
                 max_table_elements: 16384,
                 instance_timeout_ms: 120_000,
             },

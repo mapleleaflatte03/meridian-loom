@@ -60,8 +60,8 @@ impl JobReservation {
     }
 
     fn from_json(raw: &str) -> ReservationResult<Self> {
-        let job_id = extract_json_string(raw, "\"job_id\"")
-            .ok_or_else(|| "job_id missing".to_string())?;
+        let job_id =
+            extract_json_string(raw, "\"job_id\"").ok_or_else(|| "job_id missing".to_string())?;
         let reservation_id = extract_json_string(raw, "\"reservation_id\"")
             .unwrap_or_else(|| format!("res_{}", job_id));
         let reserver_id = extract_json_string(raw, "\"reserver_id\"")
@@ -70,8 +70,8 @@ impl JobReservation {
             .ok_or_else(|| "lease_started_at missing".to_string())?;
         let lease_duration_secs = extract_json_u64(raw, "\"lease_duration_secs\"")
             .ok_or_else(|| "lease_duration_secs missing".to_string())?;
-        let state_str = extract_json_string(raw, "\"state\"")
-            .ok_or_else(|| "state missing".to_string())?;
+        let state_str =
+            extract_json_string(raw, "\"state\"").ok_or_else(|| "state missing".to_string())?;
         let state = ReservationState::from_str(&state_str)?;
         Ok(JobReservation {
             job_id,
@@ -98,19 +98,19 @@ impl ReservationLedger {
     }
 
     fn to_json(&self) -> String {
-        let entries: Vec<String> = self
-            .reservations
-            .values()
-            .map(|r| r.to_json())
-            .collect();
+        let entries: Vec<String> = self.reservations.values().map(|r| r.to_json()).collect();
         format!("{{\"reservations\":[{}]}}", entries.join(","))
     }
 
     fn from_json(raw: &str) -> ReservationResult<Self> {
         let mut ledger = ReservationLedger::new();
         // Find the array contents between [ and ]
-        let arr_start = raw.find('[').ok_or_else(|| "missing [ in ledger json".to_string())?;
-        let arr_end = raw.rfind(']').ok_or_else(|| "missing ] in ledger json".to_string())?;
+        let arr_start = raw
+            .find('[')
+            .ok_or_else(|| "missing [ in ledger json".to_string())?;
+        let arr_end = raw
+            .rfind(']')
+            .ok_or_else(|| "missing ] in ledger json".to_string())?;
         let arr_body = &raw[arr_start + 1..arr_end];
         if arr_body.trim().is_empty() {
             return Ok(ledger);
@@ -118,7 +118,9 @@ impl ReservationLedger {
         // Split on top-level objects by tracking brace depth
         for obj_str in split_json_objects(arr_body) {
             let reservation = JobReservation::from_json(&obj_str)?;
-            ledger.reservations.insert(reservation.job_id.clone(), reservation);
+            ledger
+                .reservations
+                .insert(reservation.job_id.clone(), reservation);
         }
         Ok(ledger)
     }
@@ -133,7 +135,10 @@ pub fn reserve_job(
 ) -> ReservationResult<JobReservation> {
     if let Some(existing) = ledger.reservations.get(job_id) {
         if existing.state == ReservationState::Reserved {
-            return Err(format!("job {} is already reserved by {}", job_id, existing.reserver_id));
+            return Err(format!(
+                "job {} is already reserved by {}",
+                job_id, existing.reserver_id
+            ));
         }
     }
     let now = epoch_now();
@@ -145,7 +150,9 @@ pub fn reserve_job(
         lease_duration_secs: duration,
         state: ReservationState::Reserved,
     };
-    ledger.reservations.insert(job_id.to_string(), reservation.clone());
+    ledger
+        .reservations
+        .insert(job_id.to_string(), reservation.clone());
     Ok(reservation)
 }
 

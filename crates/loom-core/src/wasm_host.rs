@@ -14,8 +14,7 @@ mod wasm_runner;
 
 #[allow(unused_imports)]
 pub use wasm_runner::{
-    run_wasm_guest, WasmExecutionRequest, WasmExecutionResult, WasmGuestSource,
-    WasmMemoryProbe,
+    run_wasm_guest, WasmExecutionRequest, WasmExecutionResult, WasmGuestSource, WasmMemoryProbe,
 };
 
 /// Host-side runtime backend selection.
@@ -93,7 +92,9 @@ impl WasmHostBuilder {
             pooling: PoolingConfig::from_profile(PoolingProfile::Standard),
             fuel_metering_enabled: true,
             epoch_deadline_ms: Some(1_000),
-            notes: vec!["prepared host config; execution lives in the experimental guest lane".to_string()],
+            notes: vec![
+                "prepared host config; execution lives in the experimental guest lane".to_string(),
+            ],
         }
     }
 
@@ -179,7 +180,10 @@ impl WasmHostBuilder {
         }
     }
 
-    pub fn build_with_profile(profile_name: impl Into<String>, profile: PoolingProfile) -> Result<WasmHostConfig, Vec<String>> {
+    pub fn build_with_profile(
+        profile_name: impl Into<String>,
+        profile: PoolingProfile,
+    ) -> Result<WasmHostConfig, Vec<String>> {
         Self::new()
             .with_profile_name(profile_name)
             .with_pooling_profile(profile)
@@ -319,7 +323,10 @@ mod tests {
         assert_eq!(config.backend, HostBackend::PreviewOnly);
         assert!(config.component_model_enabled);
         assert!(config.fuel_metering_enabled);
-        assert!(config.notes.iter().any(|note| note.contains("experimental guest lane")));
+        assert!(config
+            .notes
+            .iter()
+            .any(|note| note.contains("experimental guest lane")));
         assert!(validate_host_config(&config).is_ok());
     }
 
@@ -351,7 +358,9 @@ mod tests {
             .with_pooling_config(PoolingConfig::from_profile(PoolingProfile::Heavy))
             .build()
             .expect_err("should reject oversized pooling");
-        assert!(config.iter().any(|reason| reason.contains("exceeds store limit")));
+        assert!(config
+            .iter()
+            .any(|reason| reason.contains("exceeds store limit")));
     }
 
     #[test]

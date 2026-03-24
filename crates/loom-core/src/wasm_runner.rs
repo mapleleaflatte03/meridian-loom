@@ -9,10 +9,7 @@ use super::{host_config_hints, WasmHostConfig};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WasmGuestSource {
-    WasmBytes {
-        name: String,
-        bytes: Vec<u8>,
-    },
+    WasmBytes { name: String, bytes: Vec<u8> },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -60,8 +57,16 @@ pub fn build_wasmtime_config(host: &WasmHostConfig) -> Result<Config, Vec<String
     let mut pooling = PoolingAllocationConfig::default();
     pooling
         .total_core_instances(host.pooling.max_instances)
-        .total_memories(host.pooling.max_instances.saturating_mul(host.pooling.max_memories_per_instance))
-        .total_tables(host.pooling.max_instances.saturating_mul(host.pooling.max_tables_per_instance))
+        .total_memories(
+            host.pooling
+                .max_instances
+                .saturating_mul(host.pooling.max_memories_per_instance),
+        )
+        .total_tables(
+            host.pooling
+                .max_instances
+                .saturating_mul(host.pooling.max_tables_per_instance),
+        )
         .max_core_instances_per_component(host.pooling.max_instances)
         .max_core_instance_size(host.pooling.max_memory_pages as usize * 65_536)
         .max_memories_per_component(host.pooling.max_memories_per_instance)
@@ -77,7 +82,8 @@ pub fn build_wasmtime_config(host: &WasmHostConfig) -> Result<Config, Vec<String
 
 pub fn run_wasm_guest(request: &WasmExecutionRequest) -> Result<WasmExecutionResult, String> {
     let config = build_wasmtime_config(&request.host).map_err(|errors| errors.join("; "))?;
-    let engine = Engine::new(&config).map_err(|error| format!("failed to build engine: {error}"))?;
+    let engine =
+        Engine::new(&config).map_err(|error| format!("failed to build engine: {error}"))?;
     let wasm_bytes = match &request.source {
         WasmGuestSource::WasmBytes { bytes, .. } => bytes.clone(),
     };
@@ -115,19 +121,20 @@ pub fn run_wasm_guest(request: &WasmExecutionRequest) -> Result<WasmExecutionRes
         .ok_or_else(|| format!("missing export '{}'", request.entrypoint))?;
     let entrypoint_result = call_i32_function(&mut store, &func, &request.entrypoint_args)?;
 
-    let (memory_probe_export, memory_probe_result, memory_pages_after) = if let Some(probe) = &request.memory_probe {
-        let probe_func = instance
-            .get_func(&mut store, &probe.export_name)
-            .ok_or_else(|| format!("missing memory probe export '{}'", probe.export_name))?;
-        let result = call_i32_function(&mut store, &probe_func, &[probe.pages_to_grow as i32])?;
-        let pages_after = instance
-            .get_export(&mut store, "memory")
-            .and_then(|export| export.into_memory())
-            .map(|memory| memory.size(&store) as u32);
-        (Some(probe.export_name.clone()), result, pages_after)
-    } else {
-        (None, None, None)
-    };
+    let (memory_probe_export, memory_probe_result, memory_pages_after) =
+        if let Some(probe) = &request.memory_probe {
+            let probe_func = instance
+                .get_func(&mut store, &probe.export_name)
+                .ok_or_else(|| format!("missing memory probe export '{}'", probe.export_name))?;
+            let result = call_i32_function(&mut store, &probe_func, &[probe.pages_to_grow as i32])?;
+            let pages_after = instance
+                .get_export(&mut store, "memory")
+                .and_then(|export| export.into_memory())
+                .map(|memory| memory.size(&store) as u32);
+            (Some(probe.export_name.clone()), result, pages_after)
+        } else {
+            (None, None, None)
+        };
 
     Ok(WasmExecutionResult {
         host_backend: request.host.backend.label().to_string(),
@@ -155,7 +162,9 @@ fn call_i32_function(
     args: &[i32],
 ) -> Result<Option<i32>, String> {
     if args.len() > 1 {
-        return Err("experimental local Wasm lane supports at most one i32 argument for now".to_string());
+        return Err(
+            "experimental local Wasm lane supports at most one i32 argument for now".to_string(),
+        );
     }
     let mut results = vec![Val::I32(0); func.ty(&*store).results().len()];
     match args.len() {

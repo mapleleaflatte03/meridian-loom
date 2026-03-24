@@ -1,36 +1,44 @@
 use loom_core::{
-    build_action_envelope, capsule_inspect, contract_show, doctor, health, init_workspace,
-    kernel_path_for, read_config, render_capsule_human, render_contract_human,
-    render_config_human, render_contract_json, render_doctor_human, render_doctor_json,
-    render_envelope_human, render_envelope_json, render_health_human, render_identity_human,
-    render_identity_json, resolve_agent_identity, root_from, status_human,
-    evaluate_reference_gates, LoomResult, capability_shims::{generate_shim, render_shim_human, render_shim_json, validate_shim, LegacyToolSpec},
+    build_action_envelope,
+    capability_shims::{
+        generate_shim, render_shim_human, render_shim_json, validate_shim, LegacyToolSpec,
+    },
+    capsule_inspect, contract_show, doctor, evaluate_reference_gates, health, init_workspace,
+    kernel_path_for, read_config, render_capsule_human, render_config_human, render_contract_human,
+    render_contract_json, render_doctor_human, render_doctor_json, render_envelope_human,
+    render_envelope_json, render_health_human, render_identity_human, render_identity_json,
+    resolve_agent_identity, root_from, status_human,
     wasm_host::{
         render_host_config_human, render_host_config_json, run_wasm_guest, HostBackend,
         WasmExecutionRequest, WasmGuestSource, WasmHostBuilder,
     },
-    wasm_limits::{default_limits, from_toml as parse_wasm_limits_toml, render_limits_human, render_limits_json, validate_limits},
-    wasm_profiles::{profile_defaults_map, render_pooling_config_human, render_pooling_config_json, PoolingProfile},
+    wasm_limits::{
+        default_limits, from_toml as parse_wasm_limits_toml, render_limits_human,
+        render_limits_json, validate_limits,
+    },
+    wasm_profiles::{
+        profile_defaults_map, render_pooling_config_human, render_pooling_config_json,
+        PoolingProfile,
+    },
+    LoomResult,
 };
 use loom_shadow::{
     capture_decision, capture_preflight, capture_runtime_execution, compare_logs,
-    decision_exit_code, enqueue_action, inspect_job, list_jobs, render_compare_human,
-    render_compare_json, render_decision_human, render_decision_json,
-    render_enqueued_action_human, render_enqueued_action_json, render_job_inspect_human,
-    render_job_inspect_json, render_job_list_human, render_job_list_json, render_parity_report,
-    render_supervisor_lanes_human, render_supervisor_lanes_json,
-    render_preflight_human, render_preflight_json, render_runtime_execution_human,
-    render_runtime_execution_json, render_supervisor_daemon_human,
-    render_supervisor_daemon_json, render_runtime_service_human,
+    decision_exit_code, enqueue_action, import_commitment_execution_requests, inspect_job,
+    list_jobs, render_compare_human, render_compare_json, render_decision_human,
+    render_decision_json, render_enqueued_action_human, render_enqueued_action_json,
+    render_job_inspect_human, render_job_inspect_json, render_job_list_human, render_job_list_json,
+    render_parity_report, render_preflight_human, render_preflight_json,
+    render_runtime_execution_human, render_runtime_execution_json, render_runtime_service_human,
     render_runtime_service_import_human, render_runtime_service_import_json,
     render_runtime_service_json, render_runtime_service_submit_human,
-    render_runtime_service_submit_json, render_shadow_report, render_supervisor_run_human,
-    render_supervisor_run_json, render_supervisor_status_human, render_supervisor_status_json,
-    render_supervisor_watch_human, render_supervisor_watch_json, run_supervisor,
-    import_commitment_execution_requests,
-    run_supervisor_daemon_loop, request_runtime_service_stop, request_supervisor_daemon_stop,
-    run_runtime_service_loop, runtime_service_status, submit_runtime_service_action,
-    supervisor_daemon_status, supervisor_status, watch_supervisor,
+    render_runtime_service_submit_json, render_shadow_report, render_supervisor_daemon_human,
+    render_supervisor_daemon_json, render_supervisor_lanes_human, render_supervisor_lanes_json,
+    render_supervisor_run_human, render_supervisor_run_json, render_supervisor_status_human,
+    render_supervisor_status_json, render_supervisor_watch_human, render_supervisor_watch_json,
+    request_runtime_service_stop, request_supervisor_daemon_stop, run_runtime_service_loop,
+    run_supervisor, run_supervisor_daemon_loop, runtime_service_status,
+    submit_runtime_service_action, supervisor_daemon_status, supervisor_status, watch_supervisor,
 };
 use std::env;
 use std::io::{self, IsTerminal};
@@ -205,7 +213,11 @@ fn handle_job(args: &[String]) -> LoomResult<()> {
             if format == "json" {
                 print!("{}", render_job_list_json(&jobs));
             } else {
-                print_human(&render_job_list_human(&root, &jobs, status_filter.as_deref()));
+                print_human(&render_job_list_human(
+                    &root,
+                    &jobs,
+                    status_filter.as_deref(),
+                ));
             }
             Ok(())
         }
@@ -234,7 +246,8 @@ fn handle_agent(args: &[String]) -> LoomResult<()> {
     let kernel_path = take_value(args, "--kernel-path");
     let org_id = take_value(args, "--org-id");
     let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
-    let identity = resolve_agent_identity(&root, kernel_path.as_deref(), &agent_id, org_id.as_deref())?;
+    let identity =
+        resolve_agent_identity(&root, kernel_path.as_deref(), &agent_id, org_id.as_deref())?;
     if format == "json" {
         print!("{}", render_identity_json(&identity));
     } else {
@@ -296,7 +309,12 @@ fn handle_shadow(args: &[String]) -> LoomResult<()> {
             let session_id = take_value(args, "--session-id");
             let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
 
-            let identity = resolve_agent_identity(&root, kernel_path.as_deref(), &agent_id, org_id.as_deref())?;
+            let identity = resolve_agent_identity(
+                &root,
+                kernel_path.as_deref(),
+                &agent_id,
+                org_id.as_deref(),
+            )?;
             let envelope = build_action_envelope(
                 &root,
                 kernel_path.as_deref(),
@@ -311,8 +329,13 @@ fn handle_shadow(args: &[String]) -> LoomResult<()> {
             let reference =
                 evaluate_reference_gates(&root, kernel_path.as_deref(), &identity, &envelope)?;
             let effective_kernel_path = kernel_path_for(&root, kernel_path.as_deref())?;
-            let capture =
-                capture_preflight(&root, &effective_kernel_path, &identity, &envelope, &reference)?;
+            let capture = capture_preflight(
+                &root,
+                &effective_kernel_path,
+                &identity,
+                &envelope,
+                &reference,
+            )?;
             if format == "json" {
                 print!("{}", render_preflight_json(&capture));
             } else {
@@ -336,8 +359,12 @@ fn handle_shadow(args: &[String]) -> LoomResult<()> {
             let session_id = take_value(args, "--session-id");
             let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
 
-            let identity =
-                resolve_agent_identity(&root, kernel_path.as_deref(), &agent_id, org_id.as_deref())?;
+            let identity = resolve_agent_identity(
+                &root,
+                kernel_path.as_deref(),
+                &agent_id,
+                org_id.as_deref(),
+            )?;
             let envelope = build_action_envelope(
                 &root,
                 kernel_path.as_deref(),
@@ -371,8 +398,12 @@ fn handle_shadow(args: &[String]) -> LoomResult<()> {
             let session_id = take_value(args, "--session-id");
             let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
 
-            let identity =
-                resolve_agent_identity(&root, kernel_path.as_deref(), &agent_id, org_id.as_deref())?;
+            let identity = resolve_agent_identity(
+                &root,
+                kernel_path.as_deref(),
+                &agent_id,
+                org_id.as_deref(),
+            )?;
             let envelope = build_action_envelope(
                 &root,
                 kernel_path.as_deref(),
@@ -409,7 +440,9 @@ fn handle_shadow(args: &[String]) -> LoomResult<()> {
             }
             Ok(())
         }
-        _ => Err("shadow supports 'preflight', 'decide', 'enforce', 'compare', and 'report'".to_string()),
+        _ => Err(
+            "shadow supports 'preflight', 'decide', 'enforce', 'compare', and 'report'".to_string(),
+        ),
     }
 }
 
@@ -462,8 +495,12 @@ fn handle_action(args: &[String]) -> LoomResult<()> {
             let session_id = take_value(args, "--session-id");
             let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
 
-            let identity =
-                resolve_agent_identity(&root, kernel_path.as_deref(), &agent_id, org_id.as_deref())?;
+            let identity = resolve_agent_identity(
+                &root,
+                kernel_path.as_deref(),
+                &agent_id,
+                org_id.as_deref(),
+            )?;
             let envelope = build_action_envelope(
                 &root,
                 kernel_path.as_deref(),
@@ -542,7 +579,8 @@ fn handle_wasm(args: &[String]) -> LoomResult<()> {
             if args.get(1).map(String::as_str) != Some("show") {
                 return Err("wasm profile supports 'show'".to_string());
             }
-            let profile_name = take_value(args, "--profile").unwrap_or_else(|| "standard".to_string());
+            let profile_name =
+                take_value(args, "--profile").unwrap_or_else(|| "standard".to_string());
             let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
             let profile = profile_defaults_map()
                 .remove(&profile_name)
@@ -567,7 +605,8 @@ fn handle_wasm(args: &[String]) -> LoomResult<()> {
                 "wasmtime_ready" => HostBackend::WasmtimeReady,
                 other => return Err(format!("unknown wasm host backend '{}'", other)),
             };
-            let profile_name = take_value(args, "--profile").unwrap_or_else(|| "standard".to_string());
+            let profile_name =
+                take_value(args, "--profile").unwrap_or_else(|| "standard".to_string());
             let profile = match profile_name.as_str() {
                 "minimal" => PoolingProfile::Minimal,
                 "standard" => PoolingProfile::Standard,
@@ -610,7 +649,8 @@ fn handle_wasm(args: &[String]) -> LoomResult<()> {
                 "wasmtime_ready" => HostBackend::WasmtimeReady,
                 other => return Err(format!("unknown wasm host backend '{}'", other)),
             };
-            let profile_name = take_value(args, "--profile").unwrap_or_else(|| "standard".to_string());
+            let profile_name =
+                take_value(args, "--profile").unwrap_or_else(|| "standard".to_string());
             let profile = match profile_name.as_str() {
                 "minimal" => PoolingProfile::Minimal,
                 "standard" => PoolingProfile::Standard,
@@ -636,7 +676,8 @@ fn handle_wasm(args: &[String]) -> LoomResult<()> {
                 .with_store_limits(limits)
                 .build()
                 .map_err(|errors| format!("invalid wasm host config: {}", errors.join("; ")))?;
-            let module_source = take_value(args, "--module").unwrap_or_else(|| "builtin:minimal".to_string());
+            let module_source =
+                take_value(args, "--module").unwrap_or_else(|| "builtin:minimal".to_string());
             let source = if module_source == "builtin:minimal" {
                 WasmGuestSource::WasmBytes {
                     name: "builtin:minimal".to_string(),
@@ -651,13 +692,18 @@ fn handle_wasm(args: &[String]) -> LoomResult<()> {
             };
             let entrypoint = take_value(args, "--entrypoint").unwrap_or_else(|| "run".to_string());
             let entrypoint_args = take_value(args, "--entrypoint-arg")
-                .map(|raw| raw.parse::<i32>().map(|value| vec![value]).map_err(|error| {
-                    format!("invalid --entrypoint-arg '{}': {}", raw, error)
-                }))
+                .map(|raw| {
+                    raw.parse::<i32>()
+                        .map(|value| vec![value])
+                        .map_err(|error| format!("invalid --entrypoint-arg '{}': {}", raw, error))
+                })
                 .transpose()?
                 .unwrap_or_default();
             let fuel_budget = take_value(args, "--fuel-budget")
-                .map(|raw| raw.parse::<u64>().map_err(|error| format!("invalid --fuel-budget '{}': {}", raw, error)))
+                .map(|raw| {
+                    raw.parse::<u64>()
+                        .map_err(|error| format!("invalid --fuel-budget '{}': {}", raw, error))
+                })
                 .transpose()?
                 .unwrap_or(100_000);
             let result = run_wasm_guest(&WasmExecutionRequest {
@@ -809,8 +855,8 @@ fn handle_supervisor_daemon(args: &[String]) -> LoomResult<()> {
                 std::thread::sleep(std::time::Duration::from_millis(100));
                 snapshot_result = supervisor_daemon_status(&root);
             }
-            let snapshot = snapshot_result.unwrap_or_else(|_| {
-                loom_shadow::SupervisorDaemonSnapshot {
+            let snapshot =
+                snapshot_result.unwrap_or_else(|_| loom_shadow::SupervisorDaemonSnapshot {
                     root: root.clone(),
                     supervisor_dir,
                     runtime_state_path: root.join(".loom/runtime/supervisor/runtime_state.json"),
@@ -837,8 +883,7 @@ fn handle_supervisor_daemon(args: &[String]) -> LoomResult<()> {
                     failed_jobs: 0,
                     heartbeat_entries: 0,
                     note: fallback_note,
-                }
-            });
+                });
             if format == "json" {
                 print!("{}", render_supervisor_daemon_json(&snapshot));
             } else {
@@ -862,8 +907,8 @@ fn handle_supervisor_daemon(args: &[String]) -> LoomResult<()> {
             let iterations = take_value(args, "--iterations")
                 .and_then(|raw| raw.parse::<usize>().ok())
                 .unwrap_or(60);
-            let session_id =
-                take_value(args, "--session-id").unwrap_or_else(|| format!("daemon-{}", chrono_like_timestamp()));
+            let session_id = take_value(args, "--session-id")
+                .unwrap_or_else(|| format!("daemon-{}", chrono_like_timestamp()));
             let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
             let snapshot = run_supervisor_daemon_loop(
                 &root,
@@ -1345,9 +1390,9 @@ fn render_wasm_run_json(result: &loom_core::wasm_host::WasmExecutionResult) -> S
 
 fn builtin_minimal_wasm_module() -> Vec<u8> {
     vec![
-        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x05, 0x01, 0x60, 0x00, 0x01,
-        0x7f, 0x03, 0x02, 0x01, 0x00, 0x07, 0x07, 0x01, 0x03, 0x72, 0x75, 0x6e, 0x00, 0x00,
-        0x0a, 0x06, 0x01, 0x04, 0x00, 0x41, 0x07, 0x0b,
+        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x05, 0x01, 0x60, 0x00, 0x01, 0x7f,
+        0x03, 0x02, 0x01, 0x00, 0x07, 0x07, 0x01, 0x03, 0x72, 0x75, 0x6e, 0x00, 0x00, 0x0a, 0x06,
+        0x01, 0x04, 0x00, 0x41, 0x07, 0x0b,
     ]
 }
 

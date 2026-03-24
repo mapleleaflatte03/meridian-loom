@@ -395,7 +395,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
         (false, None) => checks.push(Check {
             level: "WARN",
             label: "kernel_path",
-            detail: "embedded mode can run without kernel_path; contract inspection needs it".to_string(),
+            detail: "embedded mode can run without kernel_path; contract inspection needs it"
+                .to_string(),
         }),
     }
 
@@ -407,7 +408,10 @@ pub fn render_doctor_human(checks: &[Check]) -> String {
         "Meridian Loom // DOCTOR\n=======================\nphase:       experimental runtime rehearsal\nboundary:    public scaffold, not governed runtime\n\nChecks\n------\n",
     );
     for check in checks {
-        out.push_str(&format!("[{:<8}] {:<18} {}\n", check.level, check.label, check.detail));
+        out.push_str(&format!(
+            "[{:<8}] {:<18} {}\n",
+            check.level, check.label, check.detail
+        ));
     }
     out
 }
@@ -498,7 +502,10 @@ pub fn render_config_human(config: &Config, root: &Path) -> String {
     )
 }
 
-pub fn contract_show(root: &Path, override_kernel_path: Option<&str>) -> LoomResult<ContractSnapshot> {
+pub fn contract_show(
+    root: &Path,
+    override_kernel_path: Option<&str>,
+) -> LoomResult<ContractSnapshot> {
     let config = read_config(root)?;
     let kernel_path = resolve_kernel_path(root, override_kernel_path, Some(&config))?;
     let registry_path = kernel_path.join("kernel/runtimes.json");
@@ -524,14 +531,20 @@ pub fn contract_show(root: &Path, override_kernel_path: Option<&str>) -> LoomRes
         .iter()
         .map(|hook| {
             let key = format!("\"{}\"", hook);
-            let value = extract_json_literal(section, &key).unwrap_or_else(|| "unknown".to_string());
+            let value =
+                extract_json_literal(section, &key).unwrap_or_else(|| "unknown".to_string());
             ((*hook).to_string(), value)
         })
         .collect();
 
     let experimental_hooks = EXPERIMENTAL_PRELIGHT_HOOKS
         .iter()
-        .map(|hook| ((*hook).to_string(), "experimental_preflight_path".to_string()))
+        .map(|hook| {
+            (
+                (*hook).to_string(),
+                "experimental_preflight_path".to_string(),
+            )
+        })
         .collect();
 
     Ok(ContractSnapshot {
@@ -607,16 +620,17 @@ pub fn resolve_agent_identity(
     let explicit_org_hint = org_hint
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
-    let stdout = run_agent_registry_lookup(&script, normalized_agent, explicit_org_hint.as_deref())?;
+    let stdout =
+        run_agent_registry_lookup(&script, normalized_agent, explicit_org_hint.as_deref())?;
 
     let runtime_binding = find_named_object(&stdout, "\"runtime_binding\"")
         .ok_or_else(|| "runtime_binding missing from agent record".to_string())?;
-    let agent_id = extract_json_string(&stdout, "\"id\"")
-        .ok_or_else(|| "agent id missing".to_string())?;
-    let agent_name = extract_json_string(&stdout, "\"name\"")
-        .ok_or_else(|| "agent name missing".to_string())?;
-    let org_id = extract_json_string(&stdout, "\"org_id\"")
-        .ok_or_else(|| "org_id missing".to_string())?;
+    let agent_id =
+        extract_json_string(&stdout, "\"id\"").ok_or_else(|| "agent id missing".to_string())?;
+    let agent_name =
+        extract_json_string(&stdout, "\"name\"").ok_or_else(|| "agent name missing".to_string())?;
+    let org_id =
+        extract_json_string(&stdout, "\"org_id\"").ok_or_else(|| "org_id missing".to_string())?;
     let role = extract_json_string(&stdout, "\"role\"").unwrap_or_default();
     let economy_key = extract_json_string(&stdout, "\"economy_key\"").unwrap_or_default();
     let approval_required = extract_json_bool(&stdout, "\"approval_required\"").unwrap_or(false);
@@ -649,11 +663,15 @@ pub fn resolve_agent_identity(
         sanction_decision,
         runtime_id: extract_json_string(&runtime_binding, "\"runtime_id\"")
             .ok_or_else(|| "runtime_id missing".to_string())?,
-        runtime_label: extract_json_string(&runtime_binding, "\"runtime_label\"").unwrap_or_default(),
+        runtime_label: extract_json_string(&runtime_binding, "\"runtime_label\"")
+            .unwrap_or_default(),
         bound_org_id: extract_json_string(&runtime_binding, "\"bound_org_id\"").unwrap_or_default(),
-        boundary_name: extract_json_string(&runtime_binding, "\"boundary_name\"").unwrap_or_default(),
-        identity_model: extract_json_string(&runtime_binding, "\"identity_model\"").unwrap_or_default(),
-        runtime_registered: extract_json_bool(&runtime_binding, "\"runtime_registered\"").unwrap_or(true),
+        boundary_name: extract_json_string(&runtime_binding, "\"boundary_name\"")
+            .unwrap_or_default(),
+        identity_model: extract_json_string(&runtime_binding, "\"identity_model\"")
+            .unwrap_or_default(),
+        runtime_registered: extract_json_bool(&runtime_binding, "\"runtime_registered\"")
+            .unwrap_or(true),
         registration_status: extract_json_string(&runtime_binding, "\"registration_status\"")
             .unwrap_or_else(|| "registered".to_string()),
         source: "kernel_agent_registry".to_string(),
@@ -709,10 +727,7 @@ for item in get_restrictions(agent_id, org_id=org_id) or []:
 "#;
 
     let mut cmd = Command::new("python3");
-    cmd.arg("-c")
-        .arg(script)
-        .arg(&kernel_dir)
-        .arg(agent_lookup);
+    cmd.arg("-c").arg(script).arg(&kernel_dir).arg(agent_lookup);
     if let Some(org_id) = org_hint {
         cmd.arg(org_id);
     }
@@ -1282,10 +1297,16 @@ mod tests {
     fn resolve_identity_and_build_envelope_against_fake_kernel() {
         let kernel = fake_kernel_root("atlas");
         let root = temp_path("loom-core-envelope");
-        init_workspace(&root, "shadow", Some(&kernel.display().to_string()), "org_demo")
-            .expect("init workspace");
+        init_workspace(
+            &root,
+            "shadow",
+            Some(&kernel.display().to_string()),
+            "org_demo",
+        )
+        .expect("init workspace");
 
-        let identity = resolve_agent_identity(&root, None, "atlas", None).expect("resolve identity");
+        let identity =
+            resolve_agent_identity(&root, None, "atlas", None).expect("resolve identity");
         assert_eq!(identity.agent_id, "agent_atlas");
         assert_eq!(identity.max_per_run_usd, Some(0.5));
         assert!(!identity.approval_required);
@@ -1314,11 +1335,20 @@ mod tests {
 
     #[test]
     fn resolve_identity_prefers_snapshot_restrictions_when_present() {
-        let kernel =
-            fake_kernel_root_with_snapshot("sanction", &["execute"], Some("restricted_execute"), &[]);
+        let kernel = fake_kernel_root_with_snapshot(
+            "sanction",
+            &["execute"],
+            Some("restricted_execute"),
+            &[],
+        );
         let root = temp_path("loom-core-snapshot");
-        init_workspace(&root, "shadow", Some(&kernel.display().to_string()), "org_demo")
-            .expect("init workspace");
+        init_workspace(
+            &root,
+            "shadow",
+            Some(&kernel.display().to_string()),
+            "org_demo",
+        )
+        .expect("init workspace");
 
         let identity =
             resolve_agent_identity(&root, None, "sanction", None).expect("resolve identity");
@@ -1334,8 +1364,13 @@ mod tests {
     fn evaluate_reference_gates_uses_kernel_reference_adapter() {
         let kernel = fake_kernel_root("atlas");
         let root = temp_path("loom-core-reference");
-        init_workspace(&root, "shadow", Some(&kernel.display().to_string()), "org_demo")
-            .expect("init workspace");
+        init_workspace(
+            &root,
+            "shadow",
+            Some(&kernel.display().to_string()),
+            "org_demo",
+        )
+        .expect("init workspace");
 
         let allowed = build_action_envelope(
             &root,
@@ -1381,8 +1416,13 @@ mod tests {
     fn build_envelope_rejects_negative_cost() {
         let kernel = fake_kernel_root("atlas");
         let root = temp_path("loom-core-envelope-negative");
-        init_workspace(&root, "shadow", Some(&kernel.display().to_string()), "org_demo")
-            .expect("init workspace");
+        init_workspace(
+            &root,
+            "shadow",
+            Some(&kernel.display().to_string()),
+            "org_demo",
+        )
+        .expect("init workspace");
         let error = build_action_envelope(
             &root,
             None,
@@ -1402,10 +1442,16 @@ mod tests {
     fn resolve_identity_does_not_force_workspace_org_hint() {
         let kernel = fake_kernel_root("atlas");
         let root = temp_path("loom-core-org-fallback");
-        init_workspace(&root, "embedded", Some(&kernel.display().to_string()), "org_local")
-            .expect("init workspace");
+        init_workspace(
+            &root,
+            "embedded",
+            Some(&kernel.display().to_string()),
+            "org_local",
+        )
+        .expect("init workspace");
 
-        let identity = resolve_agent_identity(&root, None, "atlas", None).expect("resolve identity");
+        let identity =
+            resolve_agent_identity(&root, None, "atlas", None).expect("resolve identity");
         assert_eq!(identity.agent_id, "agent_atlas");
         assert_eq!(identity.org_id, "org_demo");
         assert_eq!(identity.max_per_run_usd, Some(0.5));

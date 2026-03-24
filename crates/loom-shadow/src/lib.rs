@@ -1,13 +1,13 @@
 use loom_core::{
-    build_action_envelope, envelope_input_hash, ensure_runtime_worker_scaffold,
+    build_action_envelope, ensure_runtime_worker_scaffold, envelope_input_hash,
     evaluate_reference_gates, kernel_path_for, preview_local_sanction_controls, read_config,
     resolve_agent_identity, runtime_worker_entry, ActionEnvelope, AgentIdentityResolution, Config,
     ReferenceGateCheck,
 };
 mod event_schema;
 mod policy_queue;
-mod reservations;
 mod proof_views;
+mod reservations;
 mod scheduler_state;
 
 use event_schema::{
@@ -16,12 +16,14 @@ use event_schema::{
     render_artifact_refs_json, ArtifactRefSpec, RuntimeEventSpec, RuntimeEventV1,
 };
 use policy_queue::{classify_action, PolicyClass};
-use reservations::{ack_job, expire_stale, load_ledger, nack_job, reserve_job, save_ledger, ReservationLedger};
+use proof_views::render_proof_first_status_human;
+use reservations::{
+    ack_job, expire_stale, load_ledger, nack_job, reserve_job, save_ledger, ReservationLedger,
+};
 use scheduler_state::{
     append_job_with_id, load_state as load_scheduler_state, save_state as save_scheduler_state,
     transition_job, update_job_metadata, JobStatus, SchedulerState,
 };
-use proof_views::render_proof_first_status_human;
 use serde_json::Value;
 use std::fs;
 use std::io::{self, ErrorKind, Read, Write};
@@ -840,11 +842,12 @@ pub fn capture_runtime_execution(
         &budget_capture,
     )?;
     let reference_decision = if reference.allowed { "allow" } else { "deny" }.to_string();
-    let effective_runtime_decision = if worker_capture.runtime_outcome == "budget_reservation_denied" {
-        "deny".to_string()
-    } else {
-        decision.overall_decision.clone()
-    };
+    let effective_runtime_decision =
+        if worker_capture.runtime_outcome == "budget_reservation_denied" {
+            "deny".to_string()
+        } else {
+            decision.overall_decision.clone()
+        };
     let parity_status = if reference_decision == effective_runtime_decision {
         "match".to_string()
     } else {
@@ -858,7 +861,10 @@ pub fn capture_runtime_execution(
     } else {
         format!(
             "reference returned {} at stage {} while loom enforced {} via {}",
-            reference_decision, decision.reference_stage, decision.overall_decision, decision.effective_stage
+            reference_decision,
+            decision.reference_stage,
+            decision.overall_decision,
+            decision.effective_stage
         )
     };
 
@@ -1032,7 +1038,10 @@ pub fn capture_runtime_execution(
             audit_log_path: Some(capture.audit_log_path.clone()),
             parity_report_path: Some(capture.parity_report_path.clone()),
             note: if capture.worker_note.is_empty() {
-                format!("runtime execution {} via {}", capture.runtime_outcome, capture.effective_stage)
+                format!(
+                    "runtime execution {} via {}",
+                    capture.runtime_outcome, capture.effective_stage
+                )
             } else {
                 capture.worker_note.clone()
             },
@@ -1069,8 +1078,10 @@ fn runtime_event_for_capture(capture: &RuntimeExecutionCapture) -> RuntimeEventV
         &capture.action_type,
         &capture.input_hash,
     );
-    let execution_id = canonical_execution_id(&job_id, &capture.effective_stage, &capture.runtime_outcome);
-    let decision_id = canonical_decision_id(&job_id, &capture.effective_stage, &capture.overall_decision);
+    let execution_id =
+        canonical_execution_id(&job_id, &capture.effective_stage, &capture.runtime_outcome);
+    let decision_id =
+        canonical_decision_id(&job_id, &capture.effective_stage, &capture.overall_decision);
     let parity_id = canonical_parity_id(&job_id, &execution_id, &capture.parity_status);
     let audit_id = canonical_audit_id(&job_id, &execution_id, &capture.action_type);
     let subject_id = canonical_envelope_id(
@@ -1115,7 +1126,10 @@ fn runtime_event_for_capture(capture: &RuntimeExecutionCapture) -> RuntimeEventV
             &source_event_id,
             &job_id,
             &execution_id,
-            &format!("kernel-owned runtime audit status={}", capture.audit_emission_status),
+            &format!(
+                "kernel-owned runtime audit status={}",
+                capture.audit_emission_status
+            ),
         ),
         artifact_spec(
             "parity_stream",
@@ -1232,10 +1246,15 @@ fn runtime_event_for_job(job: &JobSnapshot) -> RuntimeEventV1 {
     let parity_id = canonical_parity_id(
         &job_id,
         &execution_id,
-        if job.parity_report_path.is_some() { "linked" } else { "missing" },
+        if job.parity_report_path.is_some() {
+            "linked"
+        } else {
+            "missing"
+        },
     );
     let audit_id = canonical_audit_id(&job_id, &execution_id, &job.action_type);
-    let subject_id = canonical_envelope_id(&job.org_id, &job.agent_id, &job.action_type, &job.job_id);
+    let subject_id =
+        canonical_envelope_id(&job.org_id, &job.agent_id, &job.action_type, &job.job_id);
     let source_event_id = canonical_event_id(
         &job.org_id,
         &job.agent_id,
@@ -1441,7 +1460,8 @@ pub fn enqueue_action(
             runtime_outcome: "not_started".to_string(),
             budget_reservation_id: String::new(),
             budget_reservation_status: "not_requested".to_string(),
-            budget_reservation_reason: "queue pending; runtime reservation not attempted yet".to_string(),
+            budget_reservation_reason: "queue pending; runtime reservation not attempted yet"
+                .to_string(),
             worker_status: "queued".to_string(),
             queue_path: Some(queue_path.clone()),
             decision_path: None,
@@ -1522,7 +1542,11 @@ pub fn run_supervisor(
         let kernel_path_string = extract_json_string(&contents, "\"kernel_path\"")
             .filter(|value| !value.trim().is_empty())
             .or_else(|| override_kernel_path.map(|value| value.to_string()))
-            .unwrap_or_else(|| kernel_path_for(root, override_kernel_path).map(|p| p.display().to_string()).unwrap_or_default());
+            .unwrap_or_else(|| {
+                kernel_path_for(root, override_kernel_path)
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default()
+            });
         if kernel_path_string.is_empty() {
             return Err(format!(
                 "queued action {} has no kernel_path and no override was provided",
@@ -1558,23 +1582,25 @@ pub fn run_supervisor(
                 &format!("pending:{}", policy_label),
             );
         }
-        let reservation = match reserve_job(&mut reservation_ledger, &input_hash, "local_supervisor", 60) {
-            Ok(reservation) => reservation,
-            Err(error) => {
-                let _ = update_job_metadata(
-                    &mut scheduler_state,
-                    &input_hash,
-                    Some(&format!("reserved:{}", policy_label)),
-                    Some(Some("local_supervisor")),
-                    Some(Some(&format!("reservation skipped: {}", error))),
-                );
-                save_scheduler_state_checked(root, &scheduler_state)?;
-                save_reservation_ledger_checked(root, &reservation_ledger)?;
-                continue;
-            }
-        };
-        transition_job(&mut scheduler_state, &input_hash, JobStatus::Reserved)
-            .map_err(|error| format!("failed to reserve scheduler job {}: {}", input_hash, error))?;
+        let reservation =
+            match reserve_job(&mut reservation_ledger, &input_hash, "local_supervisor", 60) {
+                Ok(reservation) => reservation,
+                Err(error) => {
+                    let _ = update_job_metadata(
+                        &mut scheduler_state,
+                        &input_hash,
+                        Some(&format!("reserved:{}", policy_label)),
+                        Some(Some("local_supervisor")),
+                        Some(Some(&format!("reservation skipped: {}", error))),
+                    );
+                    save_scheduler_state_checked(root, &scheduler_state)?;
+                    save_reservation_ledger_checked(root, &reservation_ledger)?;
+                    continue;
+                }
+            };
+        transition_job(&mut scheduler_state, &input_hash, JobStatus::Reserved).map_err(
+            |error| format!("failed to reserve scheduler job {}: {}", input_hash, error),
+        )?;
         update_job_metadata(
             &mut scheduler_state,
             &input_hash,
@@ -1585,17 +1611,18 @@ pub fn run_supervisor(
                 policy_label, reservation.reservation_id
             ))),
         )
-        .map_err(|error| format!("failed to update reserved scheduler job {}: {}", input_hash, error))?;
+        .map_err(|error| {
+            format!(
+                "failed to update reserved scheduler job {}: {}",
+                input_hash, error
+            )
+        })?;
         save_scheduler_state_checked(root, &scheduler_state)?;
         save_reservation_ledger_checked(root, &reservation_ledger)?;
 
         let process_result = (|| -> ShadowResult<RuntimeExecutionCapture> {
-            let identity = resolve_agent_identity(
-                root,
-                Some(&kernel_path_string),
-                &agent_id,
-                Some(&org_id),
-            )?;
+            let identity =
+                resolve_agent_identity(root, Some(&kernel_path_string), &agent_id, Some(&org_id))?;
             let envelope = build_action_envelope(
                 root,
                 Some(&kernel_path_string),
@@ -1604,7 +1631,11 @@ pub fn run_supervisor(
                 &action_type,
                 &resource,
                 estimated_cost_usd,
-                if run_id.is_empty() { None } else { Some(run_id.as_str()) },
+                if run_id.is_empty() {
+                    None
+                } else {
+                    Some(run_id.as_str())
+                },
                 if session_id.is_empty() {
                     None
                 } else {
@@ -1620,12 +1651,23 @@ pub fn run_supervisor(
                 Some(Some("local_supervisor")),
                 None,
             )
-            .map_err(|error| format!("failed to update running scheduler job {}: {}", input_hash, error))?;
+            .map_err(|error| {
+                format!(
+                    "failed to update running scheduler job {}: {}",
+                    input_hash, error
+                )
+            })?;
             save_scheduler_state_checked(root, &scheduler_state)?;
             let reference =
                 evaluate_reference_gates(root, Some(&kernel_path_string), &identity, &envelope)?;
             let decision = capture_decision(root, &identity, &envelope, &reference)?;
-            capture_runtime_execution(root, Path::new(&kernel_path_string), &envelope, &reference, &decision)
+            capture_runtime_execution(
+                root,
+                Path::new(&kernel_path_string),
+                &envelope,
+                &reference,
+                &decision,
+            )
         })();
 
         match process_result {
@@ -1639,8 +1681,17 @@ pub fn run_supervisor(
                 } else {
                     summary.denied += 1;
                 }
-                ack_job(&mut reservation_ledger, &capture.input_hash, "local_supervisor")
-                    .map_err(|error| format!("failed to ack reservation for {}: {}", capture.input_hash, error))?;
+                ack_job(
+                    &mut reservation_ledger,
+                    &capture.input_hash,
+                    "local_supervisor",
+                )
+                .map_err(|error| {
+                    format!(
+                        "failed to ack reservation for {}: {}",
+                        capture.input_hash, error
+                    )
+                })?;
                 let terminal_status = if capture.overall_decision == "allow" {
                     if capture.worker_status == "completed" {
                         JobStatus::Completed
@@ -1650,8 +1701,17 @@ pub fn run_supervisor(
                 } else {
                     JobStatus::Cancelled
                 };
-                transition_job(&mut scheduler_state, &capture.input_hash, terminal_status.clone())
-                    .map_err(|error| format!("failed to update terminal state for {}: {}", capture.input_hash, error))?;
+                transition_job(
+                    &mut scheduler_state,
+                    &capture.input_hash,
+                    terminal_status.clone(),
+                )
+                .map_err(|error| {
+                    format!(
+                        "failed to update terminal state for {}: {}",
+                        capture.input_hash, error
+                    )
+                })?;
                 update_job_metadata(
                     &mut scheduler_state,
                     &capture.input_hash,
@@ -1662,7 +1722,12 @@ pub fn run_supervisor(
                         capture.runtime_outcome, capture.effective_stage, capture.reference_stage
                     ))),
                 )
-                .map_err(|error| format!("failed to update scheduler metadata for {}: {}", capture.input_hash, error))?;
+                .map_err(|error| {
+                    format!(
+                        "failed to update scheduler metadata for {}: {}",
+                        capture.input_hash, error
+                    )
+                })?;
                 save_scheduler_state_checked(root, &scheduler_state)?;
                 save_reservation_ledger_checked(root, &reservation_ledger)?;
                 let destination = processed_dir.join(
@@ -1670,8 +1735,8 @@ pub fn run_supervisor(
                         .ok_or_else(|| format!("invalid queue file {}", path.display()))?,
                 );
                 fs::rename(&path, destination.clone()).map_err(io_err)?;
-                let mut snapshot = read_job_snapshot(root, &capture.input_hash)
-                    .unwrap_or_else(|_| JobSnapshot {
+                let mut snapshot =
+                    read_job_snapshot(root, &capture.input_hash).unwrap_or_else(|_| JobSnapshot {
                         root: root.to_path_buf(),
                         job_id: capture.input_hash.clone(),
                         job_path: job_snapshot_path(root, &capture.input_hash),
@@ -1772,17 +1837,25 @@ pub fn run_supervisor(
                             queued_at: extract_json_string(&contents, "\"queued_at\"")
                                 .unwrap_or_else(timestamp_now),
                             updated_at: timestamp_now(),
-                            agent_id: extract_json_string(&contents, "\"agent_id\"").unwrap_or_default(),
-                            org_id: extract_json_string(&contents, "\"org_id\"").unwrap_or_default(),
-                            action_type: extract_json_string(&contents, "\"action_type\"").unwrap_or_default(),
-                            resource: extract_json_string(&contents, "\"resource\"").unwrap_or_default(),
-                            estimated_cost_usd: extract_json_number(&contents, "\"estimated_cost_usd\"")
-                                .map(|value| format!("{:.6}", value))
-                                .unwrap_or_else(|| "0.000000".to_string()),
+                            agent_id: extract_json_string(&contents, "\"agent_id\"")
+                                .unwrap_or_default(),
+                            org_id: extract_json_string(&contents, "\"org_id\"")
+                                .unwrap_or_default(),
+                            action_type: extract_json_string(&contents, "\"action_type\"")
+                                .unwrap_or_default(),
+                            resource: extract_json_string(&contents, "\"resource\"")
+                                .unwrap_or_default(),
+                            estimated_cost_usd: extract_json_number(
+                                &contents,
+                                "\"estimated_cost_usd\"",
+                            )
+                            .map(|value| format!("{:.6}", value))
+                            .unwrap_or_else(|| "0.000000".to_string()),
                             runtime_outcome: "supervisor_failed".to_string(),
                             budget_reservation_id: String::new(),
                             budget_reservation_status: "reservation_failed".to_string(),
-                            budget_reservation_reason: "queue supervisor failed before runtime capture".to_string(),
+                            budget_reservation_reason:
+                                "queue supervisor failed before runtime capture".to_string(),
                             worker_status: "failed_before_dispatch".to_string(),
                             queue_path: Some(destination),
                             decision_path: None,
@@ -2236,7 +2309,8 @@ pub fn supervisor_daemon_status(root: &Path) -> ShadowResult<SupervisorDaemonSna
             processed_jobs: count_runtime_queue_entries(root, "processed")?,
             failed_jobs: count_runtime_queue_entries(root, "failed")?,
             heartbeat_entries: 0,
-            note: "no daemon state captured yet; run `loom supervisor daemon start` first".to_string(),
+            note: "no daemon state captured yet; run `loom supervisor daemon start` first"
+                .to_string(),
         });
     }
 
@@ -2250,10 +2324,14 @@ pub fn supervisor_daemon_status(root: &Path) -> ShadowResult<SupervisorDaemonSna
     } else {
         false
     };
-    let status = extract_json_string(&contents, "\"status\"").unwrap_or_else(|| "unknown".to_string());
+    let status =
+        extract_json_string(&contents, "\"status\"").unwrap_or_else(|| "unknown".to_string());
     let (heartbeat_entries, _) = if heartbeat_log_path.exists() {
         let heartbeat = fs::read_to_string(&heartbeat_log_path).map_err(io_err)?;
-        let entries = heartbeat.lines().filter(|line| !line.trim().is_empty()).count();
+        let entries = heartbeat
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .count();
         (entries, ())
     } else {
         (0, ())
@@ -2468,13 +2546,22 @@ pub fn run_runtime_service_loop(
             if resolved_http_address.is_empty() {
                 format!("runtime service {} booted with socket ingress", session_id)
             } else {
-                format!("runtime service {} booted with socket ingress + http control plane at {}", session_id, resolved_http_address)
+                format!(
+                    "runtime service {} booted with socket ingress + http control plane at {}",
+                    session_id, resolved_http_address
+                )
             }
         } else {
             if resolved_http_address.is_empty() {
-                format!("runtime service {} booted with file-backed ingress only", session_id)
+                format!(
+                    "runtime service {} booted with file-backed ingress only",
+                    session_id
+                )
             } else {
-                format!("runtime service {} booted with file-backed ingress + http control plane at {}", session_id, resolved_http_address)
+                format!(
+                    "runtime service {} booted with file-backed ingress + http control plane at {}",
+                    session_id, resolved_http_address
+                )
             }
         },
     )?;
@@ -2564,7 +2651,8 @@ pub fn run_runtime_service_loop(
                                 json_string(&reply.note),
                             ),
                         )?;
-                        let http_response = build_http_response(reply.http_status_code, &reply.payload);
+                        let http_response =
+                            build_http_response(reply.http_status_code, &reply.payload);
                         stream.write_all(http_response.as_bytes()).map_err(io_err)?;
                         stream.flush().map_err(io_err)?;
                     }
@@ -2728,7 +2816,11 @@ pub fn run_runtime_service_loop(
         session_id,
         pid,
         false,
-        if stop_reason == "stop_requested" { "stop_requested" } else { "completed" },
+        if stop_reason == "stop_requested" {
+            "stop_requested"
+        } else {
+            "completed"
+        },
         &booted_at,
         &stopped_at,
         poll_seconds,
@@ -2804,7 +2896,8 @@ pub fn runtime_service_status(
             failed_jobs: count_runtime_queue_entries(root, "failed")?,
             last_request_id: String::new(),
             last_job_id: String::new(),
-            note: "no runtime service state captured yet; run `loom service start` first".to_string(),
+            note: "no runtime service state captured yet; run `loom service start` first"
+                .to_string(),
         });
     }
 
@@ -2824,7 +2917,8 @@ pub fn runtime_service_status(
         service_dir,
         socket_path,
         http_address: extract_optional_string(&contents, "\"http_address\"").unwrap_or_default(),
-        http_token_required: extract_json_bool(&contents, "\"http_token_required\"").unwrap_or(false),
+        http_token_required: extract_json_bool(&contents, "\"http_token_required\"")
+            .unwrap_or(false),
         runtime_state_path,
         stop_request_path,
         stdout_log_path,
@@ -2834,7 +2928,8 @@ pub fn runtime_service_status(
         session_id: extract_json_string(&contents, "\"session_id\"").unwrap_or_default(),
         pid,
         running: running_flag && alive,
-        status: extract_json_string(&contents, "\"status\"").unwrap_or_else(|| "unknown".to_string()),
+        status: extract_json_string(&contents, "\"status\"")
+            .unwrap_or_else(|| "unknown".to_string()),
         updated_at: extract_json_string(&contents, "\"updated_at\"").unwrap_or_default(),
         booted_at: extract_json_string(&contents, "\"booted_at\"").unwrap_or_default(),
         stopped_at: extract_json_string(&contents, "\"stopped_at\"").unwrap_or_default(),
@@ -2939,7 +3034,9 @@ pub fn submit_runtime_service_action(
 
     let service_snapshot = runtime_service_status(root, socket_override)?;
     if !service_snapshot.available || !service_snapshot.running {
-        return Err("runtime service is not running; start it with `loom service start` first".to_string());
+        return Err(
+            "runtime service is not running; start it with `loom service start` first".to_string(),
+        );
     }
     let fallback_http_url = if service_snapshot.http_address.trim().is_empty() {
         None
@@ -2960,7 +3057,8 @@ pub fn submit_runtime_service_action(
             service_token,
         )?;
         let body = extract_http_body(&reply);
-        let status = extract_json_string(&body, "\"status\"").unwrap_or_else(|| "unknown".to_string());
+        let status =
+            extract_json_string(&body, "\"status\"").unwrap_or_else(|| "unknown".to_string());
         if status != "accepted" {
             return Err(format!(
                 "runtime service submission failed: {}",
@@ -2969,7 +3067,8 @@ pub fn submit_runtime_service_action(
         }
         return Ok(RuntimeServiceSubmitCapture {
             request_id: extract_json_string(&body, "\"request_id\"").unwrap_or(request_id),
-            transport: extract_json_string(&body, "\"transport\"").unwrap_or_else(|| "http".to_string()),
+            transport: extract_json_string(&body, "\"transport\"")
+                .unwrap_or_else(|| "http".to_string()),
             service_target: extract_json_string(&body, "\"service_target\"")
                 .unwrap_or_else(|| http_url.to_string()),
             socket_path,
@@ -2989,7 +3088,8 @@ pub fn submit_runtime_service_action(
         });
     } else if socket_path.exists() && !socket_path.is_dir() {
         if let Ok(reply) = send_runtime_service_request(&socket_path, &request) {
-            let status = extract_json_string(&reply, "\"status\"").unwrap_or_else(|| "unknown".to_string());
+            let status =
+                extract_json_string(&reply, "\"status\"").unwrap_or_else(|| "unknown".to_string());
             if status != "accepted" {
                 return Err(format!(
                     "runtime service submission failed: {}",
@@ -2998,7 +3098,8 @@ pub fn submit_runtime_service_action(
             }
             return Ok(RuntimeServiceSubmitCapture {
                 request_id: extract_json_string(&reply, "\"request_id\"").unwrap_or(request_id),
-                transport: extract_json_string(&reply, "\"transport\"").unwrap_or_else(|| "socket".to_string()),
+                transport: extract_json_string(&reply, "\"transport\"")
+                    .unwrap_or_else(|| "socket".to_string()),
                 service_target: extract_json_string(&reply, "\"service_target\"")
                     .unwrap_or_else(|| socket_path.display().to_string()),
                 socket_path,
@@ -3011,7 +3112,7 @@ pub fn submit_runtime_service_action(
                 job_id: extract_json_string(&reply, "\"job_id\"").unwrap_or_default(),
                 policy_class: extract_json_string(&reply, "\"policy_class\"").unwrap_or_default(),
                 queue_path: PathBuf::from(
-                    extract_json_string(&reply, "\"queue_path\"").unwrap_or_default()
+                    extract_json_string(&reply, "\"queue_path\"").unwrap_or_default(),
                 ),
                 accepted_at: extract_json_string(&reply, "\"accepted_at\"").unwrap_or_default(),
                 note: extract_json_string(&reply, "\"note\"").unwrap_or_default(),
@@ -3063,10 +3164,11 @@ pub fn submit_runtime_service_action(
                 socket_path,
                 ingress_request_path,
                 ingress_receipt_path,
-                job_id: extract_json_string(&reply, "\"job_id\"").unwrap_or_else(|| envelope_input_hash(envelope)),
+                job_id: extract_json_string(&reply, "\"job_id\"")
+                    .unwrap_or_else(|| envelope_input_hash(envelope)),
                 policy_class: extract_json_string(&reply, "\"policy_class\"").unwrap_or_default(),
                 queue_path: PathBuf::from(
-                    extract_json_string(&reply, "\"queue_path\"").unwrap_or_default()
+                    extract_json_string(&reply, "\"queue_path\"").unwrap_or_default(),
                 ),
                 accepted_at: extract_json_string(&reply, "\"accepted_at\"").unwrap_or_default(),
                 note: format!(
@@ -3080,7 +3182,9 @@ pub fn submit_runtime_service_action(
     }
 
     let fallback_policy_class =
-        classify_action(&envelope.action_type, envelope.estimated_cost_usd, false).label().to_string();
+        classify_action(&envelope.action_type, envelope.estimated_cost_usd, false)
+            .label()
+            .to_string();
     Ok(RuntimeServiceSubmitCapture {
         request_id,
         transport: "file_ingress".to_string(),
@@ -3090,10 +3194,17 @@ pub fn submit_runtime_service_action(
         ingress_receipt_path,
         job_id: envelope_input_hash(envelope),
         policy_class: fallback_policy_class.clone(),
-        queue_path: pending_queue_dir(root, PolicyClass::from_label(&fallback_policy_class).unwrap_or(PolicyClass::Standard))?
-            .join(format!("{}.json", sanitize_filename(&envelope_input_hash(envelope)))),
+        queue_path: pending_queue_dir(
+            root,
+            PolicyClass::from_label(&fallback_policy_class).unwrap_or(PolicyClass::Standard),
+        )?
+        .join(format!(
+            "{}.json",
+            sanitize_filename(&envelope_input_hash(envelope))
+        )),
         accepted_at: timestamp_now(),
-        note: "service request staged for file-backed ingress; awaiting acceptance receipt".to_string(),
+        note: "service request staged for file-backed ingress; awaiting acceptance receipt"
+            .to_string(),
     })
 }
 
@@ -3129,8 +3240,8 @@ fn handle_runtime_service_request(
                 .ok_or_else(|| "service request missing action_type".to_string())?;
             let resource = extract_json_string(request_contents, "\"resource\"")
                 .ok_or_else(|| "service request missing resource".to_string())?;
-            let estimated_cost_usd = extract_json_number(request_contents, "\"estimated_cost_usd\"")
-                .unwrap_or(0.0);
+            let estimated_cost_usd =
+                extract_json_number(request_contents, "\"estimated_cost_usd\"").unwrap_or(0.0);
             let run_id = extract_json_string(request_contents, "\"run_id\"");
             let session_id = extract_json_string(request_contents, "\"session_id\"");
             let kernel_path_raw = extract_json_string(request_contents, "\"kernel_path\"")
@@ -3277,7 +3388,9 @@ fn send_runtime_service_request(socket_path: &Path, request: &str) -> ShadowResu
             }
         }
     }
-    Err(io_err(last_error.unwrap_or_else(|| io::Error::new(ErrorKind::Other, "runtime service socket connection failed"))))
+    Err(io_err(last_error.unwrap_or_else(|| {
+        io::Error::new(ErrorKind::Other, "runtime service socket connection failed")
+    })))
 }
 
 fn send_runtime_service_http_request(
@@ -3363,7 +3476,8 @@ fn handle_runtime_service_http_request(
             })
         }
         ("POST", "/submit") => {
-            let body = serde_json::from_str::<Value>(&request.body).map_err(|error| error.to_string())?;
+            let body =
+                serde_json::from_str::<Value>(&request.body).map_err(|error| error.to_string())?;
             let payload = format!(
                 "{{\"request_type\":{},\"request_id\":{},\"agent_id\":{},\"org_id\":{},\"action_type\":{},\"resource\":{},\"estimated_cost_usd\":{:.6},\"run_id\":{},\"session_id\":{},\"kernel_path\":{}}}\n",
                 json_string("submit_action"),
@@ -3386,11 +3500,14 @@ fn handle_runtime_service_http_request(
             )
         }
         ("POST", "/import-commitments") => {
-            let body = serde_json::from_str::<Value>(&request.body).map_err(|error| error.to_string())?;
+            let body =
+                serde_json::from_str::<Value>(&request.body).map_err(|error| error.to_string())?;
             let commitments_source = value_string(body.get("commitments_source"));
             let kernel_path = value_string(body.get("kernel_path"));
             if commitments_source.is_empty() {
-                let payload = "{\"status\":\"rejected\",\"note\":\"commitments_source is required\"}\n".to_string();
+                let payload =
+                    "{\"status\":\"rejected\",\"note\":\"commitments_source is required\"}\n"
+                        .to_string();
                 return Ok(RuntimeServiceReply {
                     status: "rejected".to_string(),
                     transport: "http".to_string(),
@@ -3436,7 +3553,10 @@ fn handle_runtime_service_http_request(
         _ => {
             let payload = format!(
                 "{{\"status\":\"not_found\",\"note\":{}}}\n",
-                json_string(&format!("unsupported route {} {}", request.method, request.path)),
+                json_string(&format!(
+                    "unsupported route {} {}",
+                    request.method, request.path
+                )),
             );
             Ok(RuntimeServiceReply {
                 status: "not_found".to_string(),
@@ -3581,7 +3701,9 @@ fn load_commitments_snapshot(
         let mut command = Command::new("curl");
         command.arg("-sS");
         if let Some(token) = workspace_token {
-            command.arg("-H").arg(format!("Authorization: Bearer {}", token));
+            command
+                .arg("-H")
+                .arg(format!("Authorization: Bearer {}", token));
         }
         command.arg(commitments_source);
         let output = command.output().map_err(io_err)?;
@@ -3609,7 +3731,10 @@ fn build_commitment_import_envelope(
     let action_type = value_string(adapter_envelope.get("action_type"));
     let resource = value_string(adapter_envelope.get("resource"));
     if agent_id.is_empty() || action_type.is_empty() || resource.is_empty() {
-        return Err("commitment import is missing adapter_envelope agent_id/action_type/resource".to_string());
+        return Err(
+            "commitment import is missing adapter_envelope agent_id/action_type/resource"
+                .to_string(),
+        );
     }
     let estimated_cost_usd = adapter_envelope
         .get("estimated_cost_usd")
@@ -3629,7 +3754,11 @@ fn build_commitment_import_envelope(
         &action_type,
         &resource,
         estimated_cost_usd,
-        if run_id.is_empty() { None } else { Some(run_id.as_str()) },
+        if run_id.is_empty() {
+            None
+        } else {
+            Some(run_id.as_str())
+        },
         if session_id.is_empty() {
             None
         } else {
@@ -4111,7 +4240,11 @@ pub fn render_enqueued_action_json(capture: &EnqueuedAction) -> String {
     )
 }
 
-pub fn render_job_list_human(root: &Path, jobs: &[JobSnapshot], status_filter: Option<&str>) -> String {
+pub fn render_job_list_human(
+    root: &Path,
+    jobs: &[JobSnapshot],
+    status_filter: Option<&str>,
+) -> String {
     let entries = if jobs.is_empty() {
         "  (none)\n".to_string()
     } else {
@@ -4375,12 +4508,7 @@ pub fn render_supervisor_lanes_human(root: &Path) -> ShadowResult<String> {
         }
         for entry in fs::read_dir(&class_dir).map_err(io_err)? {
             let path = entry.map_err(io_err)?.path();
-            if !path.is_file()
-                || !path
-                    .extension()
-                    .map(|ext| ext == "json")
-                    .unwrap_or(false)
-            {
+            if !path.is_file() || !path.extension().map(|ext| ext == "json").unwrap_or(false) {
                 continue;
             }
             let job_id = path
@@ -4400,7 +4528,9 @@ pub fn render_supervisor_lanes_json(root: &Path) -> ShadowResult<String> {
     for entry in fs::read_dir(&queue_root).map_err(io_err)? {
         let path = entry.map_err(io_err)?.path();
         if path.is_dir() {
-            if let Some(class_name) = path.file_name().map(|name| name.to_string_lossy().to_string())
+            if let Some(class_name) = path
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
             {
                 if let Some(class) = PolicyClass::from_label(&class_name) {
                     for inner in fs::read_dir(&path).map_err(io_err)? {
@@ -4419,11 +4549,7 @@ pub fn render_supervisor_lanes_json(root: &Path) -> ShadowResult<String> {
                     }
                 }
             }
-        } else if path
-            .extension()
-            .map(|ext| ext == "json")
-            .unwrap_or(false)
-        {
+        } else if path.extension().map(|ext| ext == "json").unwrap_or(false) {
             let job_id = path
                 .file_stem()
                 .map(|stem| stem.to_string_lossy().to_string())
@@ -4923,42 +5049,60 @@ pub fn render_parity_report(root: &Path) -> ShadowResult<String> {
     out.push_str(
         &reference_latest
             .as_ref()
-            .map(|contents| format!(
-                "Reference action latest\n=======================\nsource: {}\n\n{}\n",
-                reference_latest_path.display(),
-                contents
-            ))
-            .unwrap_or_else(|| "Reference action latest\n=======================\nsource: (not captured)\n\n".to_string()),
+            .map(|contents| {
+                format!(
+                    "Reference action latest\n=======================\nsource: {}\n\n{}\n",
+                    reference_latest_path.display(),
+                    contents
+                )
+            })
+            .unwrap_or_else(|| {
+                "Reference action latest\n=======================\nsource: (not captured)\n\n"
+                    .to_string()
+            }),
     );
     out.push_str(
         &reference_stream
             .as_ref()
-            .map(|contents| format!(
-                "Reference action stream\n=======================\nsource: {}\n\n{}\n",
-                reference_stream_path.display(),
-                contents
-            ))
-            .unwrap_or_else(|| "Reference action stream\n=======================\nsource: (not captured)\n\n".to_string()),
+            .map(|contents| {
+                format!(
+                    "Reference action stream\n=======================\nsource: {}\n\n{}\n",
+                    reference_stream_path.display(),
+                    contents
+                )
+            })
+            .unwrap_or_else(|| {
+                "Reference action stream\n=======================\nsource: (not captured)\n\n"
+                    .to_string()
+            }),
     );
     out.push_str(
         &comparison_latest
             .as_ref()
-            .map(|contents| format!(
-                "Action parity latest\n====================\nsource: {}\n\n{}\n",
-                comparison_latest_path.display(),
-                contents
-            ))
-            .unwrap_or_else(|| "Action parity latest\n====================\nsource: (not captured)\n\n".to_string()),
+            .map(|contents| {
+                format!(
+                    "Action parity latest\n====================\nsource: {}\n\n{}\n",
+                    comparison_latest_path.display(),
+                    contents
+                )
+            })
+            .unwrap_or_else(|| {
+                "Action parity latest\n====================\nsource: (not captured)\n\n".to_string()
+            }),
     );
     out.push_str(
         &comparison_stream
             .as_ref()
-            .map(|contents| format!(
-                "Action parity stream\n====================\nsource: {}\n\n{}\n",
-                comparison_stream_path.display(),
-                contents
-            ))
-            .unwrap_or_else(|| "Action parity stream\n====================\nsource: (not captured)\n\n".to_string()),
+            .map(|contents| {
+                format!(
+                    "Action parity stream\n====================\nsource: {}\n\n{}\n",
+                    comparison_stream_path.display(),
+                    contents
+                )
+            })
+            .unwrap_or_else(|| {
+                "Action parity stream\n====================\nsource: (not captured)\n\n".to_string()
+            }),
     );
     out.push_str(&render_action_parity_summary(
         event_latest.as_deref(),
@@ -4969,42 +5113,59 @@ pub fn render_parity_report(root: &Path) -> ShadowResult<String> {
     out.push_str(
         &event_latest
             .as_ref()
-            .map(|contents| format!(
-                "Runtime event latest\n====================\nsource: {}\n\n{}\n",
-                event_latest_path.display(),
-                contents
-            ))
-            .unwrap_or_else(|| "Runtime event latest\n====================\nsource: (not captured)\n\n".to_string()),
+            .map(|contents| {
+                format!(
+                    "Runtime event latest\n====================\nsource: {}\n\n{}\n",
+                    event_latest_path.display(),
+                    contents
+                )
+            })
+            .unwrap_or_else(|| {
+                "Runtime event latest\n====================\nsource: (not captured)\n\n".to_string()
+            }),
     );
     out.push_str(
         &event_stream
             .as_ref()
-            .map(|contents| format!(
-                "Runtime event stream\n====================\nsource: {}\n\n{}\n",
-                event_stream_path.display(),
-                contents
-            ))
-            .unwrap_or_else(|| "Runtime event stream\n====================\nsource: (not captured)\n\n".to_string()),
+            .map(|contents| {
+                format!(
+                    "Runtime event stream\n====================\nsource: {}\n\n{}\n",
+                    event_stream_path.display(),
+                    contents
+                )
+            })
+            .unwrap_or_else(|| {
+                "Runtime event stream\n====================\nsource: (not captured)\n\n".to_string()
+            }),
     );
     out.push_str(
         &openclaw_live
             .as_ref()
-            .map(|contents| format!(
-                "OpenClaw live probe\n===================\nsource: {}\n\n{}\n",
-                openclaw_live_path.display(),
-                contents
-            ))
-            .unwrap_or_else(|| "OpenClaw live probe\n===================\nsource: (not captured)\n\n".to_string()),
+            .map(|contents| {
+                format!(
+                    "OpenClaw live probe\n===================\nsource: {}\n\n{}\n",
+                    openclaw_live_path.display(),
+                    contents
+                )
+            })
+            .unwrap_or_else(|| {
+                "OpenClaw live probe\n===================\nsource: (not captured)\n\n".to_string()
+            }),
     );
     out.push_str(
         &openclaw_stream
             .as_ref()
-            .map(|contents| format!(
-                "OpenClaw live probe stream\n==========================\nsource: {}\n\n{}\n",
-                openclaw_stream_path.display(),
-                contents
-            ))
-            .unwrap_or_else(|| "OpenClaw live probe stream\n==========================\nsource: (not captured)\n\n".to_string()),
+            .map(|contents| {
+                format!(
+                    "OpenClaw live probe stream\n==========================\nsource: {}\n\n{}\n",
+                    openclaw_stream_path.display(),
+                    contents
+                )
+            })
+            .unwrap_or_else(|| {
+                "OpenClaw live probe stream\n==========================\nsource: (not captured)\n\n"
+                    .to_string()
+            }),
     );
 
     Ok(out)
@@ -5025,18 +5186,18 @@ fn render_action_parity_summary(
         .map(|allowed| if allowed { "allow" } else { "deny" }.to_string())
         .or_else(|| extract_json_string(reference_latest, "\"reference_decision\""))
         .unwrap_or_else(|| "unknown".to_string());
-    let reference_stage =
-        extract_json_string(reference_latest, "\"reference_stage\"").unwrap_or_else(|| "unknown".to_string());
-    let action_type =
-        extract_json_string(reference_latest, "\"action_type\"").unwrap_or_else(|| "unknown".to_string());
-    let resource =
-        extract_json_string(reference_latest, "\"resource\"").unwrap_or_else(|| "unknown".to_string());
+    let reference_stage = extract_json_string(reference_latest, "\"reference_stage\"")
+        .unwrap_or_else(|| "unknown".to_string());
+    let action_type = extract_json_string(reference_latest, "\"action_type\"")
+        .unwrap_or_else(|| "unknown".to_string());
+    let resource = extract_json_string(reference_latest, "\"resource\"")
+        .unwrap_or_else(|| "unknown".to_string());
 
     let runtime_status = if let Some(runtime_event) = runtime_event {
-        let runtime_outcome =
-            extract_json_string(runtime_event, "\"outcome\"").unwrap_or_else(|| "unknown".to_string());
-        let runtime_stage =
-            extract_json_string(runtime_event, "\"stage\"").unwrap_or_else(|| "unknown".to_string());
+        let runtime_outcome = extract_json_string(runtime_event, "\"outcome\"")
+            .unwrap_or_else(|| "unknown".to_string());
+        let runtime_stage = extract_json_string(runtime_event, "\"stage\"")
+            .unwrap_or_else(|| "unknown".to_string());
         let runtime_decision = if runtime_outcome == "worker_executed" {
             "allow".to_string()
         } else {
@@ -5061,10 +5222,10 @@ fn render_action_parity_summary(
     };
 
     if let Some(openclaw_live) = openclaw_live {
-        let proof_level =
-            extract_json_string(openclaw_live, "\"proof_level\"").unwrap_or_else(|| "unknown".to_string());
-        let deployment_mode =
-            extract_json_string(openclaw_live, "\"deployment_mode\"").unwrap_or_else(|| "unknown".to_string());
+        let proof_level = extract_json_string(openclaw_live, "\"proof_level\"")
+            .unwrap_or_else(|| "unknown".to_string());
+        let deployment_mode = extract_json_string(openclaw_live, "\"deployment_mode\"")
+            .unwrap_or_else(|| "unknown".to_string());
         let health_ok = extract_json_bool(openclaw_live, "\"health_ok\"").unwrap_or(false);
         out.push_str(&format!(
             "live_probe:  {} (proof_level={} deployment_mode={})\n",
@@ -5230,11 +5391,15 @@ fn runtime_ingress_stream_path(root: &Path) -> ShadowResult<PathBuf> {
 }
 
 fn runtime_ingress_request_path(root: &Path, request_id: &str) -> ShadowResult<PathBuf> {
-    Ok(ensure_runtime_ingress_dir(root)?.join("requests").join(format!("{}.json", sanitize_filename(request_id))))
+    Ok(ensure_runtime_ingress_dir(root)?
+        .join("requests")
+        .join(format!("{}.json", sanitize_filename(request_id))))
 }
 
 fn runtime_ingress_receipt_path(root: &Path, request_id: &str) -> ShadowResult<PathBuf> {
-    Ok(ensure_runtime_ingress_dir(root)?.join("receipts").join(format!("{}.json", sanitize_filename(request_id))))
+    Ok(ensure_runtime_ingress_dir(root)?
+        .join("receipts")
+        .join(format!("{}.json", sanitize_filename(request_id))))
 }
 
 fn write_supervisor_runtime_state(
@@ -5360,15 +5525,10 @@ fn count_runtime_queue_entries(root: &Path, bucket: &str) -> ShadowResult<usize>
 
 fn count_json_files_recursive(path: &Path) -> ShadowResult<usize> {
     let mut count = 0usize;
-    for entry in fs::read_dir(path).map_err(io_err)? {
+    for entry in walkdir::WalkDir::new(path) {
         let entry = entry.map_err(io_err)?;
-        let entry_path = entry.path();
-        if entry_path.is_dir() {
-            count += count_json_files_recursive(&entry_path)?;
-        } else if entry_path
-            .extension()
-            .map(|ext| ext == "json")
-            .unwrap_or(false)
+        if entry.file_type().is_file()
+            && entry.path().extension().map_or(false, |ext| ext == "json")
         {
             count += 1;
         }
@@ -5387,7 +5547,8 @@ fn reservation_ledger_path(root: &Path) -> ShadowResult<PathBuf> {
 fn load_scheduler_state_or_default(root: &Path) -> ShadowResult<SchedulerState> {
     let path = scheduler_state_path(root)?;
     if path.exists() {
-        load_scheduler_state(&path).map_err(|error| format!("failed to load scheduler state: {}", error))
+        load_scheduler_state(&path)
+            .map_err(|error| format!("failed to load scheduler state: {}", error))
     } else {
         Ok(SchedulerState::new())
     }
@@ -5658,7 +5819,8 @@ fn run_worker_supervisor(
             worker_log_path,
             worker_status: "not_dispatched".to_string(),
             worker_kind,
-            worker_note: "effective decision denied; supervisor did not dispatch worker".to_string(),
+            worker_note: "effective decision denied; supervisor did not dispatch worker"
+                .to_string(),
             runtime_outcome: "denied".to_string(),
         });
     }
@@ -5694,7 +5856,10 @@ fn run_worker_supervisor(
             worker_log_path,
             worker_status: "completed".to_string(),
             worker_kind,
-            worker_note: format!("experimental supervisor dispatched {}", worker_entry.display()),
+            worker_note: format!(
+                "experimental supervisor dispatched {}",
+                worker_entry.display()
+            ),
             runtime_outcome: "worker_executed".to_string(),
         })
     } else {
@@ -5729,7 +5894,9 @@ fn capture_openclaw_live_probe(
         .filter(|value| !value.trim().is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| {
-            PathBuf::from("/root/.openclaw/workspace/company/meridian_platform/openclaw_runtime_proof.py")
+            PathBuf::from(
+                "/root/.openclaw/workspace/company/meridian_platform/openclaw_runtime_proof.py",
+            )
         });
     if !proof_script.exists() {
         append_line(
@@ -5745,7 +5912,10 @@ fn capture_openclaw_live_probe(
             None,
             Some(probe_stream_path),
             "not_available".to_string(),
-            format!("live OpenClaw proof script not found at {}", proof_script.display()),
+            format!(
+                "live OpenClaw proof script not found at {}",
+                proof_script.display()
+            ),
         ));
     }
 
@@ -5787,8 +5957,8 @@ fn capture_openclaw_live_probe(
     let health_ok = extract_json_bool(&stdout, "\"health_ok\"").unwrap_or(false);
     let proof_level =
         extract_json_string(&stdout, "\"proof_level\"").unwrap_or_else(|| "unknown".to_string());
-    let deployment_mode =
-        extract_json_string(&stdout, "\"deployment_mode\"").unwrap_or_else(|| "unknown".to_string());
+    let deployment_mode = extract_json_string(&stdout, "\"deployment_mode\"")
+        .unwrap_or_else(|| "unknown".to_string());
     let note = format!(
         "live OpenClaw probe {} with proof_level={} deployment_mode={}",
         if health_ok { "healthy" } else { "degraded" },
@@ -5886,11 +6056,19 @@ print(json.dumps(result))
     let allowed = extract_json_bool(&stdout, "\"allowed\"").unwrap_or(false);
     let reservation_id = extract_json_string(&stdout, "\"reservation_id\"").unwrap_or_default();
     let reason = extract_json_string(&stdout, "\"reason\"").unwrap_or_else(|| {
-        if allowed { "ok".to_string() } else { "runtime budget reservation denied".to_string() }
+        if allowed {
+            "ok".to_string()
+        } else {
+            "runtime budget reservation denied".to_string()
+        }
     });
     Ok(BudgetReservationCapture {
         reservation_id,
-        status: if allowed { "reserved".to_string() } else { "reservation_denied".to_string() },
+        status: if allowed {
+            "reserved".to_string()
+        } else {
+            "reservation_denied".to_string()
+        },
         reason,
     })
 }
@@ -5936,7 +6114,11 @@ import treasury
 print(json.dumps(treasury.release_runtime_budget(reservation_id, reason=reason)))"#
     };
     let mut command = Command::new("python3");
-    command.arg("-c").arg(script).arg(&kernel_dir).arg(reservation_id);
+    command
+        .arg("-c")
+        .arg(script)
+        .arg(&kernel_dir)
+        .arg(reservation_id);
     if commit {
         command.arg(format!("{:.6}", actual_cost_usd)).arg(reason);
     } else {
@@ -5947,7 +6129,12 @@ print(json.dumps(treasury.release_runtime_budget(reservation_id, reason=reason))
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Ok(BudgetReservationCapture {
             reservation_id: reservation_id.to_string(),
-            status: if commit { "commit_failed" } else { "release_failed" }.to_string(),
+            status: if commit {
+                "commit_failed"
+            } else {
+                "release_failed"
+            }
+            .to_string(),
             reason: if stderr.is_empty() {
                 "runtime budget finalization failed".to_string()
             } else {
@@ -5957,9 +6144,15 @@ print(json.dumps(treasury.release_runtime_budget(reservation_id, reason=reason))
     }
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     Ok(BudgetReservationCapture {
-        reservation_id: extract_json_string(&stdout, "\"reservation_id\"").unwrap_or_else(|| reservation_id.to_string()),
-        status: extract_json_string(&stdout, "\"status\"")
-            .unwrap_or_else(|| if commit { "committed".to_string() } else { "released".to_string() }),
+        reservation_id: extract_json_string(&stdout, "\"reservation_id\"")
+            .unwrap_or_else(|| reservation_id.to_string()),
+        status: extract_json_string(&stdout, "\"status\"").unwrap_or_else(|| {
+            if commit {
+                "committed".to_string()
+            } else {
+                "released".to_string()
+            }
+        }),
         reason: extract_json_string(&stdout, "\"commit_reason\"")
             .or_else(|| extract_json_string(&stdout, "\"release_reason\""))
             .unwrap_or_else(|| reason.to_string()),
@@ -6049,13 +6242,26 @@ fn emit_runtime_audit(
     budget: &BudgetReservationCapture,
 ) -> ShadowResult<String> {
     let kernel_dir = kernel_path.join("kernel");
-    let job_id = canonical_job_id(&envelope.org_id, &envelope.agent_id, &envelope.action_type, &decision.input_hash);
+    let job_id = canonical_job_id(
+        &envelope.org_id,
+        &envelope.agent_id,
+        &envelope.action_type,
+        &decision.input_hash,
+    );
     let execution_id = canonical_execution_id(&job_id, &decision.effective_stage, outcome);
-    let decision_id = canonical_decision_id(&job_id, &decision.effective_stage, &decision.overall_decision);
+    let decision_id = canonical_decision_id(
+        &job_id,
+        &decision.effective_stage,
+        &decision.overall_decision,
+    );
     let parity_id = canonical_parity_id(
         &job_id,
         &execution_id,
-        if decision.effective_source == "reference_gate" { "match" } else { "divergence" },
+        if decision.effective_source == "reference_gate" {
+            "match"
+        } else {
+            "divergence"
+        },
     );
     let audit_id = canonical_audit_id(&job_id, &execution_id, &envelope.action_type);
     let runtime_event_id = canonical_event_id(
@@ -6102,11 +6308,17 @@ fn emit_runtime_audit(
             .arg("--worker_kind")
             .arg(&worker.worker_kind)
             .arg("--parity_status")
-            .arg(if decision.overall_decision == "allow" || decision.overall_decision == "deny" {
-                if decision.effective_source == "reference_gate" { "match" } else { "divergence" }
-            } else {
-                "unknown"
-            })
+            .arg(
+                if decision.overall_decision == "allow" || decision.overall_decision == "deny" {
+                    if decision.effective_source == "reference_gate" {
+                        "match"
+                    } else {
+                        "divergence"
+                    }
+                } else {
+                    "unknown"
+                },
+            )
             .arg("--runtime_event_id")
             .arg(&runtime_event_id)
             .arg("--event_schema_version")
@@ -6200,7 +6412,9 @@ fn write_runtime_event_artifacts(
 }
 
 fn job_snapshot_path(root: &Path, job_id: &str) -> PathBuf {
-    root.join(".loom/runtime/jobs").join(job_id).join("job.json")
+    root.join(".loom/runtime/jobs")
+        .join(job_id)
+        .join("job.json")
 }
 
 fn write_job_snapshot(root: &Path, snapshot: JobSnapshot) -> ShadowResult<()> {
@@ -6235,12 +6449,12 @@ fn read_job_snapshot(root: &Path, job_id: &str) -> ShadowResult<JobSnapshot> {
     let contents = fs::read_to_string(&job_path).map_err(io_err)?;
     Ok(JobSnapshot {
         root: root.to_path_buf(),
-        job_id: extract_json_string(&contents, "\"job_id\"")
-            .unwrap_or_else(|| job_id.to_string()),
+        job_id: extract_json_string(&contents, "\"job_id\"").unwrap_or_else(|| job_id.to_string()),
         job_path,
         status: extract_json_string(&contents, "\"job_status\"").unwrap_or_default(),
         stage: extract_json_string(&contents, "\"job_stage\"").unwrap_or_default(),
-        queue_bucket: extract_json_string(&contents, "\"queue_bucket\"").unwrap_or_else(|| "(none)".to_string()),
+        queue_bucket: extract_json_string(&contents, "\"queue_bucket\"")
+            .unwrap_or_else(|| "(none)".to_string()),
         queued_at: extract_json_string(&contents, "\"queued_at\"").unwrap_or_default(),
         updated_at: extract_json_string(&contents, "\"updated_at\"").unwrap_or_default(),
         agent_id: extract_json_string(&contents, "\"agent_id\"").unwrap_or_default(),
@@ -6560,7 +6774,9 @@ mod tests {
         assert!(json.contains("\"identity_restrictions\": []"));
         assert!(json.contains("\"reference_restrictions\": [\"execute\"]"));
         assert!(json.contains("\"overall_decision\": \"deny\""));
-        assert!(json.contains("\"note\": \"experimental preflight decision only; not governed runtime enforcement\""));
+        assert!(json.contains(
+            "\"note\": \"experimental preflight decision only; not governed runtime enforcement\""
+        ));
         assert_eq!(decision_exit_code(&capture, 0, 2), 2);
         let report = render_shadow_report(&root).expect("render report");
         assert!(report.contains("Decision artifact"));
@@ -6669,8 +6885,8 @@ mod tests {
         };
 
         let decision = capture_decision(&root, &identity, &envelope, &reference).expect("decision");
-        let capture =
-            capture_runtime_execution(&root, &root, &envelope, &reference, &decision).expect("runtime capture");
+        let capture = capture_runtime_execution(&root, &root, &envelope, &reference, &decision)
+            .expect("runtime capture");
 
         assert!(capture.execution_path.exists());
         assert!(capture.worker_request_path.exists());
@@ -6729,8 +6945,8 @@ mod tests {
         };
 
         let decision = capture_decision(&root, &identity, &envelope, &reference).expect("decision");
-        let capture =
-            capture_runtime_execution(&root, &root, &envelope, &reference, &decision).expect("runtime capture");
+        let capture = capture_runtime_execution(&root, &root, &envelope, &reference, &decision)
+            .expect("runtime capture");
 
         assert_eq!(capture.runtime_outcome, "denied");
         assert_eq!(capture.worker_status, "not_dispatched");
@@ -6768,7 +6984,9 @@ mod tests {
         let runtime_index = report.find("Runtime execution").expect("runtime section");
         let legacy_index = report.find("Legacy shadow marker").expect("legacy section");
         assert!(runtime_index < legacy_index);
-        assert!(report.contains("the runtime execution and parity sections above are the newer operator surfaces"));
+        assert!(report.contains(
+            "the runtime execution and parity sections above are the newer operator surfaces"
+        ));
     }
 
     #[test]
@@ -6785,7 +7003,9 @@ mod tests {
         assert!(report.contains("Current state"));
         assert!(report.contains("Recommended next step"));
         assert!(report.contains("loom shadow preflight"));
-        assert!(report.contains("meaning:     no shadow or runtime rehearsal artifacts have been captured yet"));
+        assert!(report.contains(
+            "meaning:     no shadow or runtime rehearsal artifacts have been captured yet"
+        ));
     }
 
     #[test]
@@ -6806,8 +7026,8 @@ mod tests {
         fs::create_dir_all(&root).expect("root");
         let envelope = sample_envelope();
 
-        let capture = enqueue_action(&root, Path::new("/tmp/meridian-kernel"), &envelope)
-            .expect("enqueue");
+        let capture =
+            enqueue_action(&root, Path::new("/tmp/meridian-kernel"), &envelope).expect("enqueue");
         assert!(capture.queue_path.exists());
         assert!(capture.job_path.exists());
         let queued = fs::read_to_string(&capture.queue_path).expect("queued file");
@@ -6836,14 +7056,26 @@ mod tests {
             "import json, sys\nagent_id = sys.argv[sys.argv.index('--agent_id') + 1]\norg_id = sys.argv[sys.argv.index('--org_id') + 1] if '--org_id' in sys.argv else 'org_demo'\nprint(json.dumps({'id': agent_id, 'name': 'Atlas', 'org_id': org_id, 'role': 'analyst', 'economy_key': 'atlas', 'approval_required': False, 'budget': {'max_per_run_usd': 0.5}, 'runtime_binding': {'runtime_id': 'local_kernel', 'runtime_label': 'Local Kernel Runtime', 'bound_org_id': org_id, 'boundary_name': 'workspace', 'identity_model': 'session', 'runtime_registered': True, 'registration_status': 'registered'}}, indent=2))\n",
         )
         .expect("write registry");
-        fs::write(kernel_dir.join("court.py"), "def get_restrictions(agent_id, org_id=None):\n    return []\n")
-            .expect("write court");
-        fs::write(kernel_dir.join("authority.py"), "def check_authority(agent_id, action, org_id=None):\n    return True, 'ok'\n")
-            .expect("write authority");
-        fs::write(kernel_dir.join("treasury.py"), "def check_budget(agent_id, cost_usd, org_id=None):\n    return True, 'ok'\n")
-            .expect("write treasury");
-        fs::write(kernel_dir.join("audit.py"), "def log_event(*args, **kwargs):\n    return 'evt_jobs'\n")
-            .expect("write audit");
+        fs::write(
+            kernel_dir.join("court.py"),
+            "def get_restrictions(agent_id, org_id=None):\n    return []\n",
+        )
+        .expect("write court");
+        fs::write(
+            kernel_dir.join("authority.py"),
+            "def check_authority(agent_id, action, org_id=None):\n    return True, 'ok'\n",
+        )
+        .expect("write authority");
+        fs::write(
+            kernel_dir.join("treasury.py"),
+            "def check_budget(agent_id, cost_usd, org_id=None):\n    return True, 'ok'\n",
+        )
+        .expect("write treasury");
+        fs::write(
+            kernel_dir.join("audit.py"),
+            "def log_event(*args, **kwargs):\n    return 'evt_jobs'\n",
+        )
+        .expect("write audit");
         fs::write(kernel_dir.join("adapters/__init__.py"), "").expect("write adapter init");
         fs::write(
             kernel_dir.join("adapters/openclaw_compatible.py"),
@@ -7023,7 +7255,10 @@ if __name__ == '__main__':
         assert!(summary.last_execution_path.exists());
         let pending_dir = root.join(".loom/runtime/queue/pending");
         let processed_dir = root.join(".loom/runtime/queue/processed");
-        assert_eq!(count_json_files_recursive(&pending_dir).expect("pending dir"), 0);
+        assert_eq!(
+            count_json_files_recursive(&pending_dir).expect("pending dir"),
+            0
+        );
         assert_eq!(
             fs::read_dir(&processed_dir).expect("processed dir").count(),
             1
@@ -7085,14 +7320,8 @@ if __name__ == '__main__':
         let envelope = sample_envelope();
         enqueue_action(&root, &kernel, &envelope).expect("enqueue");
 
-        let summary = watch_supervisor(
-            &root,
-            Some(kernel.to_string_lossy().as_ref()),
-            1,
-            2,
-            0,
-        )
-        .expect("watch supervisor");
+        let summary = watch_supervisor(&root, Some(kernel.to_string_lossy().as_ref()), 1, 2, 0)
+            .expect("watch supervisor");
         assert_eq!(summary.iterations, 2);
         assert_eq!(summary.processed, 1);
         assert!(summary.heartbeat_log_path.exists());
@@ -7318,13 +7547,20 @@ if __name__ == '__main__':
             }
             thread::sleep(Duration::from_millis(50));
         }
-        assert!(socket_path.exists(), "runtime service socket did not appear");
+        assert!(
+            socket_path.exists(),
+            "runtime service socket did not appear"
+        );
 
-        let capture = submit_runtime_service_action(&root, None, None, None, &kernel, &sample_envelope())
-            .expect("submit via service");
+        let capture =
+            submit_runtime_service_action(&root, None, None, None, &kernel, &sample_envelope())
+                .expect("submit via service");
         assert_eq!(capture.job_id, envelope_input_hash(&sample_envelope()));
         request_runtime_service_stop(&root, None).expect("request stop");
-        let snapshot = handle.join().expect("join service thread").expect("service loop");
+        let snapshot = handle
+            .join()
+            .expect("join service thread")
+            .expect("service loop");
         assert!(snapshot.available);
         assert_eq!(snapshot.session_id, "service-test");
         assert_eq!(snapshot.submitted, 1);
@@ -7353,14 +7589,26 @@ if __name__ == '__main__':
             "import json, sys\nagent_id = sys.argv[sys.argv.index('--agent_id') + 1]\norg_id = sys.argv[sys.argv.index('--org_id') + 1] if '--org_id' in sys.argv else 'org_demo'\nprint(json.dumps({'id': agent_id, 'name': 'Atlas', 'org_id': org_id, 'role': 'analyst', 'economy_key': 'atlas', 'approval_required': False, 'budget': {'max_per_run_usd': 0.5}, 'runtime_binding': {'runtime_id': 'local_kernel', 'runtime_label': 'Local Kernel Runtime', 'bound_org_id': org_id, 'boundary_name': 'workspace', 'identity_model': 'session', 'runtime_registered': True, 'registration_status': 'registered'}}, indent=2))\n",
         )
         .expect("write registry");
-        fs::write(kernel_dir.join("court.py"), "def get_restrictions(agent_id, org_id=None):\n    return []\n").expect("write court");
-        fs::write(kernel_dir.join("authority.py"), "def check_authority(agent_id, action, org_id=None):\n    return True, 'ok'\n").expect("write authority");
+        fs::write(
+            kernel_dir.join("court.py"),
+            "def get_restrictions(agent_id, org_id=None):\n    return []\n",
+        )
+        .expect("write court");
+        fs::write(
+            kernel_dir.join("authority.py"),
+            "def check_authority(agent_id, action, org_id=None):\n    return True, 'ok'\n",
+        )
+        .expect("write authority");
         fs::write(
             kernel_dir.join("treasury.py"),
             "def check_budget(agent_id, cost_usd, org_id=None):\n    return True, 'ok'\n\ndef reserve_runtime_budget(*args, **kwargs):\n    return {'allowed': True, 'reservation_id': 'bud_service', 'reservation': {'reservation_id': 'bud_service'}, 'reason': 'ok'}\n\ndef commit_runtime_budget(reservation_id, actual_cost_usd, note=''):\n    return {'reservation_id': reservation_id, 'status': 'committed', 'commit_reason': note}\n\ndef release_runtime_budget(reservation_id, reason=''):\n    return {'reservation_id': reservation_id, 'status': 'released', 'release_reason': reason}\n",
         )
         .expect("write treasury");
-        fs::write(kernel_dir.join("audit.py"), "def log_event(*args, **kwargs):\n    return 'evt_service'\n").expect("write audit");
+        fs::write(
+            kernel_dir.join("audit.py"),
+            "def log_event(*args, **kwargs):\n    return 'evt_service'\n",
+        )
+        .expect("write audit");
         fs::write(kernel_dir.join("adapters/__init__.py"), "").expect("write adapter init");
         fs::write(
             kernel_dir.join("adapters/openclaw_compatible.py"),
@@ -7411,17 +7659,14 @@ if __name__ == '__main__':
             thread::sleep(Duration::from_millis(50));
         }
 
-        let capture = submit_runtime_service_action(
-            &root,
-            None,
-            None,
-            None,
-            &kernel,
-            &sample_envelope(),
-        )
-        .expect("submit via file ingress fallback");
+        let capture =
+            submit_runtime_service_action(&root, None, None, None, &kernel, &sample_envelope())
+                .expect("submit via file ingress fallback");
         request_runtime_service_stop(&root, None).expect("request stop");
-        let snapshot = handle.join().expect("join service thread").expect("service loop");
+        let snapshot = handle
+            .join()
+            .expect("join service thread")
+            .expect("service loop");
         assert!(snapshot.available);
         assert_eq!(snapshot.session_id, "service-file-test");
         assert_eq!(capture.job_id, envelope_input_hash(&sample_envelope()));
@@ -7449,10 +7694,26 @@ if __name__ == '__main__':
             "import json, sys\nagent_id = sys.argv[sys.argv.index('--agent_id') + 1]\norg_id = sys.argv[sys.argv.index('--org_id') + 1] if '--org_id' in sys.argv else 'org_alpha'\nprint(json.dumps({'id': agent_id, 'name': 'Atlas', 'org_id': org_id, 'role': 'analyst', 'economy_key': 'atlas', 'approval_required': False, 'budget': {'max_per_run_usd': 5.0}, 'runtime_binding': {'runtime_id': 'local_kernel', 'runtime_label': 'Local Kernel Runtime', 'bound_org_id': org_id, 'boundary_name': 'workspace', 'identity_model': 'session', 'runtime_registered': True, 'registration_status': 'registered'}}, indent=2))\n",
         )
         .expect("write registry");
-        fs::write(kernel_dir.join("court.py"), "def get_restrictions(agent_id, org_id=None):\n    return []\n").expect("write court");
-        fs::write(kernel_dir.join("authority.py"), "def check_authority(agent_id, action, org_id=None):\n    return True, 'ok'\n").expect("write authority");
-        fs::write(kernel_dir.join("treasury.py"), "def check_budget(agent_id, cost_usd, org_id=None):\n    return True, 'ok'\n").expect("write treasury");
-        fs::write(kernel_dir.join("audit.py"), "def log_event(*args, **kwargs):\n    return 'evt_import'\n").expect("write audit");
+        fs::write(
+            kernel_dir.join("court.py"),
+            "def get_restrictions(agent_id, org_id=None):\n    return []\n",
+        )
+        .expect("write court");
+        fs::write(
+            kernel_dir.join("authority.py"),
+            "def check_authority(agent_id, action, org_id=None):\n    return True, 'ok'\n",
+        )
+        .expect("write authority");
+        fs::write(
+            kernel_dir.join("treasury.py"),
+            "def check_budget(agent_id, cost_usd, org_id=None):\n    return True, 'ok'\n",
+        )
+        .expect("write treasury");
+        fs::write(
+            kernel_dir.join("audit.py"),
+            "def log_event(*args, **kwargs):\n    return 'evt_import'\n",
+        )
+        .expect("write audit");
         init_workspace(
             &root,
             "embedded",
@@ -7503,14 +7764,26 @@ if __name__ == '__main__':
             "import json, sys\nagent_id = sys.argv[sys.argv.index('--agent_id') + 1]\norg_id = sys.argv[sys.argv.index('--org_id') + 1] if '--org_id' in sys.argv else 'org_alpha'\nprint(json.dumps({'id': agent_id, 'name': 'Atlas', 'org_id': org_id, 'role': 'analyst', 'economy_key': 'atlas', 'approval_required': False, 'budget': {'max_per_run_usd': 5.0}, 'runtime_binding': {'runtime_id': 'local_kernel', 'runtime_label': 'Local Kernel Runtime', 'bound_org_id': org_id, 'boundary_name': 'workspace', 'identity_model': 'session', 'runtime_registered': True, 'registration_status': 'registered'}}, indent=2))\n",
         )
         .expect("write registry");
-        fs::write(kernel_dir.join("court.py"), "def get_restrictions(agent_id, org_id=None):\n    return []\n").expect("write court");
-        fs::write(kernel_dir.join("authority.py"), "def check_authority(agent_id, action, org_id=None):\n    return True, 'ok'\n").expect("write authority");
+        fs::write(
+            kernel_dir.join("court.py"),
+            "def get_restrictions(agent_id, org_id=None):\n    return []\n",
+        )
+        .expect("write court");
+        fs::write(
+            kernel_dir.join("authority.py"),
+            "def check_authority(agent_id, action, org_id=None):\n    return True, 'ok'\n",
+        )
+        .expect("write authority");
         fs::write(
             kernel_dir.join("treasury.py"),
             "def check_budget(agent_id, cost_usd, org_id=None):\n    return True, 'ok'\n\ndef reserve_runtime_budget(*args, **kwargs):\n    return {'allowed': True, 'reservation_id': 'bud_service', 'reservation': {'reservation_id': 'bud_service'}, 'reason': 'ok'}\n\ndef commit_runtime_budget(reservation_id, actual_cost_usd, note=''):\n    return {'reservation_id': reservation_id, 'status': 'committed', 'commit_reason': note}\n\ndef release_runtime_budget(reservation_id, reason=''):\n    return {'reservation_id': reservation_id, 'status': 'released', 'release_reason': reason}\n",
         )
         .expect("write treasury");
-        fs::write(kernel_dir.join("audit.py"), "def log_event(*args, **kwargs):\n    return 'evt_import'\n").expect("write audit");
+        fs::write(
+            kernel_dir.join("audit.py"),
+            "def log_event(*args, **kwargs):\n    return 'evt_import'\n",
+        )
+        .expect("write audit");
         fs::write(kernel_dir.join("adapters/__init__.py"), "").expect("write adapter init");
         fs::write(
             kernel_dir.join("adapters/openclaw_compatible.py"),
