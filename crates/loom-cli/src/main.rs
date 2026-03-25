@@ -431,11 +431,13 @@ fn handle_capability(args: &[String]) -> LoomResult<()> {
             let config = read_config(&root)?;
             let skill_root = PathBuf::from(required_flag(args, "--skill-root")?);
             let capability_name = take_value(args, "--name");
+            let entrypoint = take_value(args, "--entrypoint");
             let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
             let result = import_workspace_skill(
                 &root,
                 &config,
                 &skill_root,
+                entrypoint.as_deref(),
                 capability_name.as_deref(),
             )?;
             if format == "json" {
@@ -1216,6 +1218,8 @@ fn handle_wasm_run(args: &[String]) -> LoomResult<()> {
         print_human(&render_wasm_run_human(&result));
     }
     Ok(())
+}
+
 fn handle_openclaw(args: &[String]) -> LoomResult<()> {
     match args.first().map(String::as_str) {
         Some("seam") => {
@@ -2292,7 +2296,7 @@ Governance surfaces\n\
   loom capability gap show --gap-id ID [--root PATH] [--format human|json]\n\
   loom capability scaffold --name NAME --action-type TYPE --resource RESOURCE [--description TEXT] [--worker-kind python|wasm] [--worker-entry PATH] [--wasm-module builtin:minimal|wasm:PATH] [--payload-mode json|none] [--root PATH]\n\
   loom capability forge [--name NAME] [--gap-id ID] [--template echo_json_v0|artifact_inspect_v0|url_bundle_v0] [--gap-class artifact_triage|url_collection|response_echo] [--goal TEXT] [--description TEXT] [--root PATH] [--format human|json]\n\
-  loom capability import-workspace-skill --skill-root PATH [--name NAME] [--root PATH] [--format human|json]\n\
+  loom capability import-workspace-skill --skill-root PATH [--entrypoint PATH] [--name NAME] [--root PATH] [--format human|json]\n\
   loom capability verify --name NAME --agent-id ID --kernel-path PATH [--gap-id ID] [--org-id ORG] [--payload-json JSON] [--estimated-cost-usd USD] [--expect-summary-contains TEXT] [--expect-result-field PATH=VALUE]... [--root PATH] [--format human|json]\n\
   loom capability promote --name NAME [--gap-id ID] [--root PATH] [--format human|json]\n\
   loom capability shim --tool-name NAME --input-schema JSON --output-schema JSON [--version SEMVER] [--format human|json]\n\
@@ -2355,7 +2359,7 @@ Commands\n\
   loom capability gap show --gap-id ID [--root PATH] [--format human|json]\n\
   loom capability scaffold --name NAME --action-type TYPE --resource RESOURCE [--description TEXT] [--worker-kind python|wasm] [--worker-entry PATH] [--wasm-module builtin:minimal|wasm:PATH] [--payload-mode json|none] [--root PATH]\n\
   loom capability forge [--name NAME] [--gap-id ID] [--template echo_json_v0|artifact_inspect_v0|url_bundle_v0] [--gap-class artifact_triage|url_collection|response_echo] [--goal TEXT] [--description TEXT] [--root PATH] [--format human|json]\n\
-  loom capability import-workspace-skill --skill-root PATH [--name NAME] [--root PATH] [--format human|json]\n\
+  loom capability import-workspace-skill --skill-root PATH [--entrypoint PATH] [--name NAME] [--root PATH] [--format human|json]\n\
   loom capability verify --name NAME --agent-id ID --kernel-path PATH [--gap-id ID] [--org-id ORG] [--payload-json JSON] [--estimated-cost-usd USD] [--expect-summary-contains TEXT] [--expect-result-field PATH=VALUE]... [--root PATH] [--format human|json]\n\
   loom capability promote --name NAME [--gap-id ID] [--root PATH] [--format human|json]\n\
   loom capability shim --tool-name NAME --input-schema JSON --output-schema JSON [--version SEMVER] [--format human|json]\n\
@@ -2363,7 +2367,7 @@ Commands\n\
 Notes\n\
 -----\n\
   - forge creates a candidate Loom-native capability from either a bounded template, a bounded gap-class, or a recorded capability gap.\n\
-  - import-workspace-skill supports a bounded clawfamily contract v0 subset: workspace python entrypoint skills and bundle-manifest python skills.\n\
+  - import-workspace-skill supports a bounded clawfamily contract v0 subset: workspace python entrypoint skills and bundle-manifest python skills. Workspace imports can disambiguate multi-script trees with --entrypoint or entrypoint: front matter.\n\
   - verify executes the capability through Loom's runtime path, can assert expectations over the worker result, and writes verification state back into the custom manifest.\n\
   - promote is only for custom/imported capabilities that have already been verified.\n\
   - action execute / service submit with --capability plus --gap-class records a bounded gap object instead of pretending the capability exists.\n\

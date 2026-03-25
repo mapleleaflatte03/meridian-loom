@@ -438,12 +438,13 @@ pub fn import_workspace_skill(
     root: &Path,
     config: &Config,
     skill_root: &Path,
+    explicit_entrypoint: Option<&str>,
     capability_name_override: Option<&str>,
 ) -> LoomResult<CapabilityImportResult> {
     let skill_root = skill_root
         .canonicalize()
         .map_err(io_err)?;
-    let import_spec = load_clawfamily_import_spec(&skill_root)?;
+    let import_spec = load_clawfamily_import_spec(&skill_root, explicit_entrypoint)?;
 
     ensure_capability_registry_scaffold(root, config)?;
     let capability_name = capability_name_override
@@ -1051,7 +1052,7 @@ fn parse_capability_descriptor_value(value: &Value) -> LoomResult<CapabilityDesc
     })
 }
 
-fn parse_workspace_skill_front_matter(skill_doc: &Path) -> LoomResult<(String, String)> {
+fn parse_workspace_skill_front_matter(skill_doc: &Path) -> LoomResult<(String, String, Option<String>)> {
     let raw = fs::read_to_string(skill_doc).map_err(io_err)?;
     let mut lines = raw.lines();
     if lines.next().map(str::trim) != Some("---") {
@@ -1062,6 +1063,7 @@ fn parse_workspace_skill_front_matter(skill_doc: &Path) -> LoomResult<(String, S
     }
     let mut name = String::new();
     let mut description = String::new();
+    let mut entrypoint = None;
     for line in lines {
         let trimmed = line.trim();
         if trimmed == "---" {
@@ -1072,6 +1074,11 @@ fn parse_workspace_skill_front_matter(skill_doc: &Path) -> LoomResult<(String, S
             match key.trim() {
                 "name" => name = parsed.to_string(),
                 "description" => description = parsed.to_string(),
+                "entrypoint" | "entry" => {
+                    if !parsed.is_empty() {
+                        entrypoint = Some(parsed.to_string());
+                    }
+                }
                 _ => {}
             }
         }
@@ -1082,18 +1089,24 @@ fn parse_workspace_skill_front_matter(skill_doc: &Path) -> LoomResult<(String, S
             skill_doc.display()
         ));
     }
-    Ok((name, description))
+    Ok((name, description, entrypoint))
 }
 
-fn load_clawfamily_import_spec(skill_root: &Path) -> LoomResult<ClawfamilyImportSpec> {
+fn load_clawfamily_import_spec(
+    skill_root: &Path,
+    explicit_entrypoint: Option<&str>,
+) -> LoomResult<ClawfamilyImportSpec> {
     let bundle_manifest = skill_root.join("clawskill.json");
     if bundle_manifest.exists() {
         return load_bundle_skill_spec(skill_root, &bundle_manifest);
     }
-    load_workspace_skill_spec(skill_root)
+    load_workspace_skill_spec(skill_root, explicit_entrypoint)
 }
 
-fn load_workspace_skill_spec(skill_root: &Path) -> LoomResult<ClawfamilyImportSpec> {
+fn load_workspace_skill_spec(
+    skill_root: &Path,
+    explicit_entrypoint: Option<&str>,
+) -> LoomResult<ClawfamilyImportSpec> {
     let skill_doc = skill_root.join("SKILL.md");
     if !skill_doc.exists() {
         return Err(format!(
@@ -1102,21 +1115,37 @@ fn load_workspace_skill_spec(skill_root: &Path) -> LoomResult<ClawfamilyImportSp
             skill_root.join("clawskill.json").display()
         ));
     }
-    let (skill_name, skill_description) = parse_workspace_skill_front_matter(&skill_doc)?;
-    let scripts_dir = skill_root.join("scripts");
-    let mut scripts = fs::read_dir(&scripts_dir)
-        .map_err(io_err)?
-        .filter_map(|entry| entry.ok().map(|item| item.path()))
-        .filter(|path| path.extension().map(|ext| ext == "py").unwrap_or(false))
-        .collect::<Vec<_>>();
-    scripts.sort();
-    if scripts.len() != 1 {
-        return Err(format!(
-            "workspace skill import currently requires exactly one python script in {}",
-            scripts_dir.display()
-        ));
-    }
-    let skill_script = scripts.remove(0);
+    let (skill_name, skill_description, front_matter_entrypoint) =
+        parse_workspace_skill_front_matter(&skill_doc)?;
+    let selected_entrypoint = explicit_entrypoint
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .or(front_matter_entrypoint);
+    let skill_script = if let Some(entrypoint) = selected_entrypoint {
+        resolve_workspace_skill_entrypoint(skill_root, &entrypoint)?
+    } else {
+        let scripts_dir = skill_root.join("scripts");
+        let mut scripts = if scripts_dir.exists() {
+            fs::read_dir(&scripts_dir)
+                .map_err(io_err)?
+                .filter_map(|entry| entry.ok().map(|item| item.path()))
+                .filter(|path| path.extension().map(|ext| ext == "py").unwrap_or(false))
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        scripts.sort();
+        if scripts.len() != 1 {
+            return Err(format!(
+                "workspace skill import found {} python scripts in {}; pass --entrypoint PATH or add entrypoint: PATH to {}",
+                scripts.len(),
+                scripts_dir.display(),
+                skill_doc.display()
+            ));
+        }
+        scripts.remove(0)
+    };
     let script_text = fs::read_to_string(&skill_script).map_err(io_err)?;
     let detected_signature = detect_workspace_skill_signature(&script_text)?;
     Ok(ClawfamilyImportSpec {
@@ -1131,6 +1160,29 @@ fn load_workspace_skill_spec(skill_root: &Path) -> LoomResult<ClawfamilyImportSp
         source_kind: "openclaw_workspace_skill".to_string(),
         import_provenance: "clawfamily_skill_contract_v0/workspace_python_entrypoint".to_string(),
     })
+}
+
+fn resolve_workspace_skill_entrypoint(skill_root: &Path, entrypoint: &str) -> LoomResult<PathBuf> {
+    let candidate = PathBuf::from(entrypoint.trim());
+    let full_path = if candidate.is_absolute() {
+        candidate
+    } else {
+        skill_root.join(candidate)
+    };
+    if !full_path.exists() {
+        return Err(format!(
+            "workspace skill entrypoint {} not found under {}",
+            entrypoint,
+            skill_root.display()
+        ));
+    }
+    if !full_path.is_file() {
+        return Err(format!(
+            "workspace skill entrypoint {} must be a file",
+            full_path.display()
+        ));
+    }
+    Ok(full_path)
 }
 
 fn load_bundle_skill_spec(skill_root: &Path, bundle_manifest: &Path) -> LoomResult<ClawfamilyImportSpec> {
@@ -1157,8 +1209,17 @@ fn load_bundle_skill_spec(skill_root: &Path, bundle_manifest: &Path) -> LoomResu
             bundle_manifest.display()
         ));
     }
-    let entry = required_string(&value, "entry")?;
-    let skill_script = skill_root.join(&entry);
+    let entry = value
+        .get("entrypoint")
+        .and_then(Value::as_str)
+        .or_else(|| value.get("entry").and_then(Value::as_str))
+        .ok_or_else(|| {
+            format!(
+                "clawskill bundle {} requires entrypoint or entry",
+                bundle_manifest.display()
+            )
+        })?;
+    let skill_script = skill_root.join(entry);
     if !skill_script.exists() {
         return Err(format!(
             "clawskill bundle entry {} not found under {}",
@@ -2102,7 +2163,7 @@ parser.add_argument("--skip-container", action="store_true")
         )
         .expect("write skill script");
 
-        let result = import_workspace_skill(&root, &config, &skill_root, None).expect("import workspace skill");
+        let result = import_workspace_skill(&root, &config, &skill_root, None, None).expect("import workspace skill");
         assert!(result.manifest_path.exists());
         assert!(result.worker_path.exists());
         assert_eq!(result.detected_signature, "artifact_report_v0");
@@ -2124,6 +2185,61 @@ parser.add_argument("--skip-container", action="store_true")
     }
 
     #[test]
+    fn import_workspace_skill_uses_explicit_entrypoint_for_multi_script_skills() {
+        let root = temp_path("loom-cap-import-root-explicit");
+        let config = sample_config();
+        ensure_capability_registry_scaffold(&root, &config).expect("registry scaffold");
+
+        let skill_root = temp_path("loom-cap-import-skill-explicit");
+        fs::create_dir_all(skill_root.join("scripts")).expect("create scripts dir");
+        fs::write(
+            skill_root.join("SKILL.md"),
+            r#"---
+name: malware-triage
+description: Imported malware triage skill
+---
+
+# Malware Triage
+"#,
+        )
+        .expect("write skill doc");
+        fs::write(
+            skill_root.join("scripts/helper.py"),
+            "import pathlib\n",
+        )
+        .expect("write helper script");
+        fs::write(
+            skill_root.join("scripts/triage_artifact.py"),
+            r#"import argparse
+parser = argparse.ArgumentParser()
+parser.add_argument("--artifact", required=True)
+parser.add_argument("--out", required=True)
+parser.add_argument("--skip-container", action="store_true")
+"#,
+        )
+        .expect("write skill script");
+
+        let result = import_workspace_skill(
+            &root,
+            &config,
+            &skill_root,
+            Some("scripts/triage_artifact.py"),
+            None,
+        )
+        .expect("import workspace skill");
+        assert!(result.manifest_path.exists());
+        assert!(result.worker_path.exists());
+        assert_eq!(result.skill_script, skill_root.join("scripts/triage_artifact.py"));
+        assert_eq!(result.detected_signature, "artifact_report_v0");
+        assert_eq!(result.capability.source_kind, "openclaw_workspace_skill");
+        assert_eq!(result.skill_shape, "workspace_python_entrypoint");
+        assert_eq!(result.capability.adapter_kind, "artifact_report_v0");
+        assert!(result.capability.import_provenance.contains("workspace_python_entrypoint"));
+        assert_eq!(result.capability.action_type, "skill_exec");
+        assert_eq!(result.capability.resource, "capability:clawskill.malware-triage.v0");
+    }
+
+    #[test]
     fn import_bundle_skill_creates_manifest_and_wrapper() {
         let root = temp_path("loom-cap-import-bundle-root");
         let config = sample_config();
@@ -2137,7 +2253,7 @@ parser.add_argument("--skip-container", action="store_true")
   "version": "clawfamily_skill_contract_v0",
   "name": "safe-web-research-bundle",
   "description": "Bundle manifest import",
-  "entry": "scripts/fetch_safe.py",
+  "entrypoint": "scripts/fetch_safe.py",
   "adapter_kind": "url_report_v0",
   "action_type": "skill_exec",
   "payload_mode": "json"
@@ -2157,7 +2273,7 @@ parser.add_argument("--out")
         )
         .expect("write bundle script");
 
-        let result = import_workspace_skill(&root, &config, &skill_root, None).expect("import bundle skill");
+        let result = import_workspace_skill(&root, &config, &skill_root, None, None).expect("import bundle skill");
         assert!(result.manifest_path.exists());
         assert!(result.worker_path.exists());
         assert_eq!(result.detected_signature, "url_report_v0");
