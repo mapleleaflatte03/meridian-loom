@@ -23,6 +23,7 @@ const DEFAULT_LOG_LEVEL: &str = "info";
 const DEFAULT_LOG_FORMAT: &str = "jsonl";
 const DEFAULT_LOG_MAX_BYTES: usize = 5 * 1024 * 1024;
 const DEFAULT_LOG_MAX_FILES: usize = 5;
+pub const DEFAULT_OPENCLAW_DELIVERY_QUEUE: &str = "/root/.openclaw/delivery-queue";
 const DEFAULT_PYTHON_WORKER_FILE: &str = "loom_runtime_worker.py";
 const DEFAULT_PYTHON_WORKER_SOURCE: &str = r#"#!/usr/bin/env python3
 import argparse
@@ -285,7 +286,7 @@ pub fn init_workspace(
         log_max_bytes: DEFAULT_LOG_MAX_BYTES,
         log_max_files: DEFAULT_LOG_MAX_FILES,
         openclaw_integration: "off".to_string(),
-        openclaw_delivery_queue: "/root/.openclaw/delivery-queue".to_string(),
+        openclaw_delivery_queue: DEFAULT_OPENCLAW_DELIVERY_QUEUE.to_string(),
     };
     ensure_runtime_worker_scaffold(&root, &config)?;
     capabilities::ensure_capability_registry_scaffold(&root, &config)?;
@@ -459,7 +460,7 @@ pub fn read_config(root: &Path) -> LoomResult<Config> {
         openclaw_delivery_queue: values
             .get("openclaw_delivery_queue")
             .cloned()
-            .unwrap_or_else(|| "/root/.openclaw/delivery-queue".to_string()),
+            .unwrap_or_else(|| DEFAULT_OPENCLAW_DELIVERY_QUEUE.to_string()),
     };
 
     normalize_mode(&config.mode)?;
@@ -542,6 +543,19 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
         true,
         "capability registry manifest present",
     );
+    let openclaw_delivery_queue = openclaw_delivery_queue_path(&root, &config);
+    let openclaw_required = config.openclaw_integration != "off";
+    push_path_check(
+        &mut checks,
+        "openclaw_delivery_queue",
+        &openclaw_delivery_queue,
+        openclaw_required,
+        if openclaw_required {
+            "OpenClaw delivery queue present"
+        } else {
+            "OpenClaw delivery queue configured"
+        },
+    );
     push_path_check(
         &mut checks,
         "python_workers",
@@ -573,7 +587,6 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
         true,
         "capsule manifest present",
     );
-
     let kernel_required = config.mode == "shadow" || config.mode == "standalone";
     let kernel_path = if config.kernel_path.is_empty() {
         None
@@ -682,6 +695,7 @@ pub fn status_human(root: &Path) -> LoomResult<String> {
     let root = ensure_root(root)?;
     let config = read_config(&root)?;
     let state_dir = root.join(&config.state_dir);
+    let openclaw_delivery_queue = openclaw_delivery_queue_path(&root, &config);
     let manifest = state_dir
         .join("capsules")
         .join(&config.org_id)
@@ -698,14 +712,41 @@ pub fn status_human(root: &Path) -> LoomResult<String> {
         if config.kernel_path.is_empty() { "(not set)" } else { &config.kernel_path },
         manifest.display(),
         root.join(&config.artifact_dir).join("shadow/latest.json").display(),
-        state_dir.join("runtime/queue/pending").display(),
+        openclaw_delivery_queue.display(),
         EXPERIMENTAL_PRELIGHT_HOOKS.join(", ")
     ))
 }
 
 pub fn render_config_human(config: &Config, root: &Path) -> String {
+    let openclaw_delivery_queue = openclaw_delivery_queue_path(root, config);
     format!(
-        "Meridian Loom // CONFIG\n=======================\nroot:         {}\nmode:         {}\norg_id:       {}\nstate_dir:    {}\nrun_dir:      {}\nlog_dir:      {}\nartifact_dir: {}\ncapability_dir:{}\nkernel_path:  {}\npython_path:  {}\ntypescript:   {}\nwasm_dir:     {}\nservice_http: {}\nservice_env:  {}\nservice_jobs: {}\nservice_poll: {}\nservice_iters:{}\nlog_level:    {}\nlog_format:   {}\nlog_max_b:    {}\nlog_max_f:    {}\nopenclaw:     {}\nopenclaw_dq:  {}\nboundary:     local-first config; hosted runtime remains future work\n",
+        "Meridian Loom // CONFIG
+=======================
+root:         {}
+mode:         {}
+org_id:       {}
+state_dir:    {}
+run_dir:      {}
+log_dir:      {}
+artifact_dir: {}
+capability_dir:{}
+kernel_path:  {}
+python_path:  {}
+typescript:   {}
+wasm_dir:     {}
+service_http: {}
+service_env:  {}
+service_jobs: {}
+service_poll: {}
+service_iters:{}
+log_level:    {}
+log_format:   {}
+log_max_b:    {}
+log_max_f:    {}
+openclaw:     {}
+openclaw_dq:  {} (resolved: {})
+boundary:     local-first config; hosted runtime remains future work
+",
         root.display(),
         config.mode,
         config.org_id,
@@ -737,6 +778,7 @@ pub fn render_config_human(config: &Config, root: &Path) -> String {
         config.log_max_files,
         config.openclaw_integration,
         config.openclaw_delivery_queue,
+        openclaw_delivery_queue.display(),
     )
 }
 
@@ -1717,6 +1759,19 @@ fn resolve_kernel_path(
     Ok(PathBuf::from(kernel_path))
 }
 
+pub fn resolve_workspace_path(root: &Path, configured_path: &str) -> PathBuf {
+    let path = Path::new(configured_path.trim());
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        root.join(path)
+    }
+}
+
+pub fn openclaw_delivery_queue_path(root: &Path, config: &Config) -> PathBuf {
+    resolve_workspace_path(root, &config.openclaw_delivery_queue)
+}
+
 fn ensure_root(root: &Path) -> LoomResult<PathBuf> {
     fs::create_dir_all(root).map_err(io_err)?;
     Ok(root.to_path_buf())
@@ -1941,6 +1996,7 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -1962,6 +2018,41 @@ mod tests {
         assert_eq!(loaded.org_id, "org_demo");
         assert_eq!(loaded.kernel_path, "/tmp/meridian-kernel");
         assert!(root.join("artifacts/shadow/events.jsonl").exists());
+    }
+
+    #[test]
+    fn resolve_workspace_path_handles_relative_and_absolute_paths() {
+        let root = temp_path("loom-core-storage-paths");
+        let relative = resolve_workspace_path(&root, "state/openclaw/delivery-queue");
+        assert_eq!(relative, root.join("state/openclaw/delivery-queue"));
+
+        let absolute = resolve_workspace_path(&root, "/var/lib/openclaw/delivery-queue");
+        assert_eq!(absolute, PathBuf::from("/var/lib/openclaw/delivery-queue"));
+    }
+
+    #[test]
+    fn doctor_reports_resolved_openclaw_delivery_queue() {
+        let root = temp_path("loom-core-openclaw-doctor");
+        init_workspace(&root, "embedded", Some("/tmp/meridian-kernel"), "org_demo")
+            .expect("init workspace");
+        let config_path = root.join("loom.toml");
+        let updated = fs::read_to_string(&config_path)
+            .expect("read config")
+            .replace("openclaw_integration = \"off\"", "openclaw_integration = \"dry_run\"")
+            .replace(
+                DEFAULT_OPENCLAW_DELIVERY_QUEUE,
+                "state/openclaw/delivery-queue",
+            );
+        fs::write(&config_path, updated).expect("rewrite config");
+        fs::create_dir_all(root.join("state/openclaw/delivery-queue")).expect("queue dir");
+
+        let checks = doctor(&root).expect("doctor");
+        let queue_check = checks
+            .iter()
+            .find(|check| check.label == "openclaw_delivery_queue")
+            .expect("queue check present");
+        assert_eq!(queue_check.level, "OK");
+        assert!(queue_check.detail.contains(&root.join("state/openclaw/delivery-queue").display().to_string()));
     }
 
     #[test]

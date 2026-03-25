@@ -6543,7 +6543,7 @@ fn runtime_layout_config(root: &Path) -> Config {
         log_max_bytes: 5 * 1024 * 1024,
         log_max_files: 5,
         openclaw_integration: "off".to_string(),
-        openclaw_delivery_queue: "/root/.openclaw/delivery-queue".to_string(),
+        openclaw_delivery_queue: loom_core::DEFAULT_OPENCLAW_DELIVERY_QUEUE.to_string(),
     })
 }
 

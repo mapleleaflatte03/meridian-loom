@@ -1,6 +1,6 @@
 use loom_core::{
     build_action_envelope, build_action_envelope_with_options, capsule_inspect, contract_show, contract_verify, doctor, health,
-    init_workspace, kernel_path_for, read_config, render_capsule_human, render_contract_human,
+    init_workspace, kernel_path_for, openclaw_delivery_queue_path, read_config, render_capsule_human, render_contract_human,
     render_config_human, render_contract_json, render_contract_verify_human,
     render_contract_verify_json, render_doctor_human, render_doctor_json,
     render_envelope_human, render_envelope_json, render_health_human, render_identity_human,
@@ -1372,7 +1372,7 @@ fn handle_openclaw(args: &[String]) -> LoomResult<()> {
                     let payload_path = take_value(args, "--payload-path").unwrap_or_default();
                     let delivery_target = take_value(args, "--delivery-target").unwrap_or_else(|| "telegram:default".to_string());
                     let governance_decision = take_value(args, "--governance-decision").unwrap_or_else(|| "allow".to_string());
-                    let dq_path = std::path::PathBuf::from(&config.openclaw_delivery_queue);
+                    let dq_path = openclaw_delivery_queue_path(&root, &config);
                     let request = DeliveryRoutingRequest {
                         agent_id,
                         org_id: config.org_id.clone(),
@@ -2832,7 +2832,7 @@ mod tests {
             log_max_bytes: 1024,
             log_max_files: 3,
             openclaw_integration: "off".to_string(),
-            openclaw_delivery_queue: "/tmp/openclaw".to_string(),
+            openclaw_delivery_queue: loom_core::DEFAULT_OPENCLAW_DELIVERY_QUEUE.to_string(),
         }
     }
 

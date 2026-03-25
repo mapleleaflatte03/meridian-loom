@@ -18,7 +18,7 @@
 
 use std::fs;
 use std::path::Path;
-use loom_core::{read_config, capabilities::{resolve_capability_for_request, render_capability_readiness_human}};
+use loom_core::{read_config, openclaw_delivery_queue_path, capabilities::{resolve_capability_for_request, render_capability_readiness_human}};
 
 /// Result type for seam operations.
 pub type SeamResult<T> = Result<T, String>;
@@ -220,8 +220,8 @@ pub fn check_delivery_queue(delivery_queue_path: &Path) -> SeamResult<bool> {
 pub fn render_cutover_status_human(root: &Path) -> SeamResult<String> {
     let config = read_config(root).map_err(|error| error.to_string())?;
     let mode = IntegrationMode::from_str(&config.openclaw_integration);
-    let delivery_queue_path = Path::new(&config.openclaw_delivery_queue);
-    let queue_exists = check_delivery_queue(delivery_queue_path).unwrap_or(false);
+    let delivery_queue_path = openclaw_delivery_queue_path(root, &config);
+    let queue_exists = check_delivery_queue(&delivery_queue_path).unwrap_or(false);
     let capability_resolution = resolve_capability_for_request(root, &config, None, "research", "web_search");
     let (capability, capability_note) = match capability_resolution {
         Ok(capability) => (capability, None),
@@ -421,6 +421,29 @@ mod tests {
         assert!(status.contains("CAPABILITY READINESS"));
         assert!(status.contains("interpreter:       python3"));
         assert!(status.contains("runtime_lane:"));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+
+    #[test]
+    fn cutover_status_resolves_relative_delivery_queue_under_root() {
+        let root = std::env::temp_dir().join("loom-seam-status-queue");
+        let _ = fs::remove_dir_all(&root);
+        let _config = init_workspace(&root, "embedded", None, "org_test").expect("init workspace");
+        let config_path = root.join("loom.toml");
+        let updated = fs::read_to_string(&config_path)
+            .expect("read config")
+            .replace("openclaw_integration = \"off\"", "openclaw_integration = \"dry_run\"")
+            .replace(
+                loom_core::DEFAULT_OPENCLAW_DELIVERY_QUEUE,
+                "state/openclaw/delivery-queue",
+            );
+        fs::write(&config_path, updated).expect("rewrite config");
+        fs::create_dir_all(root.join("state/openclaw/delivery-queue")).expect("queue dir");
+
+        let status = render_cutover_status_human(&root).expect("status");
+        assert!(status.contains(&root.join("state/openclaw/delivery-queue").display().to_string()));
+        assert!(status.contains("queue_exists:   true"));
         let _ = fs::remove_dir_all(&root);
     }
 }
