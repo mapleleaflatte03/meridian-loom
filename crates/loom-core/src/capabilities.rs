@@ -2292,6 +2292,10 @@ pub fn update_capability_gap_promotion(
 }
 
 pub fn render_capability_gap_human(result: &CapabilityGapUpdateResult) -> String {
+    let replay_request_status = match capability_gap_replay_request(&result.gap) {
+        Ok(_) => "supported (requested_via=action_execute)".to_string(),
+        Err(error) => format!("unavailable ({})", error),
+    };
     format!(
         "Meridian Loom // CAPABILITY GAP
 ================================
@@ -2319,6 +2323,7 @@ promotion_note:      {}
 candidate_manifest:  {}
 verification_job:    {}
 verification_exec:   {}
+replay_request:      {}
 last_note:           {}
 ",
         result.gap.gap_id,
@@ -2345,6 +2350,7 @@ last_note:           {}
         if result.gap.candidate_manifest_path.is_empty() { "(none)" } else { &result.gap.candidate_manifest_path },
         if result.gap.verification_job_id.is_empty() { "(none)" } else { &result.gap.verification_job_id },
         if result.gap.verification_execution_id.is_empty() { "(none)" } else { &result.gap.verification_execution_id },
+        replay_request_status,
         if result.gap.last_note.is_empty() { "(none)" } else { &result.gap.last_note },
     )
 }
@@ -3565,6 +3571,9 @@ parser.add_argument("--out")
             .and_then(Value::as_str)
             .map(|raw| raw.contains("request::replay::demo"))
             .unwrap_or(false));
+
+        let human = render_capability_gap_human(&gap);
+        assert!(human.contains("replay_request:      supported (requested_via=action_execute)"));
     }
 
     #[test]

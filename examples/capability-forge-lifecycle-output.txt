@@ -64,6 +64,7 @@ promotion_note:      (none)
 candidate_manifest:  /tmp/loom-capability-forge-lifecycle/capabilities/custom/loomforge-artifact-triage-suspicious-artifact-triage-v0.json
 verification_job:    (none)
 verification_exec:   (none)
+replay_request:      supported (requested_via=action_execute)
 last_note:           gap candidate forged into Loom capability runtime
 
 /tmp/loom-capability-forge-lifecycle/samples/suspicious.bin
@@ -187,6 +188,7 @@ promotion_note:      (none)
 candidate_manifest:  /tmp/loom-capability-forge-lifecycle/capabilities/custom/loomforge-artifact-triage-suspicious-artifact-triage-v0.json
 verification_job:    6ef9a5fa525576de
 verification_exec:   execution::job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de::ok::worker_executed
+replay_request:      supported (requested_via=action_execute)
 last_note:           runtime_outcome=worker_executed worker_status=completed effective_stage=ok | expectations=matched
 
 --- Step 5: Promote verified capability ---
@@ -229,6 +231,7 @@ promotion_note:      gap candidate promoted after verification
 candidate_manifest:  /tmp/loom-capability-forge-lifecycle/capabilities/custom/loomforge-artifact-triage-suspicious-artifact-triage-v0.json
 verification_job:    6ef9a5fa525576de
 verification_exec:   execution::job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de::ok::worker_executed
+replay_request:      supported (requested_via=action_execute)
 last_note:           gap candidate promoted after verification
 
 --- Step 6: Show capability gap state ---
@@ -258,6 +261,7 @@ promotion_note:      gap candidate promoted after verification
 candidate_manifest:  /tmp/loom-capability-forge-lifecycle/capabilities/custom/loomforge-artifact-triage-suspicious-artifact-triage-v0.json
 verification_job:    6ef9a5fa525576de
 verification_exec:   execution::job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de::ok::worker_executed
+replay_request:      supported (requested_via=action_execute)
 last_note:           gap candidate promoted after verification
 
 --- Step 7: Replay the previously missing request through the recorded gap ---
