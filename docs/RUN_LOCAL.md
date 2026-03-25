@@ -219,6 +219,7 @@ Exercise the same capability path through the service boundary:
 ./scripts/rehearse_claw_skill_multi_import.sh > examples/claw-skill-multi-import-output.txt
 ./scripts/rehearse_openclaw_plugin_import.sh > examples/openclaw-plugin-import-output.txt
 ./scripts/rehearse_server_replacement.sh > examples/server-replacement-output.txt
+./scripts/rehearse_phase2_portability_corpus.sh > examples/phase2-portability-corpus-output.txt
 ```
 
 `rehearse_server_replacement.sh` is the replacement-proof path for this branch:
