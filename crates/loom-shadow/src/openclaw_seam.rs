@@ -72,6 +72,22 @@ pub struct DeliveryHandoffArtifact {
     pub payload_status: String,
 }
 
+/// Queue record written from a prepared handoff.
+#[derive(Clone, Debug)]
+pub struct DeliveryQueueRecord {
+    pub queue_record_path: String,
+    pub queue_index_path: String,
+    pub handoff_path: String,
+}
+
+/// Queue submission result that combines routing and queue staging.
+#[derive(Clone, Debug)]
+pub struct DeliveryQueueSubmissionResult {
+    pub routing: DeliveryRoutingResult,
+    pub queue_record_path: String,
+    pub queue_index_path: String,
+}
+
 /// Result of routing a delivery through the seam.
 #[derive(Clone, Debug)]
 pub struct DeliveryRoutingResult {
@@ -301,6 +317,134 @@ pub fn check_delivery_queue(delivery_queue_path: &Path) -> SeamResult<bool> {
     }
 }
 
+
+fn write_delivery_queue_record(
+    root: &Path,
+    delivery_queue_path: &Path,
+    request: &DeliveryRoutingRequest,
+    handoff: &DeliveryHandoffArtifact,
+    governance_decision: &str,
+) -> SeamResult<DeliveryQueueRecord> {
+    fs::create_dir_all(delivery_queue_path).map_err(|e| e.to_string())?;
+    let queue_dir = delivery_queue_path.join("records");
+    fs::create_dir_all(&queue_dir).map_err(|e| e.to_string())?;
+    let queue_state_dir = root.join("state").join("openclaw_seam");
+    fs::create_dir_all(&queue_state_dir).map_err(|e| e.to_string())?;
+    let timestamp = epoch_now();
+    let queue_record_path = queue_dir.join(format!("queue_record_{}.json", timestamp));
+    let queue_index_path = delivery_queue_path.join("queue_index.jsonl");
+    let record = serde_json::to_string_pretty(&json!({
+        "timestamp": timestamp,
+        "mode": "submit",
+        "status": "staged",
+        "agent_id": request.agent_id,
+        "org_id": request.org_id,
+        "action_type": request.action_type,
+        "resource": request.resource,
+        "delivery_target": request.delivery_target,
+        "governance_decision": governance_decision,
+        "handoff_path": handoff.handoff_path,
+        "resolved_payload_path": handoff.resolved_payload_path,
+        "payload_status": handoff.payload_status,
+        "note": "queue record staged for later delivery; no live OpenClaw dispatch performed",
+    }))
+    .map_err(|error| error.to_string())? + "\n";
+    fs::write(&queue_record_path, record).map_err(|e| e.to_string())?;
+
+    let index_line = serde_json::to_string(&json!({
+        "ts": timestamp,
+        "queue_record": queue_record_path.display().to_string(),
+        "handoff": handoff.handoff_path,
+        "payload_status": handoff.payload_status,
+    }))
+    .map_err(|error| error.to_string())? + "\n";
+    let mut queue_index = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&queue_index_path)
+        .map_err(|e| e.to_string())?;
+    std::io::Write::write_all(&mut queue_index, index_line.as_bytes())
+        .map_err(|e| e.to_string())?;
+
+    Ok(DeliveryQueueRecord {
+        queue_record_path: queue_record_path.display().to_string(),
+        queue_index_path: queue_index_path.display().to_string(),
+        handoff_path: handoff.handoff_path.clone(),
+    })
+}
+
+pub fn submit_delivery_queue_record(
+    root: &Path,
+    delivery_queue_path: &Path,
+    request: &DeliveryRoutingRequest,
+    handoff: &DeliveryHandoffArtifact,
+    governance_decision: &str,
+) -> SeamResult<DeliveryQueueRecord> {
+    write_delivery_queue_record(root, delivery_queue_path, request, handoff, governance_decision)
+}
+
+pub fn submit_dry_run_delivery(
+    root: &Path,
+    delivery_queue_path: &Path,
+    request: &DeliveryRoutingRequest,
+    governance_decision: &str,
+) -> SeamResult<DeliveryQueueSubmissionResult> {
+    let routing = route_delivery(
+        root,
+        &IntegrationMode::DryRun,
+        delivery_queue_path,
+        request,
+        governance_decision,
+    )?;
+    let handoff = DeliveryHandoffArtifact {
+        handoff_path: routing
+            .handoff_artifact_path
+            .clone()
+            .ok_or_else(|| "dry-run handoff artifact missing from routing result".to_string())?,
+        resolved_payload_path: routing.resolved_payload_path.clone(),
+        payload_status: routing.payload_status.clone(),
+    };
+    let staged = write_delivery_queue_record(root, delivery_queue_path, request, &handoff, governance_decision)?;
+    Ok(DeliveryQueueSubmissionResult {
+        routing,
+        queue_record_path: staged.queue_record_path,
+        queue_index_path: staged.queue_index_path,
+    })
+}
+
+pub fn render_queue_submission_human(result: &DeliveryQueueSubmissionResult) -> String {
+    let mut out = String::new();
+    out.push_str("OpenClaw Queue Submission\n");
+    out.push_str("=========================\n");
+    out.push_str(&format!("queue_record:     {}\n", result.queue_record_path));
+    out.push_str(&format!("queue_index:      {}\n", result.queue_index_path));
+    out.push_str(&format!("handoff_artifact: {}\n", result.routing.handoff_artifact_path.as_deref().unwrap_or("")));
+    out.push_str(&format!("payload_status:   {}\n", result.routing.payload_status));
+    out.push_str(&format!("reason:           {}\n", result.routing.reason));
+    out
+}
+
+pub fn render_queue_submission_json(result: &DeliveryQueueSubmissionResult) -> String {
+    serde_json::to_string_pretty(&json!({
+        "routing": {
+            "mode": &result.routing.mode,
+            "routed": result.routing.routed,
+            "governance_passed": result.routing.governance_passed,
+            "bypass_triggered": result.routing.bypass_triggered,
+            "dry_run_log_path": &result.routing.dry_run_log_path,
+            "handoff_artifact_path": &result.routing.handoff_artifact_path,
+            "resolved_payload_path": &result.routing.resolved_payload_path,
+            "payload_status": &result.routing.payload_status,
+            "delivery_queue_path": &result.routing.delivery_queue_path,
+            "reason": &result.routing.reason,
+        },
+        "queue_record_path": &result.queue_record_path,
+        "queue_index_path": &result.queue_index_path,
+    }))
+    .unwrap_or_else(|error| format!("{{\"error\":\"serialization_failed\",\"detail\":{:?}}}", error.to_string()))
+        + "\n"
+}
+
 pub fn render_cutover_status_human(root: &Path) -> SeamResult<String> {
     let config = read_config(root).map_err(|error| error.to_string())?;
     let mode = IntegrationMode::from_str(&config.openclaw_integration);
@@ -440,6 +584,31 @@ mod tests {
         assert!(handoff_contents.contains("\"payload_status\": \"loaded\""));
         assert!(handoff_contents.contains("hello from payload"));
         assert!(handoff_contents.contains(&payload_path_str));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn submit_dry_run_delivery_writes_queue_record_and_index() {
+        let dir = std::env::temp_dir().join("loom-seam-submit-queue");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("state")).expect("state dir");
+        fs::create_dir_all(dir.join("payloads")).expect("payloads dir");
+        let payload_file = dir.join("payloads/brief.txt");
+        fs::write(&payload_file, "queue payload").expect("payload file");
+        let dq = dir.join("state/openclaw/delivery-queue");
+        let mut request = test_request();
+        request.payload_path = "payloads/brief.txt".to_string();
+
+        let result = submit_dry_run_delivery(&dir, &dq, &request, "allow").expect("submit dry-run delivery");
+        assert!(result.queue_record_path.contains("queue_record_"));
+        assert!(result.queue_index_path.ends_with("queue_index.jsonl"));
+        let record_contents = fs::read_to_string(&result.queue_record_path).expect("queue record contents");
+        assert!(record_contents.contains("\"mode\": \"submit\""));
+        assert!(record_contents.contains("\"status\": \"staged\""));
+        assert!(record_contents.contains("\"payload_status\": \"loaded\""));
+        let index_contents = fs::read_to_string(&result.queue_index_path).expect("queue index contents");
+        assert!(index_contents.contains(&result.queue_record_path));
+        assert!(index_contents.contains(&result.routing.handoff_artifact_path.clone().expect("handoff path")));
         let _ = fs::remove_dir_all(&dir);
     }
 
