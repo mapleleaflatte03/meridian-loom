@@ -16,9 +16,13 @@
 //!     the caller can fall back to direct OpenClaw delivery
 //!   - All routing decisions are logged to an audit trail
 
+use loom_core::{
+    capabilities::{render_capability_readiness_human, resolve_capability_for_request},
+    openclaw_delivery_queue_path, read_config, resolve_workspace_path,
+};
+use serde_json::json;
 use std::fs;
-use std::path::Path;
-use loom_core::{read_config, openclaw_delivery_queue_path, capabilities::{resolve_capability_for_request, render_capability_readiness_human}};
+use std::path::{Path, PathBuf};
 
 /// Result type for seam operations.
 pub type SeamResult<T> = Result<T, String>;
@@ -60,6 +64,14 @@ pub struct DeliveryRoutingRequest {
     pub delivery_target: String,
 }
 
+/// Canonical handoff artifact produced by the seam.
+#[derive(Clone, Debug)]
+pub struct DeliveryHandoffArtifact {
+    pub handoff_path: String,
+    pub resolved_payload_path: Option<String>,
+    pub payload_status: String,
+}
+
 /// Result of routing a delivery through the seam.
 #[derive(Clone, Debug)]
 pub struct DeliveryRoutingResult {
@@ -68,35 +80,36 @@ pub struct DeliveryRoutingResult {
     pub governance_passed: bool,
     pub bypass_triggered: bool,
     pub dry_run_log_path: Option<String>,
+    pub handoff_artifact_path: Option<String>,
+    pub resolved_payload_path: Option<String>,
+    pub payload_status: String,
     pub delivery_queue_path: Option<String>,
     pub reason: String,
 }
 
 impl DeliveryRoutingResult {
     fn to_json(&self) -> String {
-        format!(
-            concat!(
-                "{{\n",
-                "  \"mode\": {},\n",
-                "  \"routed\": {},\n",
-                "  \"governance_passed\": {},\n",
-                "  \"bypass_triggered\": {},\n",
-                "  \"dry_run_log_path\": {},\n",
-                "  \"delivery_queue_path\": {},\n",
-                "  \"reason\": {}\n",
-                "}}\n"
-            ),
-            json_str(&self.mode),
-            self.routed,
-            self.governance_passed,
-            self.bypass_triggered,
-            self.dry_run_log_path.as_deref().map(json_str).unwrap_or_else(|| "null".to_string()),
-            self.delivery_queue_path.as_deref().map(json_str).unwrap_or_else(|| "null".to_string()),
-            json_str(&self.reason),
-        )
+        serde_json::to_string_pretty(&json!({
+            "mode": self.mode,
+            "routed": self.routed,
+            "governance_passed": self.governance_passed,
+            "bypass_triggered": self.bypass_triggered,
+            "dry_run_log_path": self.dry_run_log_path,
+            "handoff_artifact_path": self.handoff_artifact_path,
+            "resolved_payload_path": self.resolved_payload_path,
+            "payload_status": self.payload_status,
+            "delivery_queue_path": self.delivery_queue_path,
+            "reason": self.reason,
+        }))
+        .unwrap_or_else(|error| {
+            format!(
+                "{{\"error\":\"serialization_failed\",\"detail\":{:?}}}",
+                error.to_string()
+            )
+        })
+            + "\n"
     }
 }
-
 /// Route a delivery request through the integration seam.
 ///
 /// When mode is Off, returns immediately with routed=false.
@@ -110,69 +123,69 @@ pub fn route_delivery(
     governance_decision: &str,
 ) -> SeamResult<DeliveryRoutingResult> {
     match mode {
-        IntegrationMode::Off => {
-            Ok(DeliveryRoutingResult {
-                mode: "off".to_string(),
-                routed: false,
-                governance_passed: false,
-                bypass_triggered: false,
-                dry_run_log_path: None,
-                delivery_queue_path: None,
-                reason: "openclaw_integration=off; seam disabled".to_string(),
-            })
-        }
+        IntegrationMode::Off => Ok(DeliveryRoutingResult {
+            mode: "off".to_string(),
+            routed: false,
+            governance_passed: false,
+            bypass_triggered: false,
+            dry_run_log_path: None,
+            handoff_artifact_path: None,
+            resolved_payload_path: None,
+            payload_status: "not_prepared".to_string(),
+            delivery_queue_path: None,
+            reason: "openclaw_integration=off; seam disabled".to_string(),
+        }),
         IntegrationMode::DryRun => {
             let governance_passed = governance_decision == "allow";
-
-            // Write dry-run log — never touch the actual delivery queue
-            let seam_dir = root.join("state").join("openclaw_seam");
-            fs::create_dir_all(&seam_dir).map_err(|e| e.to_string())?;
-            let timestamp = epoch_now();
-            let log_path = seam_dir.join(format!("dry_run_{}.json", timestamp));
-
             let bypass_triggered = !governance_passed;
-            let log_entry = format!(
-                concat!(
-                    "{{\n",
-                    "  \"timestamp\": {},\n",
-                    "  \"mode\": \"dry_run\",\n",
-                    "  \"agent_id\": {},\n",
-                    "  \"org_id\": {},\n",
-                    "  \"action_type\": {},\n",
-                    "  \"resource\": {},\n",
-                    "  \"payload_path\": {},\n",
-                    "  \"delivery_target\": {},\n",
-                    "  \"governance_decision\": {},\n",
-                    "  \"governance_passed\": {},\n",
-                    "  \"bypass_triggered\": {},\n",
-                    "  \"would_route_to\": {},\n",
-                    "  \"actually_delivered\": false,\n",
-                    "  \"note\": \"dry-run mode: no delivery performed\"\n",
-                    "}}\n"
-                ),
-                timestamp,
-                json_str(&request.agent_id),
-                json_str(&request.org_id),
-                json_str(&request.action_type),
-                json_str(&request.resource),
-                json_str(&request.payload_path),
-                json_str(&request.delivery_target),
-                json_str(governance_decision),
+            let timestamp = epoch_now();
+            let handoff = prepare_delivery_handoff(
+                root,
+                delivery_queue_path,
+                request,
+                governance_decision,
                 governance_passed,
                 bypass_triggered,
-                json_str(&delivery_queue_path.display().to_string()),
-            );
+                timestamp,
+            )?;
+
+            let seam_dir = root.join("state").join("openclaw_seam");
+            let log_path = seam_dir.join(format!("dry_run_{}.json", timestamp));
+            let log_entry = serde_json::to_string_pretty(&json!({
+                "timestamp": timestamp,
+                "mode": "dry_run",
+                "agent_id": request.agent_id,
+                "org_id": request.org_id,
+                "action_type": request.action_type,
+                "resource": request.resource,
+                "payload_path": request.payload_path,
+                "delivery_target": request.delivery_target,
+                "governance_decision": governance_decision,
+                "governance_passed": governance_passed,
+                "bypass_triggered": bypass_triggered,
+                "would_route_to": delivery_queue_path.display().to_string(),
+                "handoff_artifact_path": handoff.handoff_path,
+                "resolved_payload_path": handoff.resolved_payload_path,
+                "payload_status": handoff.payload_status,
+                "actually_delivered": false,
+                "note": "dry-run mode: no delivery performed; handoff artifact prepared",
+            }))
+            .map_err(|error| error.to_string())?
+                + "\n";
             fs::write(&log_path, &log_entry).map_err(|e| e.to_string())?;
 
-            // Append to stream
             let stream_path = seam_dir.join("dry_run_stream.jsonl");
-            let stream_line = format!(
-                "{{\"ts\":{},\"agent\":{},\"decision\":{},\"bypass\":{},\"mode\":\"dry_run\"}}\n",
-                timestamp,
-                json_str(&request.agent_id),
-                json_str(governance_decision),
-                bypass_triggered,
-            );
+            let stream_line = serde_json::to_string(&json!({
+                "ts": timestamp,
+                "agent": request.agent_id,
+                "decision": governance_decision,
+                "bypass": bypass_triggered,
+                "mode": "dry_run",
+                "handoff": handoff.handoff_path,
+                "payload_status": handoff.payload_status,
+            }))
+            .map_err(|error| error.to_string())?
+                + "\n";
             let mut stream_file = fs::OpenOptions::new()
                 .create(true)
                 .append(true)
@@ -187,25 +200,96 @@ pub fn route_delivery(
                 governance_passed,
                 bypass_triggered,
                 dry_run_log_path: Some(log_path.display().to_string()),
+                handoff_artifact_path: Some(handoff.handoff_path),
+                resolved_payload_path: handoff.resolved_payload_path,
+                payload_status: handoff.payload_status,
                 delivery_queue_path: None,
                 reason: if governance_passed {
-                    "dry-run: governance passed, delivery would proceed".to_string()
+                    "dry-run: governance passed, handoff artifact prepared".to_string()
                 } else {
-                    format!("dry-run: governance denied ({}), bypass would trigger", governance_decision)
+                    format!(
+                        "dry-run: governance denied ({}), bypass would trigger; handoff artifact prepared",
+                        governance_decision
+                    )
                 },
             })
         }
-        IntegrationMode::Live => {
-            // INTENTIONALLY NOT IMPLEMENTED.
-            // Live cutover requires:
-            //   1. Level 1 acceptance proven (done)
-            //   2. Feature flag + dry-run verified (this seam)
-            //   3. Explicit owner authorization
-            //   4. Rollback path tested
-            // Until all 4 are met, live mode returns an error.
-            Err("openclaw_integration=live is not yet implemented; cutover requires explicit owner authorization and proven dry-run acceptance".to_string())
-        }
+        IntegrationMode::Live => Err(
+            "openclaw_integration=live is not yet implemented; cutover requires explicit owner authorization and proven dry-run acceptance"
+                .to_string(),
+        ),
     }
+}
+
+fn prepare_delivery_handoff(
+    root: &Path,
+    delivery_queue_path: &Path,
+    request: &DeliveryRoutingRequest,
+    governance_decision: &str,
+    governance_passed: bool,
+    bypass_triggered: bool,
+    timestamp: u64,
+) -> SeamResult<DeliveryHandoffArtifact> {
+    let seam_dir = root.join("state").join("openclaw_seam");
+    fs::create_dir_all(&seam_dir).map_err(|e| e.to_string())?;
+    let handoff_path = seam_dir.join(format!("handoff_{}.json", timestamp));
+    let resolved_payload_path: Option<PathBuf> = if request.payload_path.trim().is_empty() {
+        None
+    } else {
+        Some(resolve_workspace_path(root, &request.payload_path))
+    };
+    let (payload_status, payload_body) = match resolved_payload_path.as_ref() {
+        None => ("missing".to_string(), None),
+        Some(path) => match fs::read_to_string(path) {
+            Ok(contents) => ("loaded".to_string(), Some(contents)),
+            Err(_) => ("missing".to_string(), None),
+        },
+    };
+    let artifact = serde_json::to_string_pretty(&json!({
+        "timestamp": timestamp,
+        "mode": "dry_run",
+        "handoff_status": "prepared",
+        "agent_id": request.agent_id,
+        "org_id": request.org_id,
+        "action_type": request.action_type,
+        "resource": request.resource,
+        "delivery_target": request.delivery_target,
+        "governance_decision": governance_decision,
+        "governance_passed": governance_passed,
+        "bypass_triggered": bypass_triggered,
+        "delivery_queue_path": delivery_queue_path.display().to_string(),
+        "payload_path": request.payload_path,
+        "resolved_payload_path": resolved_payload_path.as_ref().map(|path| path.display().to_string()),
+        "payload_status": payload_status,
+        "payload_body": payload_body,
+        "note": "canonical handoff envelope for a later delivery shim; dry-run does not enqueue",
+    }))
+    .map_err(|error| error.to_string())?
+        + "\n";
+    fs::write(&handoff_path, artifact).map_err(|e| e.to_string())?;
+
+    let stream_path = seam_dir.join("handoff_stream.jsonl");
+    let stream_line = serde_json::to_string(&json!({
+        "ts": timestamp,
+        "agent": request.agent_id,
+        "payload_status": payload_status,
+        "handoff": handoff_path.display().to_string(),
+    }))
+    .map_err(|error| error.to_string())?
+        + "\n";
+    let mut stream_file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&stream_path)
+        .map_err(|e| e.to_string())?;
+    std::io::Write::write_all(&mut stream_file, stream_line.as_bytes())
+        .map_err(|e| e.to_string())?;
+
+    Ok(DeliveryHandoffArtifact {
+        handoff_path: handoff_path.display().to_string(),
+        resolved_payload_path: resolved_payload_path.map(|path| path.display().to_string()),
+        payload_status,
+    })
 }
 
 /// Check if the OpenClaw delivery queue path exists and is writable.
@@ -254,6 +338,13 @@ pub fn render_routing_result_human(result: &DeliveryRoutingResult) -> String {
     if let Some(ref p) = result.dry_run_log_path {
         out.push_str(&format!("dry_run_log:       {}\n", p));
     }
+    if let Some(ref p) = result.handoff_artifact_path {
+        out.push_str(&format!("handoff_artifact:  {}\n", p));
+    }
+    if let Some(ref p) = result.resolved_payload_path {
+        out.push_str(&format!("payload_path:      {}\n", p));
+    }
+    out.push_str(&format!("payload_status:    {}\n", result.payload_status));
     if let Some(ref p) = result.delivery_queue_path {
         out.push_str(&format!("delivery_queue:    {}\n", p));
     }
@@ -266,10 +357,6 @@ pub fn render_routing_result_json(result: &DeliveryRoutingResult) -> String {
     result.to_json()
 }
 
-fn json_str(s: &str) -> String {
-    format!("{:?}", s)
-}
-
 fn epoch_now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -280,7 +367,10 @@ fn epoch_now() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use loom_core::{init_workspace, capabilities::{scaffold_capability, CapabilityScaffoldRequest}};
+    use loom_core::{
+        capabilities::{scaffold_capability, CapabilityScaffoldRequest},
+        init_workspace,
+    };
     use std::fs;
 
     fn test_request() -> DeliveryRoutingRequest {
@@ -299,9 +389,7 @@ mod tests {
         let dir = std::env::temp_dir().join("loom-seam-off-test");
         let _ = fs::create_dir_all(&dir);
         let dq = dir.join("delivery-queue");
-        let result = route_delivery(
-            &dir, &IntegrationMode::Off, &dq, &test_request(), "allow",
-        ).unwrap();
+        let result = route_delivery(&dir, &IntegrationMode::Off, &dq, &test_request(), "allow").unwrap();
         assert!(!result.routed);
         assert_eq!(result.mode, "off");
         assert!(!result.governance_passed);
@@ -314,20 +402,44 @@ mod tests {
         let dir = std::env::temp_dir().join("loom-seam-dryrun-allow");
         let _ = fs::create_dir_all(dir.join("state"));
         let dq = dir.join("delivery-queue");
-        let result = route_delivery(
-            &dir, &IntegrationMode::DryRun, &dq, &test_request(), "allow",
-        ).unwrap();
+        let result = route_delivery(&dir, &IntegrationMode::DryRun, &dq, &test_request(), "allow").unwrap();
         assert!(!result.routed, "dry_run must never actually route");
         assert!(result.governance_passed);
         assert!(!result.bypass_triggered);
         assert!(result.dry_run_log_path.is_some());
+        assert!(result.handoff_artifact_path.is_some());
+        assert_eq!(result.payload_status, "missing");
+        assert_eq!(result.resolved_payload_path.as_deref(), Some("/tmp/brief.md"));
         let log_path = result.dry_run_log_path.unwrap();
         let log_contents = fs::read_to_string(&log_path).unwrap();
         assert!(log_contents.contains("\"actually_delivered\": false"));
         assert!(log_contents.contains("\"governance_passed\": true"));
-
-        // Verify delivery queue was NOT touched
+        assert!(log_contents.contains("\"handoff_artifact_path\":"));
         assert!(!dq.exists(), "delivery queue must not be created in dry-run");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn dry_run_writes_handoff_artifact_and_resolves_payload() {
+        let dir = std::env::temp_dir().join("loom-seam-handoff-payload");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("state")).expect("state dir");
+        fs::create_dir_all(dir.join("payloads")).expect("payloads dir");
+        let payload_file = dir.join("payloads/brief.txt");
+        fs::write(&payload_file, "hello from payload").expect("payload file");
+        let dq = dir.join("delivery-queue");
+        let mut request = test_request();
+        request.payload_path = "payloads/brief.txt".to_string();
+
+        let result = route_delivery(&dir, &IntegrationMode::DryRun, &dq, &request, "allow").unwrap();
+        let payload_path_str = payload_file.display().to_string();
+        assert_eq!(result.payload_status, "loaded");
+        assert_eq!(result.resolved_payload_path.as_deref(), Some(payload_path_str.as_str()));
+        let handoff_path = result.handoff_artifact_path.expect("handoff artifact");
+        let handoff_contents = fs::read_to_string(&handoff_path).expect("handoff artifact contents");
+        assert!(handoff_contents.contains("\"payload_status\": \"loaded\""));
+        assert!(handoff_contents.contains("hello from payload"));
+        assert!(handoff_contents.contains(&payload_path_str));
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -336,9 +448,7 @@ mod tests {
         let dir = std::env::temp_dir().join("loom-seam-dryrun-deny");
         let _ = fs::create_dir_all(dir.join("state"));
         let dq = dir.join("delivery-queue");
-        let result = route_delivery(
-            &dir, &IntegrationMode::DryRun, &dq, &test_request(), "hard_deny",
-        ).unwrap();
+        let result = route_delivery(&dir, &IntegrationMode::DryRun, &dq, &test_request(), "hard_deny").unwrap();
         assert!(!result.routed);
         assert!(!result.governance_passed);
         assert!(result.bypass_triggered, "bypass must trigger on governance deny");
@@ -351,9 +461,7 @@ mod tests {
         let dir = std::env::temp_dir().join("loom-seam-live-test");
         let _ = fs::create_dir_all(&dir);
         let dq = dir.join("delivery-queue");
-        let err = route_delivery(
-            &dir, &IntegrationMode::Live, &dq, &test_request(), "allow",
-        );
+        let err = route_delivery(&dir, &IntegrationMode::Live, &dq, &test_request(), "allow");
         assert!(err.is_err());
         assert!(err.unwrap_err().contains("not yet implemented"));
         let _ = fs::remove_dir_all(&dir);
@@ -365,7 +473,6 @@ mod tests {
         let _ = fs::create_dir_all(dir.join("state"));
         let dq = dir.join("delivery-queue");
 
-        // Two requests
         route_delivery(&dir, &IntegrationMode::DryRun, &dq, &test_request(), "allow").unwrap();
         route_delivery(&dir, &IntegrationMode::DryRun, &dq, &test_request(), "deny").unwrap();
 
@@ -415,7 +522,8 @@ mod tests {
                 wasm_module: String::new(),
                 payload_mode: "json".to_string(),
             },
-        ).expect("scaffold capability");
+        )
+        .expect("scaffold capability");
 
         let status = render_cutover_status_human(&root).expect("status");
         assert!(status.contains("CAPABILITY READINESS"));
@@ -423,7 +531,6 @@ mod tests {
         assert!(status.contains("runtime_lane:"));
         let _ = fs::remove_dir_all(&root);
     }
-
 
     #[test]
     fn cutover_status_resolves_relative_delivery_queue_under_root() {
