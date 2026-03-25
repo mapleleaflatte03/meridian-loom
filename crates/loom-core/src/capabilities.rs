@@ -146,6 +146,7 @@ pub struct CapabilityStateUpdateResult {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CapabilityGapRequest {
+    pub request_id: String,
     pub requested_via: String,
     pub capability_name: String,
     pub gap_class: String,
@@ -153,16 +154,19 @@ pub struct CapabilityGapRequest {
     pub proposed_capability_name: String,
     pub agent_id: String,
     pub org_id: String,
+    pub kernel_path: String,
     pub action_type: String,
     pub resource: String,
     pub payload_json: String,
     pub run_id: String,
     pub session_id: String,
+    pub original_request_json: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CapabilityGapRecord {
     pub gap_id: String,
+    pub request_id: String,
     pub requested_at: String,
     pub updated_at: String,
     pub requested_via: String,
@@ -172,11 +176,13 @@ pub struct CapabilityGapRecord {
     pub proposed_capability_name: String,
     pub agent_id: String,
     pub org_id: String,
+    pub kernel_path: String,
     pub action_type: String,
     pub resource: String,
     pub payload_json: String,
     pub run_id: String,
     pub session_id: String,
+    pub original_request_json: String,
     pub forge_status: String,
     pub verification_status: String,
     pub promotion_status: String,
@@ -856,6 +862,7 @@ fn descriptor_json(capability: &CapabilityDescriptor) -> String {
 fn gap_value(gap: &CapabilityGapRecord) -> Value {
     json!({
         "gap_id": gap.gap_id,
+        "request_id": gap.request_id,
         "requested_at": gap.requested_at,
         "updated_at": gap.updated_at,
         "requested_via": gap.requested_via,
@@ -865,11 +872,13 @@ fn gap_value(gap: &CapabilityGapRecord) -> Value {
         "proposed_capability_name": gap.proposed_capability_name,
         "agent_id": gap.agent_id,
         "org_id": gap.org_id,
+        "kernel_path": gap.kernel_path,
         "action_type": gap.action_type,
         "resource": gap.resource,
         "payload_json": gap.payload_json,
         "run_id": gap.run_id,
         "session_id": gap.session_id,
+        "original_request_json": gap.original_request_json,
         "forge_status": gap.forge_status,
         "verification_status": gap.verification_status,
         "promotion_status": gap.promotion_status,
@@ -906,6 +915,11 @@ fn parse_capability_gap_json(raw: &str) -> LoomResult<CapabilityGapRecord> {
     let value: Value = serde_json::from_str(raw).map_err(io_err)?;
     Ok(CapabilityGapRecord {
         gap_id: required_string(&value, "gap_id")?,
+        request_id: value
+            .get("request_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
         requested_at: value
             .get("requested_at")
             .and_then(Value::as_str)
@@ -923,11 +937,17 @@ fn parse_capability_gap_json(raw: &str) -> LoomResult<CapabilityGapRecord> {
         proposed_capability_name: required_string(&value, "proposed_capability_name")?,
         agent_id: value.get("agent_id").and_then(Value::as_str).unwrap_or("").to_string(),
         org_id: value.get("org_id").and_then(Value::as_str).unwrap_or("").to_string(),
+        kernel_path: value.get("kernel_path").and_then(Value::as_str).unwrap_or("").to_string(),
         action_type: value.get("action_type").and_then(Value::as_str).unwrap_or("").to_string(),
         resource: value.get("resource").and_then(Value::as_str).unwrap_or("").to_string(),
         payload_json: value.get("payload_json").and_then(Value::as_str).unwrap_or("").to_string(),
         run_id: value.get("run_id").and_then(Value::as_str).unwrap_or("").to_string(),
         session_id: value.get("session_id").and_then(Value::as_str).unwrap_or("").to_string(),
+        original_request_json: value
+            .get("original_request_json")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
         forge_status: value
             .get("forge_status")
             .and_then(Value::as_str)
@@ -1397,8 +1417,23 @@ pub fn record_capability_gap(
         precise_timestamp_now(),
         sanitize_name(&request.proposed_capability_name)
     );
+    let request_id = if request.request_id.trim().is_empty() {
+        format!(
+            "request-{}-{}",
+            precise_timestamp_now(),
+            sanitize_name(&request.proposed_capability_name)
+        )
+    } else {
+        request.request_id.trim().to_string()
+    };
+    let original_request_json = if request.original_request_json.trim().is_empty() {
+        gap_request_value(request, &request_id).to_string()
+    } else {
+        request.original_request_json.trim().to_string()
+    };
     let gap = CapabilityGapRecord {
         gap_id: gap_id.clone(),
+        request_id,
         requested_at: timestamp_now(),
         updated_at: timestamp_now(),
         requested_via: request.requested_via.trim().to_string(),
@@ -1408,11 +1443,13 @@ pub fn record_capability_gap(
         proposed_capability_name: request.proposed_capability_name.trim().to_string(),
         agent_id: request.agent_id.trim().to_string(),
         org_id: request.org_id.trim().to_string(),
+        kernel_path: request.kernel_path.trim().to_string(),
         action_type: request.action_type.trim().to_string(),
         resource: request.resource.trim().to_string(),
         payload_json: request.payload_json.trim().to_string(),
         run_id: request.run_id.trim().to_string(),
         session_id: request.session_id.trim().to_string(),
+        original_request_json,
         forge_status: "missing_request_recorded".to_string(),
         verification_status: "unverified".to_string(),
         promotion_status: "candidate".to_string(),
@@ -1424,6 +1461,25 @@ pub fn record_capability_gap(
     let gap_path = capability_gap_dir(root, config).join(format!("{}.json", gap_id));
     fs::write(&gap_path, format!("{}\n", gap_value(&gap))).map_err(io_err)?;
     Ok(CapabilityGapUpdateResult { gap_path, gap })
+}
+
+fn gap_request_value(request: &CapabilityGapRequest, request_id: &str) -> Value {
+    json!({
+        "request_id": request_id,
+        "requested_via": request.requested_via,
+        "capability_name": request.capability_name,
+        "gap_class": request.gap_class,
+        "goal": request.goal,
+        "proposed_capability_name": request.proposed_capability_name,
+        "agent_id": request.agent_id,
+        "org_id": request.org_id,
+        "kernel_path": request.kernel_path,
+        "action_type": request.action_type,
+        "resource": request.resource,
+        "payload_json": request.payload_json,
+        "run_id": request.run_id,
+        "session_id": request.session_id,
+    })
 }
 
 pub fn load_capability_gap(
@@ -1494,8 +1550,32 @@ pub fn update_capability_gap_promotion(
 
 pub fn render_capability_gap_human(result: &CapabilityGapUpdateResult) -> String {
     format!(
-        "Meridian Loom // CAPABILITY GAP\n================================\ngap_id:              {}\ngap_path:            {}\nrequested_via:       {}\ncapability_name:     {}\ngap_class:           {}\ngoal:                {}\nproposed_capability: {}\nagent_id:            {}\norg_id:              {}\naction_type:         {}\nresource:            {}\nforge_status:        {}\nverification_status: {}\npromotion_status:    {}\ncandidate_manifest:  {}\nverification_job:    {}\nverification_exec:   {}\nlast_note:           {}\n",
+        "Meridian Loom // CAPABILITY GAP
+================================
+gap_id:              {}
+request_id:          {}
+gap_path:            {}
+requested_via:       {}
+capability_name:     {}
+gap_class:           {}
+goal:                {}
+proposed_capability: {}
+agent_id:            {}
+org_id:              {}
+kernel_path:         {}
+action_type:         {}
+resource:            {}
+original_request:    {}
+forge_status:        {}
+verification_status: {}
+promotion_status:    {}
+candidate_manifest:  {}
+verification_job:    {}
+verification_exec:   {}
+last_note:           {}
+",
         result.gap.gap_id,
+        if result.gap.request_id.is_empty() { "(none)" } else { &result.gap.request_id },
         result.gap_path.display(),
         result.gap.requested_via,
         result.gap.capability_name,
@@ -1504,8 +1584,10 @@ pub fn render_capability_gap_human(result: &CapabilityGapUpdateResult) -> String
         result.gap.proposed_capability_name,
         if result.gap.agent_id.is_empty() { "(none)" } else { &result.gap.agent_id },
         if result.gap.org_id.is_empty() { "(none)" } else { &result.gap.org_id },
+        if result.gap.kernel_path.is_empty() { "(none)" } else { &result.gap.kernel_path },
         if result.gap.action_type.is_empty() { "(none)" } else { &result.gap.action_type },
         if result.gap.resource.is_empty() { "(none)" } else { &result.gap.resource },
+        if result.gap.original_request_json.is_empty() { "(none)" } else { &result.gap.original_request_json },
         result.gap.forge_status,
         result.gap.verification_status,
         result.gap.promotion_status,
@@ -2384,6 +2466,7 @@ parser.add_argument("--out")
             &root,
             &config,
             &CapabilityGapRequest {
+                request_id: String::new(),
                 requested_via: "action_execute".to_string(),
                 capability_name: "loomforge.artifact-triage.demo.v0".to_string(),
                 gap_class: "artifact_triage".to_string(),
@@ -2391,11 +2474,13 @@ parser.add_argument("--out")
                 proposed_capability_name: "loomforge.artifact-triage.demo.v0".to_string(),
                 agent_id: "agent_tutorial".to_string(),
                 org_id: "org_tutorial".to_string(),
+                kernel_path: "/tmp/kernel".to_string(),
                 action_type: String::new(),
                 resource: String::new(),
                 payload_json: "{\"artifact_path\":\"/tmp/sample.bin\"}".to_string(),
                 run_id: String::new(),
                 session_id: String::new(),
+                original_request_json: String::new(),
             },
         )
         .expect("record gap");
