@@ -29,6 +29,9 @@ Meridian Loom is the local-first runtime surface for Meridian. It is meant to
 be installable, inspectable, and operable by a real end-user or operator on a
 single Linux host.
 
+It is production-oriented in local form. It is not yet a hosted runtime
+replacement or an OpenClaw retirement path.
+
 What is real today:
 
 - a real `loom` binary
@@ -47,6 +50,17 @@ What is not claimed today:
 
 OpenClaw still runs the live host. Meridian remains the governance kernel above
 runtimes.
+
+Migration / cutover path:
+
+1. local service and operator surface are real
+2. capability readiness, proof, and parity checks are surfaced
+3. explicit owner authorization gates any cutover work
+4. live transport cutover and OpenClaw retirement come only after the hosted
+   replacement path is fully proven
+
+Until step 4 exists, OpenClaw stays in the live host and Loom stays a
+production-oriented local surface.
 
 ## Install order
 
@@ -264,8 +278,6 @@ See [docs/RELEASE.md](docs/RELEASE.md).
 
 ## Product truth
 
-Loom is now production-oriented in local form. It is still not the hosted
-runtime that retires OpenClaw. That distinction is intentional and enforced in
-the docs and operator output.
-
-See [docs/PRODUCT_TRUTH.md](docs/PRODUCT_TRUTH.md).
+The canonical statement lives in [docs/PRODUCT_TRUTH.md](docs/PRODUCT_TRUTH.md).
+In short: Loom is production-oriented in local form, but it is still not the
+hosted replacement or OpenClaw retirement path.
