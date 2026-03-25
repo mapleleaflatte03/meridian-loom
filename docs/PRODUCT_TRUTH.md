@@ -32,6 +32,7 @@ It does **not** mean:
 - single-node only
 - no hosted scheduler or hosted audit backend
 - live host still runs OpenClaw
+- `phase3/minimal-gap-replay-slice` is archival and non-main; its remaining diff is superseded by `origin/main`
 
 ## Language discipline
 
