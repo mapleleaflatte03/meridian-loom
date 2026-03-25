@@ -1048,23 +1048,32 @@ pub fn render_capability_human(capability: &CapabilityDescriptor) -> String {
 
 pub fn render_capability_import_human(result: &CapabilityImportResult) -> String {
     format!(
-        "Meridian Loom // CAPABILITY IMPORT\n==================================\nname:              {}\nmanifest:          {}\nworker_path:       {}\nskill_shape:       {}\nsource_kind:       {}\nsource_path:       {}\nsource_manifest:   {}\nadapter_kind:      {}\nimport_provenance: {}\nskill_root:        {}\nskill_script:      {}\naction_type:       {}\nresource:          {}\nnote:              bounded clawfamily skill imported into Loom capability runtime\n",
+        "Meridian Loom // CAPABILITY IMPORT\n==================================\nname:              {}\nmanifest:          {}\nworker_path:       {}\nskill_shape:       {}\nworker_kind:       {}\nworker_entry:      {}\npayload_mode:      {}\nsource_kind:       {}\nsource_path:       {}\nsource_manifest:   {}\nadapter_kind:      {}\nimport_provenance: {}\nruntime_lane:      {}\ndependency:        {}\nenv_contract:      {}\nskill_root:        {}\nskill_script:      {}\naction_type:       {}\nresource:          {}\nnote:              bounded clawfamily skill imported into Loom capability runtime\n",
         result.capability.name,
         result.manifest_path.display(),
         result.worker_path.display(),
         result.skill_shape,
+        result.capability.worker_kind,
+        if result.capability.worker_entry.is_empty() {
+            "(none)"
+        } else {
+            &result.capability.worker_entry
+        },
+        result.capability.payload_mode,
         result.capability.source_kind,
         result.capability.source_path,
         result.source_manifest.display(),
         result.detected_signature,
         result.capability.import_provenance,
+        capability_runtime_lane(&result.capability),
+        capability_dependency_mode(&result.capability),
+        capability_env_contract(&result.capability),
         result.skill_root.display(),
         result.skill_script.display(),
         result.capability.action_type,
         result.capability.resource,
     )
 }
-
 pub fn render_capability_import_json(result: &CapabilityImportResult) -> String {
     format!(
         "{}\n",
@@ -1122,9 +1131,15 @@ unsupported_items:  {}
   worker_path: {}
   skill_root: {}
   skill_doc: {}
+  worker_kind: {}
+  worker_entry: {}
+  payload_mode: {}
   source_kind: {}
   source_manifest: {}
   import_provenance: {}
+  runtime_lane: {}
+  dependency: {}
+  env_contract: {}
   import_scope: {}
 "#,
             imported.capability.name,
@@ -1132,9 +1147,19 @@ unsupported_items:  {}
             imported.worker_path.display(),
             imported.skill_root.display(),
             imported.skill_doc.display(),
+            imported.capability.worker_kind,
+            if imported.capability.worker_entry.is_empty() {
+                "(none)"
+            } else {
+                &imported.capability.worker_entry
+            },
+            imported.capability.payload_mode,
             imported.normalized_metadata.source_kind,
             imported.normalized_metadata.source_manifest,
             imported.normalized_metadata.import_provenance,
+            capability_runtime_lane(&imported.capability),
+            capability_dependency_mode(&imported.capability),
+            capability_env_contract(&imported.capability),
             imported.normalized_metadata.import_scope,
         ));
     }
@@ -1148,7 +1173,6 @@ unsupported_items:  {}
     }
     out
 }
-
 pub fn render_openclaw_plugin_import_json(result: &OpenClawPluginImportResult) -> String {
     let imported_skills = result
         .imported_skills
@@ -2368,6 +2392,7 @@ pub fn capability_runtime_lane(capability: &CapabilityDescriptor) -> &'static st
         "wasm" => "wasmtime_local_guest",
         "python" if capability.source_kind == "openclaw_workspace_skill" => "python_host_process/imported_workspace_skill",
         "python" if capability.source_kind == "clawfamily_skill_bundle" => "python_host_process/imported_skill_bundle",
+        "python" if capability.source_kind == "openclaw_plugin_skill" => "python_host_process/imported_openclaw_plugin_skill",
         "python" if capability.source_kind == "loom_forge_candidate" => "python_host_process/forged_candidate",
         "python" => "python_host_process",
         _ => "unknown",
@@ -2378,6 +2403,7 @@ pub fn capability_dependency_mode(capability: &CapabilityDescriptor) -> &'static
     match capability.source_kind.as_str() {
         "openclaw_workspace_skill" => "workspace_host_python",
         "clawfamily_skill_bundle" => "bundle_host_python",
+        "openclaw_plugin_skill" => "plugin_host_python",
         "loom_forge_candidate" => "loom_generated_python",
         "loom_builtin" if capability.worker_kind == "wasm" => "builtin_wasm_guest",
         "loom_builtin" => "builtin_runtime_worker",
@@ -2407,6 +2433,19 @@ pub fn capability_env_contract(capability: &CapabilityDescriptor) -> String {
                 "(none)"
             } else {
                 &capability.source_manifest
+            },
+            if capability.worker_entry.is_empty() {
+                "(none)"
+            } else {
+                &capability.worker_entry
+            }
+        ),
+        "openclaw_plugin_skill" => format!(
+            "host python3 + plugin skill root {} + wrapper {}",
+            if capability.source_path.is_empty() {
+                "(unknown)"
+            } else {
+                &capability.source_path
             },
             if capability.worker_entry.is_empty() {
                 "(none)"
@@ -3014,6 +3053,13 @@ name: beta-review
         assert_eq!(imported.normalized_metadata.capability_name, "clawskill.acme-plugin.alpha-review.v0");
         assert!(imported.manifest_path.exists());
         assert!(imported.worker_path.exists());
+        let human = render_openclaw_plugin_import_human(&result);
+        assert!(human.contains("worker_kind: python"));
+        assert!(human.contains("worker_entry: workers/python/imported-clawskill-acme-plugin-alpha-review-v0.py"));
+        assert!(human.contains("payload_mode: json"));
+        assert!(human.contains("runtime_lane: python_host_process/imported_openclaw_plugin_skill"));
+        assert!(human.contains("dependency: plugin_host_python"));
+        assert!(human.contains("env_contract: host python3 + plugin skill root"));
     }
 
     #[test]
@@ -3111,6 +3157,13 @@ parser.add_argument("--skip-container", action="store_true")
             .expect("imported capability present");
         assert_eq!(imported.source_kind, "openclaw_workspace_skill");
         assert!(imported.source_path.contains("loom-cap-import-skill"));
+        let human = render_capability_import_human(&result);
+        assert!(human.contains("worker_kind:       python"));
+        assert!(human.contains("worker_entry:      workers/python/imported-clawskill-malware-triage-v0.py"));
+        assert!(human.contains("payload_mode:      json"));
+        assert!(human.contains("runtime_lane:      python_host_process/imported_workspace_skill"));
+        assert!(human.contains("dependency:        workspace_host_python"));
+        assert!(human.contains("env_contract:      host python3 + source skill root"));
     }
 
     #[test]
