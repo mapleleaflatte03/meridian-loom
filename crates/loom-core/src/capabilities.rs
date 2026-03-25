@@ -229,6 +229,10 @@ pub struct CapabilityGapRecord {
     pub forge_status: String,
     pub verification_status: String,
     pub promotion_status: String,
+    pub verified_at: String,
+    pub verification_note: String,
+    pub promoted_at: String,
+    pub promotion_note: String,
     pub candidate_manifest_path: String,
     pub verification_job_id: String,
     pub verification_execution_id: String,
@@ -1322,6 +1326,10 @@ fn gap_value(gap: &CapabilityGapRecord) -> Value {
         "forge_status": gap.forge_status,
         "verification_status": gap.verification_status,
         "promotion_status": gap.promotion_status,
+        "verified_at": gap.verified_at,
+        "verification_note": gap.verification_note,
+        "promoted_at": gap.promoted_at,
+        "promotion_note": gap.promotion_note,
         "candidate_manifest_path": gap.candidate_manifest_path,
         "verification_job_id": gap.verification_job_id,
         "verification_execution_id": gap.verification_execution_id,
@@ -1402,6 +1410,26 @@ fn parse_capability_gap_json(raw: &str) -> LoomResult<CapabilityGapRecord> {
             .get("promotion_status")
             .and_then(Value::as_str)
             .unwrap_or("candidate")
+            .to_string(),
+        verified_at: value
+            .get("verified_at")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        verification_note: value
+            .get("verification_note")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        promoted_at: value
+            .get("promoted_at")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        promotion_note: value
+            .get("promotion_note")
+            .and_then(Value::as_str)
+            .unwrap_or("")
             .to_string(),
         candidate_manifest_path: value
             .get("candidate_manifest_path")
@@ -2079,6 +2107,10 @@ pub fn record_capability_gap(
         forge_status: "missing_request_recorded".to_string(),
         verification_status: "unverified".to_string(),
         promotion_status: "candidate".to_string(),
+        verified_at: String::new(),
+        verification_note: String::new(),
+        promoted_at: String::new(),
+        promotion_note: String::new(),
         candidate_manifest_path: String::new(),
         verification_job_id: String::new(),
         verification_execution_id: String::new(),
@@ -2148,10 +2180,13 @@ pub fn update_capability_gap_verification(
     let gap_path = capability_gap_manifest_path(root, config, gap_id)?;
     let raw = fs::read_to_string(&gap_path).map_err(io_err)?;
     let mut gap = parse_capability_gap_json(&raw)?;
-    gap.updated_at = timestamp_now();
+    let now = timestamp_now();
+    gap.updated_at = now.clone();
     gap.verification_status = verification_status.trim().to_string();
+    gap.verified_at = now;
     gap.verification_job_id = verification_job_id.trim().to_string();
     gap.verification_execution_id = verification_execution_id.trim().to_string();
+    gap.verification_note = note.trim().to_string();
     gap.last_note = note.trim().to_string();
     fs::write(&gap_path, format!("{}\n", gap_value(&gap))).map_err(io_err)?;
     Ok(CapabilityGapUpdateResult { gap_path, gap })
@@ -2167,8 +2202,11 @@ pub fn update_capability_gap_promotion(
     let gap_path = capability_gap_manifest_path(root, config, gap_id)?;
     let raw = fs::read_to_string(&gap_path).map_err(io_err)?;
     let mut gap = parse_capability_gap_json(&raw)?;
-    gap.updated_at = timestamp_now();
+    let now = timestamp_now();
+    gap.updated_at = now.clone();
     gap.promotion_status = promotion_status.trim().to_string();
+    gap.promoted_at = now;
+    gap.promotion_note = note.trim().to_string();
     gap.last_note = note.trim().to_string();
     fs::write(&gap_path, format!("{}\n", gap_value(&gap))).map_err(io_err)?;
     Ok(CapabilityGapUpdateResult { gap_path, gap })
@@ -2195,6 +2233,10 @@ original_request:    {}
 forge_status:        {}
 verification_status: {}
 promotion_status:    {}
+verified_at:         {}
+verification_note:   {}
+promoted_at:         {}
+promotion_note:      {}
 candidate_manifest:  {}
 verification_job:    {}
 verification_exec:   {}
@@ -2217,6 +2259,10 @@ last_note:           {}
         result.gap.forge_status,
         result.gap.verification_status,
         result.gap.promotion_status,
+        if result.gap.verified_at.is_empty() { "(never)" } else { &result.gap.verified_at },
+        if result.gap.verification_note.is_empty() { "(none)" } else { &result.gap.verification_note },
+        if result.gap.promoted_at.is_empty() { "(never)" } else { &result.gap.promoted_at },
+        if result.gap.promotion_note.is_empty() { "(none)" } else { &result.gap.promotion_note },
         if result.gap.candidate_manifest_path.is_empty() { "(none)" } else { &result.gap.candidate_manifest_path },
         if result.gap.verification_job_id.is_empty() { "(none)" } else { &result.gap.verification_job_id },
         if result.gap.verification_execution_id.is_empty() { "(none)" } else { &result.gap.verification_execution_id },
@@ -3249,7 +3295,7 @@ parser.add_argument("--out")
                 kernel_path: "/tmp/kernel".to_string(),
                 action_type: String::new(),
                 resource: String::new(),
-                payload_json: "{\"artifact_path\":\"/tmp/sample.bin\"}".to_string(),
+                payload_json: r#"{"artifact_path":"/tmp/sample.bin"}"#.to_string(),
                 run_id: String::new(),
                 session_id: String::new(),
                 original_request_json: String::new(),
@@ -3279,6 +3325,8 @@ parser.add_argument("--out")
         )
         .expect("update verify");
         assert_eq!(verified.gap.verification_status, "verified");
+        assert_eq!(verified.gap.verification_note, "verification matched expectations");
+        assert!(!verified.gap.verified_at.is_empty());
 
         let promoted = update_capability_gap_promotion(
             &root,
@@ -3289,5 +3337,70 @@ parser.add_argument("--out")
         )
         .expect("update promote");
         assert_eq!(promoted.gap.promotion_status, "promoted");
+        assert_eq!(promoted.gap.promotion_note, "promotion succeeded");
+        assert!(!promoted.gap.promoted_at.is_empty());
+
+        let persisted = load_capability_gap(&root, &config, &gap.gap.gap_id).expect("reload gap");
+        assert_eq!(persisted.verification_note, verified.gap.verification_note);
+        assert_eq!(persisted.verified_at, verified.gap.verified_at);
+        assert_eq!(persisted.promotion_note, promoted.gap.promotion_note);
+        assert_eq!(persisted.promoted_at, promoted.gap.promoted_at);
+    }
+
+    #[test]
+    fn capability_gap_record_persists_verification_and_promotion_evidence() {
+        let root = temp_path("loom-cap-gap-evidence");
+        let config = sample_config();
+        ensure_capability_registry_scaffold(&root, &config).expect("registry scaffold");
+
+        let gap = record_capability_gap(
+            &root,
+            &config,
+            &CapabilityGapRequest {
+                request_id: String::new(),
+                requested_via: "action_execute".to_string(),
+                capability_name: "loomforge.artifact-triage.demo.v0".to_string(),
+                gap_class: "artifact_triage".to_string(),
+                goal: "suspicious artifact triage".to_string(),
+                proposed_capability_name: "loomforge.artifact-triage.demo.v0".to_string(),
+                agent_id: "agent_tutorial".to_string(),
+                org_id: "org_tutorial".to_string(),
+                kernel_path: "/tmp/kernel".to_string(),
+                action_type: String::new(),
+                resource: String::new(),
+                payload_json: r#"{"artifact_path":"/tmp/sample.bin"}"#.to_string(),
+                run_id: String::new(),
+                session_id: String::new(),
+                original_request_json: String::new(),
+            },
+        )
+        .expect("record gap");
+
+        let verified = update_capability_gap_verification(
+            &root,
+            &config,
+            &gap.gap.gap_id,
+            "verified",
+            "job::verify",
+            "execution::verify",
+            "verification matched expectations",
+        )
+        .expect("update verify");
+        let promoted = update_capability_gap_promotion(
+            &root,
+            &config,
+            &gap.gap.gap_id,
+            "promoted",
+            "promotion succeeded",
+        )
+        .expect("update promote");
+
+        let persisted = load_capability_gap(&root, &config, &gap.gap.gap_id).expect("reload gap");
+        assert_eq!(persisted.verification_status, "verified");
+        assert_eq!(persisted.verification_note, "verification matched expectations");
+        assert_eq!(persisted.verified_at, verified.gap.verified_at);
+        assert_eq!(persisted.promotion_status, "promoted");
+        assert_eq!(persisted.promotion_note, "promotion succeeded");
+        assert_eq!(persisted.promoted_at, promoted.gap.promoted_at);
     }
 }
