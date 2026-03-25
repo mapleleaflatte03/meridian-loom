@@ -1,6 +1,6 @@
 == Meridian Loom // Capability Forge Lifecycle ==
 root:   /tmp/loom-capability-forge-lifecycle
-kernel: /tmp/loom-capability-forge-kernel.0ZwCQX
+kernel: /tmp/loom-capability-forge-kernel.O5vzhK
 agent:  agent_tutorial
 org:    org_tutorial
 
@@ -17,12 +17,12 @@ state_dir:   state
 run_dir:     run
 log_dir:     logs
 artifact_dir: artifacts
-kernel_path: /tmp/loom-capability-forge-kernel.0ZwCQX
+kernel_path: /tmp/loom-capability-forge-kernel.O5vzhK
 status:      initialized local-first runtime root
 next_step:   loom doctor --root /tmp/loom-capability-forge-lifecycle --format human
 
 --- Step 2: Missing capability gap ---
-{"gap":{"action_type":"","agent_id":"agent_tutorial","candidate_manifest_path":"","capability_name":"loomforge.artifact-triage.suspicious-artifact-triage.v0","forge_status":"missing_request_recorded","gap_class":"artifact_triage","gap_id":"gap-1774358956746-loomforge-artifact-triage-suspicious-artifact-triage-v0","goal":"suspicious artifact triage","last_note":"missing capability recorded for bounded forge follow-up","org_id":"org_tutorial","payload_json":"{\"artifact_path\":\"missing\"}","promotion_status":"candidate","proposed_capability_name":"loomforge.artifact-triage.suspicious-artifact-triage.v0","requested_at":"1774358956","requested_via":"action_execute","resource":"","run_id":"","session_id":"","updated_at":"1774358956","verification_execution_id":"","verification_job_id":"","verification_status":"unverified"},"gap_path":"/tmp/loom-capability-forge-lifecycle/capabilities/gaps/gap-1774358956746-loomforge-artifact-triage-suspicious-artifact-triage-v0.json"}
+{"gap":{"action_type":"","agent_id":"agent_tutorial","candidate_manifest_path":"","capability_name":"loomforge.artifact-triage.suspicious-artifact-triage.v0","forge_status":"missing_request_recorded","gap_class":"artifact_triage","gap_id":"gap-1774461895907-loomforge-artifact-triage-suspicious-artifact-triage-v0","goal":"suspicious artifact triage","kernel_path":"/tmp/loom-capability-forge-kernel.O5vzhK","last_note":"missing capability recorded for bounded forge follow-up","org_id":"org_tutorial","original_request_json":"{\"action_type\":\"\",\"agent_id\":\"agent_tutorial\",\"capability_name\":\"loomforge.artifact-triage.suspicious-artifact-triage.v0\",\"gap_class\":\"artifact_triage\",\"goal\":\"suspicious artifact triage\",\"kernel_path\":\"/tmp/loom-capability-forge-kernel.O5vzhK\",\"org_id\":\"org_tutorial\",\"payload_json\":\"{\\\"artifact_path\\\":\\\"missing\\\"}\",\"proposed_capability_name\":\"loomforge.artifact-triage.suspicious-artifact-triage.v0\",\"request_id\":\"request-1774461895907-loomforge-artifact-triage-suspicious-artifact-triage-v0\",\"requested_via\":\"action_execute\",\"resource\":\"\",\"run_id\":\"\",\"session_id\":\"\"}","payload_json":"{\"artifact_path\":\"missing\"}","promoted_at":"","promotion_note":"","promotion_status":"candidate","proposed_capability_name":"loomforge.artifact-triage.suspicious-artifact-triage.v0","request_id":"request-1774461895907-loomforge-artifact-triage-suspicious-artifact-triage-v0","requested_at":"1774461895","requested_via":"action_execute","resource":"","run_id":"","session_id":"","updated_at":"1774461895","verification_execution_id":"","verification_job_id":"","verification_note":"","verification_status":"unverified","verified_at":""},"gap_path":"/tmp/loom-capability-forge-lifecycle/capabilities/gaps/gap-1774461895907-loomforge-artifact-triage-suspicious-artifact-triage-v0.json"}
 
 --- Step 3: Forge a capability candidate from a bounded gap class ---
 Meridian Loom // CAPABILITY FORGE
@@ -40,8 +40,9 @@ note:              candidate capability forged into Loom runtime and ready for v
 
 Meridian Loom // CAPABILITY GAP
 ================================
-gap_id:              gap-1774358956746-loomforge-artifact-triage-suspicious-artifact-triage-v0
-gap_path:            /tmp/loom-capability-forge-lifecycle/capabilities/gaps/gap-1774358956746-loomforge-artifact-triage-suspicious-artifact-triage-v0.json
+gap_id:              gap-1774461895907-loomforge-artifact-triage-suspicious-artifact-triage-v0
+request_id:          request-1774461895907-loomforge-artifact-triage-suspicious-artifact-triage-v0
+gap_path:            /tmp/loom-capability-forge-lifecycle/capabilities/gaps/gap-1774461895907-loomforge-artifact-triage-suspicious-artifact-triage-v0.json
 requested_via:       action_execute
 capability_name:     loomforge.artifact-triage.suspicious-artifact-triage.v0
 gap_class:           artifact_triage
@@ -49,11 +50,17 @@ goal:                suspicious artifact triage
 proposed_capability: loomforge.artifact-triage.suspicious-artifact-triage.v0
 agent_id:            agent_tutorial
 org_id:              org_tutorial
+kernel_path:         /tmp/loom-capability-forge-kernel.O5vzhK
 action_type:         (none)
 resource:            (none)
+original_request:    {"action_type":"","agent_id":"agent_tutorial","capability_name":"loomforge.artifact-triage.suspicious-artifact-triage.v0","gap_class":"artifact_triage","goal":"suspicious artifact triage","kernel_path":"/tmp/loom-capability-forge-kernel.O5vzhK","org_id":"org_tutorial","payload_json":"{\"artifact_path\":\"missing\"}","proposed_capability_name":"loomforge.artifact-triage.suspicious-artifact-triage.v0","request_id":"request-1774461895907-loomforge-artifact-triage-suspicious-artifact-triage-v0","requested_via":"action_execute","resource":"","run_id":"","session_id":""}
 forge_status:        candidate_forged
 verification_status: unverified
 promotion_status:    candidate
+verified_at:         (never)
+verification_note:   (none)
+promoted_at:         (never)
+promotion_note:      (none)
 candidate_manifest:  /tmp/loom-capability-forge-lifecycle/capabilities/custom/loomforge-artifact-triage-suspicious-artifact-triage-v0.json
 verification_job:    (none)
 verification_exec:   (none)
@@ -104,7 +111,7 @@ Artifacts
 =========
 - artifact::execution_receipt::job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de::execution__job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de__ok__worker_executed::runtime_execution | kind=execution_receipt | label=runtime_execution | path=/tmp/loom-capability-forge-lifecycle/state/runtime/last_execution.json | source=loom.runtime.v1::org_tutorial::agent_tutorial::artifact_inspect::capability_loomforge.artifact-triage.suspicious-artifact-triage.v0::worker_executed::ok::job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de::execution__job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de__ok__worker_executed | note=runtime execution receipt
 - artifact::decision_receipt::job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de::execution__job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de__ok__worker_executed::runtime_decision | kind=decision_receipt | label=runtime_decision | path=/tmp/loom-capability-forge-lifecycle/artifacts/shadow/decision.json | source=loom.runtime.v1::org_tutorial::agent_tutorial::artifact_inspect::capability_loomforge.artifact-triage.suspicious-artifact-triage.v0::worker_executed::ok::job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de::execution__job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de__ok__worker_executed | note=pre-execution decision artifact
-- artifact::audit_log::job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de::execution__job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de__ok__worker_executed::runtime_audit | kind=audit_log | label=runtime_audit | path=/tmp/loom-capability-forge-kernel.0ZwCQX/kernel/runtime_audit/loom_runtime_events.jsonl | source=loom.runtime.v1::org_tutorial::agent_tutorial::artifact_inspect::capability_loomforge.artifact-triage.suspicious-artifact-triage.v0::worker_executed::ok::job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de::execution__job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de__ok__worker_executed | note=kernel-owned runtime audit status=runtime_event_written_local_fallback
+- artifact::audit_log::job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de::execution__job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de__ok__worker_executed::runtime_audit | kind=audit_log | label=runtime_audit | path=/tmp/loom-capability-forge-kernel.O5vzhK/kernel/runtime_audit/loom_runtime_events.jsonl | source=loom.runtime.v1::org_tutorial::agent_tutorial::artifact_inspect::capability_loomforge.artifact-triage.suspicious-artifact-triage.v0::worker_executed::ok::job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de::execution__job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de__ok__worker_executed | note=kernel-owned runtime audit status=runtime_event_written_local_fallback
 - artifact::parity_stream::job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de::execution__job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de__ok__worker_executed::runtime_parity_stream | kind=parity_stream | label=runtime_parity_stream | path=/tmp/loom-capability-forge-lifecycle/artifacts/parity/stream.jsonl | source=loom.runtime.v1::org_tutorial::agent_tutorial::artifact_inspect::capability_loomforge.artifact-triage.suspicious-artifact-triage.v0::worker_executed::ok::job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de::execution__job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de__ok__worker_executed | note=parity_status=match
 - artifact::parity_report::job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de::execution__job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de__ok__worker_executed::runtime_parity_report | kind=parity_report | label=runtime_parity_report | path=/tmp/loom-capability-forge-lifecycle/artifacts/parity/latest.json | source=loom.runtime.v1::org_tutorial::agent_tutorial::artifact_inspect::capability_loomforge.artifact-triage.suspicious-artifact-triage.v0::worker_executed::ok::job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de::execution__job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de__ok__worker_executed | note=reference and loom agreed on allow at stage ok
 - artifact::runtime_event::job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de::execution__job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de__ok__worker_executed::runtime_event | kind=runtime_event | label=runtime_event | path=/tmp/loom-capability-forge-lifecycle/artifacts/runtime/events/6ef9a5fa525576de.json | source=loom.runtime.v1::org_tutorial::agent_tutorial::artifact_inspect::capability_loomforge.artifact-triage.suspicious-artifact-triage.v0::worker_executed::ok::job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de::execution__job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de__ok__worker_executed | note=canonical runtime event receipt
@@ -126,7 +133,7 @@ execution_path:      /tmp/loom-capability-forge-lifecycle/state/runtime/last_exe
 runtime_event:       /tmp/loom-capability-forge-lifecycle/artifacts/runtime/events/6ef9a5fa525576de.json
 runtime_event_stream:/tmp/loom-capability-forge-lifecycle/artifacts/runtime/events/stream.jsonl
 decision_path:       /tmp/loom-capability-forge-lifecycle/artifacts/shadow/decision.json
-audit_log:           /tmp/loom-capability-forge-kernel.0ZwCQX/kernel/runtime_audit/loom_runtime_events.jsonl (runtime_event_written_local_fallback)
+audit_log:           /tmp/loom-capability-forge-kernel.O5vzhK/kernel/runtime_audit/loom_runtime_events.jsonl (runtime_event_written_local_fallback)
 parity_stream:       /tmp/loom-capability-forge-lifecycle/artifacts/parity/stream.jsonl
 parity_report:       /tmp/loom-capability-forge-lifecycle/artifacts/parity/latest.json
 openclaw_live_probe: (not captured) (not_available)
@@ -138,7 +145,7 @@ Next
 2. loom parity report --root /tmp/loom-capability-forge-lifecycle
 3. loom shadow report --root /tmp/loom-capability-forge-lifecycle
 4. Inspect /tmp/loom-capability-forge-lifecycle/state/runtime/jobs/6ef9a5fa525576de/worker.log for worker execution details.
-5. Inspect /tmp/loom-capability-forge-kernel.0ZwCQX/kernel/runtime_audit/loom_runtime_events.jsonl for runtime-side audit details.
+5. Inspect /tmp/loom-capability-forge-kernel.O5vzhK/kernel/runtime_audit/loom_runtime_events.jsonl for runtime-side audit details.
 
 
 Meridian Loom // CAPABILITY VERIFY
@@ -146,7 +153,7 @@ Meridian Loom // CAPABILITY VERIFY
 name:              loomforge.artifact-triage.suspicious-artifact-triage.v0
 manifest:          /tmp/loom-capability-forge-lifecycle/capabilities/custom/loomforge-artifact-triage-suspicious-artifact-triage-v0.json
 verification:      verified
-verified_at:       1774358956
+verified_at:       1774461896
 verify_job:        6ef9a5fa525576de
 verify_exec:       execution::job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de::ok::worker_executed
 verification_note: runtime_outcome=worker_executed worker_status=completed effective_stage=ok | expectations=matched
@@ -156,8 +163,9 @@ promoted_at:       (never)
 
 Meridian Loom // CAPABILITY GAP
 ================================
-gap_id:              gap-1774358956746-loomforge-artifact-triage-suspicious-artifact-triage-v0
-gap_path:            /tmp/loom-capability-forge-lifecycle/capabilities/gaps/gap-1774358956746-loomforge-artifact-triage-suspicious-artifact-triage-v0.json
+gap_id:              gap-1774461895907-loomforge-artifact-triage-suspicious-artifact-triage-v0
+request_id:          request-1774461895907-loomforge-artifact-triage-suspicious-artifact-triage-v0
+gap_path:            /tmp/loom-capability-forge-lifecycle/capabilities/gaps/gap-1774461895907-loomforge-artifact-triage-suspicious-artifact-triage-v0.json
 requested_via:       action_execute
 capability_name:     loomforge.artifact-triage.suspicious-artifact-triage.v0
 gap_class:           artifact_triage
@@ -165,11 +173,17 @@ goal:                suspicious artifact triage
 proposed_capability: loomforge.artifact-triage.suspicious-artifact-triage.v0
 agent_id:            agent_tutorial
 org_id:              org_tutorial
+kernel_path:         /tmp/loom-capability-forge-kernel.O5vzhK
 action_type:         (none)
 resource:            (none)
+original_request:    {"action_type":"","agent_id":"agent_tutorial","capability_name":"loomforge.artifact-triage.suspicious-artifact-triage.v0","gap_class":"artifact_triage","goal":"suspicious artifact triage","kernel_path":"/tmp/loom-capability-forge-kernel.O5vzhK","org_id":"org_tutorial","payload_json":"{\"artifact_path\":\"missing\"}","proposed_capability_name":"loomforge.artifact-triage.suspicious-artifact-triage.v0","request_id":"request-1774461895907-loomforge-artifact-triage-suspicious-artifact-triage-v0","requested_via":"action_execute","resource":"","run_id":"","session_id":""}
 forge_status:        candidate_forged
 verification_status: verified
 promotion_status:    candidate
+verified_at:         1774461896
+verification_note:   runtime_outcome=worker_executed worker_status=completed effective_stage=ok | expectations=matched
+promoted_at:         (never)
+promotion_note:      (none)
 candidate_manifest:  /tmp/loom-capability-forge-lifecycle/capabilities/custom/loomforge-artifact-triage-suspicious-artifact-triage-v0.json
 verification_job:    6ef9a5fa525576de
 verification_exec:   execution::job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de::ok::worker_executed
@@ -181,18 +195,19 @@ Meridian Loom // CAPABILITY PROMOTE
 name:              loomforge.artifact-triage.suspicious-artifact-triage.v0
 manifest:          /tmp/loom-capability-forge-lifecycle/capabilities/custom/loomforge-artifact-triage-suspicious-artifact-triage-v0.json
 verification:      verified
-verified_at:       1774358956
+verified_at:       1774461896
 verify_job:        6ef9a5fa525576de
 verify_exec:       execution::job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de::ok::worker_executed
 verification_note: runtime_outcome=worker_executed worker_status=completed effective_stage=ok | expectations=matched
 promotion:         promoted
-promoted_at:       1774358956
+promoted_at:       1774461896
 
 
 Meridian Loom // CAPABILITY GAP
 ================================
-gap_id:              gap-1774358956746-loomforge-artifact-triage-suspicious-artifact-triage-v0
-gap_path:            /tmp/loom-capability-forge-lifecycle/capabilities/gaps/gap-1774358956746-loomforge-artifact-triage-suspicious-artifact-triage-v0.json
+gap_id:              gap-1774461895907-loomforge-artifact-triage-suspicious-artifact-triage-v0
+request_id:          request-1774461895907-loomforge-artifact-triage-suspicious-artifact-triage-v0
+gap_path:            /tmp/loom-capability-forge-lifecycle/capabilities/gaps/gap-1774461895907-loomforge-artifact-triage-suspicious-artifact-triage-v0.json
 requested_via:       action_execute
 capability_name:     loomforge.artifact-triage.suspicious-artifact-triage.v0
 gap_class:           artifact_triage
@@ -200,11 +215,17 @@ goal:                suspicious artifact triage
 proposed_capability: loomforge.artifact-triage.suspicious-artifact-triage.v0
 agent_id:            agent_tutorial
 org_id:              org_tutorial
+kernel_path:         /tmp/loom-capability-forge-kernel.O5vzhK
 action_type:         (none)
 resource:            (none)
+original_request:    {"action_type":"","agent_id":"agent_tutorial","capability_name":"loomforge.artifact-triage.suspicious-artifact-triage.v0","gap_class":"artifact_triage","goal":"suspicious artifact triage","kernel_path":"/tmp/loom-capability-forge-kernel.O5vzhK","org_id":"org_tutorial","payload_json":"{\"artifact_path\":\"missing\"}","proposed_capability_name":"loomforge.artifact-triage.suspicious-artifact-triage.v0","request_id":"request-1774461895907-loomforge-artifact-triage-suspicious-artifact-triage-v0","requested_via":"action_execute","resource":"","run_id":"","session_id":""}
 forge_status:        candidate_forged
 verification_status: verified
 promotion_status:    promoted
+verified_at:         1774461896
+verification_note:   runtime_outcome=worker_executed worker_status=completed effective_stage=ok | expectations=matched
+promoted_at:         1774461896
+promotion_note:      gap candidate promoted after verification
 candidate_manifest:  /tmp/loom-capability-forge-lifecycle/capabilities/custom/loomforge-artifact-triage-suspicious-artifact-triage-v0.json
 verification_job:    6ef9a5fa525576de
 verification_exec:   execution::job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de::ok::worker_executed
@@ -213,8 +234,9 @@ last_note:           gap candidate promoted after verification
 --- Step 6: Show capability gap state ---
 Meridian Loom // CAPABILITY GAP
 ================================
-gap_id:              gap-1774358956746-loomforge-artifact-triage-suspicious-artifact-triage-v0
-gap_path:            /tmp/loom-capability-forge-lifecycle/capabilities/gaps/gap-1774358956746-loomforge-artifact-triage-suspicious-artifact-triage-v0.json
+gap_id:              gap-1774461895907-loomforge-artifact-triage-suspicious-artifact-triage-v0
+request_id:          request-1774461895907-loomforge-artifact-triage-suspicious-artifact-triage-v0
+gap_path:            /tmp/loom-capability-forge-lifecycle/capabilities/gaps/gap-1774461895907-loomforge-artifact-triage-suspicious-artifact-triage-v0.json
 requested_via:       action_execute
 capability_name:     loomforge.artifact-triage.suspicious-artifact-triage.v0
 gap_class:           artifact_triage
@@ -222,11 +244,17 @@ goal:                suspicious artifact triage
 proposed_capability: loomforge.artifact-triage.suspicious-artifact-triage.v0
 agent_id:            agent_tutorial
 org_id:              org_tutorial
+kernel_path:         /tmp/loom-capability-forge-kernel.O5vzhK
 action_type:         (none)
 resource:            (none)
+original_request:    {"action_type":"","agent_id":"agent_tutorial","capability_name":"loomforge.artifact-triage.suspicious-artifact-triage.v0","gap_class":"artifact_triage","goal":"suspicious artifact triage","kernel_path":"/tmp/loom-capability-forge-kernel.O5vzhK","org_id":"org_tutorial","payload_json":"{\"artifact_path\":\"missing\"}","proposed_capability_name":"loomforge.artifact-triage.suspicious-artifact-triage.v0","request_id":"request-1774461895907-loomforge-artifact-triage-suspicious-artifact-triage-v0","requested_via":"action_execute","resource":"","run_id":"","session_id":""}
 forge_status:        candidate_forged
 verification_status: verified
 promotion_status:    promoted
+verified_at:         1774461896
+verification_note:   runtime_outcome=worker_executed worker_status=completed effective_stage=ok | expectations=matched
+promoted_at:         1774461896
+promotion_note:      gap candidate promoted after verification
 candidate_manifest:  /tmp/loom-capability-forge-lifecycle/capabilities/custom/loomforge-artifact-triage-suspicious-artifact-triage-v0.json
 verification_job:    6ef9a5fa525576de
 verification_exec:   execution::job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de::ok::worker_executed
@@ -339,7 +367,7 @@ Artifacts
 =========
 - artifact::execution_receipt::job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de::execution__job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de__ok__worker_executed::runtime_execution | kind=execution_receipt | label=runtime_execution | path=/tmp/loom-capability-forge-lifecycle/state/runtime/last_execution.json | source=loom.runtime.v1::org_tutorial::agent_tutorial::artifact_inspect::capability_loomforge.artifact-triage.suspicious-artifact-triage.v0::worker_executed::ok::job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de::execution__job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de__ok__worker_executed | note=runtime execution receipt
 - artifact::decision_receipt::job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de::execution__job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de__ok__worker_executed::runtime_decision | kind=decision_receipt | label=runtime_decision | path=/tmp/loom-capability-forge-lifecycle/artifacts/shadow/decision.json | source=loom.runtime.v1::org_tutorial::agent_tutorial::artifact_inspect::capability_loomforge.artifact-triage.suspicious-artifact-triage.v0::worker_executed::ok::job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de::execution__job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de__ok__worker_executed | note=pre-execution decision artifact
-- artifact::audit_log::job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de::execution__job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de__ok__worker_executed::runtime_audit | kind=audit_log | label=runtime_audit | path=/tmp/loom-capability-forge-kernel.0ZwCQX/kernel/runtime_audit/loom_runtime_events.jsonl | source=loom.runtime.v1::org_tutorial::agent_tutorial::artifact_inspect::capability_loomforge.artifact-triage.suspicious-artifact-triage.v0::worker_executed::ok::job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de::execution__job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de__ok__worker_executed | note=kernel-owned runtime audit status=runtime_event_written_local_fallback
+- artifact::audit_log::job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de::execution__job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de__ok__worker_executed::runtime_audit | kind=audit_log | label=runtime_audit | path=/tmp/loom-capability-forge-kernel.O5vzhK/kernel/runtime_audit/loom_runtime_events.jsonl | source=loom.runtime.v1::org_tutorial::agent_tutorial::artifact_inspect::capability_loomforge.artifact-triage.suspicious-artifact-triage.v0::worker_executed::ok::job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de::execution__job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de__ok__worker_executed | note=kernel-owned runtime audit status=runtime_event_written_local_fallback
 - artifact::parity_stream::job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de::execution__job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de__ok__worker_executed::runtime_parity_stream | kind=parity_stream | label=runtime_parity_stream | path=/tmp/loom-capability-forge-lifecycle/artifacts/parity/stream.jsonl | source=loom.runtime.v1::org_tutorial::agent_tutorial::artifact_inspect::capability_loomforge.artifact-triage.suspicious-artifact-triage.v0::worker_executed::ok::job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de::execution__job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de__ok__worker_executed | note=parity_status=match
 - artifact::parity_report::job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de::execution__job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de__ok__worker_executed::runtime_parity_report | kind=parity_report | label=runtime_parity_report | path=/tmp/loom-capability-forge-lifecycle/artifacts/parity/latest.json | source=loom.runtime.v1::org_tutorial::agent_tutorial::artifact_inspect::capability_loomforge.artifact-triage.suspicious-artifact-triage.v0::worker_executed::ok::job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de::execution__job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de__ok__worker_executed | note=reference and loom agreed on allow at stage ok
 - artifact::runtime_event::job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de::execution__job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de__ok__worker_executed::runtime_event | kind=runtime_event | label=runtime_event | path=/tmp/loom-capability-forge-lifecycle/artifacts/runtime/events/6ef9a5fa525576de.json | source=loom.runtime.v1::org_tutorial::agent_tutorial::artifact_inspect::capability_loomforge.artifact-triage.suspicious-artifact-triage.v0::worker_executed::ok::job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de::execution__job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de__ok__worker_executed | note=canonical runtime event receipt
@@ -361,7 +389,7 @@ execution_path:      /tmp/loom-capability-forge-lifecycle/state/runtime/last_exe
 runtime_event:       /tmp/loom-capability-forge-lifecycle/artifacts/runtime/events/6ef9a5fa525576de.json
 runtime_event_stream:/tmp/loom-capability-forge-lifecycle/artifacts/runtime/events/stream.jsonl
 decision_path:       /tmp/loom-capability-forge-lifecycle/artifacts/shadow/decision.json
-audit_log:           /tmp/loom-capability-forge-kernel.0ZwCQX/kernel/runtime_audit/loom_runtime_events.jsonl (runtime_event_written_local_fallback)
+audit_log:           /tmp/loom-capability-forge-kernel.O5vzhK/kernel/runtime_audit/loom_runtime_events.jsonl (runtime_event_written_local_fallback)
 parity_stream:       /tmp/loom-capability-forge-lifecycle/artifacts/parity/stream.jsonl
 parity_report:       /tmp/loom-capability-forge-lifecycle/artifacts/parity/latest.json
 openclaw_live_probe: (not captured) (not_available)
@@ -373,7 +401,7 @@ Next
 2. loom parity report --root /tmp/loom-capability-forge-lifecycle
 3. loom shadow report --root /tmp/loom-capability-forge-lifecycle
 4. Inspect /tmp/loom-capability-forge-lifecycle/state/runtime/jobs/6ef9a5fa525576de/worker.log for worker execution details.
-5. Inspect /tmp/loom-capability-forge-kernel.0ZwCQX/kernel/runtime_audit/loom_runtime_events.jsonl for runtime-side audit details.
+5. Inspect /tmp/loom-capability-forge-kernel.O5vzhK/kernel/runtime_audit/loom_runtime_events.jsonl for runtime-side audit details.
 
 --- Step 8: Show promoted capability ---
 Meridian Loom // CAPABILITY
@@ -395,12 +423,12 @@ runtime_lane:      python_host_process/forged_candidate
 dependency:        loom_generated_python
 env_contract:      host python3 + forged worker workers/python/forged-loomforge-artifact-triage-suspicious-artifact-triage-v0.py
 verification:      verified
-verified_at:       1774358956
+verified_at:       1774461896
 verify_job:        6ef9a5fa525576de
 verify_exec:       execution::job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de::ok::worker_executed
 verify_note:       runtime_outcome=worker_executed worker_status=completed effective_stage=ok | expectations=matched
 promotion:         promoted
-promoted_at:       1774358956
+promoted_at:       1774461896
 enabled:           true
 
 
@@ -409,8 +437,16 @@ Verification evidence
 manifest:          /tmp/loom-capability-forge-lifecycle/capabilities/custom/loomforge-artifact-triage-suspicious-artifact-triage-v0.json
 verification_job:  6ef9a5fa525576de
 verification_exec: execution::job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de::ok::worker_executed
+expectation_summary: runtime_outcome=worker_executed worker_status=completed effective_stage=ok | expectations=matched
 job_path:          /tmp/loom-capability-forge-lifecycle/state/runtime/jobs/6ef9a5fa525576de/job.json
+job_status:        completed
+job_stage:         runtime_execute
+runtime_outcome:   worker_executed
+worker_status:     completed
+budget_status:     committed
+failure_reason:    runtime worker completed
+job_note:          capability loomforge.artifact-triage.suspicious-artifact-triage.v0 dispatched via /tmp/loom-capability-forge-lifecycle/workers/python/forged-loomforge-artifact-triage-suspicious-artifact-triage-v0.py
 worker_result:     /tmp/loom-capability-forge-lifecycle/state/runtime/jobs/6ef9a5fa525576de/result.json
 event_path:        /tmp/loom-capability-forge-lifecycle/artifacts/runtime/events/6ef9a5fa525576de.json
-audit_log:         /tmp/loom-capability-forge-kernel.0ZwCQX/kernel/runtime_audit/loom_runtime_events.jsonl
+audit_log:         /tmp/loom-capability-forge-kernel.O5vzhK/kernel/runtime_audit/loom_runtime_events.jsonl
 parity_report:     /tmp/loom-capability-forge-lifecycle/artifacts/parity/latest.json
