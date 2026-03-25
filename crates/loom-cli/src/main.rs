@@ -329,7 +329,7 @@ fn handle_capability(args: &[String]) -> LoomResult<()> {
                 .ok_or_else(|| format!("capability '{}' not found", name))?;
             let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
             if format == "json" {
-                print!("{}", render_capability_json(&capability));
+                print!("{}", render_capability_show_json(&root, &capability)?);
             } else {
                 print_human_block(&[
                     render_capability_human(&capability),
@@ -1989,8 +1989,8 @@ fn render_capability_evidence_human(
         .join(format!("{}.json", sanitize_token(&capability.name)));
     if capability.last_verification_job_id.is_empty() {
         return format!(
-            "Verification evidence\n=====================\nmanifest:          {}\nverification_job:  (none)\nverification_note: capability has not been verified through Loom yet\n",
-            manifest_path.display()
+            "Verification evidence\n=====================\nmanifest:          {}\nverification_job:  (none)\nexpectation_summary: capability has not been verified through Loom yet\n",
+            manifest_path.display(),
         );
     }
     match inspect_job(root, &capability.last_verification_job_id) {
@@ -2001,7 +2001,7 @@ fn render_capability_evidence_human(
                 .map(|parent| parent.join("result.json"))
                 .unwrap_or_else(|| root.join("state/runtime/jobs/result.json"));
             format!(
-                "Verification evidence\n=====================\nmanifest:          {}\nverification_job:  {}\nverification_exec: {}\njob_path:          {}\nworker_result:     {}\nevent_path:        {}\naudit_log:         {}\nparity_report:     {}\n",
+                "Verification evidence\n=====================\nmanifest:          {}\nverification_job:  {}\nverification_exec: {}\nexpectation_summary: {}\njob_path:          {}\njob_status:        {}\njob_stage:         {}\nruntime_outcome:   {}\nworker_status:     {}\nbudget_status:     {}\nfailure_reason:    {}\njob_note:          {}\nworker_result:     {}\nevent_path:        {}\naudit_log:         {}\nparity_report:     {}\n",
                 manifest_path.display(),
                 capability.last_verification_job_id,
                 if capability.last_verification_execution_id.is_empty() {
@@ -2009,7 +2009,27 @@ fn render_capability_evidence_human(
                 } else {
                     &capability.last_verification_execution_id
                 },
+                if capability.verification_note.is_empty() {
+                    "(none)"
+                } else {
+                    &capability.verification_note
+                },
                 job.job_path.display(),
+                job.status,
+                job.stage,
+                job.runtime_outcome,
+                job.worker_status,
+                job.budget_reservation_status,
+                if job.budget_reservation_reason.is_empty() {
+                    if job.note.is_empty() {
+                        "(none)"
+                    } else {
+                        &job.note
+                    }
+                } else {
+                    &job.budget_reservation_reason
+                },
+                if job.note.is_empty() { "(none)" } else { &job.note },
                 worker_result_path.display(),
                 job.event_path
                     .as_ref()
@@ -2026,7 +2046,7 @@ fn render_capability_evidence_human(
             )
         }
         Err(error) => format!(
-            "Verification evidence\n=====================\nmanifest:          {}\nverification_job:  {}\nverification_exec: {}\nlookup_error:      {}\n",
+            "Verification evidence\n=====================\nmanifest:          {}\nverification_job:  {}\nverification_exec: {}\nexpectation_summary: {}\nlookup_error:      {}\n",
             manifest_path.display(),
             capability.last_verification_job_id,
             if capability.last_verification_execution_id.is_empty() {
@@ -2034,12 +2054,116 @@ fn render_capability_evidence_human(
             } else {
                 &capability.last_verification_execution_id
             },
+            if capability.verification_note.is_empty() {
+                "(none)"
+            } else {
+                &capability.verification_note
+            },
             error
         ),
     }
 }
 
+fn capability_verification_evidence_value(
+    root: &std::path::Path,
+    capability: &loom_core::capabilities::CapabilityDescriptor,
+) -> LoomResult<Value> {
+    let manifest_path = root
+        .join("capabilities")
+        .join("custom")
+        .join(format!("{}.json", sanitize_token(&capability.name)));
+    if capability.last_verification_job_id.is_empty() {
+        return Ok(serde_json::json!({
+            "manifest": manifest_path.display().to_string(),
+            "verification_job": Value::Null,
+            "expectation_summary": if capability.verification_note.is_empty() {
+                "capability has not been verified through Loom yet"
+            } else {
+                capability.verification_note.as_str()
+            },
+        }));
+    }
+
+    match inspect_job(root, &capability.last_verification_job_id) {
+        Ok(job) => {
+            let worker_result_path = job
+                .job_path
+                .parent()
+                .map(|parent| parent.join("result.json"))
+                .unwrap_or_else(|| root.join("state/runtime/jobs/result.json"));
+            Ok(serde_json::json!({
+                "manifest": manifest_path.display().to_string(),
+                "verification_job": capability.last_verification_job_id,
+                "verification_exec": if capability.last_verification_execution_id.is_empty() {
+                    Value::Null
+                } else {
+                    Value::String(capability.last_verification_execution_id.clone())
+                },
+                "expectation_summary": if capability.verification_note.is_empty() {
+                    Value::Null
+                } else {
+                    Value::String(capability.verification_note.clone())
+                },
+                "job_path": job.job_path.display().to_string(),
+                "job_status": job.status,
+                "job_stage": job.stage,
+                "runtime_outcome": job.runtime_outcome,
+                "worker_status": job.worker_status,
+                "budget_status": job.budget_reservation_status,
+                "failure_reason": if job.budget_reservation_reason.is_empty() {
+                    if job.note.is_empty() {
+                        Value::Null
+                    } else {
+                        Value::String(job.note.clone())
+                    }
+                } else {
+                    Value::String(job.budget_reservation_reason)
+                },
+                "job_note": if job.note.is_empty() {
+                    Value::Null
+                } else {
+                    Value::String(job.note)
+                },
+                "worker_result": worker_result_path.display().to_string(),
+                "event_path": job.event_path.map(|path| path.display().to_string()),
+                "audit_log": job.audit_log_path.map(|path| path.display().to_string()),
+                "parity_report": job.parity_report_path.map(|path| path.display().to_string()),
+            }))
+        }
+        Err(error) => Ok(serde_json::json!({
+            "manifest": manifest_path.display().to_string(),
+            "verification_job": capability.last_verification_job_id,
+            "verification_exec": if capability.last_verification_execution_id.is_empty() {
+                Value::Null
+            } else {
+                Value::String(capability.last_verification_execution_id.clone())
+            },
+            "expectation_summary": if capability.verification_note.is_empty() {
+                Value::Null
+            } else {
+                Value::String(capability.verification_note.clone())
+            },
+            "lookup_error": error,
+        })),
+    }
+}
+
+fn render_capability_show_json(
+    root: &std::path::Path,
+    capability: &loom_core::capabilities::CapabilityDescriptor,
+) -> LoomResult<String> {
+    let mut value: Value = serde_json::from_str(&render_capability_json(capability))
+        .map_err(|error| format!("failed to parse capability json: {}", error))?;
+    let evidence = capability_verification_evidence_value(root, capability)?;
+    if let Some(object) = value.as_object_mut() {
+        object.insert("verification_evidence".to_string(), evidence);
+    }
+    Ok(format!("{}\n", value))
+}
+
 fn verify_capability_expectations(
+
+
     worker_result: Option<&Value>,
     expect_summary_contains: Option<&str>,
     expect_result_fields: &[String],
@@ -2565,6 +2689,55 @@ fn style_human_line(line: &str) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::fs;
+    use std::path::Path;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use loom_core::capabilities::ensure_capability_registry_scaffold;
+
+    fn temp_path(label: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("{}-{}", label, unique));
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir_all(&path).expect("create temp path");
+        path
+    }
+
+    fn sample_config() -> loom_core::Config {
+        loom_core::Config {
+            mode: "embedded".to_string(),
+            kernel_path: String::new(),
+            org_id: "local_foundry".to_string(),
+            state_dir: "state".to_string(),
+            run_dir: "run".to_string(),
+            log_dir: "logs".to_string(),
+            artifact_dir: "artifacts".to_string(),
+            capabilities_dir: "capabilities".to_string(),
+            python_path: "workers/python".to_string(),
+            typescript_path: "workers/typescript".to_string(),
+            wasm_dir: "workers/wasm".to_string(),
+            service_http_address: "127.0.0.1:18910".to_string(),
+            service_token_env: "LOOM_SERVICE_TOKEN".to_string(),
+            service_max_jobs: 8,
+            service_poll_seconds: 1,
+            service_max_iterations: 0,
+            log_level: "info".to_string(),
+            log_format: "jsonl".to_string(),
+            log_max_bytes: 1024,
+            log_max_files: 3,
+            openclaw_integration: "off".to_string(),
+            openclaw_delivery_queue: "/tmp/openclaw".to_string(),
+        }
+    }
+
+    fn write_job_snapshot(root: &Path, job_id: &str, job_json: &str) {
+        let job_dir = root.join("state/runtime/jobs").join(job_id);
+        fs::create_dir_all(&job_dir).expect("create job dir");
+        fs::write(job_dir.join("job.json"), job_json).expect("write job snapshot");
+    }
 
     #[test]
     fn verify_expectations_accepts_matching_summary_and_fields() {
@@ -2624,4 +2797,109 @@ mod tests {
         .expect("verify expectations");
         assert!(failures.is_empty());
     }
+
+    #[test]
+    fn capability_show_exposes_verification_evidence_and_reject_reasons() {
+        let root = temp_path("loom-cap-show-evidence");
+        let config = sample_config();
+        ensure_capability_registry_scaffold(&root, &config).expect("registry scaffold");
+        scaffold_capability(
+            &root,
+            &config,
+            &CapabilityScaffoldRequest {
+                name: "local.custom.reject".to_string(),
+                description: "custom reject".to_string(),
+                action_type: "respond".to_string(),
+                resource: "capability:local.custom.reject".to_string(),
+                worker_kind: "python".to_string(),
+                worker_entry: String::new(),
+                wasm_module: String::new(),
+                payload_mode: "json".to_string(),
+            },
+        )
+        .expect("scaffold");
+
+        let job_id = "job::reject";
+        let execution_id = "execution::reject";
+        let job_path = root.join("state/runtime/jobs").join(job_id).join("job.json");
+        write_job_snapshot(
+            &root,
+            job_id,
+            &json!({
+                "job_id": job_id,
+                "job_path": job_path.display().to_string(),
+                "job_status": "failed",
+                "job_stage": "rejected",
+                "queue_bucket": "reject",
+                "queued_at": "1234567890",
+                "updated_at": "1234567891",
+                "agent_id": "agent_tutorial",
+                "org_id": "org_tutorial",
+                "action_type": "respond",
+                "resource": "capability:local.custom.reject",
+                "estimated_cost_usd": "0.050000",
+                "runtime_outcome": "worker_rejected",
+                "budget_reservation_id": null,
+                "budget_reservation_status": "denied",
+                "budget_reservation_reason": "policy reject: missing fixture set",
+                "worker_status": "rejected",
+                "queue_path": null,
+                "decision_path": null,
+                "execution_path": null,
+                "event_path": null,
+                "event_stream_path": null,
+                "audit_log_path": null,
+                "parity_report_path": null,
+                "reservation_id": null,
+                "reservation_state": "denied",
+                "attempt_count": 1,
+                "note": "reject reason: missing fixture set"
+            })
+            .to_string(),
+        );
+
+        update_capability_verification(
+            &root,
+            &config,
+            "local.custom.reject",
+            "failed",
+            "1234567892",
+            job_id,
+            execution_id,
+            "runtime_outcome=worker_rejected | expectation_failures=summary missing fragment: suspicious.exe",
+        )
+        .expect("update verification");
+
+        let capability = find_capability_by_name(&root, &config, "local.custom.reject")
+            .expect("resolve capability")
+            .expect("capability present");
+
+        let json_output = render_capability_show_json(&root, &capability).expect("render json");
+        let value: Value = serde_json::from_str(&json_output).expect("parse show json");
+        let evidence = value
+            .get("verification_evidence")
+            .and_then(Value::as_object)
+            .expect("verification evidence");
+
+        assert_eq!(evidence.get("job_status").and_then(Value::as_str), Some("failed"));
+        assert_eq!(evidence.get("job_stage").and_then(Value::as_str), Some("rejected"));
+        assert_eq!(
+            evidence.get("expectation_summary").and_then(Value::as_str),
+            Some("runtime_outcome=worker_rejected | expectation_failures=summary missing fragment: suspicious.exe")
+        );
+        assert_eq!(
+            evidence.get("failure_reason").and_then(Value::as_str),
+            Some("policy reject: missing fixture set")
+        );
+        assert_eq!(
+            evidence.get("job_note").and_then(Value::as_str),
+            Some("reject reason: missing fixture set")
+        );
+
+        let human = render_capability_evidence_human(&root, &capability);
+        assert!(human.contains("expectation_summary: runtime_outcome=worker_rejected"));
+        assert!(human.contains("failure_reason:    policy reject: missing fixture set"));
+        assert!(human.contains("job_note:          reject reason: missing fixture set"));
+    }
+
 }
