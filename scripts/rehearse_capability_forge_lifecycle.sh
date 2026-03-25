@@ -194,6 +194,9 @@ echo "--- Step 1: Initialize workspace ---"
   --kernel-path "${KERNEL_PATH}" \
   --root "${ROOT_DIR}" \
   --org-id org_tutorial
+ARTIFACT_DIR="${ROOT_DIR}/samples"
+mkdir -p "${ARTIFACT_DIR}"
+
 echo ""
 
 echo "--- Step 2: Missing capability gap ---"
@@ -205,7 +208,7 @@ GAP_JSON="$("${LOOM}" action execute \
   --capability "${CAPABILITY_NAME}" \
   --gap-class artifact_triage \
   --goal "suspicious artifact triage" \
-  --payload-json '{"artifact_path":"missing"}' \
+  --payload-json "{\"artifact_path\":\"${ARTIFACT_DIR}/suspicious.bin\"}" \
   --estimated-cost-usd 0.05 \
   --format json)"
 printf '%s\n' "${GAP_JSON}"
@@ -222,8 +225,6 @@ echo "--- Step 3: Forge a capability candidate from a bounded gap class ---"
   --gap-id "${GAP_ID}"
 echo ""
 
-ARTIFACT_DIR="${ROOT_DIR}/samples"
-mkdir -p "${ARTIFACT_DIR}"
 python3 - <<'PY' "${ARTIFACT_DIR}/suspicious.bin"
 from pathlib import Path
 import sys
@@ -259,17 +260,10 @@ echo "--- Step 6: Show capability gap state ---"
 "${LOOM}" capability gap show --root "${ROOT_DIR}" --gap-id "${GAP_ID}"
 echo ""
 
-echo "--- Step 7: Re-run the previously missing request successfully ---"
-"${LOOM}" action execute \
+echo "--- Step 7: Replay the previously missing request through the recorded gap ---"
+"${LOOM}" capability gap replay \
   --root "${ROOT_DIR}" \
-  --kernel-path "${KERNEL_PATH}" \
-  --agent-id agent_tutorial \
-  --org-id org_tutorial \
-  --capability "${CAPABILITY_NAME}" \
-  --payload-json "{\"artifact_path\":\"${ARTIFACT_DIR}/suspicious.bin\"}" \
-  --estimated-cost-usd 0.05 \
-  --format human
+  --gap-id "${GAP_ID}"
 echo ""
-
 echo "--- Step 8: Show promoted capability ---"
 "${LOOM}" capability show --root "${ROOT_DIR}" --name "${CAPABILITY_NAME}"

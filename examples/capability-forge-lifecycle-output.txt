@@ -22,7 +22,7 @@ status:      initialized local-first runtime root
 next_step:   loom doctor --root /tmp/loom-capability-forge-lifecycle --format human
 
 --- Step 2: Missing capability gap ---
-{"gap":{"action_type":"","agent_id":"agent_tutorial","candidate_manifest_path":"","capability_name":"loomforge.artifact-triage.suspicious-artifact-triage.v0","forge_status":"missing_request_recorded","gap_class":"artifact_triage","gap_id":"gap-1774461895907-loomforge-artifact-triage-suspicious-artifact-triage-v0","goal":"suspicious artifact triage","kernel_path":"/tmp/loom-capability-forge-kernel.O5vzhK","last_note":"missing capability recorded for bounded forge follow-up","org_id":"org_tutorial","original_request_json":"{\"action_type\":\"\",\"agent_id\":\"agent_tutorial\",\"capability_name\":\"loomforge.artifact-triage.suspicious-artifact-triage.v0\",\"gap_class\":\"artifact_triage\",\"goal\":\"suspicious artifact triage\",\"kernel_path\":\"/tmp/loom-capability-forge-kernel.O5vzhK\",\"org_id\":\"org_tutorial\",\"payload_json\":\"{\\\"artifact_path\\\":\\\"missing\\\"}\",\"proposed_capability_name\":\"loomforge.artifact-triage.suspicious-artifact-triage.v0\",\"request_id\":\"request-1774461895907-loomforge-artifact-triage-suspicious-artifact-triage-v0\",\"requested_via\":\"action_execute\",\"resource\":\"\",\"run_id\":\"\",\"session_id\":\"\"}","payload_json":"{\"artifact_path\":\"missing\"}","promoted_at":"","promotion_note":"","promotion_status":"candidate","proposed_capability_name":"loomforge.artifact-triage.suspicious-artifact-triage.v0","request_id":"request-1774461895907-loomforge-artifact-triage-suspicious-artifact-triage-v0","requested_at":"1774461895","requested_via":"action_execute","resource":"","run_id":"","session_id":"","updated_at":"1774461895","verification_execution_id":"","verification_job_id":"","verification_note":"","verification_status":"unverified","verified_at":""},"gap_path":"/tmp/loom-capability-forge-lifecycle/capabilities/gaps/gap-1774461895907-loomforge-artifact-triage-suspicious-artifact-triage-v0.json"}
+{"gap":{"action_type":"","agent_id":"agent_tutorial","candidate_manifest_path":"","capability_name":"loomforge.artifact-triage.suspicious-artifact-triage.v0","forge_status":"missing_request_recorded","gap_class":"artifact_triage","gap_id":"gap-1774461895907-loomforge-artifact-triage-suspicious-artifact-triage-v0","goal":"suspicious artifact triage","kernel_path":"/tmp/loom-capability-forge-kernel.O5vzhK","last_note":"missing capability recorded for bounded forge follow-up","org_id":"org_tutorial","original_request_json":"{\"action_type\":\"\",\"agent_id\":\"agent_tutorial\",\"capability_name\":\"loomforge.artifact-triage.suspicious-artifact-triage.v0\",\"gap_class\":\"artifact_triage\",\"goal\":\"suspicious artifact triage\",\"kernel_path\":\"/tmp/loom-capability-forge-kernel.O5vzhK\",\"org_id\":\"org_tutorial\",\"payload_json\":\"{\\\"artifact_path\\\":\\\"/tmp/loom-capability-forge-lifecycle/samples/suspicious.bin\\\"}\",\"proposed_capability_name\":\"loomforge.artifact-triage.suspicious-artifact-triage.v0\",\"request_id\":\"request-1774461895907-loomforge-artifact-triage-suspicious-artifact-triage-v0\",\"requested_via\":\"action_execute\",\"resource\":\"\",\"run_id\":\"\",\"session_id\":\"\"}","payload_json":"{\"artifact_path\":\"/tmp/loom-capability-forge-lifecycle/samples/suspicious.bin\"}","promoted_at":"","promotion_note":"","promotion_status":"candidate","proposed_capability_name":"loomforge.artifact-triage.suspicious-artifact-triage.v0","request_id":"request-1774461895907-loomforge-artifact-triage-suspicious-artifact-triage-v0","requested_at":"1774461895","requested_via":"action_execute","resource":"","run_id":"","session_id":"","updated_at":"1774461895","verification_execution_id":"","verification_job_id":"","verification_note":"","verification_status":"unverified","verified_at":""},"gap_path":"/tmp/loom-capability-forge-lifecycle/capabilities/gaps/gap-1774461895907-loomforge-artifact-triage-suspicious-artifact-triage-v0.json"}
 
 --- Step 3: Forge a capability candidate from a bounded gap class ---
 Meridian Loom // CAPABILITY FORGE
@@ -53,7 +53,7 @@ org_id:              org_tutorial
 kernel_path:         /tmp/loom-capability-forge-kernel.O5vzhK
 action_type:         (none)
 resource:            (none)
-original_request:    {"action_type":"","agent_id":"agent_tutorial","capability_name":"loomforge.artifact-triage.suspicious-artifact-triage.v0","gap_class":"artifact_triage","goal":"suspicious artifact triage","kernel_path":"/tmp/loom-capability-forge-kernel.O5vzhK","org_id":"org_tutorial","payload_json":"{\"artifact_path\":\"missing\"}","proposed_capability_name":"loomforge.artifact-triage.suspicious-artifact-triage.v0","request_id":"request-1774461895907-loomforge-artifact-triage-suspicious-artifact-triage-v0","requested_via":"action_execute","resource":"","run_id":"","session_id":""}
+original_request:    {"action_type":"","agent_id":"agent_tutorial","capability_name":"loomforge.artifact-triage.suspicious-artifact-triage.v0","gap_class":"artifact_triage","goal":"suspicious artifact triage","kernel_path":"/tmp/loom-capability-forge-kernel.O5vzhK","org_id":"org_tutorial","payload_json":"{\"artifact_path\":\"/tmp/loom-capability-forge-lifecycle/samples/suspicious.bin\"}","proposed_capability_name":"loomforge.artifact-triage.suspicious-artifact-triage.v0","request_id":"request-1774461895907-loomforge-artifact-triage-suspicious-artifact-triage-v0","requested_via":"action_execute","resource":"","run_id":"","session_id":""}
 forge_status:        candidate_forged
 verification_status: unverified
 promotion_status:    candidate
@@ -176,7 +176,7 @@ org_id:              org_tutorial
 kernel_path:         /tmp/loom-capability-forge-kernel.O5vzhK
 action_type:         (none)
 resource:            (none)
-original_request:    {"action_type":"","agent_id":"agent_tutorial","capability_name":"loomforge.artifact-triage.suspicious-artifact-triage.v0","gap_class":"artifact_triage","goal":"suspicious artifact triage","kernel_path":"/tmp/loom-capability-forge-kernel.O5vzhK","org_id":"org_tutorial","payload_json":"{\"artifact_path\":\"missing\"}","proposed_capability_name":"loomforge.artifact-triage.suspicious-artifact-triage.v0","request_id":"request-1774461895907-loomforge-artifact-triage-suspicious-artifact-triage-v0","requested_via":"action_execute","resource":"","run_id":"","session_id":""}
+original_request:    {"action_type":"","agent_id":"agent_tutorial","capability_name":"loomforge.artifact-triage.suspicious-artifact-triage.v0","gap_class":"artifact_triage","goal":"suspicious artifact triage","kernel_path":"/tmp/loom-capability-forge-kernel.O5vzhK","org_id":"org_tutorial","payload_json":"{\"artifact_path\":\"/tmp/loom-capability-forge-lifecycle/samples/suspicious.bin\"}","proposed_capability_name":"loomforge.artifact-triage.suspicious-artifact-triage.v0","request_id":"request-1774461895907-loomforge-artifact-triage-suspicious-artifact-triage-v0","requested_via":"action_execute","resource":"","run_id":"","session_id":""}
 forge_status:        candidate_forged
 verification_status: verified
 promotion_status:    candidate
@@ -218,7 +218,7 @@ org_id:              org_tutorial
 kernel_path:         /tmp/loom-capability-forge-kernel.O5vzhK
 action_type:         (none)
 resource:            (none)
-original_request:    {"action_type":"","agent_id":"agent_tutorial","capability_name":"loomforge.artifact-triage.suspicious-artifact-triage.v0","gap_class":"artifact_triage","goal":"suspicious artifact triage","kernel_path":"/tmp/loom-capability-forge-kernel.O5vzhK","org_id":"org_tutorial","payload_json":"{\"artifact_path\":\"missing\"}","proposed_capability_name":"loomforge.artifact-triage.suspicious-artifact-triage.v0","request_id":"request-1774461895907-loomforge-artifact-triage-suspicious-artifact-triage-v0","requested_via":"action_execute","resource":"","run_id":"","session_id":""}
+original_request:    {"action_type":"","agent_id":"agent_tutorial","capability_name":"loomforge.artifact-triage.suspicious-artifact-triage.v0","gap_class":"artifact_triage","goal":"suspicious artifact triage","kernel_path":"/tmp/loom-capability-forge-kernel.O5vzhK","org_id":"org_tutorial","payload_json":"{\"artifact_path\":\"/tmp/loom-capability-forge-lifecycle/samples/suspicious.bin\"}","proposed_capability_name":"loomforge.artifact-triage.suspicious-artifact-triage.v0","request_id":"request-1774461895907-loomforge-artifact-triage-suspicious-artifact-triage-v0","requested_via":"action_execute","resource":"","run_id":"","session_id":""}
 forge_status:        candidate_forged
 verification_status: verified
 promotion_status:    promoted
@@ -247,7 +247,7 @@ org_id:              org_tutorial
 kernel_path:         /tmp/loom-capability-forge-kernel.O5vzhK
 action_type:         (none)
 resource:            (none)
-original_request:    {"action_type":"","agent_id":"agent_tutorial","capability_name":"loomforge.artifact-triage.suspicious-artifact-triage.v0","gap_class":"artifact_triage","goal":"suspicious artifact triage","kernel_path":"/tmp/loom-capability-forge-kernel.O5vzhK","org_id":"org_tutorial","payload_json":"{\"artifact_path\":\"missing\"}","proposed_capability_name":"loomforge.artifact-triage.suspicious-artifact-triage.v0","request_id":"request-1774461895907-loomforge-artifact-triage-suspicious-artifact-triage-v0","requested_via":"action_execute","resource":"","run_id":"","session_id":""}
+original_request:    {"action_type":"","agent_id":"agent_tutorial","capability_name":"loomforge.artifact-triage.suspicious-artifact-triage.v0","gap_class":"artifact_triage","goal":"suspicious artifact triage","kernel_path":"/tmp/loom-capability-forge-kernel.O5vzhK","org_id":"org_tutorial","payload_json":"{\"artifact_path\":\"/tmp/loom-capability-forge-lifecycle/samples/suspicious.bin\"}","proposed_capability_name":"loomforge.artifact-triage.suspicious-artifact-triage.v0","request_id":"request-1774461895907-loomforge-artifact-triage-suspicious-artifact-triage-v0","requested_via":"action_execute","resource":"","run_id":"","session_id":""}
 forge_status:        candidate_forged
 verification_status: verified
 promotion_status:    promoted
@@ -260,7 +260,7 @@ verification_job:    6ef9a5fa525576de
 verification_exec:   execution::job__org_tutorial__agent_tutorial__artifact_inspect__6ef9a5fa525576de::ok::worker_executed
 last_note:           gap candidate promoted after verification
 
---- Step 7: Re-run the previously missing request successfully ---
+--- Step 7: Replay the previously missing request through the recorded gap ---
 Meridian Loom // AGENT IDENTITY
 ================================
 agent_id:            agent_tutorial
@@ -293,7 +293,7 @@ action_type:         artifact_inspect
 resource:            capability:loomforge.artifact-triage.suspicious-artifact-triage.v0
 capability_name:     loomforge.artifact-triage.suspicious-artifact-triage.v0
 payload_json:        {"artifact_path":"/tmp/loom-capability-forge-lifecycle/samples/suspicious.bin"}
-estimated_cost_usd:  0.0500
+estimated_cost_usd:  0.0000
 run_id:              (none)
 session_id:          (none)
 source:              loom_experimental_preflight
@@ -309,7 +309,7 @@ org_id:                 org_tutorial
 action_type:            artifact_inspect
 resource:               capability:loomforge.artifact-triage.suspicious-artifact-triage.v0
 input_hash:             6ef9a5fa525576de
-estimated_cost_usd:      0.0500
+estimated_cost_usd:      0.0000
 identity_restrictions:  (none)
 reference_restrictions: (none)
 local_sanction:         allow (no execute restriction)
@@ -337,7 +337,7 @@ org_id:              org_tutorial
 action_type:         artifact_inspect
 resource:            capability:loomforge.artifact-triage.suspicious-artifact-triage.v0
 input_hash:          6ef9a5fa525576de
-estimated_cost_usd:  0.0500
+estimated_cost_usd:  0.0000
 overall_decision:    allow
 effective_source:    reference_gate
 effective_stage:     ok

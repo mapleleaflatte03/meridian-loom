@@ -2203,6 +2203,32 @@ pub fn load_capability_gap(
     parse_capability_gap_json(&raw)
 }
 
+pub fn capability_gap_replay_request(gap: &CapabilityGapRecord) -> LoomResult<CapabilityGapRequest> {
+    match gap.requested_via.trim() {
+        "action_execute" => Ok(CapabilityGapRequest {
+            request_id: gap.request_id.clone(),
+            requested_via: gap.requested_via.clone(),
+            capability_name: gap.capability_name.clone(),
+            gap_class: gap.gap_class.clone(),
+            goal: gap.goal.clone(),
+            proposed_capability_name: gap.proposed_capability_name.clone(),
+            agent_id: gap.agent_id.clone(),
+            org_id: gap.org_id.clone(),
+            kernel_path: gap.kernel_path.clone(),
+            action_type: gap.action_type.clone(),
+            resource: gap.resource.clone(),
+            payload_json: gap.payload_json.clone(),
+            run_id: gap.run_id.clone(),
+            session_id: gap.session_id.clone(),
+            original_request_json: gap.original_request_json.clone(),
+        }),
+        other => Err(format!(
+            "capability gap replay only supports requested_via=action_execute; got {}",
+            if other.is_empty() { "(none)" } else { other }
+        )),
+    }
+}
+
 pub fn update_capability_gap_forge(
     root: &Path,
     config: &Config,
@@ -3539,5 +3565,76 @@ parser.add_argument("--out")
             .and_then(Value::as_str)
             .map(|raw| raw.contains("request::replay::demo"))
             .unwrap_or(false));
+    }
+
+    #[test]
+    fn capability_gap_replay_request_reconstructs_action_execute_fixture() {
+        let root = temp_path("loom-cap-gap-replay-request");
+        let config = sample_config();
+        ensure_capability_registry_scaffold(&root, &config).expect("registry scaffold");
+
+        let gap = record_capability_gap(
+            &root,
+            &config,
+            &CapabilityGapRequest {
+                request_id: "request::replay::roundtrip::demo".to_string(),
+                requested_via: "action_execute".to_string(),
+                capability_name: "loomforge.artifact-triage.demo.v0".to_string(),
+                gap_class: "artifact_triage".to_string(),
+                goal: "suspicious artifact triage".to_string(),
+                proposed_capability_name: "loomforge.artifact-triage.demo.v0".to_string(),
+                agent_id: "agent_tutorial".to_string(),
+                org_id: "org_tutorial".to_string(),
+                kernel_path: "/tmp/kernel".to_string(),
+                action_type: "artifact_inspect".to_string(),
+                resource: "capability:loomforge.artifact-triage.demo.v0".to_string(),
+                payload_json: r#"{"artifact_path":"/tmp/sample.bin"}"#.to_string(),
+                run_id: "run::replay::demo".to_string(),
+                session_id: "session::replay::demo".to_string(),
+                original_request_json: String::new(),
+            },
+        )
+        .expect("record gap");
+
+        let replay = capability_gap_replay_request(&gap.gap).expect("replay request");
+        assert_eq!(replay.requested_via, "action_execute");
+        assert_eq!(replay.capability_name, "loomforge.artifact-triage.demo.v0");
+        assert_eq!(replay.action_type, "artifact_inspect");
+        assert_eq!(replay.resource, "capability:loomforge.artifact-triage.demo.v0");
+        assert_eq!(replay.payload_json, r#"{"artifact_path":"/tmp/sample.bin"}"#);
+        assert_eq!(replay.original_request_json, gap.gap.original_request_json);
+    }
+
+    #[test]
+    fn capability_gap_replay_request_rejects_service_submit_fixture() {
+        let root = temp_path("loom-cap-gap-replay-service");
+        let config = sample_config();
+        ensure_capability_registry_scaffold(&root, &config).expect("registry scaffold");
+
+        let gap = record_capability_gap(
+            &root,
+            &config,
+            &CapabilityGapRequest {
+                request_id: "request::replay::service::demo".to_string(),
+                requested_via: "service_submit".to_string(),
+                capability_name: "loomforge.artifact-triage.demo.v0".to_string(),
+                gap_class: "artifact_triage".to_string(),
+                goal: "suspicious artifact triage".to_string(),
+                proposed_capability_name: "loomforge.artifact-triage.demo.v0".to_string(),
+                agent_id: "agent_tutorial".to_string(),
+                org_id: "org_tutorial".to_string(),
+                kernel_path: "/tmp/kernel".to_string(),
+                action_type: "artifact_inspect".to_string(),
+                resource: "capability:loomforge.artifact-triage.demo.v0".to_string(),
+                payload_json: r#"{"artifact_path":"/tmp/sample.bin"}"#.to_string(),
+                run_id: "run::replay::demo".to_string(),
+                session_id: "session::replay::demo".to_string(),
+                original_request_json: String::new(),
+            },
+        )
+        .expect("record gap");
+
+        let error = capability_gap_replay_request(&gap.gap).expect_err("unsupported replay");
+        assert!(error.contains("requested_via=action_execute"));
     }
 }

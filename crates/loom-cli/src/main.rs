@@ -5,10 +5,10 @@ use loom_core::{
     render_contract_verify_json, render_doctor_human, render_doctor_json,
     render_envelope_human, render_envelope_json, render_health_human, render_identity_human,
     render_identity_json, resolve_agent_identity, root_from, status_human,
-    evaluate_reference_gates, LoomResult, capability_shims::{generate_shim, render_shim_human, render_shim_json, validate_shim, LegacyToolSpec},
+    evaluate_reference_gates, Config, LoomResult, capability_shims::{generate_shim, render_shim_human, render_shim_json, validate_shim, LegacyToolSpec},
     capabilities::{
         find_capability_by_name, forge_capability, import_workspace_skill, load_capability_registry, promote_capability,
-        load_capability_gap, record_capability_gap, import_openclaw_plugin_skill_subset,
+        load_capability_gap, capability_gap_replay_request, record_capability_gap, import_openclaw_plugin_skill_subset,
         render_capability_forge_human, render_capability_forge_json,
         render_capability_gap_human, render_capability_gap_json,
         render_capability_human, render_capability_import_human, render_capability_import_json,
@@ -51,7 +51,7 @@ use loom_shadow::{
 use serde_json::Value;
 use std::env;
 use std::io::{self, IsTerminal};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 
 fn main() -> ExitCode {
@@ -624,6 +624,7 @@ fn handle_capability(args: &[String]) -> LoomResult<()> {
             }
             Ok(())
         }
+
         Some("gap") => {
             match args.get(1).map(String::as_str) {
                 Some("show") => {
@@ -644,7 +645,50 @@ fn handle_capability(args: &[String]) -> LoomResult<()> {
                     }
                     Ok(())
                 }
-                _ => Err("capability gap supports 'show'".to_string()),
+                Some("replay") => {
+                    let root = root_from(take_value(args, "--root").as_deref())?;
+                    let config = read_config(&root)?;
+                    let gap_id = required_flag(args, "--gap-id")?;
+                    let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+                    let gap = load_capability_gap(&root, &config, &gap_id)?;
+                    let replay_request = capability_gap_replay_request(&gap)?;
+                    run_action_execute_request(
+                        &root,
+                        &config,
+                        &replay_request.agent_id,
+                        Some(replay_request.capability_name.as_str()),
+                        replay_request.action_type,
+                        replay_request.resource,
+                        0.0,
+                        if replay_request.kernel_path.trim().is_empty() {
+                            None
+                        } else {
+                            Some(replay_request.kernel_path.as_str())
+                        },
+                        if replay_request.org_id.trim().is_empty() {
+                            None
+                        } else {
+                            Some(replay_request.org_id.as_str())
+                        },
+                        if replay_request.run_id.trim().is_empty() {
+                            None
+                        } else {
+                            Some(replay_request.run_id.as_str())
+                        },
+                        if replay_request.session_id.trim().is_empty() {
+                            None
+                        } else {
+                            Some(replay_request.session_id.as_str())
+                        },
+                        if replay_request.payload_json.trim().is_empty() {
+                            None
+                        } else {
+                            Some(replay_request.payload_json.as_str())
+                        },
+                        &format,
+                    )
+                }
+                _ => Err("capability gap supports 'show' and 'replay'".to_string()),
             }
         }
         Some("shim") => {
@@ -903,6 +947,69 @@ fn handle_shadow(args: &[String]) -> LoomResult<()> {
     }
 }
 
+
+fn run_action_execute_request(
+    root: &Path,
+    config: &Config,
+    agent_id: &str,
+    capability_name: Option<&str>,
+    mut action_type: String,
+    mut resource: String,
+    estimated_cost_usd: f64,
+    kernel_path: Option<&str>,
+    org_id: Option<&str>,
+    run_id: Option<&str>,
+    session_id: Option<&str>,
+    payload_json: Option<&str>,
+    format: &str,
+) -> LoomResult<()> {
+    let identity = resolve_agent_identity(&root, kernel_path, agent_id, org_id)?;
+    if let Some(name) = capability_name {
+        match find_capability_by_name(&root, config, name)? {
+            Some(capability) => {
+                if action_type.is_empty() {
+                    action_type = capability.action_type;
+                }
+                if resource.is_empty() {
+                    resource = capability.resource;
+                }
+            }
+            None => return Err(format!("capability '{}' not found", name)),
+        }
+    }
+    if action_type.trim().is_empty() || resource.trim().is_empty() {
+        return Err("action execute requires --action-type and --resource, or a resolvable --capability".to_string());
+    }
+
+    let envelope = build_action_envelope_with_options(
+        &root,
+        kernel_path,
+        agent_id,
+        org_id,
+        &action_type,
+        &resource,
+        estimated_cost_usd,
+        run_id,
+        session_id,
+        capability_name,
+        payload_json,
+    )?;
+    let reference = evaluate_reference_gates(&root, kernel_path, &identity, &envelope)?;
+    let decision = capture_decision(&root, &identity, &envelope, &reference)?;
+    let effective_kernel_path = kernel_path_for(&root, kernel_path)?;
+    let capture = capture_runtime_execution(&root, &effective_kernel_path, &envelope, &reference, &decision)?;
+    if format == "json" {
+        print!("{}", render_runtime_execution_json(&capture));
+    } else {
+        print_human_block(&[
+            render_identity_human(&identity),
+            render_envelope_human(&envelope),
+            render_decision_human(&decision),
+            render_runtime_execution_human(&capture),
+        ]);
+    }
+    std::process::exit(decision_exit_code(&decision, 0, 2));
+}
 fn handle_action(args: &[String]) -> LoomResult<()> {
     match args.first().map(String::as_str) {
         Some("enqueue") => {
@@ -2438,6 +2545,7 @@ Governance surfaces\n\
   loom capability list [--root PATH] [--format human|json]\n\
   loom capability show --name NAME [--root PATH] [--format human|json]\n\
   loom capability gap show --gap-id ID [--root PATH] [--format human|json]\n\
+  loom capability gap replay --gap-id ID [--root PATH] [--format human|json]\n\
   loom capability scaffold --name NAME --action-type TYPE --resource RESOURCE [--description TEXT] [--worker-kind python|wasm] [--worker-entry PATH] [--wasm-module builtin:minimal|wasm:PATH] [--payload-mode json|none] [--root PATH]\n\
   loom capability forge [--name NAME] [--gap-id ID] [--template echo_json_v0|artifact_inspect_v0|url_bundle_v0] [--gap-class artifact_triage|url_collection|response_echo] [--goal TEXT] [--description TEXT] [--root PATH] [--format human|json]\n\
   loom capability import-workspace-skill --skill-root PATH [--entrypoint PATH] [--name NAME] [--root PATH] [--format human|json]\n  loom capability import-openclaw-plugin-skill-subset --plugin-root PATH [--root PATH] [--format human|json]\n\
@@ -2501,6 +2609,7 @@ Commands\n\
   loom capability list [--root PATH] [--format human|json]\n\
   loom capability show --name NAME [--root PATH] [--format human|json]\n\
   loom capability gap show --gap-id ID [--root PATH] [--format human|json]\n\
+  loom capability gap replay --gap-id ID [--root PATH] [--format human|json]\n\
   loom capability scaffold --name NAME --action-type TYPE --resource RESOURCE [--description TEXT] [--worker-kind python|wasm] [--worker-entry PATH] [--wasm-module builtin:minimal|wasm:PATH] [--payload-mode json|none] [--root PATH]\n\
   loom capability forge [--name NAME] [--gap-id ID] [--template echo_json_v0|artifact_inspect_v0|url_bundle_v0] [--gap-class artifact_triage|url_collection|response_echo] [--goal TEXT] [--description TEXT] [--root PATH] [--format human|json]\n\
   loom capability import-workspace-skill --skill-root PATH [--entrypoint PATH] [--name NAME] [--root PATH] [--format human|json]\n  loom capability import-openclaw-plugin-skill-subset --plugin-root PATH [--root PATH] [--format human|json]\n\
@@ -2515,6 +2624,7 @@ Notes\n\
   - verify executes the capability through Loom's runtime path, can assert expectations over the worker result, and writes verification state back into the custom manifest.\n\
   - promote is only for custom/imported capabilities that have already been verified.\n\
   - action execute / service submit with --capability plus --gap-class records a bounded gap object instead of pretending the capability exists.\n\
+  - gap replay currently reissues only recorded action_execute gaps; service_submit gaps fail explicitly until their transport-side replay fields are persisted.\n\
   - imported workspace skills still run through Loom queue, job, worker, audit, and artifact paths.\n\
   - this is a local-first compatibility seam, not an OpenClaw runtime dependency or hosted cutover.\n",
     );
