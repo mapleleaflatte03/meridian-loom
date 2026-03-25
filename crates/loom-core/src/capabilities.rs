@@ -2140,6 +2140,35 @@ fn gap_request_value(request: &CapabilityGapRequest, request_id: &str) -> Value 
     })
 }
 
+fn gap_replay_request_value(gap: &CapabilityGapRecord) -> Value {
+    let request = CapabilityGapRequest {
+        request_id: gap.request_id.clone(),
+        requested_via: gap.requested_via.clone(),
+        capability_name: gap.capability_name.clone(),
+        gap_class: gap.gap_class.clone(),
+        goal: gap.goal.clone(),
+        proposed_capability_name: gap.proposed_capability_name.clone(),
+        agent_id: gap.agent_id.clone(),
+        org_id: gap.org_id.clone(),
+        kernel_path: gap.kernel_path.clone(),
+        action_type: gap.action_type.clone(),
+        resource: gap.resource.clone(),
+        payload_json: gap.payload_json.clone(),
+        run_id: gap.run_id.clone(),
+        session_id: gap.session_id.clone(),
+        original_request_json: gap.original_request_json.clone(),
+    };
+    gap_request_value(&request, &gap.request_id)
+}
+
+fn gap_render_value(gap: &CapabilityGapRecord) -> Value {
+    let mut value = gap_value(gap);
+    if let Some(object) = value.as_object_mut() {
+        object.insert("replay_request".to_string(), gap_replay_request_value(gap));
+    }
+    value
+}
+
 pub fn load_capability_gap(
     root: &Path,
     config: &Config,
@@ -2275,7 +2304,7 @@ pub fn render_capability_gap_json(result: &CapabilityGapUpdateResult) -> String 
         "{}\n",
         json!({
             "gap_path": result.gap_path.display().to_string(),
-            "gap": gap_value(&result.gap),
+            "gap": gap_render_value(&result.gap),
         })
     )
 }
@@ -3402,5 +3431,60 @@ parser.add_argument("--out")
         assert_eq!(persisted.promotion_status, "promoted");
         assert_eq!(persisted.promotion_note, "promotion succeeded");
         assert_eq!(persisted.promoted_at, promoted.gap.promoted_at);
+    }
+
+    #[test]
+    fn capability_gap_show_json_includes_replay_request_fixture() {
+        let root = temp_path("loom-cap-gap-replay");
+        let config = sample_config();
+        ensure_capability_registry_scaffold(&root, &config).expect("registry scaffold");
+
+        let gap = record_capability_gap(
+            &root,
+            &config,
+            &CapabilityGapRequest {
+                request_id: "request::replay::demo".to_string(),
+                requested_via: "action_execute".to_string(),
+                capability_name: "loomforge.artifact-triage.demo.v0".to_string(),
+                gap_class: "artifact_triage".to_string(),
+                goal: "suspicious artifact triage".to_string(),
+                proposed_capability_name: "loomforge.artifact-triage.demo.v0".to_string(),
+                agent_id: "agent_tutorial".to_string(),
+                org_id: "org_tutorial".to_string(),
+                kernel_path: "/tmp/kernel".to_string(),
+                action_type: "artifact_inspect".to_string(),
+                resource: "capability:loomforge.artifact-triage.demo.v0".to_string(),
+                payload_json: r#"{"artifact_path":"/tmp/sample.bin"}"#.to_string(),
+                run_id: "run::replay::demo".to_string(),
+                session_id: "session::replay::demo".to_string(),
+                original_request_json: String::new(),
+            },
+        )
+        .expect("record gap");
+
+        let json_output = render_capability_gap_json(&gap);
+        let value: Value = serde_json::from_str(&json_output).expect("parse gap json");
+        let replay = value
+            .get("gap")
+            .and_then(Value::as_object)
+            .and_then(|gap| gap.get("replay_request"))
+            .and_then(Value::as_object)
+            .expect("replay request");
+
+        assert_eq!(replay.get("request_id").and_then(Value::as_str), Some("request::replay::demo"));
+        assert_eq!(replay.get("requested_via").and_then(Value::as_str), Some("action_execute"));
+        assert_eq!(replay.get("capability_name").and_then(Value::as_str), Some("loomforge.artifact-triage.demo.v0"));
+        assert_eq!(replay.get("gap_class").and_then(Value::as_str), Some("artifact_triage"));
+        assert_eq!(replay.get("goal").and_then(Value::as_str), Some("suspicious artifact triage"));
+        assert_eq!(replay.get("payload_json").and_then(Value::as_str), Some(r#"{"artifact_path":"/tmp/sample.bin"}"#));
+        assert_eq!(replay.get("run_id").and_then(Value::as_str), Some("run::replay::demo"));
+        assert_eq!(replay.get("session_id").and_then(Value::as_str), Some("session::replay::demo"));
+        assert!(value
+            .get("gap")
+            .and_then(Value::as_object)
+            .and_then(|gap| gap.get("original_request_json"))
+            .and_then(Value::as_str)
+            .map(|raw| raw.contains("request::replay::demo"))
+            .unwrap_or(false));
     }
 }
