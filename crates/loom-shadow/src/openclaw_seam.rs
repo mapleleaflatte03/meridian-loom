@@ -18,6 +18,7 @@
 
 use std::fs;
 use std::path::Path;
+use loom_core::{read_config, capabilities::{resolve_capability_for_request, render_capability_readiness_human}};
 
 /// Result type for seam operations.
 pub type SeamResult<T> = Result<T, String>;
@@ -216,6 +217,31 @@ pub fn check_delivery_queue(delivery_queue_path: &Path) -> SeamResult<bool> {
     }
 }
 
+pub fn render_cutover_status_human(root: &Path) -> SeamResult<String> {
+    let config = read_config(root).map_err(|error| error.to_string())?;
+    let mode = IntegrationMode::from_str(&config.openclaw_integration);
+    let delivery_queue_path = Path::new(&config.openclaw_delivery_queue);
+    let queue_exists = check_delivery_queue(delivery_queue_path).unwrap_or(false);
+    let capability_resolution = resolve_capability_for_request(root, &config, None, "research", "web_search");
+    let (capability, capability_note) = match capability_resolution {
+        Ok(capability) => (capability, None),
+        Err(error) => (None, Some(error)),
+    };
+    let readiness = render_capability_readiness_human(
+        "research",
+        "web_search",
+        capability.as_ref(),
+        capability_note.as_deref(),
+    );
+    Ok(format!(
+        "OpenClaw Integration Seam // STATUS\n===================================\nmode:           {}\ndelivery_queue: {}\nqueue_exists:   {}\ncutover:        not implemented (intentional)\n\n{}\n",
+        mode.as_str(),
+        delivery_queue_path.display(),
+        queue_exists,
+        readiness,
+    ))
+}
+
 /// Render a human-readable summary of a routing result.
 pub fn render_routing_result_human(result: &DeliveryRoutingResult) -> String {
     let mut out = String::new();
@@ -254,6 +280,7 @@ fn epoch_now() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use loom_core::{init_workspace, capabilities::{scaffold_capability, CapabilityScaffoldRequest}};
     use std::fs;
 
     fn test_request() -> DeliveryRoutingRequest {
@@ -368,5 +395,32 @@ mod tests {
 
         let missing = std::env::temp_dir().join("loom-seam-dq-missing-42");
         assert!(!check_delivery_queue(&missing).unwrap());
+    }
+
+    #[test]
+    fn cutover_status_surfaces_resolved_capability_readiness() {
+        let root = std::env::temp_dir().join("loom-seam-status-readiness");
+        let _ = fs::remove_dir_all(&root);
+        let config = init_workspace(&root, "embedded", None, "org_test").expect("init workspace");
+        scaffold_capability(
+            &root,
+            &config,
+            &CapabilityScaffoldRequest {
+                name: "loom.research.web_search.v1".to_string(),
+                description: "research web search".to_string(),
+                action_type: "research".to_string(),
+                resource: "web_search".to_string(),
+                worker_kind: "python".to_string(),
+                worker_entry: String::new(),
+                wasm_module: String::new(),
+                payload_mode: "json".to_string(),
+            },
+        ).expect("scaffold capability");
+
+        let status = render_cutover_status_human(&root).expect("status");
+        assert!(status.contains("CAPABILITY READINESS"));
+        assert!(status.contains("interpreter:       python3"));
+        assert!(status.contains("runtime_lane:"));
+        let _ = fs::remove_dir_all(&root);
     }
 }

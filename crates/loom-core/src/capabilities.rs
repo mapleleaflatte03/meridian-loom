@@ -956,9 +956,98 @@ pub fn forge_capability(
     })
 }
 
+pub fn capability_interpreter(capability: &CapabilityDescriptor) -> &'static str {
+    match capability.worker_kind.as_str() {
+        "python" => "python3",
+        "wasm" => "wasmtime",
+        _ => "runtime-managed",
+    }
+}
+
+pub fn capability_binary_surface(capability: &CapabilityDescriptor) -> String {
+    if !capability.worker_entry.is_empty() {
+        capability.worker_entry.clone()
+    } else if !capability.wasm_module.is_empty() {
+        capability.wasm_module.clone()
+    } else {
+        "(none)".to_string()
+    }
+}
+
+pub fn capability_isolation_expectation(capability: &CapabilityDescriptor) -> &'static str {
+    match capability.worker_kind.as_str() {
+        "wasm" => "local Wasmtime guest sandbox",
+        "python" if capability.source_kind == "openclaw_workspace_skill" => {
+            "host python process, workspace-skill wrapper"
+        }
+        "python" if capability.source_kind == "clawfamily_skill_bundle" => {
+            "host python process, bundle wrapper"
+        }
+        "python" if capability.source_kind == "loom_forge_candidate" => {
+            "host python process, forged wrapper"
+        }
+        "python" => "host python process",
+        _ => "runtime-managed",
+    }
+}
+
+pub fn render_capability_readiness_human(
+    request_action: &str,
+    request_resource: &str,
+    capability: Option<&CapabilityDescriptor>,
+    resolution_note: Option<&str>,
+) -> String {
+    let note = resolution_note.unwrap_or_else(|| {
+        if capability.is_some() {
+            "matched enabled capability registry entry"
+        } else {
+            "no enabled capability matched the request"
+        }
+    });
+    let capability_block = match capability {
+        Some(capability) => render_capability_human(capability),
+        None => String::from(
+            "Meridian Loom // CAPABILITY\n============================\nname:              (none)\n",
+        ),
+    };
+    format!(
+        "Meridian Loom // CAPABILITY READINESS\n=====================================\nrequest:             {} / {}\nresolution:          {}\nresolution_note:     {}\n{}\n",
+        request_action,
+        request_resource,
+        if capability.is_some() { "resolved" } else { "unresolved" },
+        note,
+        capability_block
+    )
+}
+
+pub fn render_capability_readiness_json(
+    request_action: &str,
+    request_resource: &str,
+    capability: Option<&CapabilityDescriptor>,
+    resolution_note: Option<&str>,
+) -> String {
+    let note = resolution_note.unwrap_or_else(|| {
+        if capability.is_some() {
+            "matched enabled capability registry entry"
+        } else {
+            "no enabled capability matched the request"
+        }
+    });
+    format!(
+        "{}\n",
+        json!({
+            "request_action": request_action,
+            "request_resource": request_resource,
+            "resolution_status": if capability.is_some() { "resolved" } else { "unresolved" },
+            "resolution_note": note,
+            "capability": capability.map(descriptor_value),
+        })
+    )
+}
+
 pub fn render_capability_human(capability: &CapabilityDescriptor) -> String {
     format!(
-        "Meridian Loom // CAPABILITY\n============================\nname:              {}\ndescription:       {}\naction_type:       {}\nresource:          {}\nworker_kind:       {}\nworker_entry:      {}\nwasm_module:       {}\npayload_mode:      {}\nsource_kind:       {}\nsource_path:       {}\nsource_manifest:   {}\nadapter_kind:      {}\nimport_provenance: {}\nruntime_lane:      {}\ndependency:        {}\nenv_contract:      {}\nverification:      {}\nverified_at:       {}\nverify_job:        {}\nverify_exec:       {}\nverify_note:       {}\npromotion:         {}\npromoted_at:       {}\nenabled:           {}\n",
+        "Meridian Loom // CAPABILITY\n============================\nname:              {}\ndescription:       {}\naction_type:       {}\nresource:          {}\nworker_kind:       {}\ninterpreter:       {}\nworker_entry:      {}\nwasm_module:       {}\nbinary_surface:    {}\npayload_mode:      {}\nsource_kind:       {}\nsource_path:       {}\nsource_manifest:   {}\nadapter_kind:      {}\nimport_provenance: {}\nruntime_lane:      {}\ndependency:        {}\nenv_contract:      {}\nisolation:         {}\nverification:      {}\nverified_at:       {}\nverify_job:        {}\nverify_exec:       {}\nverify_note:       {}\npromotion:         {}\npromoted_at:       {}\nenabled:           {}\n",
         capability.name,
         if capability.description.is_empty() {
             "(none)"
@@ -968,6 +1057,7 @@ pub fn render_capability_human(capability: &CapabilityDescriptor) -> String {
         capability.action_type,
         capability.resource,
         capability.worker_kind,
+        capability_interpreter(capability),
         if capability.worker_entry.is_empty() {
             "(none)"
         } else {
@@ -978,6 +1068,7 @@ pub fn render_capability_human(capability: &CapabilityDescriptor) -> String {
         } else {
             &capability.wasm_module
         },
+        capability_binary_surface(capability),
         capability.payload_mode,
         if capability.source_kind.is_empty() {
             "(none)"
@@ -1007,6 +1098,7 @@ pub fn render_capability_human(capability: &CapabilityDescriptor) -> String {
         capability_runtime_lane(capability),
         capability_dependency_mode(capability),
         capability_env_contract(capability),
+        capability_isolation_expectation(capability),
         if capability.verification_status.is_empty() {
             "(none)"
         } else {
@@ -1301,8 +1393,10 @@ fn descriptor_value(capability: &CapabilityDescriptor) -> Value {
         "action_type": capability.action_type,
         "resource": capability.resource,
         "worker_kind": capability.worker_kind,
+        "interpreter": capability_interpreter(capability),
         "worker_entry": capability.worker_entry,
         "wasm_module": capability.wasm_module,
+        "binary_surface": capability_binary_surface(capability),
         "payload_mode": capability.payload_mode,
         "source_kind": capability.source_kind,
         "source_path": capability.source_path,
@@ -1312,6 +1406,7 @@ fn descriptor_value(capability: &CapabilityDescriptor) -> Value {
         "runtime_lane": capability_runtime_lane(capability),
         "dependency_mode": capability_dependency_mode(capability),
         "env_contract": capability_env_contract(capability),
+        "isolation_expectation": capability_isolation_expectation(capability),
         "verification_status": capability.verification_status,
         "last_verified_at": capability.last_verified_at,
         "last_verification_job_id": capability.last_verification_job_id,

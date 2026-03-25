@@ -34,6 +34,7 @@ use loom_shadow::{
     render_job_inspect_json, render_job_list_human, render_job_list_json, render_parity_report,
     render_supervisor_lanes_human, render_supervisor_lanes_json,
     render_preflight_human, render_preflight_json, render_runtime_execution_human,
+    render_cutover_status_human,
     render_runtime_execution_json, render_supervisor_daemon_human,
     render_supervisor_daemon_json, render_runtime_service_human,
     render_runtime_service_import_human, render_runtime_service_import_json,
@@ -45,7 +46,7 @@ use loom_shadow::{
     run_supervisor_daemon_loop, request_runtime_service_stop, request_supervisor_daemon_stop,
     run_runtime_service_loop, runtime_service_status, submit_runtime_service_action,
     supervisor_daemon_status, supervisor_status, watch_supervisor,
-    check_delivery_queue, route_delivery, render_routing_result_human, render_routing_result_json,
+    route_delivery, render_routing_result_human, render_routing_result_json,
     DeliveryRoutingRequest, IntegrationMode,
 };
 use serde_json::Value;
@@ -1351,16 +1352,8 @@ fn handle_openclaw(args: &[String]) -> LoomResult<()> {
             match sub {
                 Some("status") => {
                     let root = root_from(take_value(args, "--root").as_deref())?;
-                    let config = read_config(&root)?;
-                    let mode = IntegrationMode::from_str(&config.openclaw_integration);
-                    let dq_path = std::path::PathBuf::from(&config.openclaw_delivery_queue);
-                    let dq_exists = check_delivery_queue(&dq_path).unwrap_or(false);
-                    println!("OpenClaw Integration Seam // STATUS");
-                    println!("===================================");
-                    println!("mode:           {}", mode.as_str());
-                    println!("delivery_queue: {}", config.openclaw_delivery_queue);
-                    println!("queue_exists:   {}", dq_exists);
-                    println!("cutover:        not implemented (intentional)");
+                    let status = render_cutover_status_human(&root)?;
+                    print_human(&status);
                     Ok(())
                 }
                 Some("dry-run") => {

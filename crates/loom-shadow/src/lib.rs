@@ -2,7 +2,7 @@ use loom_core::{
     build_action_envelope, build_action_envelope_with_options, enforce_sanction_controls, envelope_input_hash,
     ensure_runtime_worker_scaffold, evaluate_reference_gates, kernel_path_for,
     preview_local_sanction_controls, read_config, resolve_agent_identity, runtime_worker_entry,
-    capabilities::{resolve_capability_for_request, CapabilityDescriptor},
+    capabilities::{resolve_capability_for_request, render_capability_json, render_capability_readiness_human, render_capability_readiness_json, CapabilityDescriptor},
     wasm_host::{run_wasm_guest, WasmExecutionRequest, WasmGuestSource, WasmHostBuilder},
     ActionEnvelope, AgentIdentityResolution, Config, ReferenceGateCheck,
 };
@@ -26,7 +26,7 @@ use scheduler_state::{
 };
 use proof_views::render_proof_first_status_human;
 pub use openclaw_seam::{
-    check_delivery_queue, route_delivery, render_routing_result_human, render_routing_result_json,
+    check_delivery_queue, render_cutover_status_human, route_delivery, render_routing_result_human, render_routing_result_json,
     DeliveryRoutingRequest, DeliveryRoutingResult, IntegrationMode,
 };
 use serde_json::Value;
@@ -63,6 +63,8 @@ pub struct PreflightCapture {
     pub overall_decision: String,
     pub reference_stage: String,
     pub reference_reason: String,
+    pub capability_readiness_human: String,
+    pub capability_readiness_json: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -414,6 +416,35 @@ pub fn capture_preflight(
         "not_required"
     };
     let overall_decision = if reference.allowed { "allow" } else { "deny" };
+    let (resolved_capability, capability_resolution_note) = match read_config(root) {
+        Ok(config) => match resolve_capability_for_request(
+            root,
+            &config,
+            if envelope.capability_name.is_empty() {
+                None
+            } else {
+                Some(envelope.capability_name.as_str())
+            },
+            &envelope.action_type,
+            &envelope.resource,
+        ) {
+            Ok(capability) => (capability, None),
+            Err(error) => (None, Some(error)),
+        },
+        Err(error) => (None, Some(format!("capability readiness skipped: {}", error))),
+    };
+    let capability_readiness_human = render_capability_readiness_human(
+        &envelope.action_type,
+        &envelope.resource,
+        resolved_capability.as_ref(),
+        capability_resolution_note.as_deref(),
+    );
+    let capability_readiness_json = render_capability_readiness_json(
+        &envelope.action_type,
+        &envelope.resource,
+        resolved_capability.as_ref(),
+        capability_resolution_note.as_deref(),
+    );
 
     append_line(
         &event_log,
@@ -624,6 +655,8 @@ pub fn capture_preflight(
         overall_decision: overall_decision.to_string(),
         reference_stage: reference.stage.clone(),
         reference_reason: reference.reason.clone(),
+        capability_readiness_human,
+        capability_readiness_json,
     })
 }
 
@@ -4652,7 +4685,7 @@ pub fn decision_exit_code(capture: &DecisionCapture, allow_code: i32, deny_code:
 
 pub fn render_preflight_human(capture: &PreflightCapture) -> String {
     format!(
-        "Meridian Loom // SHADOW PREFLIGHT\n===================================\nevent_log:              {}\naudit_preview_log:      {}\nreference_report:       {}\nreference_event_log:    {}\nlatest_report:          {}\ninput_hash:             {}\nestimated_cost_usd:     {:.4}\nidentity_restrictions:  {}\nreference_restrictions: {}\nsanction_controls:      {} (snapshot: {})\nbudget_limit_usd:       {}\nbudget_gate:            {}\napproval_hook:          {} (policy: {})\naudit_emission:         {}\noverall_decision:       {}\nreference_stage:        {}\nreference_reason:       {}\ncaptured_hooks:         {}\n",
+        "Meridian Loom // SHADOW PREFLIGHT\n===================================\nevent_log:              {}\naudit_preview_log:      {}\nreference_report:       {}\nreference_event_log:    {}\nlatest_report:          {}\ninput_hash:             {}\nestimated_cost_usd:     {:.4}\nidentity_restrictions:  {}\nreference_restrictions: {}\nsanction_controls:      {} (snapshot: {})\nbudget_limit_usd:       {}\nbudget_gate:            {}\napproval_hook:          {} (policy: {})\naudit_emission:         {}\noverall_decision:       {}\nreference_stage:        {}\nreference_reason:       {}\ncaptured_hooks:         {}\n\n{}\n",
         capture.event_log.display(),
         capture.audit_preview_log.display(),
         capture.reference_report.display(),
@@ -4687,13 +4720,14 @@ pub fn render_preflight_human(capture: &PreflightCapture) -> String {
         } else {
             &capture.reference_reason
         },
-        capture.hooks.join(", ")
+        capture.hooks.join(", "),
+        capture.capability_readiness_human,
     )
 }
 
 pub fn render_preflight_json(capture: &PreflightCapture) -> String {
     format!(
-        "{{\n  \"event_log\": {},\n  \"audit_preview_log\": {},\n  \"reference_report\": {},\n  \"reference_event_log\": {},\n  \"latest_report\": {},\n  \"input_hash\": {},\n  \"estimated_cost_usd\": {:.6},\n  \"identity_restrictions\": {},\n  \"reference_restrictions\": {},\n  \"sanction_decision\": {},\n  \"sanction_gate_decision\": {},\n  \"budget_limit_usd\": {},\n  \"budget_gate_decision\": {},\n  \"approval_decision\": {},\n  \"approval_gate_decision\": {},\n  \"audit_emission_decision\": {},\n  \"overall_decision\": {},\n  \"reference_stage\": {},\n  \"reference_reason\": {},\n  \"captured_hooks\": [\"agent_identity\", \"action_envelope\", \"cost_attribution\", \"approval_hook\", \"audit_emission\", \"sanction_controls\", \"budget_gate\"]\n}}\n",
+        "{{\n  \"event_log\": {},\n  \"audit_preview_log\": {},\n  \"reference_report\": {},\n  \"reference_event_log\": {},\n  \"latest_report\": {},\n  \"input_hash\": {},\n  \"estimated_cost_usd\": {:.6},\n  \"identity_restrictions\": {},\n  \"reference_restrictions\": {},\n  \"sanction_decision\": {},\n  \"sanction_gate_decision\": {},\n  \"budget_limit_usd\": {},\n  \"budget_gate_decision\": {},\n  \"approval_decision\": {},\n  \"approval_gate_decision\": {},\n  \"audit_emission_decision\": {},\n  \"overall_decision\": {},\n  \"reference_stage\": {},\n  \"reference_reason\": {},\n  \"capability_readiness\": {},\n  \"captured_hooks\": [\"agent_identity\", \"action_envelope\", \"cost_attribution\", \"approval_hook\", \"audit_emission\", \"sanction_controls\", \"budget_gate\"]\n}}\n",
         json_string(&capture.event_log.display().to_string()),
         json_string(&capture.audit_preview_log.display().to_string()),
         json_string(&capture.reference_report.display().to_string()),
@@ -4716,6 +4750,7 @@ pub fn render_preflight_json(capture: &PreflightCapture) -> String {
         json_string(&capture.overall_decision),
         json_string(&capture.reference_stage),
         json_string(&capture.reference_reason),
+        capture.capability_readiness_json,
     )
 }
 
@@ -6544,28 +6579,7 @@ fn ensure_parity_reference_dir(root: &Path) -> ShadowResult<PathBuf> {
 
 fn render_capability_descriptor_json(capability: Option<&CapabilityDescriptor>) -> String {
     match capability {
-        Some(capability) => format!(
-            "{{\"name\":{},\"description\":{},\"action_type\":{},\"resource\":{},\"worker_kind\":{},\"worker_entry\":{},\"wasm_module\":{},\"payload_mode\":{},\"source_kind\":{},\"source_path\":{},\"adapter_kind\":{},\"verification_status\":{},\"last_verified_at\":{},\"last_verification_job_id\":{},\"last_verification_execution_id\":{},\"verification_note\":{},\"promotion_state\":{},\"promoted_at\":{},\"enabled\":{}}}",
-            json_string(&capability.name),
-            json_string(&capability.description),
-            json_string(&capability.action_type),
-            json_string(&capability.resource),
-            json_string(&capability.worker_kind),
-            json_string(&capability.worker_entry),
-            json_string(&capability.wasm_module),
-            json_string(&capability.payload_mode),
-            json_string(&capability.source_kind),
-            json_string(&capability.source_path),
-            json_string(&capability.adapter_kind),
-            json_string(&capability.verification_status),
-            json_string(&capability.last_verified_at),
-            json_string(&capability.last_verification_job_id),
-            json_string(&capability.last_verification_execution_id),
-            json_string(&capability.verification_note),
-            json_string(&capability.promotion_state),
-            json_string(&capability.promoted_at),
-            if capability.enabled { "true" } else { "false" },
-        ),
+        Some(capability) => render_capability_json(capability).trim_end().to_string(),
         None => "null".to_string(),
     }
 }
@@ -7936,6 +7950,9 @@ mod tests {
         assert_eq!(capture.approval_gate_decision, "allow");
         assert_eq!(capture.audit_emission_decision, "local_preview_written");
         assert_eq!(capture.overall_decision, "allow");
+        let human = render_preflight_human(&capture);
+        assert!(human.contains("CAPABILITY READINESS"));
+        assert!(human.contains("capability readiness skipped"));
         let report = render_shadow_report(&root).expect("report");
         assert!(report.contains("preflight_captured"));
         assert!(report.contains("budget_gate"));
@@ -8164,6 +8181,7 @@ mod tests {
             reference_decision: "".to_string(),
             reference_stage: "".to_string(),
             audit_emission_status: "".to_string(),
+            economy_hook_status: "".to_string(),
             openclaw_live_probe_status: "".to_string(),
             openclaw_live_probe_note: "".to_string(),
             parity_status: "parity_test".to_string(),
