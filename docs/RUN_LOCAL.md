@@ -217,6 +217,7 @@ Exercise the same capability path through the service boundary:
 ./scripts/acceptance_capability_service.sh
 ./scripts/rehearse_claw_skill_service.sh > examples/claw-skill-service-output.txt
 ./scripts/rehearse_claw_skill_multi_import.sh > examples/claw-skill-multi-import-output.txt
+./scripts/rehearse_openclaw_plugin_import.sh > examples/openclaw-plugin-import-output.txt
 ./scripts/rehearse_server_replacement.sh > examples/server-replacement-output.txt
 ```
 
