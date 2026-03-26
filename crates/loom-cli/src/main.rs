@@ -75,7 +75,12 @@ fn run() -> LoomResult<()> {
     }
 
     match args[0].as_str() {
+        "banner" => {
+            print_startup_banner();
+            Ok(())
+        }
         "version" | "-V" | "--version" => {
+            print_startup_banner();
             print_human(&format!(
                 "Meridian Loom // VERSION\n=========================\nversion:     {}\nboundary:    local-first runtime surface; hosted replacement not claimed\n",
                 env!("CARGO_PKG_VERSION")
@@ -2549,6 +2554,7 @@ http surface:\n\
 }
 
 fn print_help() {
+    print_startup_banner();
     print_human(
         "Meridian Loom // HELP\n\
 ======================\n\
@@ -2557,6 +2563,7 @@ boundary:    local-first service is real; hosted replacement is not\n\
 \n\
 Bootstrap\n\
 ---------\n\
+  loom banner\n\
   loom version\n\
   loom init --mode <embedded|shadow|standalone> [--kernel-path PATH] [--root PATH] [--org-id ID]\n\
   loom doctor [--root PATH] [--format json|human]\n\
@@ -2769,6 +2776,32 @@ fn builtin_minimal_wasm_module() -> Vec<u8> {
         0x7f, 0x03, 0x02, 0x01, 0x00, 0x07, 0x07, 0x01, 0x03, 0x72, 0x75, 0x6e, 0x00, 0x00,
         0x0a, 0x06, 0x01, 0x04, 0x00, 0x41, 0x07, 0x0b,
     ]
+}
+
+fn render_startup_banner(color: bool) -> String {
+    let icon = [
+        "      /\\/\\",
+        "   .-/ /\\ \\-.",
+        "  /__/_/\\_\\__\\",
+        "  \\  \\ \\/ /  /",
+        "   '.__\\__/_.",
+    ]
+    .join("\n");
+    if color {
+        format!(
+            "\x1b[1;92m{}\x1b[0m\n\x1b[1;96mMERIDIAN LOOM\x1b[0m\n\x1b[96mConstitutional Runtime v0.1.0.\x1b[0m\n\x1b[37mAutonomous intelligence inside a governed shell.\x1b[0m\n\n",
+            icon,
+        )
+    } else {
+        format!(
+            "{}\nMERIDIAN LOOM\nConstitutional Runtime v0.1.0.\nAutonomous intelligence inside a governed shell.\n\n",
+            icon,
+        )
+    }
+}
+
+fn print_startup_banner() {
+    print!("{}", render_startup_banner(stdout_supports_color()));
 }
 
 fn print_human(output: &str) {
