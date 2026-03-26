@@ -1,6 +1,6 @@
 use loom_core::{
     build_action_envelope, build_action_envelope_with_options, capsule_inspect, contract_show, contract_verify, doctor, health,
-    init_workspace, kernel_path_for, openclaw_delivery_queue_path, read_config, render_capsule_human, render_contract_human,
+    init_workspace, kernel_path_for, read_config, render_capsule_human, render_contract_human,
     render_config_human, render_contract_json, render_contract_verify_human,
     render_contract_verify_json, render_doctor_human, render_doctor_json,
     render_envelope_human, render_envelope_json, render_health_human, render_identity_human,
@@ -39,7 +39,6 @@ use loom_shadow::{
     render_queue_status_human, render_queue_status_json, queue_status,
     render_supervisor_lanes_human, render_supervisor_lanes_json,
     render_preflight_human, render_preflight_json, render_runtime_execution_human,
-    render_cutover_status_human, render_queue_submission_human, render_queue_submission_json,
     render_runtime_execution_json, render_supervisor_daemon_human,
     render_supervisor_daemon_json, render_runtime_service_human,
     render_runtime_service_import_human, render_runtime_service_import_json,
@@ -49,10 +48,8 @@ use loom_shadow::{
     render_supervisor_watch_human, render_supervisor_watch_json, run_queue_once, run_queue_until_empty, run_supervisor,
     import_commitment_execution_requests,
     run_supervisor_daemon_loop, request_runtime_service_stop, request_supervisor_daemon_stop,
-    run_runtime_service_loop, runtime_service_status, submit_dry_run_delivery, submit_runtime_service_action,
+    run_runtime_service_loop, runtime_service_status, submit_runtime_service_action,
     supervisor_daemon_status, supervisor_status, watch_supervisor,
-    route_delivery, render_routing_result_human, render_routing_result_json,
-    DeliveryRoutingRequest, IntegrationMode,
 };
 use serde_json::Value;
 use std::env;
@@ -107,7 +104,6 @@ fn run() -> LoomResult<()> {
         "shadow" => handle_shadow(&args[1..]),
         "parity" => handle_parity(&args[1..]),
         "wasm" => handle_wasm(&args[1..]),
-        "openclaw" => handle_openclaw(&args[1..]),
         "-h" | "--help" | "help" => {
             print_help();
             Ok(())
@@ -1439,92 +1435,6 @@ fn handle_wasm_run(args: &[String]) -> LoomResult<()> {
     Ok(())
 }
 
-fn handle_openclaw(args: &[String]) -> LoomResult<()> {
-    match args.first().map(String::as_str) {
-        Some("seam") => {
-            let sub = args.get(1).map(String::as_str);
-            match sub {
-                Some("status") => {
-                    let root = root_from(take_value(args, "--root").as_deref())?;
-                    let status = render_cutover_status_human(&root)?;
-                    print_human(&status);
-                    Ok(())
-                }
-                Some("dry-run") => {
-                    let root = root_from(take_value(args, "--root").as_deref())?;
-                    let config = read_config(&root)?;
-                    let mode = IntegrationMode::from_str(&config.openclaw_integration);
-                    if mode != IntegrationMode::DryRun {
-                        return Err(format!(
-                            "openclaw_integration={} in loom.toml; set openclaw_integration=dry_run to use this command",
-                            mode.as_str()
-                        ));
-                    }
-                    let agent_id = required_flag(args, "--agent-id")?;
-                    let action_type = take_value(args, "--action-type").unwrap_or_else(|| "deliver".to_string());
-                    let resource = take_value(args, "--resource").unwrap_or_else(|| "nightly_brief".to_string());
-                    let payload_path = take_value(args, "--payload-path").unwrap_or_default();
-                    let delivery_target = take_value(args, "--delivery-target").unwrap_or_else(|| "telegram:default".to_string());
-                    let governance_decision = take_value(args, "--governance-decision").unwrap_or_else(|| "allow".to_string());
-                    let dq_path = openclaw_delivery_queue_path(&root, &config);
-                    let request = DeliveryRoutingRequest {
-                        agent_id,
-                        org_id: config.org_id.clone(),
-                        action_type,
-                        resource,
-                        payload_path,
-                        delivery_target,
-                    };
-                    let result = route_delivery(&root, &IntegrationMode::DryRun, &dq_path, &request, &governance_decision)?;
-                    let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
-                    if format == "json" {
-                        print!("{}", render_routing_result_json(&result));
-                    } else {
-                        print!("{}", render_routing_result_human(&result));
-                    }
-                    Ok(())
-                }
-                Some("submit") => {
-                    let root = root_from(take_value(args, "--root").as_deref())?;
-                    let config = read_config(&root)?;
-                    let mode = IntegrationMode::from_str(&config.openclaw_integration);
-                    if mode != IntegrationMode::DryRun {
-                        return Err(format!(
-                            "openclaw_integration={} in loom.toml; set openclaw_integration=dry_run to use this command",
-                            mode.as_str()
-                        ));
-                    }
-                    let agent_id = required_flag(args, "--agent-id")?;
-                    let action_type = take_value(args, "--action-type").unwrap_or_else(|| "deliver".to_string());
-                    let resource = take_value(args, "--resource").unwrap_or_else(|| "nightly_brief".to_string());
-                    let payload_path = take_value(args, "--payload-path").unwrap_or_default();
-                    let delivery_target = take_value(args, "--delivery-target").unwrap_or_else(|| "telegram:default".to_string());
-                    let governance_decision = take_value(args, "--governance-decision").unwrap_or_else(|| "allow".to_string());
-                    let dq_path = openclaw_delivery_queue_path(&root, &config);
-                    let request = DeliveryRoutingRequest {
-                        agent_id,
-                        org_id: config.org_id.clone(),
-                        action_type,
-                        resource,
-                        payload_path,
-                        delivery_target,
-                    };
-                    let result = submit_dry_run_delivery(&root, &dq_path, &request, &governance_decision)?;
-                    let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
-                    if format == "json" {
-                        print!("{}", render_queue_submission_json(&result));
-                    } else {
-                        print!("{}", render_queue_submission_human(&result));
-                    }
-                    Ok(())
-                }
-                _ => Err("openclaw seam supports 'status', 'dry-run', and 'submit'".to_string()),
-            }
-        }
-        _ => Err("openclaw supports 'seam'".to_string()),
-    }
-}
-
 fn handle_wasm(args: &[String]) -> LoomResult<()> {
     match args.first().map(String::as_str) {
         Some("limits") => handle_wasm_limits(args),
@@ -2706,11 +2616,6 @@ Runtime rehearsal\n\
   loom shadow report [--root PATH]\n\
   loom parity report [--root PATH]\n\
 \n\
-OpenClaw integration seam\n\
--------------------------\n\
-  loom openclaw seam status [--root PATH]\n\
-  loom openclaw seam dry-run --agent-id ID [--action-type TYPE] [--resource RES] [--payload-path PATH] [--delivery-target TARGET] [--governance-decision allow|deny] [--root PATH] [--format human|json]\n\
-  loom openclaw seam submit --agent-id ID [--action-type TYPE] [--resource RES] [--payload-path PATH] [--delivery-target TARGET] [--governance-decision allow|deny] [--root PATH] [--format human|json]\n\
 \n\
 Next\n\
 ----\n\
@@ -3154,38 +3059,6 @@ mod tests {
         assert!(human.contains("expectation_summary: runtime_outcome=worker_rejected"));
         assert!(human.contains("failure_reason:    policy reject: missing fixture set"));
         assert!(human.contains("job_note:          reject reason: missing fixture set"));
-    }
-
-    #[test]
-    fn openclaw_seam_submit_stages_queue_record() {
-        let root = temp_path("loom-openclaw-submit");
-        loom_core::init_workspace(&root, "embedded", None, "org_test").expect("init workspace");
-        let config_path = root.join("loom.toml");
-        let updated = fs::read_to_string(&config_path)
-            .expect("read config")
-            .replace("openclaw_integration = \"off\"", "openclaw_integration = \"dry_run\"");
-        fs::write(&config_path, updated).expect("rewrite config");
-        fs::create_dir_all(root.join("payloads")).expect("payloads dir");
-        fs::create_dir_all(root.join("state/openclaw/delivery-queue")).expect("queue dir");
-        fs::write(root.join("payloads/brief.txt"), "submit payload").expect("payload file");
-
-        let request = loom_shadow::DeliveryRoutingRequest {
-            agent_id: "agent_atlas".to_string(),
-            org_id: "org_test".to_string(),
-            action_type: "deliver".to_string(),
-            resource: "nightly_brief".to_string(),
-            payload_path: "payloads/brief.txt".to_string(),
-            delivery_target: "telegram:@test".to_string(),
-        };
-        let queue_result = loom_shadow::submit_dry_run_delivery(&root, &root.join("state/openclaw/delivery-queue"), &request, "allow")
-            .expect("submit dry-run delivery");
-
-        let queue_root = root.join("state/openclaw/delivery-queue");
-        assert!(queue_root.join("queue_index.jsonl").exists());
-        let record_count = fs::read_dir(queue_root.join("records")).expect("records dir").count();
-        assert_eq!(record_count, 1);
-        assert!(queue_result.queue_record_path.contains("queue_record_"));
-        let _ = fs::remove_dir_all(&root);
     }
 
 }
