@@ -221,6 +221,26 @@ pub struct QueueRunOnceSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QueueRunUntilEmptySummary {
+    pub root: PathBuf,
+    pub queue_dir: PathBuf,
+    pub progress_path: PathBuf,
+    pub journal_path: PathBuf,
+    pub requested: usize,
+    pub max_passes: usize,
+    pub passes_completed: usize,
+    pub initial_pending: usize,
+    pub final_pending: usize,
+    pub processed_jobs: usize,
+    pub failed_jobs: usize,
+    pub acked_jobs: usize,
+    pub last_input_hash: String,
+    pub last_execution_path: PathBuf,
+    pub drained: bool,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct QueueStatusSnapshot {
     pub root: PathBuf,
     pub queue_dir: PathBuf,
@@ -2267,6 +2287,116 @@ pub fn run_queue_once(
     };
     fs::write(&progress_path, render_queue_run_once_json(&summary)).map_err(io_err)?;
     ensure_private_file(&progress_path)?;
+    Ok(summary)
+}
+
+pub fn run_queue_until_empty(
+    root: &Path,
+    override_kernel_path: Option<&str>,
+    max_jobs_per_pass: usize,
+    max_passes: usize,
+) -> ShadowResult<QueueRunUntilEmptySummary> {
+    let queue_dir = ensure_runtime_dir(root)?.join("queue");
+    let progress_dir = queue_runs_dir(root)?.join(format!("run_until_empty_{}", timestamp_now()));
+    ensure_private_dir(&progress_dir)?;
+    let journal_path = progress_dir.join("journal.jsonl");
+    let progress_path = progress_dir.join("summary.json");
+    let initial_pending = count_runtime_queue_entries(root, "pending")?;
+    let mut passes_completed = 0usize;
+    let mut processed_jobs = 0usize;
+    let mut failed_jobs = 0usize;
+    let mut acked_jobs = 0usize;
+    let mut last_input_hash = String::new();
+    let mut last_execution_path = queue_dir.join("last_execution.json");
+    let mut final_pending = initial_pending;
+    let effective_max_passes = max_passes.max(1);
+    let effective_max_jobs = max_jobs_per_pass.max(1);
+    let mut journal_entries: Vec<String> = Vec::new();
+
+    if initial_pending == 0 {
+        journal_entries.push(format!(
+            r#"{{"status":"queue_run_until_empty_pass","pass":0,"pending_before":0,"pending_after":0,"processed_jobs":0,"failed_jobs":0,"acked_jobs":0,"drained":true,"note":{}}}
+"#,
+            json_string("queue already empty; no consume pass executed"),
+        ));
+    } else {
+        for pass in 0..effective_max_passes {
+            let pending_before = count_runtime_queue_entries(root, "pending")?;
+            if pending_before == 0 {
+                break;
+            }
+
+            let acked_before = count_queue_ack_entries(root)?;
+            let consume = consume_pending_queue(root, override_kernel_path, effective_max_jobs)?;
+            let acked_after = count_queue_ack_entries(root)?;
+            let pass_acked_jobs = acked_after.saturating_sub(acked_before);
+            passes_completed += 1;
+            processed_jobs += consume.processed_jobs;
+            failed_jobs += consume.failed_jobs;
+            acked_jobs += pass_acked_jobs;
+            last_input_hash = consume.last_input_hash.clone();
+            last_execution_path = consume.last_execution_path.clone();
+            final_pending = consume.pending_after;
+            let drained = final_pending == 0;
+            journal_entries.push(format!(
+                r#"{{"status":"queue_run_until_empty_pass","pass":{},"pending_before":{},"pending_after":{},"processed_jobs":{},"failed_jobs":{},"acked_jobs":{},"last_input_hash":{},"last_execution_path":{},"drained":{},"note":{}}}
+"#,
+                pass + 1,
+                consume.pending_before,
+                consume.pending_after,
+                consume.processed_jobs,
+                consume.failed_jobs,
+                pass_acked_jobs,
+                json_string(&consume.last_input_hash),
+                json_string(&consume.last_execution_path.display().to_string()),
+                if drained { "true" } else { "false" },
+                json_string(&consume.note),
+            ));
+            if drained {
+                break;
+            }
+        }
+    }
+
+    for entry in &journal_entries {
+        append_line(&journal_path, entry)?;
+    }
+
+    let drained = final_pending == 0;
+    let note = if initial_pending == 0 {
+        "queue already empty; no consume pass executed".to_string()
+    } else if drained {
+        format!(
+            "drained {} pending records in {} pass(es)",
+            initial_pending, passes_completed
+        )
+    } else {
+        format!(
+            "stopped after {} pass(es) with {} pending record(s) remaining",
+            passes_completed, final_pending
+        )
+    };
+    let summary = QueueRunUntilEmptySummary {
+        root: root.to_path_buf(),
+        queue_dir,
+        progress_path: progress_path.clone(),
+        journal_path: journal_path.clone(),
+        requested: effective_max_jobs,
+        max_passes: effective_max_passes,
+        passes_completed,
+        initial_pending,
+        final_pending,
+        processed_jobs,
+        failed_jobs,
+        acked_jobs,
+        last_input_hash,
+        last_execution_path,
+        drained,
+        note,
+    };
+    fs::write(&progress_path, render_queue_run_until_empty_json(&summary)).map_err(io_err)?;
+    ensure_private_file(&progress_path)?;
+    ensure_private_file(&journal_path)?;
     Ok(summary)
 }
 
@@ -5480,6 +5610,95 @@ pub fn render_queue_run_once_json(summary: &QueueRunOnceSummary) -> String {
         summary.processed_jobs,
         summary.failed_jobs,
         summary.acked_jobs,
+        json_string(&summary.last_input_hash),
+        json_string(&summary.last_execution_path.display().to_string()),
+        json_string(&summary.note),
+    )
+}
+
+pub fn render_queue_run_until_empty_human(summary: &QueueRunUntilEmptySummary) -> String {
+    format!(
+        r#"Meridian Loom // QUEUE RUN-UNTIL-EMPTY
+======================================
+phase:       bounded local queue drain loop
+boundary:    queued records are consumed locally until empty or until the pass cap is reached; live delivery is not attempted
+
+Current state
+=============
+root:                {}
+queue_dir:            {}
+progress_path:        {}
+journal_path:         {}
+requested:            {}
+max_passes:           {}
+passes_completed:     {}
+initial_pending:      {}
+final_pending:        {}
+processed_jobs:       {}
+failed_jobs:          {}
+acked_jobs:           {}
+drained:              {}
+last_input_hash:      {}
+last_execution_path:  {}
+note:                 {}
+"#,
+        summary.root.display(),
+        summary.queue_dir.display(),
+        summary.progress_path.display(),
+        summary.journal_path.display(),
+        summary.requested,
+        summary.max_passes,
+        summary.passes_completed,
+        summary.initial_pending,
+        summary.final_pending,
+        summary.processed_jobs,
+        summary.failed_jobs,
+        summary.acked_jobs,
+        if summary.drained { "true" } else { "false" },
+        if summary.last_input_hash.is_empty() {
+            "(none)".to_string()
+        } else {
+            summary.last_input_hash.clone()
+        },
+        summary.last_execution_path.display(),
+        summary.note,
+    )
+}
+
+pub fn render_queue_run_until_empty_json(summary: &QueueRunUntilEmptySummary) -> String {
+    format!(
+        r#"{{
+  "status": "queue_run_until_empty_complete",
+  "root": {},
+  "queue_dir": {},
+  "progress_path": {},
+  "journal_path": {},
+  "requested": {},
+  "max_passes": {},
+  "passes_completed": {},
+  "initial_pending": {},
+  "final_pending": {},
+  "processed_jobs": {},
+  "failed_jobs": {},
+  "acked_jobs": {},
+  "drained": {},
+  "last_input_hash": {},
+  "last_execution_path": {},
+  "note": {}
+}}"#,
+        json_string(&summary.root.display().to_string()),
+        json_string(&summary.queue_dir.display().to_string()),
+        json_string(&summary.progress_path.display().to_string()),
+        json_string(&summary.journal_path.display().to_string()),
+        summary.requested,
+        summary.max_passes,
+        summary.passes_completed,
+        summary.initial_pending,
+        summary.final_pending,
+        summary.processed_jobs,
+        summary.failed_jobs,
+        summary.acked_jobs,
+        if summary.drained { "true" } else { "false" },
         json_string(&summary.last_input_hash),
         json_string(&summary.last_execution_path.display().to_string()),
         json_string(&summary.note),
@@ -10247,6 +10466,59 @@ print(json.dumps({'id': agent_id, 'name': 'Atlas', 'org_id': org_id, 'role': 'an
         assert!(human.contains("progress_path:"));
         let json = render_queue_run_once_json(&summary);
         assert!(json.contains(r#""status": "queue_run_once_complete""#));
+    }
+
+    #[test]
+    fn queue_run_until_empty_records_a_journal_and_drains_pending_records() {
+        let root = temp_path("loom-shadow-queue-run-until-empty");
+        fs::create_dir_all(&root).expect("root");
+        let kernel_root = temp_path("loom-shadow-queue-run-until-empty-kernel");
+        scaffold_queue_kernel(&kernel_root, "queue run-until-empty fixture", 0.5);
+        init_workspace(
+            &root,
+            "embedded",
+            Some(kernel_root.to_string_lossy().as_ref()),
+            "org_demo",
+        )
+        .expect("init workspace");
+
+        let mut first = sample_envelope();
+        first.run_id = "run_a".to_string();
+        let first_capture = enqueue_action(&root, &kernel_root, &first).expect("enqueue first");
+        let mut second = sample_envelope();
+        second.run_id = "run_b".to_string();
+        second.action_type = "analysis".to_string();
+        second.resource = "artifact_inspect".to_string();
+        let second_capture = enqueue_action(&root, &kernel_root, &second).expect("enqueue second");
+
+        let summary = run_queue_until_empty(
+            &root,
+            Some(kernel_root.to_string_lossy().as_ref()),
+            1,
+            5,
+        )
+        .expect("run queue until empty");
+        assert_eq!(summary.initial_pending, 2);
+        assert_eq!(summary.passes_completed, 2);
+        assert_eq!(summary.final_pending, 0);
+        assert_eq!(summary.processed_jobs, 2);
+        assert_eq!(summary.failed_jobs, 0);
+        assert_eq!(summary.acked_jobs, 2);
+        assert!(summary.drained);
+        assert!(summary.progress_path.exists());
+        assert!(summary.journal_path.exists());
+        let progress = fs::read_to_string(&summary.progress_path).expect("progress file");
+        assert!(progress.contains(r#""status": "queue_run_until_empty_complete""#));
+        let journal = fs::read_to_string(&summary.journal_path).expect("journal file");
+        assert!(journal.contains(r#""pass":1"#));
+        assert!(journal.contains(r#""pass":2"#));
+        assert!(journal.contains(&first_capture.input_hash));
+        assert!(journal.contains(&second_capture.input_hash));
+        let human = render_queue_run_until_empty_human(&summary);
+        assert!(human.contains("QUEUE RUN-UNTIL-EMPTY"));
+        assert!(human.contains("journal_path:"));
+        let json = render_queue_run_until_empty_json(&summary);
+        assert!(json.contains(r#""status": "queue_run_until_empty_complete""#));
     }
 
     fn temp_path(prefix: &str) -> PathBuf {

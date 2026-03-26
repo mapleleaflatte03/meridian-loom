@@ -35,6 +35,7 @@ use loom_shadow::{
     render_queue_ack_human, render_queue_ack_json, render_queue_consume_human,
     render_queue_consume_json, render_queue_inspect_human, render_queue_inspect_json,
     render_queue_run_once_human, render_queue_run_once_json,
+    render_queue_run_until_empty_human, render_queue_run_until_empty_json,
     render_queue_status_human, render_queue_status_json, queue_status,
     render_supervisor_lanes_human, render_supervisor_lanes_json,
     render_preflight_human, render_preflight_json, render_runtime_execution_human,
@@ -45,7 +46,7 @@ use loom_shadow::{
     render_runtime_service_json, render_runtime_service_submit_human,
     render_runtime_service_submit_json, render_shadow_report, render_supervisor_run_human,
     render_supervisor_run_json, render_supervisor_status_human, render_supervisor_status_json,
-    render_supervisor_watch_human, render_supervisor_watch_json, run_queue_once, run_supervisor,
+    render_supervisor_watch_human, render_supervisor_watch_json, run_queue_once, run_queue_until_empty, run_supervisor,
     import_commitment_execution_requests,
     run_supervisor_daemon_loop, request_runtime_service_stop, request_supervisor_daemon_stop,
     run_runtime_service_loop, runtime_service_status, submit_dry_run_delivery, submit_runtime_service_action,
@@ -767,6 +768,24 @@ fn handle_queue(args: &[String]) -> LoomResult<()> {
             }
             Ok(())
         }
+        Some("run-until-empty") => {
+            let root = root_from(take_value(args, "--root").as_deref())?;
+            let kernel_path = take_value(args, "--kernel-path");
+            let max_jobs = take_value(args, "--max-jobs")
+                .and_then(|raw| raw.parse::<usize>().ok())
+                .unwrap_or(1);
+            let max_passes = take_value(args, "--max-passes")
+                .and_then(|raw| raw.parse::<usize>().ok())
+                .unwrap_or(25);
+            let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+            let summary = run_queue_until_empty(&root, kernel_path.as_deref(), max_jobs, max_passes)?;
+            if format == "json" {
+                print!("{}", render_queue_run_until_empty_json(&summary));
+            } else {
+                print_human(&render_queue_run_until_empty_human(&summary));
+            }
+            Ok(())
+        }
         Some("status") => {
             let root = root_from(take_value(args, "--root").as_deref())?;
             let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
@@ -790,7 +809,7 @@ fn handle_queue(args: &[String]) -> LoomResult<()> {
             }
             Ok(())
         }
-        _ => Err("queue supports 'inspect', 'consume', 'run-once', and 'ack'".to_string()),
+        _ => Err("queue supports 'inspect', 'consume', 'run-once', 'run-until-empty', 'status', and 'ack'".to_string()),
     }
 }
 
@@ -2711,12 +2730,14 @@ usage:
   loom queue inspect [--root PATH] [--limit N] [--format human|json]
   loom queue consume [--root PATH] [--kernel-path PATH] [--max-jobs N] [--format human|json]
   loom queue run-once [--root PATH] [--kernel-path PATH] [--format human|json]
+  loom queue run-until-empty [--root PATH] [--kernel-path PATH] [--max-jobs N] [--max-passes N] [--format human|json]
   loom queue status [--root PATH] [--format human|json]
   loom queue ack --job-id HASH [--root PATH]
 notes:
   - inspect reads pending local queue records without mutating them
   - consume runs the local supervisor over pending queue records and writes filesystem ack receipts
   - run-once is the bounded pipeline step: it performs one local consume pass and records a progress artifact
+  - run-until-empty repeatedly consumes bounded passes until the queue drains or the pass cap is reached, and writes a journal plus summary artifact
   - status reports policy-class queue depth without mutating any queue state
   - ack records a terminal job acknowledgement for an already completed, failed, denied, or cancelled job
 ",
