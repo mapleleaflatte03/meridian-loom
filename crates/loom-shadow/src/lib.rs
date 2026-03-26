@@ -205,6 +205,22 @@ pub struct QueueConsumeSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QueueRunOnceSummary {
+    pub root: PathBuf,
+    pub queue_dir: PathBuf,
+    pub progress_path: PathBuf,
+    pub requested: usize,
+    pub pending_before: usize,
+    pub pending_after: usize,
+    pub processed_jobs: usize,
+    pub failed_jobs: usize,
+    pub acked_jobs: usize,
+    pub last_input_hash: String,
+    pub last_execution_path: PathBuf,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct QueueAckCapture {
     pub root: PathBuf,
     pub job_id: String,
@@ -2176,6 +2192,36 @@ pub fn consume_pending_queue(
         last_execution_path: run.last_execution_path,
         note,
     })
+}
+
+pub fn run_queue_once(
+    root: &Path,
+    override_kernel_path: Option<&str>,
+) -> ShadowResult<QueueRunOnceSummary> {
+    let consume = consume_pending_queue(root, override_kernel_path, 1)?;
+    let progress_dir = queue_runs_dir(root)?;
+    let progress_path = progress_dir.join(format!("run_once_{}.json", timestamp_now()));
+    let summary = QueueRunOnceSummary {
+        root: consume.root,
+        queue_dir: consume.queue_dir,
+        progress_path: progress_path.clone(),
+        requested: consume.requested,
+        pending_before: consume.pending_before,
+        pending_after: consume.pending_after,
+        processed_jobs: consume.processed_jobs,
+        failed_jobs: consume.failed_jobs,
+        acked_jobs: consume.acked_jobs,
+        last_input_hash: consume.last_input_hash,
+        last_execution_path: consume.last_execution_path,
+        note: if consume.note.is_empty() {
+            "bounded local queue pipeline pass; no live delivery attempted".to_string()
+        } else {
+            format!("bounded local queue pipeline pass; {}", consume.note)
+        },
+    };
+    fs::write(&progress_path, render_queue_run_once_json(&summary)).map_err(io_err)?;
+    ensure_private_file(&progress_path)?;
+    Ok(summary)
 }
 
 pub fn ack_queue_job(root: &Path, job_id: &str) -> ShadowResult<QueueAckCapture> {
@@ -5325,6 +5371,75 @@ pub fn render_queue_consume_json(summary: &QueueConsumeSummary) -> String {
     )
 }
 
+pub fn render_queue_run_once_human(summary: &QueueRunOnceSummary) -> String {
+    format!(
+        r#"Meridian Loom // QUEUE RUN-ONCE
+===============================
+phase:       bounded local queue pipeline step
+boundary:    staged records are consumed locally and progress is recorded on disk; live delivery is not attempted
+
+Current state
+=============
+root:                {}
+queue_dir:            {}
+progress_path:        {}
+requested:            {}
+pending_before:       {}
+pending_after:        {}
+processed_jobs:       {}
+failed_jobs:          {}
+acked_jobs:           {}
+last_input_hash:      {}
+last_execution_path:  {}
+note:                 {}
+"#,
+        summary.root.display(),
+        summary.queue_dir.display(),
+        summary.progress_path.display(),
+        summary.requested,
+        summary.pending_before,
+        summary.pending_after,
+        summary.processed_jobs,
+        summary.failed_jobs,
+        summary.acked_jobs,
+        summary.last_input_hash,
+        summary.last_execution_path.display(),
+        summary.note,
+    )
+}
+
+pub fn render_queue_run_once_json(summary: &QueueRunOnceSummary) -> String {
+    format!(
+        r#"{{
+  "status": "queue_run_once_complete",
+  "root": {},
+  "queue_dir": {},
+  "progress_path": {},
+  "requested": {},
+  "pending_before": {},
+  "pending_after": {},
+  "processed_jobs": {},
+  "failed_jobs": {},
+  "acked_jobs": {},
+  "last_input_hash": {},
+  "last_execution_path": {},
+  "note": {}
+}}"#,
+        json_string(&summary.root.display().to_string()),
+        json_string(&summary.queue_dir.display().to_string()),
+        json_string(&summary.progress_path.display().to_string()),
+        summary.requested,
+        summary.pending_before,
+        summary.pending_after,
+        summary.processed_jobs,
+        summary.failed_jobs,
+        summary.acked_jobs,
+        json_string(&summary.last_input_hash),
+        json_string(&summary.last_execution_path.display().to_string()),
+        json_string(&summary.note),
+    )
+}
+
 pub fn render_queue_ack_human(capture: &QueueAckCapture) -> String {
     format!(
         r#"Meridian Loom // QUEUE ACK
@@ -6905,6 +7020,12 @@ fn collect_pending_queue_paths(root: &Path) -> ShadowResult<Vec<(PolicyClass, Pa
 
 fn queue_acks_dir(root: &Path) -> ShadowResult<PathBuf> {
     let path = ensure_runtime_dir(root)?.join("queue").join("acks");
+    fs::create_dir_all(&path).map_err(io_err)?;
+    Ok(path)
+}
+
+fn queue_runs_dir(root: &Path) -> ShadowResult<PathBuf> {
+    let path = ensure_runtime_dir(root)?.join("queue").join("runs");
     fs::create_dir_all(&path).map_err(io_err)?;
     Ok(path)
 }
@@ -9944,6 +10065,40 @@ print(json.dumps({'id': agent_id, 'name': 'Atlas', 'org_id': org_id, 'role': 'an
         assert!(human.contains("acknowledged_by:     queue_ack"));
         let json = render_queue_ack_json(&ack);
         assert!(json.contains(r#""status": "queue_ack_recorded""#));
+    }
+
+    #[test]
+    fn queue_run_once_processes_a_single_batch_and_records_progress() {
+        let root = temp_path("loom-shadow-queue-run-once");
+        fs::create_dir_all(&root).expect("root");
+        let kernel_root = temp_path("loom-shadow-queue-run-once-kernel");
+        scaffold_queue_kernel(&kernel_root, "queue run-once fixture", 0.5);
+        init_workspace(
+            &root,
+            "embedded",
+            Some(kernel_root.to_string_lossy().as_ref()),
+            "org_demo",
+        )
+        .expect("init workspace");
+        let envelope = sample_envelope();
+        let capture = enqueue_action(&root, &kernel_root, &envelope).expect("enqueue");
+
+        let summary = run_queue_once(&root, Some(kernel_root.to_string_lossy().as_ref()))
+            .expect("run queue once");
+        assert_eq!(summary.pending_before, 1);
+        assert_eq!(summary.pending_after, 0);
+        assert_eq!(summary.processed_jobs, 1);
+        assert_eq!(summary.failed_jobs, 0);
+        assert_eq!(summary.acked_jobs, 1);
+        assert_eq!(summary.last_input_hash, capture.input_hash);
+        assert!(summary.progress_path.exists());
+        let progress = fs::read_to_string(&summary.progress_path).expect("progress file");
+        assert!(progress.contains(r#""status": "queue_run_once_complete""#));
+        let human = render_queue_run_once_human(&summary);
+        assert!(human.contains("QUEUE RUN-ONCE"));
+        assert!(human.contains("progress_path:"));
+        let json = render_queue_run_once_json(&summary);
+        assert!(json.contains(r#""status": "queue_run_once_complete""#));
     }
 
     fn temp_path(prefix: &str) -> PathBuf {
