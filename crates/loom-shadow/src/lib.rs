@@ -165,6 +165,60 @@ pub struct EnqueuedAction {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QueueRecordSnapshot {
+    pub root: PathBuf,
+    pub queue_path: PathBuf,
+    pub ack_path: PathBuf,
+    pub job_path: PathBuf,
+    pub job_id: String,
+    pub queue_bucket: String,
+    pub policy_class: String,
+    pub status: String,
+    pub queued_at: String,
+    pub agent_id: String,
+    pub org_id: String,
+    pub action_type: String,
+    pub resource: String,
+    pub estimated_cost_usd: String,
+    pub run_id: String,
+    pub session_id: String,
+    pub kernel_path: String,
+    pub job_status: String,
+    pub job_stage: String,
+    pub acknowledged: bool,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QueueConsumeSummary {
+    pub root: PathBuf,
+    pub queue_dir: PathBuf,
+    pub requested: usize,
+    pub pending_before: usize,
+    pub pending_after: usize,
+    pub processed_jobs: usize,
+    pub failed_jobs: usize,
+    pub acked_jobs: usize,
+    pub last_input_hash: String,
+    pub last_execution_path: PathBuf,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QueueAckCapture {
+    pub root: PathBuf,
+    pub job_id: String,
+    pub job_path: PathBuf,
+    pub queue_path: Option<PathBuf>,
+    pub ack_path: PathBuf,
+    pub queue_bucket: String,
+    pub job_status: String,
+    pub acknowledged_at: String,
+    pub acknowledged_by: String,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JobSnapshot {
     pub root: PathBuf,
     pub job_id: String,
@@ -1923,7 +1977,7 @@ pub fn run_supervisor(
                 snapshot.queue_bucket = format!("processed:{}", policy_label);
                 snapshot.stage = "local_queue_supervisor".to_string();
                 snapshot.updated_at = timestamp_now();
-                snapshot.queue_path = Some(destination);
+                snapshot.queue_path = Some(destination.clone());
                 snapshot.decision_path = Some(capture.decision_path.clone());
                 snapshot.execution_path = Some(capture.execution_path.clone());
                 snapshot.event_path = Some(capture.runtime_event_path.clone());
@@ -1956,7 +2010,8 @@ pub fn run_supervisor(
                 } else {
                     format!("{} [{} lane]", capture.worker_note, policy_label)
                 };
-                write_job_snapshot(root, snapshot)?;
+                write_job_snapshot(root, snapshot.clone())?;
+                let _ = write_queue_ack_record(root, &snapshot, "local_supervisor", Some(&destination));
             }
             Err(error) => {
                 summary.failed += 1;
@@ -2009,7 +2064,7 @@ pub fn run_supervisor(
                             budget_reservation_status: "reservation_failed".to_string(),
                             budget_reservation_reason: "queue supervisor failed before runtime capture".to_string(),
                             worker_status: "failed_before_dispatch".to_string(),
-                            queue_path: Some(destination),
+                            queue_path: Some(destination.clone()),
                             decision_path: None,
                             execution_path: None,
                             event_path: None,
@@ -2023,6 +2078,9 @@ pub fn run_supervisor(
                             note: error,
                         },
                     )?;
+                    if let Ok(snapshot) = read_job_snapshot(root, &input_hash) {
+                        let _ = write_queue_ack_record(root, &snapshot, "local_supervisor", Some(&destination));
+                    }
                 }
             }
         }
@@ -2069,6 +2127,66 @@ pub fn list_jobs(
 
 pub fn inspect_job(root: &Path, job_id: &str) -> ShadowResult<JobSnapshot> {
     read_job_snapshot(root, job_id)
+}
+
+pub fn inspect_pending_queue(root: &Path, limit: usize) -> ShadowResult<Vec<QueueRecordSnapshot>> {
+    let mut records = collect_pending_queue_paths(root)?
+        .into_iter()
+        .map(|(policy_class, path)| load_queue_record_snapshot(root, policy_class, &path))
+        .collect::<ShadowResult<Vec<_>>>()?;
+    records.sort_by(|left, right| {
+        left.queued_at
+            .cmp(&right.queued_at)
+            .then_with(|| left.job_id.cmp(&right.job_id))
+    });
+    if limit > 0 {
+        records.truncate(limit);
+    }
+    Ok(records)
+}
+
+pub fn consume_pending_queue(
+    root: &Path,
+    override_kernel_path: Option<&str>,
+    max_jobs: usize,
+) -> ShadowResult<QueueConsumeSummary> {
+    let queue_dir = ensure_runtime_dir(root)?.join("queue");
+    let pending_before = count_runtime_queue_entries(root, "pending")?;
+    let run = run_supervisor(root, override_kernel_path, max_jobs)?;
+    let pending_after = count_runtime_queue_entries(root, "pending")?;
+    let acked_jobs = count_queue_ack_entries(root)?;
+    let note = if run.note.is_empty() {
+        format!(
+            "consumed {} local queue records with filesystem acks",
+            run.processed
+        )
+    } else {
+        format!("{}; local queue acks recorded", run.note)
+    };
+    Ok(QueueConsumeSummary {
+        root: root.to_path_buf(),
+        queue_dir,
+        requested: max_jobs,
+        pending_before,
+        pending_after,
+        processed_jobs: run.processed,
+        failed_jobs: run.failed,
+        acked_jobs,
+        last_input_hash: run.last_input_hash,
+        last_execution_path: run.last_execution_path,
+        note,
+    })
+}
+
+pub fn ack_queue_job(root: &Path, job_id: &str) -> ShadowResult<QueueAckCapture> {
+    let snapshot = inspect_job(root, job_id)?;
+    if !matches!(snapshot.status.as_str(), "completed" | "failed" | "denied" | "cancelled") {
+        return Err(format!(
+            "job {} is in state {}, not a terminal state that can be acknowledged",
+            job_id, snapshot.status
+        ));
+    }
+    write_queue_ack_record(root, &snapshot, "queue_ack", snapshot.queue_path.as_deref())
 }
 
 /// Approve a suspended job, moving it back to Queued so the supervisor can re-process it.
@@ -4983,7 +5101,19 @@ pub fn render_enqueued_action_human(capture: &EnqueuedAction) -> String {
 
 pub fn render_enqueued_action_json(capture: &EnqueuedAction) -> String {
     format!(
-        "{{\n  \"status\": \"queued\",\n  \"queue_path\": {},\n  \"job_path\": {},\n  \"input_hash\": {},\n  \"policy_class\": {},\n  \"agent_id\": {},\n  \"org_id\": {},\n  \"action_type\": {},\n  \"resource\": {},\n  \"estimated_cost_usd\": {},\n  \"kernel_path\": {}\n}}\n",
+        r#"{{
+  "status": "queued",
+  "queue_path": {},
+  "job_path": {},
+  "input_hash": {},
+  "policy_class": {},
+  "agent_id": {},
+  "org_id": {},
+  "action_type": {},
+  "resource": {},
+  "estimated_cost_usd": {},
+  "kernel_path": {}
+}}"#,
         json_string(&capture.queue_path.display().to_string()),
         json_string(&capture.job_path.display().to_string()),
         json_string(&capture.input_hash),
@@ -4994,6 +5124,263 @@ pub fn render_enqueued_action_json(capture: &EnqueuedAction) -> String {
         json_string(&capture.resource),
         capture.estimated_cost_usd,
         json_string(&capture.kernel_path),
+    )
+}
+
+fn render_queue_record_human(record: &QueueRecordSnapshot) -> String {
+    format!(
+        r"  {} | policy={} | status={} | job_status={} | stage={} | acked={} | queue_path={}
+",
+        record.job_id,
+        record.policy_class,
+        record.status,
+        record.job_status,
+        record.job_stage,
+        if record.acknowledged { "yes" } else { "no" },
+        record.queue_path.display(),
+    )
+}
+
+fn render_queue_record_json(record: &QueueRecordSnapshot) -> String {
+    format!(
+        r#"    {{
+      "job_id": {},
+      "queue_bucket": {},
+      "policy_class": {},
+      "status": {},
+      "queued_at": {},
+      "agent_id": {},
+      "org_id": {},
+      "action_type": {},
+      "resource": {},
+      "estimated_cost_usd": {},
+      "run_id": {},
+      "session_id": {},
+      "kernel_path": {},
+      "job_status": {},
+      "job_stage": {},
+      "acknowledged": {},
+      "queue_path": {},
+      "job_path": {},
+      "ack_path": {},
+      "note": {}
+    }}"#,
+        json_string(&record.job_id),
+        json_string(&record.queue_bucket),
+        json_string(&record.policy_class),
+        json_string(&record.status),
+        json_string(&record.queued_at),
+        json_string(&record.agent_id),
+        json_string(&record.org_id),
+        json_string(&record.action_type),
+        json_string(&record.resource),
+        json_string(&record.estimated_cost_usd),
+        json_string(&record.run_id),
+        json_string(&record.session_id),
+        json_string(&record.kernel_path),
+        json_string(&record.job_status),
+        json_string(&record.job_stage),
+        if record.acknowledged { "true" } else { "false" },
+        json_string(&record.queue_path.display().to_string()),
+        json_string(&record.job_path.display().to_string()),
+        json_string(&record.ack_path.display().to_string()),
+        json_string(&record.note),
+    )
+}
+
+pub fn render_queue_inspect_human(root: &Path, records: &[QueueRecordSnapshot], limit: usize) -> String {
+    let entries = if records.is_empty() {
+        "  (none)
+".to_string()
+    } else {
+        records.iter().map(render_queue_record_human).collect::<String>()
+    };
+    let acked = records.iter().filter(|record| record.acknowledged).count();
+    format!(
+        r#"Meridian Loom // QUEUE INSPECT
+==============================
+phase:       experimental local queue staging
+boundary:    submitted queue records are locally inspectable; hosted delivery is not
+
+Current state
+=============
+root:                {}
+pending_records:     {}
+acked_records:       {}
+limit:               {}
+
+Entries
+-------
+{}
+Next
+====
+1. loom queue consume --root {} --max-jobs 1
+2. loom queue ack --root {} --job-id <job_id>
+3. loom job inspect --job-id <job_id> --root {}
+"#,
+        root.display(),
+        records.len(),
+        acked,
+        if limit == 0 { "(all)".to_string() } else { limit.to_string() },
+        entries,
+        root.display(),
+        root.display(),
+        root.display(),
+    )
+}
+
+pub fn render_queue_inspect_json(root: &Path, records: &[QueueRecordSnapshot], limit: usize) -> String {
+    let rendered = records.iter().map(render_queue_record_json).collect::<Vec<_>>().join(",\n");
+    format!(
+        r#"{{
+  "status": "queue_inspect",
+  "root": {},
+  "limit": {},
+  "pending_records": {},
+  "acked_records": {},
+  "records": [
+{}
+  ]
+}}"#,
+        json_string(&root.display().to_string()),
+        limit,
+        records.len(),
+        records.iter().filter(|record| record.acknowledged).count(),
+        rendered
+    )
+}
+
+pub fn render_queue_consume_human(summary: &QueueConsumeSummary) -> String {
+    format!(
+        r#"Meridian Loom // QUEUE CONSUME
+==============================
+phase:       experimental local queue consumer
+boundary:    queued records are consumed locally and acked on the filesystem; hosted delivery is not
+
+Current state
+=============
+root:                {}
+queue_dir:            {}
+requested:            {}
+pending_before:       {}
+pending_after:        {}
+processed_jobs:       {}
+failed_jobs:          {}
+acked_jobs:           {}
+last_input_hash:      {}
+last_execution_path:  {}
+note:                 {}
+
+Next
+====
+1. loom queue inspect --root {}
+2. loom queue ack --root {} --job-id {}
+3. loom parity report --root {}
+"#,
+        summary.root.display(),
+        summary.queue_dir.display(),
+        summary.requested,
+        summary.pending_before,
+        summary.pending_after,
+        summary.processed_jobs,
+        summary.failed_jobs,
+        summary.acked_jobs,
+        summary.last_input_hash,
+        summary.last_execution_path.display(),
+        summary.note,
+        summary.root.display(),
+        summary.root.display(),
+        if summary.last_input_hash.is_empty() { "<job_id>".to_string() } else { summary.last_input_hash.clone() },
+        summary.root.display(),
+    )
+}
+
+pub fn render_queue_consume_json(summary: &QueueConsumeSummary) -> String {
+    format!(
+        r#"{{
+  "status": "queue_consume_complete",
+  "root": {},
+  "queue_dir": {},
+  "requested": {},
+  "pending_before": {},
+  "pending_after": {},
+  "processed_jobs": {},
+  "failed_jobs": {},
+  "acked_jobs": {},
+  "last_input_hash": {},
+  "last_execution_path": {},
+  "note": {}
+}}"#,
+        json_string(&summary.root.display().to_string()),
+        json_string(&summary.queue_dir.display().to_string()),
+        summary.requested,
+        summary.pending_before,
+        summary.pending_after,
+        summary.processed_jobs,
+        summary.failed_jobs,
+        summary.acked_jobs,
+        json_string(&summary.last_input_hash),
+        json_string(&summary.last_execution_path.display().to_string()),
+        json_string(&summary.note),
+    )
+}
+
+pub fn render_queue_ack_human(capture: &QueueAckCapture) -> String {
+    format!(
+        r#"Meridian Loom // QUEUE ACK
+=========================
+phase:       experimental local queue acknowledgment
+boundary:    queue acknowledgement is a local filesystem receipt, not live delivery
+
+Current state
+=============
+job_id:              {}
+job_status:          {}
+queue_bucket:        {}
+ack_path:            {}
+acknowledged_at:     {}
+acknowledged_by:     {}
+queue_path:          {}
+job_path:            {}
+note:                {}
+"#,
+        capture.job_id,
+        capture.job_status,
+        capture.queue_bucket,
+        capture.ack_path.display(),
+        capture.acknowledged_at,
+        capture.acknowledged_by,
+        capture.queue_path.as_ref().map(|path| path.display().to_string()).unwrap_or_else(|| "(none)".to_string()),
+        capture.job_path.display(),
+        capture.note,
+    )
+}
+
+pub fn render_queue_ack_json(capture: &QueueAckCapture) -> String {
+    format!(
+        r#"{{
+  "status": "queue_ack_recorded",
+  "root": {},
+  "job_id": {},
+  "job_path": {},
+  "queue_path": {},
+  "ack_path": {},
+  "queue_bucket": {},
+  "job_status": {},
+  "acknowledged_at": {},
+  "acknowledged_by": {},
+  "note": {}
+}}"#,
+        json_string(&capture.root.display().to_string()),
+        json_string(&capture.job_id),
+        json_string(&capture.job_path.display().to_string()),
+        capture.queue_path.as_ref().map(|path| json_string(&path.display().to_string())).unwrap_or_else(|| "null".to_string()),
+        json_string(&capture.ack_path.display().to_string()),
+        json_string(&capture.queue_bucket),
+        json_string(&capture.job_status),
+        json_string(&capture.acknowledged_at),
+        json_string(&capture.acknowledged_by),
+        json_string(&capture.note),
     )
 }
 
@@ -6514,6 +6901,140 @@ fn collect_pending_queue_paths(root: &Path) -> ShadowResult<Vec<(PolicyClass, Pa
             .map(|path| (PolicyClass::Standard, path)),
     );
     Ok(pending)
+}
+
+fn queue_acks_dir(root: &Path) -> ShadowResult<PathBuf> {
+    let path = ensure_runtime_dir(root)?.join("queue").join("acks");
+    fs::create_dir_all(&path).map_err(io_err)?;
+    Ok(path)
+}
+
+fn queue_ack_path(root: &Path, job_id: &str) -> ShadowResult<PathBuf> {
+    Ok(queue_acks_dir(root)?.join(format!("{}.json", sanitize_filename(job_id))))
+}
+
+fn count_queue_ack_entries(root: &Path) -> ShadowResult<usize> {
+    let path = queue_acks_dir(root)?;
+    if !path.exists() {
+        return Ok(0);
+    }
+    count_json_files_recursive(&path)
+}
+
+fn load_queue_record_snapshot(root: &Path, policy_class: PolicyClass, queue_path: &Path) -> ShadowResult<QueueRecordSnapshot> {
+    let contents = fs::read_to_string(queue_path).map_err(io_err)?;
+    let queue_body = serde_json::from_str::<Value>(&contents).unwrap_or(Value::Null);
+    let job_id = value_string(queue_body.get("input_hash"));
+    let job_id = if job_id.is_empty() {
+        extract_json_string(&contents, "\"input_hash\"")
+            .ok_or_else(|| format!("input_hash missing in {}", queue_path.display()))?
+    } else {
+        job_id
+    };
+    let job_path = job_snapshot_path(root, &job_id);
+    let ack_path = queue_ack_path(root, &job_id)?;
+    let job_snapshot = read_job_snapshot(root, &job_id).ok();
+    let acknowledged = ack_path.exists();
+    let (job_status, job_stage, note) = match job_snapshot {
+        Some(snapshot) => (
+            snapshot.status,
+            snapshot.stage,
+            if ack_path.exists() {
+                format!("{}; local queue ack present", snapshot.note)
+            } else {
+                snapshot.note
+            },
+        ),
+        None => (
+            "(not captured)".to_string(),
+            "(not captured)".to_string(),
+            if ack_path.exists() {
+                "local queue ack present, but no job snapshot was captured".to_string()
+            } else {
+                "pending local supervisor consume".to_string()
+            },
+        ),
+    };
+    Ok(QueueRecordSnapshot {
+        root: root.to_path_buf(),
+        queue_path: queue_path.to_path_buf(),
+        ack_path,
+        job_path,
+        job_id,
+        queue_bucket: format!("pending:{}", policy_class.label()),
+        policy_class: policy_class.label().to_string(),
+        status: value_string(queue_body.get("status")),
+        queued_at: value_string(queue_body.get("queued_at")),
+        agent_id: value_string(queue_body.get("agent_id")),
+        org_id: value_string(queue_body.get("org_id")),
+        action_type: value_string(queue_body.get("action_type")),
+        resource: value_string(queue_body.get("resource")),
+        estimated_cost_usd: if let Some(value) = queue_body.get("estimated_cost_usd").and_then(Value::as_f64) {
+            format!("{:.6}", value)
+        } else {
+            extract_json_number(&contents, "\"estimated_cost_usd\"")
+                .map(|value| format!("{:.6}", value))
+                .unwrap_or_else(|| "0.000000".to_string())
+        },
+        run_id: value_string(queue_body.get("run_id")),
+        session_id: value_string(queue_body.get("session_id")),
+        kernel_path: value_string(queue_body.get("kernel_path")),
+        job_status,
+        job_stage,
+        acknowledged,
+        note,
+    })
+}
+
+fn write_queue_ack_record(
+    root: &Path,
+    snapshot: &JobSnapshot,
+    acknowledged_by: &str,
+    queue_path: Option<&Path>,
+) -> ShadowResult<QueueAckCapture> {
+    let ack_path = queue_ack_path(root, &snapshot.job_id)?;
+    let acknowledged_at = timestamp_now();
+    let rendered = format!(
+        r#"{{
+  "status": "acked",
+  "job_id": {},
+  "job_path": {},
+  "queue_path": {},
+  "ack_path": {},
+  "queue_bucket": {},
+  "job_status": {},
+  "job_stage": {},
+  "acknowledged_at": {},
+  "acknowledged_by": {},
+  "note": {}
+}}"#,
+        json_string(&snapshot.job_id),
+        json_string(&snapshot.job_path.display().to_string()),
+        queue_path
+            .map(|path| json_string(&path.display().to_string()))
+            .unwrap_or_else(|| "null".to_string()),
+        json_string(&ack_path.display().to_string()),
+        json_string(&snapshot.queue_bucket),
+        json_string(&snapshot.status),
+        json_string(&snapshot.stage),
+        json_string(&acknowledged_at),
+        json_string(acknowledged_by),
+        json_string(&snapshot.note),
+    );
+    fs::write(&ack_path, rendered).map_err(io_err)?;
+    ensure_private_file(&ack_path)?;
+    Ok(QueueAckCapture {
+        root: root.to_path_buf(),
+        job_id: snapshot.job_id.clone(),
+        job_path: snapshot.job_path.clone(),
+        queue_path: queue_path.map(Path::to_path_buf),
+        ack_path: ack_path.clone(),
+        queue_bucket: snapshot.queue_bucket.clone(),
+        job_status: snapshot.status.clone(),
+        acknowledged_at,
+        acknowledged_by: acknowledged_by.to_string(),
+        note: snapshot.note.clone(),
+    })
 }
 
 fn ensure_parity_dir(root: &Path) -> ShadowResult<PathBuf> {
@@ -9265,6 +9786,164 @@ if __name__ == '__main__':
         assert_eq!(snapshot.status, "crashed");
         let health = render_runtime_service_health_json(&snapshot);
         assert!(health.contains("\"status\": \"crashed\""));
+    }
+
+    fn scaffold_queue_kernel(kernel_root: &Path, note: &str, treasury_limit: f64) {
+        let kernel_dir = kernel_root.join("kernel");
+        fs::create_dir_all(kernel_dir.join("adapters")).expect("kernel dirs");
+        let runtimes = serde_json::json!({
+            "runtimes": {
+                "local_kernel": {"id": "local_kernel", "label": "Local Kernel Runtime"},
+                "meridian_loom": {
+                    "status": "experimental",
+                    "notes": note,
+                    "contract_compliance": {
+                        "agent_identity": null,
+                        "action_envelope": null,
+                        "cost_attribution": null,
+                        "approval_hook": null,
+                        "audit_emission": null,
+                        "sanction_controls": null,
+                        "budget_gate": null,
+                    },
+                },
+            }
+        });
+        fs::write(
+            kernel_dir.join("runtimes.json"),
+            format!("{}\n", serde_json::to_string_pretty(&runtimes).expect("serialize runtimes")),
+        )
+        .expect("write runtimes");
+        fs::write(
+            kernel_dir.join("agent_registry.py"),
+            r#"import json, sys
+agent_id = sys.argv[sys.argv.index('--agent_id') + 1]
+org_id = sys.argv[sys.argv.index('--org_id') + 1] if '--org_id' in sys.argv else 'org_demo'
+print(json.dumps({'id': agent_id, 'name': 'Atlas', 'org_id': org_id, 'role': 'analyst', 'economy_key': 'atlas', 'approval_required': False, 'budget': {'max_per_run_usd': 0.5}, 'runtime_binding': {'runtime_id': 'local_kernel', 'runtime_label': 'Local Kernel Runtime', 'bound_org_id': org_id, 'boundary_name': 'workspace', 'identity_model': 'session', 'runtime_registered': True, 'registration_status': 'registered'}}, indent=2))
+"#,
+        )
+        .expect("write registry");
+        fs::write(
+            kernel_dir.join("court.py"),
+            r#"def get_restrictions(agent_id, org_id=None):
+    return []
+"#,
+        )
+        .expect("write court");
+        fs::write(
+            kernel_dir.join("authority.py"),
+            r#"def check_authority(agent_id, action, org_id=None):
+    return True, 'ok'
+"#,
+        )
+        .expect("write authority");
+        fs::write(
+            kernel_dir.join("treasury.py"),
+            format!(
+                r#"def check_budget(agent_id, cost_usd, org_id=None):
+    if cost_usd > {}:
+        return False, 'below reserve'
+    return True, 'ok'
+"#,
+                treasury_limit,
+            ),
+        )
+        .expect("write treasury");
+        fs::write(
+            kernel_dir.join("audit.py"),
+            r#"def log_event(*args, **kwargs):
+    return 'evt_jobs'
+"#,
+        )
+        .expect("write audit");
+        fs::write(kernel_dir.join("adapters/__init__.py"), "").expect("write adapter init");
+        fs::write(
+            kernel_dir.join("adapters/openclaw_compatible.py"),
+            r#"def pre_action_check(org_id, envelope):
+    return {'allowed': True, 'stage': 'ok', 'reason': 'ok', 'restrictions': []}
+"#,
+        )
+        .expect("write adapter");
+    }
+
+    #[test]
+    fn queue_inspect_lists_pending_records_before_processing() {
+        let root = temp_path("loom-shadow-queue-inspect");
+        fs::create_dir_all(&root).expect("root");
+        let envelope = sample_envelope();
+        let capture = enqueue_action(&root, Path::new("/tmp/meridian-kernel"), &envelope).expect("enqueue");
+
+        let records = inspect_pending_queue(&root, 10).expect("inspect queue");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].job_id, capture.input_hash);
+        assert!(!records[0].acknowledged);
+        let human = render_queue_inspect_human(&root, &records, 10);
+        assert!(human.contains("QUEUE INSPECT"));
+        assert!(human.contains(&capture.input_hash));
+        let json = render_queue_inspect_json(&root, &records, 10);
+        assert!(json.contains(r#""pending_records": 1"#));
+    }
+
+    #[test]
+    fn queue_consume_processes_and_records_ack_receipts() {
+        let root = temp_path("loom-shadow-queue-consume");
+        fs::create_dir_all(&root).expect("root");
+        let kernel_root = temp_path("loom-shadow-queue-consume-kernel");
+        scaffold_queue_kernel(&kernel_root, "queue consume fixture", 0.5);
+        init_workspace(
+            &root,
+            "embedded",
+            Some(kernel_root.to_string_lossy().as_ref()),
+            "org_demo",
+        )
+        .expect("init workspace");
+        let envelope = sample_envelope();
+        let capture = enqueue_action(&root, &kernel_root, &envelope).expect("enqueue");
+
+        let summary = consume_pending_queue(&root, Some(kernel_root.to_string_lossy().as_ref()), 1)
+            .expect("consume queue");
+        assert_eq!(summary.pending_before, 1);
+        assert_eq!(summary.pending_after, 0);
+        assert_eq!(summary.processed_jobs, 1);
+        assert_eq!(summary.failed_jobs, 0);
+        assert_eq!(summary.acked_jobs, 1);
+        assert_eq!(summary.last_input_hash, capture.input_hash);
+        let ack_path = root.join("state/runtime/queue/acks").join(format!("{}.json", capture.input_hash));
+        assert!(ack_path.exists());
+        let human = render_queue_consume_human(&summary);
+        assert!(human.contains("QUEUE CONSUME"));
+        assert!(human.contains("acked_jobs:"));
+        let json = render_queue_consume_json(&summary);
+        assert!(json.contains(r#""status": "queue_consume_complete""#));
+    }
+
+    #[test]
+    fn queue_ack_records_terminal_job_receipt() {
+        let root = temp_path("loom-shadow-queue-ack");
+        fs::create_dir_all(&root).expect("root");
+        let kernel_root = temp_path("loom-shadow-queue-ack-kernel");
+        scaffold_queue_kernel(&kernel_root, "queue ack fixture", 0.5);
+        init_workspace(
+            &root,
+            "embedded",
+            Some(kernel_root.to_string_lossy().as_ref()),
+            "org_demo",
+        )
+        .expect("init workspace");
+        let envelope = sample_envelope();
+        let capture = enqueue_action(&root, &kernel_root, &envelope).expect("enqueue");
+        run_supervisor(&root, Some(kernel_root.to_string_lossy().as_ref()), 1).expect("supervisor");
+
+        let ack = ack_queue_job(&root, &capture.input_hash).expect("ack job");
+        assert_eq!(ack.job_id, capture.input_hash);
+        assert_eq!(ack.acknowledged_by, "queue_ack");
+        assert_eq!(ack.job_status, "completed");
+        assert!(ack.ack_path.exists());
+        let human = render_queue_ack_human(&ack);
+        assert!(human.contains("QUEUE ACK"));
+        assert!(human.contains("acknowledged_by:     queue_ack"));
+        let json = render_queue_ack_json(&ack);
+        assert!(json.contains(r#""status": "queue_ack_recorded""#));
     }
 
     fn temp_path(prefix: &str) -> PathBuf {

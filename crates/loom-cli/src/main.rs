@@ -27,11 +27,13 @@ use loom_core::{
     wasm_profiles::{profile_defaults_map, render_pooling_config_human, render_pooling_config_json, PoolingProfile},
 };
 use loom_shadow::{
-    approve_job, capture_decision, capture_preflight, capture_runtime_execution, compare_logs,
-    decision_exit_code, enqueue_action, inspect_job, list_jobs, render_compare_human,
+    ack_queue_job, approve_job, consume_pending_queue, capture_decision, capture_preflight, capture_runtime_execution, compare_logs,
+    decision_exit_code, enqueue_action, inspect_job, inspect_pending_queue, list_jobs, render_compare_human,
     render_compare_json, render_decision_human, render_decision_json,
     render_enqueued_action_human, render_enqueued_action_json, render_job_inspect_human,
     render_job_inspect_json, render_job_list_human, render_job_list_json, render_parity_report,
+    render_queue_ack_human, render_queue_ack_json, render_queue_consume_human,
+    render_queue_consume_json, render_queue_inspect_human, render_queue_inspect_json,
     render_supervisor_lanes_human, render_supervisor_lanes_json,
     render_preflight_human, render_preflight_json, render_runtime_execution_human,
     render_cutover_status_human, render_queue_submission_human, render_queue_submission_json,
@@ -93,6 +95,7 @@ fn run() -> LoomResult<()> {
         "capsule" => handle_capsule(&args[1..]),
         "capability" => handle_capability(&args[1..]),
         "job" => handle_job(&args[1..]),
+        "queue" => handle_queue(&args[1..]),
         "agent" => handle_agent(&args[1..]),
         "envelope" => handle_envelope(&args[1..]),
         "action" => handle_action(&args[1..]),
@@ -716,6 +719,53 @@ fn handle_capability(args: &[String]) -> LoomResult<()> {
             Ok(())
         }
         _ => Err("capability supports 'list', 'show', 'scaffold', 'forge', 'import-workspace-skill', 'import-openclaw-plugin-skill-subset', 'verify', 'promote', and 'shim'".to_string()),
+    }
+}
+
+fn handle_queue(args: &[String]) -> LoomResult<()> {
+    match args.first().map(String::as_str) {
+        Some("inspect") => {
+            let root = root_from(take_value(args, "--root").as_deref())?;
+            let limit = take_value(args, "--limit")
+                .and_then(|raw| raw.parse::<usize>().ok())
+                .unwrap_or(0);
+            let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+            let records = inspect_pending_queue(&root, limit)?;
+            if format == "json" {
+                print!("{}", render_queue_inspect_json(&root, &records, limit));
+            } else {
+                print_human(&render_queue_inspect_human(&root, &records, limit));
+            }
+            Ok(())
+        }
+        Some("consume") => {
+            let root = root_from(take_value(args, "--root").as_deref())?;
+            let kernel_path = take_value(args, "--kernel-path");
+            let max_jobs = take_value(args, "--max-jobs")
+                .and_then(|raw| raw.parse::<usize>().ok())
+                .unwrap_or(1);
+            let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+            let summary = consume_pending_queue(&root, kernel_path.as_deref(), max_jobs)?;
+            if format == "json" {
+                print!("{}", render_queue_consume_json(&summary));
+            } else {
+                print_human(&render_queue_consume_human(&summary));
+            }
+            Ok(())
+        }
+        Some("ack") => {
+            let root = root_from(take_value(args, "--root").as_deref())?;
+            let job_id = required_flag(args, "--job-id")?;
+            let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+            let capture = ack_queue_job(&root, &job_id)?;
+            if format == "json" {
+                print!("{}", render_queue_ack_json(&capture));
+            } else {
+                print_human(&render_queue_ack_human(&capture));
+            }
+            Ok(())
+        }
+        _ => Err("queue supports 'inspect', 'consume', and 'ack'".to_string()),
     }
 }
 
@@ -2625,6 +2675,22 @@ Next\n\
   3. loom start --root \"$HOME/.local/share/meridian-loom/runtime/default\" --kernel-path /tmp/meridian-kernel --http-address 127.0.0.1:18910 --service-token \"$LOOM_SERVICE_TOKEN\"\n\
   4. curl -sS -H 'Authorization: Bearer loom-local-token' http://127.0.0.1:18910/status\n\
   5. loom logs --root \"$HOME/.local/share/meridian-loom/runtime/default\" --lines 50\n",
+    );
+}
+
+fn print_queue_help() {
+    print_human(
+        "Meridian Loom // QUEUE HELP
+============================
+usage:
+  loom queue inspect [--root PATH] [--limit N] [--format human|json]
+  loom queue consume [--root PATH] [--kernel-path PATH] [--max-jobs N] [--format human|json]
+  loom queue ack --job-id HASH [--root PATH]
+notes:
+  - inspect reads pending local queue records without mutating them
+  - consume runs the local supervisor over pending queue records and writes filesystem ack receipts
+  - ack records a terminal job acknowledgement for an already completed, failed, denied, or cancelled job
+",
     );
 }
 
