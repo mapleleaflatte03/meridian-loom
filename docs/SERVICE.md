@@ -49,6 +49,25 @@ When `--http-address` is set, Loom exposes:
 
 If `--service-token` is set, token auth is required on that surface.
 
+## Queue seam
+
+The local queue surface is separate from the HTTP service surface, but it is now real and operator-visible:
+
+- `loom queue inspect` reads pending queue records without mutating them
+- `loom queue consume` runs the local supervisor over pending queue records and writes filesystem ack receipts
+- `loom queue run-once` performs one bounded consume pass and records a progress artifact
+- `loom queue run-until-empty` repeats bounded passes until the queue drains or the pass cap is reached, then writes a journal and summary artifact
+- `loom queue status` reports policy-class queue depth without mutating queue state
+- `loom queue ack` records a terminal acknowledgement for an already completed, failed, denied, or cancelled job
+
+Queue artifacts live under `<root>/state/runtime/queue/`:
+
+- pending records: `<root>/state/runtime/queue/pending/<policy_class>/`
+- ack receipts: `<root>/state/runtime/queue/acks/`
+- run artifacts: `<root>/state/runtime/queue/runs/`
+
+This queue seam is local-only. It does not imply hosted queue orchestration, cross-node delivery, or live transport cutover.
+
 Container/runtime contract:
 
 - image entrypoint: `loom`

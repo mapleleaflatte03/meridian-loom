@@ -9,7 +9,7 @@ Current truth:
 - local service lifecycle is real
 - background and foreground service modes exist
 - tokenized local HTTP control plane is real
-- queue, scheduler, job ledger, logs, audit, and parity paths are real
+- queue seam, scheduler, job ledger, logs, audit, and parity paths are real; the queue surface includes inspect, consume, ack, run-once, run-until-empty, and status
 - Docker, tarball, and source install flows exist
 - operator docs are aligned with the current code surface
 
@@ -19,6 +19,8 @@ What it is not yet:
 - OpenClaw retirement
 - live transport cutover
 - full hosted parity
+- hosted or distributed queue orchestration
+- queue acknowledgements from a live transport
 - full contract compliance across every future runtime hook
 
 ## Migration / cutover path

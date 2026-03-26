@@ -37,7 +37,8 @@ What is real today:
 - a real `loom` binary
 - a real local service lifecycle
 - a local HTTP control plane with token auth
-- local queue, scheduler, job ledger, audit, and parity artifacts
+- a local queue seam with `inspect`, `consume`, `ack`, `status`, `run-once`, and `run-until-empty`
+- local scheduler, job ledger, audit, and parity artifacts
 - Docker, tarball, and source install paths
 - operator docs for install, config, run, logs, and release
 
@@ -47,6 +48,7 @@ What is not claimed today:
 - live OpenClaw retirement
 - transport cutover for the live host
 - full hosted parity with OpenClaw
+- hosted or distributed queue orchestration
 
 OpenClaw still runs the live host. Meridian remains the governance kernel above
 runtimes.
@@ -175,6 +177,7 @@ First-class operator commands:
 - `loom logs`
 - `loom capability list|show|gap show|scaffold|forge|import-workspace-skill|verify|promote|shim`
 - `loom service start|status|submit|import-commitments|stop`
+- `loom queue inspect|consume|run-once|run-until-empty|status|ack`
 - `loom job list|inspect`
 - `loom parity report`
 - `loom shadow report`
@@ -198,6 +201,7 @@ That harness proves:
 - status and health checks
 - tokenized HTTP submit
 - job processing and inspection
+- queue inspect/consume/ack/run-once/run-until-empty/status on local records
 - logs and artifacts at stable paths
 - restart and idempotent stop
 
