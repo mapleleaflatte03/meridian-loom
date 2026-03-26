@@ -3,14 +3,11 @@
 </p>
 
 <p align="center">
-  Local-first runtime surface for Meridian operators.
+  <img src="docs/assets/loom_runtime_panels.svg" alt="Meridian Loom runtime panels" width="960">
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/phase-local--first%20runtime-0c1117?style=flat-square" alt="Local-first runtime">
-  <img src="https://img.shields.io/badge/boundary-production--oriented%20local%20only-8b0000?style=flat-square" alt="Production-oriented local only">
-  <img src="https://img.shields.io/github/actions/workflow/status/mapleleaflatte03/meridian-loom/rust.yml?branch=main&style=flat-square" alt="Rust CI">
-  <img src="https://img.shields.io/badge/license-MIT-1f6feb?style=flat-square" alt="MIT license">
+  Meridian Loom is the local-first runtime surface for Meridian.
 </p>
 
 <p align="center">
@@ -19,269 +16,62 @@
   <a href="docs/SERVICE.md">Service</a> ·
   <a href="docs/CONFIG.md">Config</a> ·
   <a href="docs/OPERATIONS.md">Operations</a> ·
-  <a href="docs/RELEASE.md">Release</a> ·
-  <a href="docs/PRODUCT_TRUTH.md">Product Truth</a>
+  <a href="docs/ARCHITECTURE.md">Architecture</a> ·
+  <a href="docs/RELEASE.md">Release</a>
 </p>
 
 # Meridian Loom
 
-Meridian Loom is the local-first runtime surface for Meridian. It is meant to
-be installable, inspectable, and operable by a real end-user or operator on a
-single Linux host.
+Meridian Loom is the operator-facing local runtime boundary for Meridian. It is installable, inspectable, and runnable on a single Linux host.
 
-It is production-oriented in local form. It is not yet a hosted runtime
-replacement or an OpenClaw retirement path.
+The current repo truth is intentionally narrow:
 
-What is real today:
+- a real local service lifecycle exists
+- foreground and background service modes exist
+- the local HTTP control plane is tokenized
+- queue, job ledger, audit, parity, and shadow artifacts are real
+- Docker, tarball, and source install paths exist
+- rehearsal scripts are split between operational tests and migration/back-compat tooling
 
-- a real `loom` binary
-- a real local service lifecycle
-- a local HTTP control plane with token auth
-- a local queue seam with `inspect`, `consume`, `ack`, `status`, `run-once`, and `run-until-empty`
-- local scheduler, job ledger, audit, and parity artifacts
-- Docker, tarball, and source install paths
-- operator docs for install, config, run, logs, and release
-
-What is not claimed today:
+What is not claimed:
 
 - hosted runtime replacement
-- live OpenClaw retirement
-- transport cutover for the live host
-- full hosted parity with OpenClaw
-- hosted or distributed queue orchestration
+- live transport cutover
+- distributed queue orchestration
+- retired OpenClaw dependency in the live host
 
-OpenClaw still runs the live host. Meridian remains the governance kernel above
-runtimes.
+Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the compact architecture and truth boundary.
 
-Migration / cutover path:
+## Quick links
 
-1. local service and operator surface are real
-2. capability readiness, proof, and parity checks are surfaced
-3. explicit owner authorization gates any cutover work
-4. live transport cutover and OpenClaw retirement come only after the hosted
-   replacement path is fully proven
+- Install: [docs/INSTALL.md](docs/INSTALL.md)
+- Run Local: [docs/RUN_LOCAL.md](docs/RUN_LOCAL.md)
+- Service: [docs/SERVICE.md](docs/SERVICE.md)
+- Config: [docs/CONFIG.md](docs/CONFIG.md)
+- Operations: [docs/OPERATIONS.md](docs/OPERATIONS.md)
+- Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- Release: [docs/RELEASE.md](docs/RELEASE.md)
 
-Until step 4 exists, OpenClaw stays in the live host and Loom stays a
-production-oriented local surface.
+## Operational surface
 
-## Install order
-
-Prefer these paths in order:
-
-1. Docker for the fastest isolated local runtime
-2. prebuilt tarball for end-user/operator machines
-3. source build when extending the runtime
-
-See [docs/INSTALL.md](docs/INSTALL.md).
-
-## Quick start
-
-### Docker
-
-```bash
-docker build -t meridian-loom:local .
-export MERIDIAN_KERNEL_PATH=/tmp/meridian-kernel
-export LOOM_SERVICE_TOKEN=loom-local-token
-docker run --rm \
-  -p 127.0.0.1:18910:18910 \
-  -e LOOM_ROOT=/var/lib/loom/runtime/default \
-  -e LOOM_SERVICE_TOKEN="$LOOM_SERVICE_TOKEN" \
-  -e LOOM_ORG_ID=local_foundry \
-  -e MERIDIAN_RUNTIME_AUDIT_FILE=/var/lib/loom/runtime/default/artifacts/audit/loom_runtime_events.jsonl \
-  -v "$PWD/runtime:/var/lib/loom" \
-  -v "$MERIDIAN_KERNEL_PATH:/kernel:ro" \
-  --entrypoint /bin/sh \
-  meridian-loom:local \
-  -lc 'loom init --mode embedded --root "$LOOM_ROOT" --kernel-path /kernel --org-id "$LOOM_ORG_ID" && exec loom start --foreground --root "$LOOM_ROOT" --kernel-path /kernel --http-address 0.0.0.0:18910 --service-token "$LOOM_SERVICE_TOKEN"'
-```
-
-### Local binary
-
-```bash
-cargo build --release --workspace --locked
-export LOOM_ROOT="$HOME/.local/share/meridian-loom/runtime/default"
-export LOOM_SERVICE_TOKEN=loom-local-token
-export MERIDIAN_KERNEL_PATH=/tmp/meridian-kernel
-
-target/release/loom init \
-  --mode embedded \
-  --root "$LOOM_ROOT" \
-  --kernel-path "$MERIDIAN_KERNEL_PATH" \
-  --org-id local_foundry
-
-target/release/loom doctor --root "$LOOM_ROOT" --format human
-target/release/loom start \
-  --root "$LOOM_ROOT" \
-  --kernel-path "$MERIDIAN_KERNEL_PATH" \
-  --http-address 127.0.0.1:18910 \
-  --service-token "$LOOM_SERVICE_TOKEN"
-```
-
-Submit a request:
-
-```bash
-curl -sS \
-  -H "Authorization: Bearer ${LOOM_SERVICE_TOKEN}" \
-  -H "Content-Type: application/json" \
-  -X POST \
-  --data '{
-    "request_id":"demo-submit",
-    "agent_id":"agent_allow",
-    "org_id":"local_foundry",
-    "action_type":"research",
-    "resource":"web_search",
-    "estimated_cost_usd":0.05,
-    "kernel_path":"/tmp/meridian-kernel"
-  }' \
-  http://127.0.0.1:18910/submit
-```
-
-Inspect and stop:
-
-```bash
-target/release/loom status --root "$LOOM_ROOT"
-target/release/loom logs --root "$LOOM_ROOT" --lines 50
-target/release/loom stop --root "$LOOM_ROOT"
-```
-
-## Runtime layout
-
-Each runtime root is self-contained:
-
-- `<root>/loom.toml`
-- `<root>/state/`
-- `<root>/run/service/`
-- `<root>/run/ingress/`
-- `<root>/logs/`
-- `<root>/capabilities/`
-- `<root>/artifacts/audit/`
-- `<root>/artifacts/parity/`
-- `<root>/artifacts/runtime/`
-- `<root>/artifacts/shadow/`
-
-This is the production-oriented local layout. Legacy `.loom/` roots are still
-read for backward compatibility when an older workspace is present.
-
-## Command surface
-
-First-class operator commands:
-
-- `loom version`
-- `loom init`
-- `loom doctor`
-- `loom health`
-- `loom status`
-- `loom start`
-- `loom stop`
-- `loom restart`
-- `loom logs`
-- `loom capability list|show|gap show|scaffold|forge|import-workspace-skill|verify|promote|shim`
-- `loom service start|status|submit|import-commitments|stop`
-- `loom queue inspect|consume|run-once|run-until-empty|status|ack`
+- `loom init`, `loom doctor`, `loom health`, `loom status`
+- `loom start`, `loom stop`, `loom restart`, `loom logs`
+- `loom queue inspect|consume|ack|run-once|run-until-empty|status`
 - `loom job list|inspect`
 - `loom parity report`
 - `loom shadow report`
+- `loom capability list|show|gap show|scaffold|forge|import-workspace-skill|verify|promote|shim`
+- `loom service start|status|submit|import-commitments|stop`
 
-Run `loom help` for the full surface.
+## Rehearsals
 
-## Acceptance path
+- Operational rehearsals live in `scripts/tests/`
+- Migration and backward-compatibility rehearsals live in `scripts/migration_tools/`
+- Generated `examples/*-output.txt` transcripts are not checked in
 
-The repo includes an end-to-end local acceptance harness:
+## Truth boundary
 
-```bash
-./scripts/acceptance_local_service.sh \
-  --root "$HOME/.local/share/meridian-loom/runtime/acceptance" \
-  --kernel-path /tmp/meridian-kernel
-```
-
-That harness proves:
-
-- init into the production-oriented layout
-- start as a local service
-- status and health checks
-- tokenized HTTP submit
-- job processing and inspection
-- queue inspect/consume/ack/run-once/run-until-empty/status on local records
-- logs and artifacts at stable paths
-- restart and idempotent stop
-
-The repo also includes container verification without depending on a compose
-plugin:
-
-```bash
-./scripts/acceptance_container_service.sh --kernel-path /tmp/meridian-kernel
-./scripts/verify_release_local.sh --kernel-path /tmp/meridian-kernel
-```
-
-For capability-backed execution on a fixture kernel:
-
-```bash
-./scripts/rehearse_capability_runtime.sh > examples/capability-runtime-output.txt
-```
-
-For the capability-backed service path end-to-end:
-
-```bash
-./scripts/acceptance_capability_service.sh
-```
-
-For imported clawfamily workspace skills on a fixture kernel:
-
-```bash
-./scripts/rehearse_claw_skill_import.sh > examples/claw-skill-import-output.txt
-```
-
-For the full imported-skill lifecycle inside Loom:
-
-```bash
-./scripts/rehearse_claw_skill_lifecycle.sh > examples/claw-skill-lifecycle-output.txt
-```
-
-For the imported clawfamily skill through Loom service submit:
-
-```bash
-./scripts/rehearse_claw_skill_service.sh > examples/claw-skill-service-output.txt
-```
-
-For multi-shape clawfamily compatibility through Loom service submit:
-
-```bash
-./scripts/rehearse_claw_skill_multi_import.sh > examples/claw-skill-multi-import-output.txt
-```
-
-For a Loom-forged candidate capability that verifies and promotes itself through
-the same runtime path:
-
-```bash
-./scripts/rehearse_capability_forge_lifecycle.sh > examples/capability-forge-lifecycle-output.txt
-```
-
-For a single local server-path rehearsal driven entirely by Loom with an
-imported clawfamily skill owned by Loom's service boundary:
-
-```bash
-./scripts/rehearse_server_replacement.sh > examples/server-replacement-output.txt
-```
-
-When the kernel bundle is mounted read-only in Docker, set
-`MERIDIAN_RUNTIME_AUDIT_FILE` into the writable Loom runtime root as shown
-above. That keeps runtime audit emission usable without pretending the mounted
-kernel tree itself is writable.
-
-## Packaging
-
-Release and install helpers:
-
-- `./scripts/package_release.sh`
-- `./scripts/release_local.sh`
-- `./scripts/install_local.sh`
-- `deploy/systemd/loom.service`
-- `deploy/systemd/loom-user.service`
-
-See [docs/RELEASE.md](docs/RELEASE.md).
-
-## Product truth
-
-The canonical statement lives in [docs/PRODUCT_TRUTH.md](docs/PRODUCT_TRUTH.md).
-In short: Loom is production-oriented in local form, but it is still not the
-hosted replacement or OpenClaw retirement path.
+- local service, queue, audit, parity, and operator surfaces are real
+- queue ack, run-once, run-until-empty, and status are real local queue operations
+- the repo is not a hosted replacement claim
+- legacy OpenClaw-named compatibility surfaces remain only where they still serve import or migration compatibility

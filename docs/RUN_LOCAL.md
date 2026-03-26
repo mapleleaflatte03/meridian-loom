@@ -215,14 +215,14 @@ Exercise the same capability path through the service boundary:
 
 ```bash
 ./scripts/acceptance_capability_service.sh
-./scripts/rehearse_claw_skill_service.sh > examples/claw-skill-service-output.txt
-./scripts/rehearse_claw_skill_multi_import.sh > examples/claw-skill-multi-import-output.txt
-./scripts/rehearse_openclaw_plugin_import.sh > examples/openclaw-plugin-import-output.txt
-./scripts/rehearse_server_replacement.sh > examples/server-replacement-output.txt
-./scripts/rehearse_phase2_portability_corpus.sh > examples/phase2-portability-corpus-output.txt
+./scripts/migration_tools/rehearse_claw_skill_service.sh
+./scripts/migration_tools/rehearse_claw_skill_multi_import.sh
+./scripts/migration_tools/rehearse_openclaw_plugin_import.sh
+./scripts/migration_tools/rehearse_server_replacement.sh
+./scripts/tests/rehearse_phase2_portability_corpus.sh
 ```
 
-`rehearse_server_replacement.sh` is the replacement-proof path for this branch:
+`scripts/migration_tools/rehearse_server_replacement.sh` is the replacement-proof path for this branch:
 it imports `malware-triage`, verifies it, promotes it, submits it through Loom
 service, inspects the completed job, restarts Loom, submits the same imported
 skill again, then tails logs and stops cleanly. It proves the local server path

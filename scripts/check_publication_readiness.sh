@@ -14,7 +14,6 @@ required_files=(
   "docs/assets/loom_runtime_panels.svg"
   "docs/SETUP_REHEARSAL.md"
   "docs/PUBLICATION_CHECKLIST.md"
-  "examples/rehearsal-output.txt"
 )
 
 echo "== Meridian Loom publication readiness =="
@@ -40,7 +39,7 @@ cargo build --workspace
 echo
 echo "== setup rehearsal =="
 REHEARSAL_ROOT="$(mktemp -d /tmp/meridian-loom-publication.XXXXXX)"
-./scripts/rehearse_setup.sh "$REHEARSAL_ROOT" >/tmp/meridian-loom-publication-rehearsal.txt
+./scripts/tests/rehearse_setup.sh "$REHEARSAL_ROOT" >/tmp/meridian-loom-publication-rehearsal.txt
 echo "[OK]   rehearsal transcript refreshed at /tmp/meridian-loom-publication-rehearsal.txt"
 
 echo

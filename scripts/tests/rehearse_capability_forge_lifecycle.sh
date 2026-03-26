@@ -2,27 +2,27 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 LOOM="${LOOM:-${REPO_ROOT}/target/debug/loom}"
-ROOT_DIR="${1:-/tmp/loom-capability-runtime}"
-KERNEL_PATH="$(mktemp -d /tmp/loom-capability-kernel.XXXXXX)"
+ROOT_DIR="${1:-/tmp/loom-capability-forge-lifecycle}"
+KERNEL_PATH="$(mktemp -d /tmp/loom-capability-forge-kernel.XXXXXX)"
+CAPABILITY_NAME="loomforge.artifact-triage.suspicious-artifact-triage.v0"
 
 cleanup() {
   rm -rf "${ROOT_DIR}" "${KERNEL_PATH}"
 }
 trap cleanup EXIT
 
-echo "== Meridian Loom // Capability Runtime Rehearsal =="
+echo "== Meridian Loom // Capability Forge Lifecycle =="
 echo "root:   ${ROOT_DIR}"
 echo "kernel: ${KERNEL_PATH}"
 echo "agent:  agent_tutorial"
 echo "org:    org_tutorial"
 echo ""
 
-if [[ ! -x "${LOOM}" ]]; then
-  echo "Binary not found at ${LOOM}, building..."
-  (cd "${REPO_ROOT}" && cargo build --workspace)
-fi
+echo "--- Build debug binary ---"
+(cd "${REPO_ROOT}" && cargo build --workspace >/dev/null)
+echo ""
 
 rm -rf "${ROOT_DIR}"
 mkdir -p "${KERNEL_PATH}/kernel/adapters"
@@ -33,7 +33,7 @@ cat > "${KERNEL_PATH}/kernel/runtimes.json" <<'EOF'
     "local_kernel": {"id": "local_kernel", "label": "Local Kernel Runtime"},
     "meridian_loom": {
       "status": "experimental",
-      "notes": "capability runtime rehearsal",
+      "notes": "capability forge rehearsal",
       "contract_compliance": {
         "agent_identity": null,
         "action_envelope": null,
@@ -173,48 +173,97 @@ EOF
 
 export MERIDIAN_OPENCLAW_PROOF_SCRIPT="${KERNEL_PATH}/kernel/missing_openclaw_runtime_proof.py"
 
+read_json_field() {
+  python3 - <<'PY' "$1" "$2"
+import json, sys
+value = json.loads(sys.argv[1])
+for part in sys.argv[2].split('.'):
+    if not part:
+        continue
+    if isinstance(value, list):
+        value = value[int(part)]
+    else:
+        value = value.get(part) if isinstance(value, dict) else None
+print("" if value is None else value)
+PY
+}
+
 echo "--- Step 1: Initialize workspace ---"
 "${LOOM}" init \
   --mode embedded \
   --kernel-path "${KERNEL_PATH}" \
   --root "${ROOT_DIR}" \
   --org-id org_tutorial
+ARTIFACT_DIR="${ROOT_DIR}/samples"
+mkdir -p "${ARTIFACT_DIR}"
+
 echo ""
 
-echo "--- Step 2: List built-in capabilities ---"
-"${LOOM}" capability list --root "${ROOT_DIR}"
-echo ""
-
-echo "--- Step 3: Scaffold a custom capability ---"
-"${LOOM}" capability scaffold \
-  --root "${ROOT_DIR}" \
-  --name local.custom.echo \
-  --description "Custom local echo capability" \
-  --action-type respond \
-  --resource capability:local.custom.echo \
-  --worker-kind python
-echo ""
-
-echo "--- Step 4: Show the custom capability ---"
-"${LOOM}" capability show --root "${ROOT_DIR}" --name local.custom.echo
-echo ""
-
-echo "--- Step 5: Execute the built-in capability ---"
-"${LOOM}" action execute \
+echo "--- Step 2: Missing capability gap ---"
+GAP_JSON="$("${LOOM}" action execute \
   --root "${ROOT_DIR}" \
   --kernel-path "${KERNEL_PATH}" \
   --agent-id agent_tutorial \
   --org-id org_tutorial \
-  --capability loom.echo.v1 \
-  --payload-json '{"message":"hello from capability runtime"}' \
-  --estimated-cost-usd 0.05
+  --capability "${CAPABILITY_NAME}" \
+  --gap-class artifact_triage \
+  --goal "suspicious artifact triage" \
+  --payload-json "{\"artifact_path\":\"${ARTIFACT_DIR}/suspicious.bin\"}" \
+  --estimated-cost-usd 0.05 \
+  --format json)"
+printf '%s\n' "${GAP_JSON}"
+GAP_ID="$(read_json_field "${GAP_JSON}" "gap.gap_id")"
+if [[ -z "${GAP_ID}" ]]; then
+  echo "expected missing capability request to produce gap record" >&2
+  exit 1
+fi
 echo ""
 
-JOB_ID="$("${LOOM}" job list --root "${ROOT_DIR}" --format json | python3 -c 'import json,sys; data=json.load(sys.stdin); print(data["jobs"][-1]["job_id"])')"
-
-echo "--- Step 6: Inspect the capability-backed job ---"
-"${LOOM}" job inspect --root "${ROOT_DIR}" --job-id "${JOB_ID}"
+echo "--- Step 3: Forge a capability candidate from a bounded gap class ---"
+"${LOOM}" capability forge \
+  --root "${ROOT_DIR}" \
+  --gap-id "${GAP_ID}"
 echo ""
 
-echo "--- Step 7: Inspect parity ---"
-"${LOOM}" parity report --root "${ROOT_DIR}"
+python3 - <<'PY' "${ARTIFACT_DIR}/suspicious.bin"
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+path.write_bytes(b"MZ" + b"\x90" * 128)
+print(path)
+PY
+echo ""
+
+echo "--- Step 4: Verify forged capability through Loom runtime ---"
+"${LOOM}" capability verify \
+  --root "${ROOT_DIR}" \
+  --kernel-path "${KERNEL_PATH}" \
+  --agent-id agent_tutorial \
+  --org-id org_tutorial \
+  --name "${CAPABILITY_NAME}" \
+  --gap-id "${GAP_ID}" \
+  --payload-json "{\"artifact_path\":\"${ARTIFACT_DIR}/suspicious.bin\"}" \
+  --estimated-cost-usd 0.05 \
+  --expect-summary-contains suspicious.bin \
+  --expect-result-field artifact_exists=true \
+  --expect-result-field artifact_name=suspicious.bin
+echo ""
+
+echo "--- Step 5: Promote verified capability ---"
+"${LOOM}" capability promote \
+  --root "${ROOT_DIR}" \
+  --name "${CAPABILITY_NAME}" \
+  --gap-id "${GAP_ID}"
+echo ""
+
+echo "--- Step 6: Show capability gap state ---"
+"${LOOM}" capability gap show --root "${ROOT_DIR}" --gap-id "${GAP_ID}"
+echo ""
+
+echo "--- Step 7: Replay the previously missing request through the recorded gap ---"
+"${LOOM}" capability gap replay \
+  --root "${ROOT_DIR}" \
+  --gap-id "${GAP_ID}"
+echo ""
+echo "--- Step 8: Show promoted capability ---"
+"${LOOM}" capability show --root "${ROOT_DIR}" --name "${CAPABILITY_NAME}"

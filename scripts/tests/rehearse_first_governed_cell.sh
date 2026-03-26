@@ -8,7 +8,7 @@ set -euo pipefail
 # runs the supervisor, and inspects the result.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 LOOM="${LOOM:-${REPO_ROOT}/target/release/loom}"
 ROOT_DIR="${1:-/tmp/loom-first-cell}"
 KERNEL_PATH="$(mktemp -d /tmp/loom-first-cell-kernel.XXXXXX)"
@@ -259,4 +259,4 @@ echo "  - Action envelopes are normalized and hashed"
 echo "  - The queue boundary persists pending work"
 echo "  - Governance gates fire on every action"
 echo "  - Execution leaves auditable artifacts"
-echo "  - Fail-closed is the default (try rehearse_local_sanction_preview.sh)"
+echo "  - Fail-closed is the default (try ./scripts/tests/rehearse_local_sanction_preview.sh)"

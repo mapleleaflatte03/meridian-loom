@@ -190,10 +190,10 @@ Operator-facing rehearsals for this service boundary:
 
 ```bash
 ./scripts/acceptance_capability_service.sh
-./scripts/rehearse_claw_skill_service.sh > examples/claw-skill-service-output.txt
-./scripts/rehearse_claw_skill_multi_import.sh > examples/claw-skill-multi-import-output.txt
-./scripts/rehearse_openclaw_plugin_import.sh > examples/openclaw-plugin-import-output.txt
-./scripts/rehearse_server_replacement.sh > examples/server-replacement-output.txt
+./scripts/migration_tools/rehearse_claw_skill_service.sh
+./scripts/migration_tools/rehearse_claw_skill_multi_import.sh
+./scripts/migration_tools/rehearse_openclaw_plugin_import.sh
+./scripts/migration_tools/rehearse_server_replacement.sh
 ```
 
 The replacement rehearsal now uses an imported clawfamily skill, not

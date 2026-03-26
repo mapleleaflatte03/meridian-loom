@@ -43,7 +43,7 @@ mkdir -p "$output_dir" "$staging_dir/bin" "$staging_dir/config" "$staging_dir/do
 install -m 0755 "$repo_root/target/release/loom" "$staging_dir/bin/loom"
 install -m 0644 "$repo_root/loom.toml.example" "$staging_dir/config/loom.toml.example"
 
-for doc in INSTALL.md RUN_LOCAL.md SERVICE.md CONFIG.md OPERATIONS.md RELEASE.md PRODUCT_TRUTH.md; do
+for doc in INSTALL.md RUN_LOCAL.md SERVICE.md CONFIG.md OPERATIONS.md RELEASE.md ARCHITECTURE.md; do
   install -m 0644 "$repo_root/docs/$doc" "$staging_dir/docs/$doc"
 done
 

@@ -15,7 +15,7 @@
 <p align="center">
   <a href="../README.md">Loom README</a> ·
   <a href="PUBLICATION_CHECKLIST.md">Publication Checklist</a> ·
-  <a href="LOOM_100_IMPROVEMENTS.md">100 Improvements</a> ·
+  <a href="ARCHITECTURE.md">100 Improvements</a> ·
   <a href="https://github.com/mapleleaflatte03/meridian-kernel/blob/main/docs/LOOM_SPEC.md">Loom Spec</a> ·
   <a href="https://app.welliam.codes">Live Host</a>
 </p>
@@ -47,15 +47,15 @@ to inspect honestly.
 | Script | What it proves | What it does not prove |
 |---|---|---|
 | `./scripts/bootstrap_embedded.sh` | local bootstrap, build, doctor, health | runtime replacement |
-| `./scripts/rehearse_first_governed_cell.sh` | governed identity, queue, supervisor, audit, parity | hosted scheduler |
-| `./scripts/rehearse_local_sanction_preview.sh` | deny path when local sanctions override reference allow | real hosted enforcement |
-| `./scripts/rehearse_allow_execute.sh` | allow path, budget reservation commit, runtime event receipt, action parity comparison | hosted replacement |
-| `./scripts/rehearse_supervisor_queue.sh` | queue-backed supervisor and job ledger | long-running hosted daemon |
-| `./scripts/rehearse_supervisor_watch.sh` | bounded watch-loop state and heartbeat history | daemonized service |
-| `./scripts/rehearse_supervisor_daemon.sh` | local daemon lifecycle shell | hosted runtime supervisor |
-| `./scripts/rehearse_runtime_service.sh` | local runtime service lifecycle, ingress stream, service-owned execution shell | hosted ingress service |
-| `./scripts/rehearse_runtime_http_service.sh` | tokenized local HTTP control plane for runtime service status/submit/stop | hosted HTTP runtime ingress |
-| `./scripts/rehearse_commitment_import.sh` | sender-side commitment outbox import into Loom queue | live cross-host replacement |
+| `./scripts/tests/rehearse_first_governed_cell.sh` | governed identity, queue, supervisor, audit, parity | hosted scheduler |
+| `./scripts/tests/rehearse_local_sanction_preview.sh` | deny path when local sanctions override reference allow | real hosted enforcement |
+| `./scripts/tests/rehearse_allow_execute.sh` | allow path, budget reservation commit, runtime event receipt, action parity comparison | hosted replacement |
+| `./scripts/tests/rehearse_supervisor_queue.sh` | queue-backed supervisor and job ledger | long-running hosted daemon |
+| `./scripts/tests/rehearse_supervisor_watch.sh` | bounded watch-loop state and heartbeat history | daemonized service |
+| `./scripts/tests/rehearse_supervisor_daemon.sh` | local daemon lifecycle shell | hosted runtime supervisor |
+| `./scripts/tests/rehearse_runtime_service.sh` | local runtime service lifecycle, ingress stream, service-owned execution shell | hosted ingress service |
+| `./scripts/tests/rehearse_runtime_http_service.sh` | tokenized local HTTP control plane for runtime service status/submit/stop | hosted HTTP runtime ingress |
+| `./scripts/migration_tools/rehearse_commitment_import.sh` | sender-side commitment outbox import into Loom queue | live cross-host replacement |
 
 ## Current rehearsal scope
 
@@ -133,7 +133,7 @@ The rehearsal verifies:
 ## Run
 
 ```bash
-./scripts/rehearse_setup.sh
+./scripts/tests/rehearse_setup.sh
 ```
 
 The script creates a disposable directory under `/tmp/loom-rehearsal` by
@@ -152,7 +152,7 @@ git clone https://github.com/mapleleaflatte03/meridian-loom.git /tmp/meridian-lo
 cd /tmp/meridian-loom-clone/repo
 cargo test
 cargo build
-./scripts/rehearse_setup.sh
+./scripts/tests/rehearse_setup.sh
 ```
 
 That fresh-clone run passed and confirmed:
@@ -183,7 +183,7 @@ backed; it does not make Loom a governed execution runtime.
 There is now a separate allow-path rehearsal:
 
 ```bash
-./scripts/rehearse_allow_execute.sh
+./scripts/tests/rehearse_allow_execute.sh
 ```
 
 That script proves the current local supervisor path:
@@ -198,7 +198,7 @@ That script proves the current local supervisor path:
 There is now a separate queue-backed supervisor rehearsal:
 
 ```bash
-./scripts/rehearse_supervisor_queue.sh
+./scripts/tests/rehearse_supervisor_queue.sh
 ```
 
 That script proves the current queue supervisor path:
@@ -217,7 +217,7 @@ That script proves the current queue supervisor path:
 There is now a separate bounded supervisor watch rehearsal:
 
 ```bash
-./scripts/rehearse_supervisor_watch.sh
+./scripts/tests/rehearse_supervisor_watch.sh
 ```
 
 That script proves the current watch-loop surface:
@@ -232,13 +232,12 @@ That script proves the current watch-loop surface:
 - the result is still a bounded local rehearsal loop, not a hosted or daemonized
   scheduler
 
-Its checked-in transcript lives at
-`examples/supervisor-watch-output.txt`.
+The rehearsal script lives at `scripts/tests/rehearse_supervisor_watch.sh`.
 
 There is now a separate bounded supervisor daemon rehearsal:
 
 ```bash
-./scripts/rehearse_supervisor_daemon.sh
+./scripts/tests/rehearse_supervisor_daemon.sh
 ```
 
 That script proves the current daemon-lifecycle surface:
@@ -253,13 +252,12 @@ That script proves the current daemon-lifecycle surface:
 - the result is still a bounded local daemon rehearsal, not a hosted runtime
   supervisor
 
-Its checked-in transcript lives at
-`examples/supervisor-daemon-output.txt`.
+The rehearsal script lives at `scripts/tests/rehearse_supervisor_daemon.sh`.
 
 There is now a separate local runtime service rehearsal:
 
 ```bash
-./scripts/rehearse_runtime_service.sh
+./scripts/tests/rehearse_runtime_service.sh
 ```
 
 That script proves the current local service shell:
@@ -273,13 +271,12 @@ That script proves the current local service shell:
   operator surface
 - `loom service stop` records a local stop request and the loop exits cleanly
 
-Its checked-in transcript lives at
-`examples/runtime-service-output.txt`.
+The rehearsal script lives at `scripts/tests/rehearse_runtime_service.sh`.
 
 There is now a separate local HTTP control-plane rehearsal:
 
 ```bash
-./scripts/rehearse_runtime_http_service.sh
+./scripts/tests/rehearse_runtime_http_service.sh
 ```
 
 That script proves the current tokenized HTTP surface:
@@ -291,13 +288,12 @@ That script proves the current tokenized HTTP surface:
 - authenticated `POST /stop` requests a clean local shutdown through that same
   boundary
 
-Its checked-in transcript lives at
-`examples/runtime-http-service-output.txt`.
+The rehearsal script lives at `scripts/tests/rehearse_runtime_http_service.sh`.
 
 There is now a separate commitment import rehearsal:
 
 ```bash
-./scripts/rehearse_commitment_import.sh
+./scripts/migration_tools/rehearse_commitment_import.sh
 ```
 
 That script proves the current sender-side import seam:
@@ -310,8 +306,7 @@ That script proves the current sender-side import seam:
 - the queued result is then inspectable through `loom job list` and
   `loom job inspect`
 
-Its checked-in transcript lives at
-`examples/commitment-import-output.txt`.
+The rehearsal script lives at `scripts/migration_tools/rehearse_commitment_import.sh`.
 
 The rehearsal now also proves both fail-closed surfaces against the current
 kernel truth:
@@ -328,7 +323,7 @@ The founder-host rehearsal proves the real current kernel path. A second,
 fixture-backed rehearsal exists to prove the local sanction override path:
 
 ```bash
-./scripts/rehearse_local_sanction_preview.sh
+./scripts/tests/rehearse_local_sanction_preview.sh
 ```
 
 That script creates a synthetic kernel fixture where:

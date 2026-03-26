@@ -9,7 +9,7 @@ If you only want the operational path, run this:
 
 ```bash
 ./scripts/bootstrap_embedded.sh
-./scripts/rehearse_first_governed_cell.sh
+./scripts/tests/rehearse_first_governed_cell.sh
 ```
 
 That gets you from a clean checkout to a real governed action rehearsal with
@@ -52,7 +52,7 @@ Every step leaves an artifact. Every step is inspectable. That is the point.
 This tutorial uses a fixture-backed kernel so the governance gates have real
 allow/deny behavior without needing the full Meridian Kernel deployment.
 
-The rehearsal script at `scripts/rehearse_first_governed_cell.sh` handles the
+The rehearsal script at `scripts/tests/rehearse_first_governed_cell.sh` handles the
 full setup automatically. The steps below show the exact sequence.
 
 ### Variables
@@ -354,13 +354,13 @@ isolated, and audited at scale. That is the path Loom is building toward.
 ## If you want to continue
 
 ```bash
-./scripts/rehearse_local_sanction_preview.sh
-./scripts/rehearse_supervisor_queue.sh
-./scripts/rehearse_supervisor_watch.sh
-./scripts/rehearse_supervisor_daemon.sh
+./scripts/tests/rehearse_local_sanction_preview.sh
+./scripts/tests/rehearse_supervisor_queue.sh
+./scripts/tests/rehearse_supervisor_watch.sh
+./scripts/tests/rehearse_supervisor_daemon.sh
 ```
 
 If you are choosing an everyday operating mode, start with `profiles/solo.toml`
 and move up only when you need more ceremony, approvals, or isolation.
 
-Read `docs/LOOM_100_IMPROVEMENTS.md` for the full improvement docket.
+Read `docs/ARCHITECTURE.md` for the compact architecture and truth boundary.

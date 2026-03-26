@@ -15,7 +15,7 @@
 <p align="center">
   <a href="../README.md">Loom README</a> ·
   <a href="SETUP_REHEARSAL.md">Setup Rehearsal</a> ·
-  <a href="LOOM_100_IMPROVEMENTS.md">100 Improvements</a> ·
+  <a href="ARCHITECTURE.md">100 Improvements</a> ·
   <a href="https://github.com/mapleleaflatte03/meridian-kernel/blob/main/docs/LOOM_SPEC.md">Loom Spec</a> ·
   <a href="https://github.com/mapleleaflatte03/meridian-kernel">Kernel Repo</a>
 </p>

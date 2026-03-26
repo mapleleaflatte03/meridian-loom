@@ -2,8 +2,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-source "${SCRIPT_DIR}/fixture_kernel_local.sh"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+source "${SCRIPT_DIR}/../fixture_kernel_local.sh"
 
 LOOM="${LOOM:-${REPO_ROOT}/target/debug/loom}"
 ROOT_DIR="${1:-/tmp/loom-clawskill-service}"

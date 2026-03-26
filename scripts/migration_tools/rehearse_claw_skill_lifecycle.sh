@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 LOOM="${LOOM:-${REPO_ROOT}/target/debug/loom}"
 ROOT_DIR="${1:-/tmp/loom-clawskill-lifecycle}"
 KERNEL_PATH="$(mktemp -d /tmp/loom-clawskill-lifecycle-kernel.XXXXXX)"
