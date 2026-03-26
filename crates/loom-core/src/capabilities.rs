@@ -323,6 +323,29 @@ pub fn default_capabilities(config: &Config) -> Vec<CapabilityDescriptor> {
             promoted_at: String::new(),
             enabled: true,
         },
+        CapabilityDescriptor {
+            name: "loom.browser.navigate.v1".to_string(),
+            description: "Run the built-in bounded browser navigation Wasm guest through the local Wasmtime lane.".to_string(),
+            action_type: "browse".to_string(),
+            resource: "capability:loom.browser.navigate.v1".to_string(),
+            worker_kind: "wasm".to_string(),
+            worker_entry: String::new(),
+            wasm_module: "builtin:browser.navigate".to_string(),
+            payload_mode: "json".to_string(),
+            source_kind: "loom_builtin".to_string(),
+            source_path: "builtin:loom.browser.navigate.v1".to_string(),
+            source_manifest: String::new(),
+            adapter_kind: "loom_wasm_browser_guest_v0".to_string(),
+            import_provenance: "loom_builtin_contract_v0".to_string(),
+            verification_status: "builtin".to_string(),
+            last_verified_at: String::new(),
+            last_verification_job_id: String::new(),
+            last_verification_execution_id: String::new(),
+            verification_note: "built-in bounded web/Wasm capability".to_string(),
+            promotion_state: "builtin".to_string(),
+            promoted_at: String::new(),
+            enabled: true,
+        },
     ]
 }
 
@@ -3073,6 +3096,7 @@ description: {}
         let registry = load_capability_registry(&root, &config).expect("registry load");
         assert!(registry.capabilities.iter().any(|item| item.name == "loom.echo.v1"));
         assert!(registry.capabilities.iter().any(|item| item.name == "loom.wasm.minimal.v1"));
+        assert!(registry.capabilities.iter().any(|item| item.name == "loom.browser.navigate.v1"));
     }
 
     #[test]
@@ -3116,6 +3140,10 @@ description: {}
             .expect("resolve by request")
             .expect("capability by request");
         assert_eq!(by_request.worker_kind, "wasm");
+        let browser = resolve_capability_for_request(&root, &config, None, "browse", "capability:loom.browser.navigate.v1")
+            .expect("resolve browser capability")
+            .expect("browser capability by request");
+        assert_eq!(browser.wasm_module, "builtin:browser.navigate");
     }
 
     #[test]

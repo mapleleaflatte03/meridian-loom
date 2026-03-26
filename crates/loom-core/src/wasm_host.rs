@@ -6,6 +6,8 @@
 
 use std::collections::BTreeMap;
 
+use serde_json::{json, Value};
+
 use crate::wasm_limits::{default_limits, render_limits_human, validate_limits, WasmStoreLimits};
 use crate::wasm_profiles::{render_pooling_config_human, PoolingConfig, PoolingProfile};
 
@@ -22,6 +24,11 @@ pub const WASM_HOST_CALL_NAMESPACE: &str = "loom_host";
 pub const HOST_BROWSER_NAVIGATE: &str = "host_browser_navigate";
 pub const HOST_SCHEDULE_HEARTBEAT: &str = "host_schedule_heartbeat";
 pub const HOST_TERMINAL_EXEC: &str = "host_terminal_exec";
+pub const WASM_HOST_REQUEST_OFFSET: i32 = 1_024;
+pub const WASM_HOST_RESPONSE_OFFSET: i32 = 8_192;
+pub const WASM_HOST_RESPONSE_CAPACITY: i32 = 16_384;
+pub const WASM_HOST_RESULT_PTR_EXPORT: &str = "loom_result_ptr";
+pub const WASM_HOST_RESULT_LEN_EXPORT: &str = "loom_result_len";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WasmHostCallKind {
@@ -61,6 +68,29 @@ impl WasmHostCallDecision {
             Self::Pending => "pending",
             Self::Allowed => "allowed",
             Self::Denied => "denied",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WasmHostCallStatusCode {
+    Success,
+    InvalidRequest,
+    PermissionDenied,
+    ResponseTooLarge,
+    Unsupported,
+    InternalError,
+}
+
+impl WasmHostCallStatusCode {
+    pub fn code(self) -> i32 {
+        match self {
+            Self::Success => 0,
+            Self::InvalidRequest => -1,
+            Self::PermissionDenied => -2,
+            Self::ResponseTooLarge => -3,
+            Self::Unsupported => -4,
+            Self::InternalError => -5,
         }
     }
 }
@@ -126,7 +156,10 @@ pub struct WasmBrowserNavigateResponse {
     pub decision: WasmHostCallDecision,
     pub navigation_id: String,
     pub final_url: String,
+    pub http_status: Option<u16>,
+    pub content_type: String,
     pub title: String,
+    pub body_excerpt_utf8: String,
     pub semantic_snapshot_ref: String,
     pub note: String,
 }
@@ -240,7 +273,7 @@ pub fn wasm_host_call_signatures() -> Vec<WasmHostCallSignature> {
             request_type: "WasmBrowserNavigateRequest",
             response_type: "WasmBrowserNavigateResponse",
             purpose: WasmHostCallKind::BrowserNavigate.purpose(),
-            truth_boundary: "foundation only; host approval, browser execution, and storage policy remain separate runtime concerns",
+            truth_boundary: "bounded synchronous HTTP navigation is locally real; hosted browser automation remains out of scope here",
         },
         WasmHostCallSignature {
             kind: WasmHostCallKind::ScheduleHeartbeat,
@@ -256,9 +289,246 @@ pub fn wasm_host_call_signatures() -> Vec<WasmHostCallSignature> {
             request_type: "WasmTerminalExecRequest",
             response_type: "WasmTerminalExecResponse",
             purpose: WasmHostCallKind::TerminalExec.purpose(),
-            truth_boundary: "foundation only; safe terminal execution still requires an explicit adapter implementation and policy gate",
+            truth_boundary: "bounded local command execution is real only inside explicit timeout and path policy",
         },
     ]
+}
+
+pub fn render_wasm_browser_navigate_request_json(request: &WasmBrowserNavigateRequest) -> String {
+    json!({
+        "security": render_security_context_value(&request.security),
+        "session_id": request.session_id,
+        "url": request.url,
+        "allowed_hosts": request.allowed_hosts,
+        "wait_for": request.wait_for,
+        "timeout_ms": request.timeout_ms,
+        "capture_semantic_snapshot": request.capture_semantic_snapshot,
+    })
+    .to_string()
+}
+
+pub fn render_wasm_terminal_exec_request_json(request: &WasmTerminalExecRequest) -> String {
+    json!({
+        "security": render_security_context_value(&request.security),
+        "argv": request.argv,
+        "working_dir": request.working_dir,
+        "env_allowlist": request.env_allowlist,
+        "stdin_utf8": request.stdin_utf8,
+        "timeout_ms": request.timeout_ms,
+        "max_output_bytes": request.max_output_bytes,
+        "require_clean_environment": request.require_clean_environment,
+    })
+    .to_string()
+}
+
+pub fn builtin_browser_navigate_guest_bytes(request_json: &str) -> Result<Vec<u8>, String> {
+    build_host_call_guest(HOST_BROWSER_NAVIGATE, request_json)
+}
+
+pub fn builtin_terminal_exec_guest_bytes(request_json: &str) -> Result<Vec<u8>, String> {
+    build_host_call_guest(HOST_TERMINAL_EXEC, request_json)
+}
+
+pub(crate) fn parse_wasm_browser_navigate_request(raw: &str) -> Result<WasmBrowserNavigateRequest, String> {
+    let value: Value = serde_json::from_str(raw)
+        .map_err(|error| format!("invalid browser navigate request json: {error}"))?;
+    Ok(WasmBrowserNavigateRequest {
+        security: parse_security_context(value.get("security")),
+        session_id: value_string(value.get("session_id")),
+        url: value_string(value.get("url")),
+        allowed_hosts: value_string_array(value.get("allowed_hosts")),
+        wait_for: value_string_or(value.get("wait_for"), "dom_content_loaded"),
+        timeout_ms: value_u64_or(value.get("timeout_ms"), 4_000),
+        capture_semantic_snapshot: value_bool_or(value.get("capture_semantic_snapshot"), true),
+    })
+}
+
+pub(crate) fn parse_wasm_terminal_exec_request(raw: &str) -> Result<WasmTerminalExecRequest, String> {
+    let value: Value = serde_json::from_str(raw)
+        .map_err(|error| format!("invalid terminal exec request json: {error}"))?;
+    Ok(WasmTerminalExecRequest {
+        security: parse_security_context(value.get("security")),
+        argv: value_string_array(value.get("argv")),
+        working_dir: value_string_or(value.get("working_dir"), "."),
+        env_allowlist: value_string_array(value.get("env_allowlist")),
+        stdin_utf8: value_string(value.get("stdin_utf8")),
+        timeout_ms: value_u64_or(value.get("timeout_ms"), 2_000),
+        max_output_bytes: value_usize_or(value.get("max_output_bytes"), 16_384),
+        require_clean_environment: value_bool_or(value.get("require_clean_environment"), true),
+    })
+}
+
+pub(crate) fn parse_wasm_heartbeat_schedule_request(raw: &str) -> Result<WasmHeartbeatScheduleRequest, String> {
+    let value: Value = serde_json::from_str(raw)
+        .map_err(|error| format!("invalid heartbeat request json: {error}"))?;
+    let schedule_kind = match value_string_or(value.get("schedule_kind"), "interval").as_str() {
+        "once" => WasmHeartbeatScheduleKind::Once,
+        "cron" => WasmHeartbeatScheduleKind::Cron,
+        _ => WasmHeartbeatScheduleKind::Interval,
+    };
+    Ok(WasmHeartbeatScheduleRequest {
+        security: parse_security_context(value.get("security")),
+        heartbeat_id: value_string(value.get("heartbeat_id")),
+        capability_name: value_string(value.get("capability_name")),
+        schedule_kind,
+        schedule_expression: value_string(value.get("schedule_expression")),
+        not_before_unix_ms: value.get("not_before_unix_ms").and_then(Value::as_u64),
+        interval_seconds: value.get("interval_seconds").and_then(Value::as_u64),
+        jitter_seconds: value_u64_or(value.get("jitter_seconds"), 15),
+        payload_json: value_string(value.get("payload_json")),
+        max_runs: value.get("max_runs").and_then(Value::as_u64).map(|value| value as u32),
+    })
+}
+
+pub(crate) fn render_wasm_browser_navigate_response_json(response: &WasmBrowserNavigateResponse) -> String {
+    json!({
+        "decision": response.decision.label(),
+        "navigation_id": response.navigation_id,
+        "final_url": response.final_url,
+        "http_status": response.http_status,
+        "content_type": response.content_type,
+        "title": response.title,
+        "body_excerpt_utf8": response.body_excerpt_utf8,
+        "semantic_snapshot_ref": response.semantic_snapshot_ref,
+        "note": response.note,
+    })
+    .to_string()
+}
+
+pub(crate) fn render_wasm_terminal_exec_response_json(response: &WasmTerminalExecResponse) -> String {
+    json!({
+        "decision": response.decision.label(),
+        "exit_code": response.exit_code,
+        "stdout_utf8": response.stdout_utf8,
+        "stderr_utf8": response.stderr_utf8,
+        "timed_out": response.timed_out,
+        "truncated": response.truncated,
+        "note": response.note,
+    })
+    .to_string()
+}
+
+pub(crate) fn render_wasm_heartbeat_schedule_response_json(response: &WasmHeartbeatScheduleResponse) -> String {
+    json!({
+        "decision": response.decision.label(),
+        "heartbeat_id": response.heartbeat_id,
+        "next_fire_at_unix_ms": response.next_fire_at_unix_ms,
+        "accepted_run_id": response.accepted_run_id,
+        "note": response.note,
+    })
+    .to_string()
+}
+
+fn build_host_call_guest(import_name: &str, request_json: &str) -> Result<Vec<u8>, String> {
+    let request_bytes = request_json.as_bytes();
+    let request_data = wat_data_bytes(request_bytes);
+    let wat = format!(
+        r#"(module
+  (import "{namespace}" "{import_name}" (func $host_call (param i32 i32 i32 i32) (result i32)))
+  (memory (export "memory") 2)
+  (global $loom_result_ptr (export "{result_ptr_export}") i32 (i32.const {response_offset}))
+  (global $loom_result_len (export "{result_len_export}") (mut i32) (i32.const 0))
+  (data (i32.const {request_offset}) "{request_data}")
+  (func (export "run") (result i32)
+    (local $written i32)
+    i32.const {request_offset}
+    i32.const {request_len}
+    global.get $loom_result_ptr
+    i32.const {response_capacity}
+    call $host_call
+    local.tee $written
+    global.set $loom_result_len
+    local.get $written))"#,
+        namespace = WASM_HOST_CALL_NAMESPACE,
+        import_name = import_name,
+        request_offset = WASM_HOST_REQUEST_OFFSET,
+        request_len = request_bytes.len(),
+        request_data = request_data,
+        response_offset = WASM_HOST_RESPONSE_OFFSET,
+        response_capacity = WASM_HOST_RESPONSE_CAPACITY,
+        result_ptr_export = WASM_HOST_RESULT_PTR_EXPORT,
+        result_len_export = WASM_HOST_RESULT_LEN_EXPORT,
+    );
+    wat::parse_str(&wat).map_err(|error| format!("failed to compile builtin wasm guest: {error}"))
+}
+
+fn wat_data_bytes(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|byte| format!("\\{:02x}", byte))
+        .collect::<Vec<_>>()
+        .join("")
+}
+
+fn render_security_context_value(security: &WasmHostSecurityContext) -> Value {
+    json!({
+        "capability_name": security.capability_name,
+        "agent_id": security.agent_id,
+        "org_id": security.org_id,
+        "session_id": security.session_id,
+        "operation_id": security.operation_id,
+        "max_timeout_ms": security.max_timeout_ms,
+        "max_response_bytes": security.max_response_bytes,
+        "allowed_hosts": security.allowed_hosts,
+        "allowed_workdir_roots": security.allowed_workdir_roots,
+        "require_user_present": security.require_user_present,
+    })
+}
+
+fn parse_security_context(value: Option<&Value>) -> WasmHostSecurityContext {
+    let mut security = WasmHostSecurityContext::default();
+    if let Some(value) = value {
+        security.capability_name = value_string(value.get("capability_name"));
+        security.agent_id = value_string(value.get("agent_id"));
+        security.org_id = value_string(value.get("org_id"));
+        security.session_id = value_string(value.get("session_id"));
+        security.operation_id = value_string(value.get("operation_id"));
+        security.max_timeout_ms = value_u64_or(value.get("max_timeout_ms"), security.max_timeout_ms);
+        security.max_response_bytes = value_usize_or(value.get("max_response_bytes"), security.max_response_bytes);
+        let allowed_hosts = value_string_array(value.get("allowed_hosts"));
+        if !allowed_hosts.is_empty() {
+            security.allowed_hosts = allowed_hosts;
+        }
+        let allowed_roots = value_string_array(value.get("allowed_workdir_roots"));
+        if !allowed_roots.is_empty() {
+            security.allowed_workdir_roots = allowed_roots;
+        }
+        security.require_user_present = value_bool_or(value.get("require_user_present"), security.require_user_present);
+    }
+    security
+}
+
+fn value_string(value: Option<&Value>) -> String {
+    value.and_then(Value::as_str).unwrap_or_default().to_string()
+}
+
+fn value_string_or(value: Option<&Value>, default: &str) -> String {
+    value.and_then(Value::as_str).unwrap_or(default).to_string()
+}
+
+fn value_string_array(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(|value| value.to_string())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn value_u64_or(value: Option<&Value>, default: u64) -> u64 {
+    value.and_then(Value::as_u64).unwrap_or(default)
+}
+
+fn value_usize_or(value: Option<&Value>, default: usize) -> usize {
+    value.and_then(Value::as_u64).map(|value| value as usize).unwrap_or(default)
+}
+
+fn value_bool_or(value: Option<&Value>, default: bool) -> bool {
+    value.and_then(Value::as_bool).unwrap_or(default)
 }
 
 /// Host-side runtime backend selection.

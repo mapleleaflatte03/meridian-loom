@@ -3,7 +3,11 @@ use loom_core::{
     ensure_runtime_worker_scaffold, evaluate_reference_gates, kernel_path_for,
     preview_local_sanction_controls, read_config, resolve_agent_identity, runtime_worker_entry,
     capabilities::{resolve_capability_for_request, render_capability_json, render_capability_readiness_human, render_capability_readiness_json, CapabilityDescriptor},
-    wasm_host::{run_wasm_guest, WasmExecutionRequest, WasmGuestSource, WasmHostBuilder},
+    wasm_host::{
+        builtin_browser_navigate_guest_bytes, render_wasm_browser_navigate_request_json, run_wasm_guest,
+        HostBackend, WasmBrowserNavigateRequest, WasmExecutionRequest, WasmGuestSource, WasmHostBuilder,
+        WasmHostSecurityContext,
+    },
     ActionEnvelope, AgentIdentityResolution, Config, ReferenceGateCheck,
 };
 mod event_schema;
@@ -7927,7 +7931,7 @@ fn dispatch_python_worker(
 fn dispatch_wasm_worker(
     capability: &CapabilityDescriptor,
     resource: &str,
-    _jobs_dir: &Path,
+    jobs_dir: &Path,
     worker_request_path: &Path,
     worker_result_path: &Path,
     worker_log_path: &Path,
@@ -7944,16 +7948,20 @@ fn dispatch_wasm_worker(
             0x7f, 0x03, 0x02, 0x01, 0x00, 0x07, 0x07, 0x01, 0x03, 0x72, 0x75, 0x6e, 0x00, 0x00,
             0x0a, 0x06, 0x01, 0x04, 0x00, 0x41, 0x07, 0x0b,
         ]
+    } else if module_source == "builtin:browser.navigate" {
+        build_builtin_browser_navigate_guest(capability, worker_request_path)?
     } else if let Some(module_path) = module_source.strip_prefix("wasm:") {
-        fs::read(module_path).map_err(|e| format!("failed to read wasm module {}: {}", module_path, e))?
+        fs::read(module_path).map_err(|error| format!("failed to read wasm module {}: {}", module_path, error))?
     } else {
         return Err(format!("unsupported wasm resource: {}", module_source));
     };
 
     let fuel_budget: u64 = 100_000;
     let host_config = WasmHostBuilder::default()
+        .with_backend(HostBackend::WasmtimeReady)
+        .with_profile_name(format!("runtime/{}", capability.name))
         .build()
-        .map_err(|errors| format!("wasm host config: {}", errors.join("; ")))?;
+        .map_err(|errors| format!("wasm host config: {}", errors.join("; ") ))?;
 
     let request = WasmExecutionRequest {
         host: host_config,
@@ -7969,20 +7977,44 @@ fn dispatch_wasm_worker(
 
     match run_wasm_guest(&request) {
         Ok(result) => {
+            let host_response_json = result.host_response_json.clone().unwrap_or_else(|| "null".to_string());
+            let host_calls_json = serde_json::to_string(&result.host_calls).unwrap_or_else(|_| "[]".to_string());
             let result_json = format!(
-                "{{\n  \"status\": \"completed\",\n  \"worker_type\": \"wasm\",\n  \"module\": {},\n  \"entrypoint\": \"run\",\n  \"entrypoint_result\": {},\n  \"fuel_budget\": {},\n  \"host_backend\": {},\n  \"pooling_profile\": {}\n}}\n",
+                "{{
+  \"status\": \"completed\",
+  \"worker_type\": \"wasm\",
+  \"module\": {},
+  \"entrypoint\": \"run\",
+  \"entrypoint_result\": {},
+  \"fuel_budget\": {},
+  \"host_backend\": {},
+  \"pooling_profile\": {},
+  \"host_calls\": {},
+  \"host_response_json\": {}
+}}
+",
                 json_string(&result.module_name),
-                result.entrypoint_result.map(|v| v.to_string()).unwrap_or_else(|| "null".to_string()),
+                result.entrypoint_result.map(|value| value.to_string()).unwrap_or_else(|| "null".to_string()),
                 fuel_budget,
                 json_string(&result.host_backend),
                 json_string(&result.pooling_profile),
+                host_calls_json,
+                host_response_json,
             );
             fs::write(worker_result_path, &result_json).map_err(io_err)?;
+            let host_calls_label = if result.host_calls.is_empty() {
+                "none".to_string()
+            } else {
+                result.host_calls.join(",")
+            };
             let log_msg = format!(
-                "wasm worker completed: module={} entrypoint=run result={} backend={}\n",
+                "wasm worker completed: module={} entrypoint=run result={} backend={} host_calls={} jobs_dir={}
+",
                 result.module_name,
-                result.entrypoint_result.map(|v| v.to_string()).unwrap_or_else(|| "null".to_string()),
+                result.entrypoint_result.map(|value| value.to_string()).unwrap_or_else(|| "null".to_string()),
                 result.host_backend,
+                host_calls_label,
+                jobs_dir.display(),
             );
             fs::write(worker_log_path, &log_msg).map_err(io_err)?;
             Ok(WorkerExecutionCapture {
@@ -7992,10 +8024,11 @@ fn dispatch_wasm_worker(
                 worker_status: "completed".to_string(),
                 worker_kind: format!("wasm_wasmtime/{}", capability.name),
                 worker_note: format!(
-                    "wasm capability {} executed: module={} entrypoint_result={} fuel_budget={}",
+                    "wasm capability {} executed: module={} entrypoint_result={} host_calls={} fuel_budget={}",
                     capability.name,
                     result.module_name,
-                    result.entrypoint_result.map(|v| v.to_string()).unwrap_or_else(|| "null".to_string()),
+                    result.entrypoint_result.map(|value| value.to_string()).unwrap_or_else(|| "null".to_string()),
+                    if result.host_calls.is_empty() { "none".to_string() } else { result.host_calls.join(",") },
                     fuel_budget,
                 ),
                 runtime_outcome: "worker_executed".to_string(),
@@ -8004,13 +8037,21 @@ fn dispatch_wasm_worker(
         Err(error) => {
             let is_fuel_exhaustion = error.contains("fuel") || error.contains("out of fuel");
             let result_json = format!(
-                "{{\n  \"status\": \"failed\",\n  \"worker_type\": \"wasm\",\n  \"module\": {},\n  \"error\": {},\n  \"fuel_exhaustion\": {}\n}}\n",
+                "{{
+  \"status\": \"failed\",
+  \"worker_type\": \"wasm\",
+  \"module\": {},
+  \"error\": {},
+  \"fuel_exhaustion\": {}
+}}
+",
                 json_string(module_source),
                 json_string(&error),
                 if is_fuel_exhaustion { "true" } else { "false" },
             );
             fs::write(worker_result_path, &result_json).map_err(io_err)?;
-            fs::write(worker_log_path, format!("wasm worker failed: {}\n", error)).map_err(io_err)?;
+            fs::write(worker_log_path, format!("wasm worker failed: {}
+", error)).map_err(io_err)?;
             Ok(WorkerExecutionCapture {
                 worker_request_path: worker_request_path.to_path_buf(),
                 worker_result_path: worker_result_path.to_path_buf(),
@@ -8030,6 +8071,74 @@ fn dispatch_wasm_worker(
             })
         }
     }
+}
+
+fn build_builtin_browser_navigate_guest(
+    capability: &CapabilityDescriptor,
+    worker_request_path: &Path,
+) -> ShadowResult<Vec<u8>> {
+    let raw = fs::read_to_string(worker_request_path).map_err(io_err)?;
+    let body: Value = serde_json::from_str(&raw).map_err(io_err)?;
+    let envelope = body.get("envelope");
+    let payload_json = value_json_string(envelope.and_then(|value| value.get("payload_json")));
+    let payload = if payload_json.is_empty() {
+        Value::Object(serde_json::Map::new())
+    } else {
+        serde_json::from_str(&payload_json)
+            .map_err(|error| format!("invalid browser payload_json for {}: {}", capability.name, error))?
+    };
+    let url = value_string(payload.get("url"));
+    if url.is_empty() {
+        return Err(format!("capability '{}' requires payload_json.url", capability.name));
+    }
+    let allowed_hosts = value_string_vec(payload.get("allowed_hosts"));
+    let timeout_ms = payload.get("timeout_ms").and_then(Value::as_u64).unwrap_or(3_000);
+    let runtime_id = value_string(envelope.and_then(|value| value.get("runtime_id")));
+    let input_hash = value_string(body.get("input_hash"));
+    let wait_for = value_string(payload.get("wait_for"));
+    let request = WasmBrowserNavigateRequest {
+        security: WasmHostSecurityContext {
+            capability_name: capability.name.clone(),
+            agent_id: value_string(envelope.and_then(|value| value.get("agent_id"))),
+            org_id: value_string(envelope.and_then(|value| value.get("org_id"))),
+            session_id: runtime_id.clone(),
+            operation_id: input_hash.clone(),
+            max_timeout_ms: timeout_ms.max(1),
+            max_response_bytes: 16_384,
+            allowed_hosts: allowed_hosts.clone(),
+            allowed_workdir_roots: vec![".".to_string()],
+            require_user_present: false,
+        },
+        session_id: if runtime_id.is_empty() { input_hash } else { runtime_id },
+        url,
+        allowed_hosts,
+        wait_for: if wait_for.is_empty() {
+            "dom_content_loaded".to_string()
+        } else {
+            wait_for
+        },
+        timeout_ms,
+        capture_semantic_snapshot: payload
+            .get("capture_semantic_snapshot")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+    };
+    let request_json = render_wasm_browser_navigate_request_json(&request);
+    builtin_browser_navigate_guest_bytes(&request_json)
+}
+
+fn value_string_vec(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
 }
 
 fn capture_reference_probe(

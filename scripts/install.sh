@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
-PREFIX="${LOOM_PREFIX:-/root/.local/share/meridian-loom}"
+PREFIX="${LOOM_PREFIX:-/home/ubuntu/.local/share/meridian-loom}"
 BIN_DIR="${LOOM_BIN_DIR:-${PREFIX}/current/bin}"
 RUNTIME_ROOT="${LOOM_RUNTIME_ROOT:-${PREFIX}/runtime/default}"
 BINARY_PATH="${BIN_DIR}/loom"
@@ -41,6 +41,64 @@ file_exists() {
   fi
 }
 
+seed_builtin_browser_capability() {
+  local registry_path
+  registry_path="$RUNTIME_ROOT/capabilities/registry.json"
+  run_privileged python3 - "$registry_path" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+if path.exists():
+    payload = json.loads(path.read_text(encoding="utf-8"))
+else:
+    payload = {"version": "loom.capabilities.v0", "capabilities": []}
+
+descriptor = {
+    "name": "loom.browser.navigate.v1",
+    "description": "Run the built-in bounded browser navigation Wasm guest through the local Wasmtime lane.",
+    "action_type": "browse",
+    "resource": "capability:loom.browser.navigate.v1",
+    "worker_kind": "wasm",
+    "interpreter": "wasmtime",
+    "worker_entry": "",
+    "wasm_module": "builtin:browser.navigate",
+    "binary_surface": "builtin_wasm_guest",
+    "payload_mode": "json",
+    "source_kind": "loom_builtin",
+    "source_path": "builtin:loom.browser.navigate.v1",
+    "source_manifest": "",
+    "adapter_kind": "loom_wasm_browser_guest_v0",
+    "import_provenance": "loom_builtin_contract_v0",
+    "runtime_lane": "wasm",
+    "dependency_mode": "builtin",
+    "env_contract": "none",
+    "isolation_expectation": "pooled_wasmtime_local",
+    "verification_status": "builtin",
+    "last_verified_at": "",
+    "last_verification_job_id": "",
+    "last_verification_execution_id": "",
+    "verification_note": "built-in bounded web/Wasm capability",
+    "promotion_state": "builtin",
+    "promoted_at": "",
+    "enabled": True,
+}
+
+capabilities = payload.setdefault("capabilities", [])
+for index, capability in enumerate(capabilities):
+    if capability.get("name") == descriptor["name"]:
+        capabilities[index] = descriptor
+        break
+else:
+    capabilities.append(descriptor)
+capabilities.sort(key=lambda item: item.get("name", ""))
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+  printf "==> Seeded built-in browser capability into %s\n" "$registry_path"
+}
+
 print_banner() {
   local icon
   icon="$(cat <<'BANNER'
@@ -65,13 +123,13 @@ BANNER
 }
 
 ensure_cargo() {
-  if [[ -f /root/.cargo/env ]]; then
-    # shellcheck disable=SC1091
-    source /root/.cargo/env
-  fi
   if [[ -f /home/ubuntu/.cargo/env ]]; then
     # shellcheck disable=SC1091
     source /home/ubuntu/.cargo/env
+  fi
+  if [[ -f /root/.cargo/env ]]; then
+    # shellcheck disable=SC1091
+    source /root/.cargo/env
   fi
   if ! command -v cargo >/dev/null 2>&1; then
     echo 'cargo not found after loading rustup environment' >&2
@@ -122,6 +180,8 @@ ensure_runtime_root() {
   else
     printf '==> Reusing existing capability registry at %s\n' "$RUNTIME_ROOT/capabilities/registry.json"
   fi
+
+  seed_builtin_browser_capability
 }
 
 print_summary() {
