@@ -221,6 +221,20 @@ pub struct QueueRunOnceSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QueueStatusSnapshot {
+    pub root: PathBuf,
+    pub queue_dir: PathBuf,
+    pub pending_records: usize,
+    pub acked_records: usize,
+    pub total_pending: usize,
+    pub standard_depth: usize,
+    pub privileged_depth: usize,
+    pub budget_heavy_depth: usize,
+    pub sanction_sensitive_depth: usize,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct QueueAckCapture {
     pub root: PathBuf,
     pub job_id: String,
@@ -2159,6 +2173,38 @@ pub fn inspect_pending_queue(root: &Path, limit: usize) -> ShadowResult<Vec<Queu
         records.truncate(limit);
     }
     Ok(records)
+}
+
+pub fn queue_status(root: &Path) -> ShadowResult<QueueStatusSnapshot> {
+    let queue_dir = ensure_runtime_dir(root)?.join("queue");
+    let records = inspect_pending_queue(root, 0)?;
+    let mut standard_depth = 0usize;
+    let mut privileged_depth = 0usize;
+    let mut budget_heavy_depth = 0usize;
+    let mut sanction_sensitive_depth = 0usize;
+
+    for record in &records {
+        match record.policy_class.as_str() {
+            "standard" => standard_depth += 1,
+            "privileged" => privileged_depth += 1,
+            "budget_heavy" => budget_heavy_depth += 1,
+            "sanction_sensitive" => sanction_sensitive_depth += 1,
+            _ => {}
+        }
+    }
+
+    Ok(QueueStatusSnapshot {
+        root: root.to_path_buf(),
+        queue_dir,
+        pending_records: records.len(),
+        acked_records: records.iter().filter(|record| record.acknowledged).count(),
+        total_pending: records.iter().filter(|record| !record.acknowledged).count(),
+        standard_depth,
+        privileged_depth,
+        budget_heavy_depth,
+        sanction_sensitive_depth,
+        note: "local queue depth is inspectable; hosted queue orchestration remains future work".to_string(),
+    })
 }
 
 pub fn consume_pending_queue(
@@ -5437,6 +5483,69 @@ pub fn render_queue_run_once_json(summary: &QueueRunOnceSummary) -> String {
         json_string(&summary.last_input_hash),
         json_string(&summary.last_execution_path.display().to_string()),
         json_string(&summary.note),
+    )
+}
+
+pub fn render_queue_status_human(snapshot: &QueueStatusSnapshot) -> String {
+    format!(
+        r#"Meridian Loom // QUEUE STATUS
+=============================
+phase:       experimental local queue status
+boundary:    queue depth is locally inspectable; hosted queue orchestration is not
+
+Current state
+=============
+root:                {}
+queue_dir:            {}
+pending_records:      {}
+acked_records:        {}
+total_pending:        {}
+standard_depth:       {}
+privileged_depth:     {}
+budget_heavy_depth:   {}
+sanction_sensitive:   {}
+note:                 {}
+"#,
+        snapshot.root.display(),
+        snapshot.queue_dir.display(),
+        snapshot.pending_records,
+        snapshot.acked_records,
+        snapshot.total_pending,
+        snapshot.standard_depth,
+        snapshot.privileged_depth,
+        snapshot.budget_heavy_depth,
+        snapshot.sanction_sensitive_depth,
+        snapshot.note,
+    )
+}
+
+pub fn render_queue_status_json(snapshot: &QueueStatusSnapshot) -> String {
+    format!(
+        r#"{{
+  "status": "queue_status",
+  "root": {},
+  "queue_dir": {},
+  "pending_records": {},
+  "acked_records": {},
+  "total_pending": {},
+  "queue_depths": {{
+    "standard": {},
+    "privileged": {},
+    "budget_heavy": {},
+    "sanction_sensitive": {}
+  }},
+  "note": {}
+}}"#,
+        json_string(&snapshot.root.display().to_string()),
+        json_string(&snapshot.queue_dir.display().to_string()),
+        snapshot.pending_records,
+        snapshot.acked_records,
+        snapshot.total_pending,
+        snapshot.standard_depth,
+        snapshot.privileged_depth,
+        snapshot.budget_heavy_depth,
+        snapshot.sanction_sensitive_depth,
+        json_string(&snapshot.note),
     )
 }
 
@@ -10003,6 +10112,45 @@ print(json.dumps({'id': agent_id, 'name': 'Atlas', 'org_id': org_id, 'role': 'an
         assert!(human.contains(&capture.input_hash));
         let json = render_queue_inspect_json(&root, &records, 10);
         assert!(json.contains(r#""pending_records": 1"#));
+    }
+
+    #[test]
+    fn queue_status_reports_policy_depths_for_pending_records() {
+        let root = temp_path("loom-shadow-queue-status");
+        fs::create_dir_all(&root).expect("root");
+        let kernel_root = temp_path("loom-shadow-queue-status-kernel");
+        scaffold_queue_kernel(&kernel_root, "queue status fixture", 0.5);
+        init_workspace(
+            &root,
+            "embedded",
+            Some(kernel_root.to_string_lossy().as_ref()),
+            "org_demo",
+        )
+        .expect("init workspace");
+
+        let mut envelope = sample_envelope();
+        envelope.action_type = "research".to_string();
+        envelope.estimated_cost_usd = 0.5;
+        enqueue_action(&root, &kernel_root, &envelope).expect("enqueue standard");
+        envelope.action_type = "admin".to_string();
+        enqueue_action(&root, &kernel_root, &envelope).expect("enqueue privileged");
+        envelope.action_type = "research".to_string();
+        envelope.estimated_cost_usd = 2.5;
+        enqueue_action(&root, &kernel_root, &envelope).expect("enqueue budget heavy");
+
+        let snapshot = queue_status(&root).expect("queue status");
+        assert_eq!(snapshot.pending_records, 3);
+        assert_eq!(snapshot.total_pending, 3);
+        assert_eq!(snapshot.standard_depth, 1);
+        assert_eq!(snapshot.privileged_depth, 1);
+        assert_eq!(snapshot.budget_heavy_depth, 1);
+        assert_eq!(snapshot.sanction_sensitive_depth, 0);
+        let human = render_queue_status_human(&snapshot);
+        assert!(human.contains("QUEUE STATUS"));
+        assert!(human.contains("standard_depth:"));
+        let json = render_queue_status_json(&snapshot);
+        assert!(json.contains(r#""status": "queue_status""#));
+        assert!(json.contains(r#""standard": 1"#));
     }
 
     #[test]

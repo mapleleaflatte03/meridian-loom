@@ -35,6 +35,7 @@ use loom_shadow::{
     render_queue_ack_human, render_queue_ack_json, render_queue_consume_human,
     render_queue_consume_json, render_queue_inspect_human, render_queue_inspect_json,
     render_queue_run_once_human, render_queue_run_once_json,
+    render_queue_status_human, render_queue_status_json, queue_status,
     render_supervisor_lanes_human, render_supervisor_lanes_json,
     render_preflight_human, render_preflight_json, render_runtime_execution_human,
     render_cutover_status_human, render_queue_submission_human, render_queue_submission_json,
@@ -763,6 +764,17 @@ fn handle_queue(args: &[String]) -> LoomResult<()> {
                 print!("{}", render_queue_run_once_json(&summary));
             } else {
                 print_human(&render_queue_run_once_human(&summary));
+            }
+            Ok(())
+        }
+        Some("status") => {
+            let root = root_from(take_value(args, "--root").as_deref())?;
+            let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+            let snapshot = queue_status(&root)?;
+            if format == "json" {
+                print!("{}", render_queue_status_json(&snapshot));
+            } else {
+                print_human(&render_queue_status_human(&snapshot));
             }
             Ok(())
         }
@@ -2699,11 +2711,13 @@ usage:
   loom queue inspect [--root PATH] [--limit N] [--format human|json]
   loom queue consume [--root PATH] [--kernel-path PATH] [--max-jobs N] [--format human|json]
   loom queue run-once [--root PATH] [--kernel-path PATH] [--format human|json]
+  loom queue status [--root PATH] [--format human|json]
   loom queue ack --job-id HASH [--root PATH]
 notes:
   - inspect reads pending local queue records without mutating them
   - consume runs the local supervisor over pending queue records and writes filesystem ack receipts
   - run-once is the bounded pipeline step: it performs one local consume pass and records a progress artifact
+  - status reports policy-class queue depth without mutating any queue state
   - ack records a terminal job acknowledgement for an already completed, failed, denied, or cancelled job
 ",
     );
