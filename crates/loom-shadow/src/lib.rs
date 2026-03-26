@@ -7507,8 +7507,8 @@ fn runtime_layout_config(root: &Path) -> Config {
         log_format: "jsonl".to_string(),
         log_max_bytes: 5 * 1024 * 1024,
         log_max_files: 5,
-        openclaw_integration: "off".to_string(),
-        openclaw_delivery_queue: loom_core::DEFAULT_OPENCLAW_DELIVERY_QUEUE.to_string(),
+        handoff_mode: "off".to_string(),
+        delivery_queue: loom_core::DEFAULT_DELIVERY_QUEUE.to_string(),
     })
 }
 

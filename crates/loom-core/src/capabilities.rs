@@ -3022,8 +3022,8 @@ mod tests {
             log_format: "jsonl".to_string(),
             log_max_bytes: 1024,
             log_max_files: 3,
-            openclaw_integration: "off".to_string(),
-            openclaw_delivery_queue: "/tmp/openclaw".to_string(),
+            handoff_mode: "off".to_string(),
+            delivery_queue: "/tmp/delivery-queue".to_string(),
         }
     }
 
