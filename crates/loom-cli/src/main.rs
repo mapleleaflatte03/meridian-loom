@@ -77,7 +77,7 @@ fn run() -> LoomResult<()> {
     match args[0].as_str() {
         "version" | "-V" | "--version" => {
             print_human(&format!(
-                "Meridian Loom // VERSION\n=========================\nversion:     {}\nboundary:    local-first runtime surface; OpenClaw replacement not claimed\n",
+                "Meridian Loom // VERSION\n=========================\nversion:     {}\nboundary:    local-first runtime surface; hosted replacement not claimed\n",
                 env!("CARGO_PKG_VERSION")
             ));
             Ok(())
@@ -2669,13 +2669,13 @@ Commands\n\
 Notes\n\
 -----\n\
   - forge creates a candidate Loom-native capability from either a bounded template, a bounded gap-class, or a recorded capability gap.\n\
-  - import-workspace-skill supports a bounded clawfamily contract v0 subset: workspace python entrypoint skills and bundle-manifest python skills. Workspace imports can disambiguate multi-script trees with --entrypoint or entrypoint: front matter.\n  - import-openclaw-plugin-skill-subset imports only immediate child skill dirs under the declared OpenClaw plugin skills roots and reports every unsupported source surface explicitly.\n\
+  - import-workspace-skill supports a bounded clawfamily contract v0 subset: workspace python entrypoint skills and bundle-manifest python skills. Workspace imports can disambiguate multi-script trees with --entrypoint or entrypoint: front matter.\n  - import-openclaw-plugin-skill-subset imports only immediate child skill dirs under the declared plugin skills roots and reports every unsupported source surface explicitly.\n\
   - verify executes the capability through Loom's runtime path, can assert expectations over the worker result, and writes verification state back into the custom manifest.\n\
   - promote is only for custom/imported capabilities that have already been verified.\n\
   - action execute / service submit with --capability plus --gap-class records a bounded gap object instead of pretending the capability exists.\n\
   - gap replay currently reissues only recorded action_execute gaps; service_submit gaps fail explicitly until their transport-side replay fields are persisted.\n\
   - imported workspace skills still run through Loom queue, job, worker, audit, and artifact paths.\n\
-  - this is a local-first compatibility seam, not an OpenClaw runtime dependency or hosted cutover.\n",
+  - this is a local-first compatibility surface; hosted runtime dependency is not claimed.\n",
     );
 }
 

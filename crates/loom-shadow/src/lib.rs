@@ -114,8 +114,8 @@ pub struct RuntimeExecutionCapture {
     pub audit_log_path: PathBuf,
     pub parity_stream_path: PathBuf,
     pub parity_report_path: PathBuf,
-    pub openclaw_live_probe_path: Option<PathBuf>,
-    pub openclaw_live_probe_stream_path: Option<PathBuf>,
+    pub reference_probe_path: Option<PathBuf>,
+    pub reference_probe_stream_path: Option<PathBuf>,
     pub decision_path: PathBuf,
     pub input_hash: String,
     pub agent_id: String,
@@ -137,8 +137,8 @@ pub struct RuntimeExecutionCapture {
     pub reference_stage: String,
     pub audit_emission_status: String,
     pub economy_hook_status: String,
-    pub openclaw_live_probe_status: String,
-    pub openclaw_live_probe_note: String,
+    pub reference_probe_status: String,
+    pub reference_probe_note: String,
     pub parity_status: String,
     pub parity_reason: String,
 }
@@ -823,7 +823,7 @@ pub fn compare_logs(
         divergences,
         divergence_rate,
         hook_results,
-        note: "offline event-log diff only; use `loom action execute` plus `loom parity report` for runtime-side rehearsal and optional live OpenClaw probe".to_string(),
+        note: "offline event-log diff only; use `loom action execute` plus `loom parity report` for runtime-side rehearsal and optional live reference probe".to_string(),
     };
 
     if let Some(root) = root {
@@ -952,11 +952,11 @@ pub fn capture_runtime_execution(
         run_worker_supervisor(root, envelope, decision)?
     };
     let (
-        openclaw_live_probe_path,
-        openclaw_live_probe_stream_path,
-        openclaw_live_probe_status,
-        openclaw_live_probe_note,
-    ) = capture_openclaw_live_probe(root, &decision.input_hash)?;
+        reference_probe_path,
+        reference_probe_stream_path,
+        reference_probe_status,
+        reference_probe_note,
+    ) = capture_reference_probe(root, &decision.input_hash)?;
     write_reference_parity_artifacts(root, envelope, decision, reference)?;
     if budget_capture.status == "reserved" {
         budget_capture = if worker_capture.runtime_outcome == "worker_executed" {
@@ -1021,7 +1021,7 @@ pub fn capture_runtime_execution(
     append_line(
         &parity_stream_path,
         &format!(
-            "{{\"timestamp\":{},\"source\":\"openclaw_reference_stream\",\"phase\":\"reference_gate\",\"hook_name\":{},\"decision\":{},\"stage\":{},\"agent_id\":{},\"org_id\":{},\"input_hash\":{},\"reason\":{}}}\n",
+            "{{\"timestamp\":{},\"source\":\"reference_stream\",\"phase\":\"reference_gate\",\"hook_name\":{},\"decision\":{},\"stage\":{},\"agent_id\":{},\"org_id\":{},\"input_hash\":{},\"reason\":{}}}\n",
             json_string(&stream_timestamp),
             json_string(&decision.reference_stage),
             json_string(&reference_decision),
@@ -1065,21 +1065,21 @@ pub fn capture_runtime_execution(
     append_line(
         &parity_stream_path,
         &format!(
-            "{{\"timestamp\":{},\"source\":\"openclaw_live_probe\",\"phase\":\"live_runtime_probe\",\"hook_name\":\"runtime_health\",\"decision\":{},\"stage\":\"live_single_host_openclaw\",\"agent_id\":{},\"org_id\":{},\"input_hash\":{},\"reason\":{},\"probe_path\":{},\"probe_stream_path\":{}}}\n",
+            "{{\"timestamp\":{},\"source\":\"reference_probe\",\"phase\":\"live_runtime_probe\",\"hook_name\":\"runtime_health\",\"decision\":{},\"stage\":\"live_single_host_reference\",\"agent_id\":{},\"org_id\":{},\"input_hash\":{},\"reason\":{},\"probe_path\":{},\"probe_stream_path\":{}}}\n",
             json_string(&stream_timestamp),
-            json_string(&openclaw_live_probe_status),
+            json_string(&reference_probe_status),
             json_string(&decision.agent_id),
             json_string(&decision.org_id),
             json_string(&decision.input_hash),
-            json_string(&openclaw_live_probe_note),
+            json_string(&reference_probe_note),
             json_string(
-                &openclaw_live_probe_path
+                &reference_probe_path
                     .as_ref()
                     .map(|path| path.display().to_string())
                     .unwrap_or_default()
             ),
             json_string(
-                &openclaw_live_probe_stream_path
+                &reference_probe_stream_path
                     .as_ref()
                     .map(|path| path.display().to_string())
                     .unwrap_or_default()
@@ -1097,8 +1097,8 @@ pub fn capture_runtime_execution(
         audit_log_path: audit_log_path.clone(),
         parity_stream_path: parity_stream_path.clone(),
         parity_report_path: parity_report_path.clone(),
-        openclaw_live_probe_path,
-        openclaw_live_probe_stream_path,
+        reference_probe_path,
+        reference_probe_stream_path,
         decision_path: decision.decision_path.clone(),
         input_hash: decision.input_hash.clone(),
         agent_id: decision.agent_id.clone(),
@@ -1120,8 +1120,8 @@ pub fn capture_runtime_execution(
         reference_stage: decision.reference_stage.clone(),
         audit_emission_status,
         economy_hook_status: economy_hook_status.unwrap_or_else(|e| format!("error: {}", e)),
-        openclaw_live_probe_status,
-        openclaw_live_probe_note,
+        reference_probe_status,
+        reference_probe_note,
         parity_status,
         parity_reason,
     };
@@ -1364,26 +1364,26 @@ fn runtime_event_for_capture(capture: &RuntimeExecutionCapture) -> RuntimeEventV
             &capture.worker_note,
         ),
     ];
-    if let Some(path) = capture.openclaw_live_probe_path.as_ref() {
+    if let Some(path) = capture.reference_probe_path.as_ref() {
         artifact_refs.push(artifact_spec(
-            "openclaw_live_probe",
-            "openclaw_live_probe",
+            "reference_probe",
+            "reference_probe",
             path,
             &ids.source_event_id,
             &ids.job_id,
             &ids.execution_id,
-            &capture.openclaw_live_probe_note,
+            &capture.reference_probe_note,
         ));
     }
-    if let Some(path) = capture.openclaw_live_probe_stream_path.as_ref() {
+    if let Some(path) = capture.reference_probe_stream_path.as_ref() {
         artifact_refs.push(artifact_spec(
-            "openclaw_live_probe_stream",
-            "openclaw_live_probe_stream",
+            "reference_probe_stream",
+            "reference_probe_stream",
             path,
             &ids.source_event_id,
             &ids.job_id,
             &ids.execution_id,
-            "live OpenClaw probe stream entries",
+            "reference probe stream entries",
         ));
     }
     RuntimeEventSpec {
@@ -5178,7 +5178,7 @@ pub fn render_runtime_execution_human(capture: &RuntimeExecutionCapture) -> Stri
         .unwrap_or_else(|| "(unknown)".to_string());
     let event = runtime_event_for_capture(capture);
     format!(
-        "Meridian Loom // RUNTIME EXECUTE\n=================================\nphase:       experimental runtime rehearsal\nboundary:    local governed supervisor path is real; hosted runtime replacement is not\n\nDecision\n========\nagent_id:            {}\norg_id:              {}\naction_type:         {}\nresource:            {}\ninput_hash:          {}\nestimated_cost_usd:  {:.4}\noverall_decision:    {}\neffective_source:    {}\neffective_stage:     {}\nreference_decision:  {}\nreference_stage:     {}\nruntime_outcome:     {}\nbudget_reservation:  {} {}\nworker_status:       {}\nworker_kind:         {}\nworker_note:         {}\nparity_status:       {}\nparity_reason:       {}\n\n{}\nArtifacts\n=========\n{}\nworker supervisor artifacts\n===========================\nworker_request:      {}\nworker_result:       {}\nworker_log:          {}\n\nproof / audit / parity artifacts\n================================\nexecution_path:      {}\nruntime_event:       {}\nruntime_event_stream:{}\ndecision_path:       {}\naudit_log:           {} ({})\nparity_stream:       {}\nparity_report:       {}\nopenclaw_live_probe: {} ({})\nopenclaw_probe_log:  {}\n\nNext\n====\n1. loom job inspect --job-id {} --root {}\n2. loom parity report --root {}\n3. loom shadow report --root {}\n4. Inspect {} for worker execution details.\n5. Inspect {} for runtime-side audit details.\n",
+        "Meridian Loom // RUNTIME EXECUTE\n=================================\nphase:       experimental runtime rehearsal\nboundary:    local governed supervisor path is real; hosted runtime replacement is not\n\nDecision\n========\nagent_id:            {}\norg_id:              {}\naction_type:         {}\nresource:            {}\ninput_hash:          {}\nestimated_cost_usd:  {:.4}\noverall_decision:    {}\neffective_source:    {}\neffective_stage:     {}\nreference_decision:  {}\nreference_stage:     {}\nruntime_outcome:     {}\nbudget_reservation:  {} {}\nworker_status:       {}\nworker_kind:         {}\nworker_note:         {}\nparity_status:       {}\nparity_reason:       {}\n\n{}\nArtifacts\n=========\n{}\nworker supervisor artifacts\n===========================\nworker_request:      {}\nworker_result:       {}\nworker_log:          {}\n\nproof / audit / parity artifacts\n================================\nexecution_path:      {}\nruntime_event:       {}\nruntime_event_stream:{}\ndecision_path:       {}\naudit_log:           {} ({})\nparity_stream:       {}\nparity_report:       {}\nreference_probe: {} ({})\nreference_probe_log:  {}\n\nNext\n====\n1. loom job inspect --job-id {} --root {}\n2. loom parity report --root {}\n3. loom shadow report --root {}\n4. Inspect {} for worker execution details.\n5. Inspect {} for runtime-side audit details.\n",
         capture.agent_id,
         capture.org_id,
         capture.action_type,
@@ -5216,13 +5216,13 @@ pub fn render_runtime_execution_human(capture: &RuntimeExecutionCapture) -> Stri
         capture.parity_stream_path.display(),
         capture.parity_report_path.display(),
         capture
-            .openclaw_live_probe_path
+            .reference_probe_path
             .as_ref()
             .map(|path| path.display().to_string())
             .unwrap_or_else(|| "(not captured)".to_string()),
-        capture.openclaw_live_probe_status,
+        capture.reference_probe_status,
         capture
-            .openclaw_live_probe_stream_path
+            .reference_probe_stream_path
             .as_ref()
             .map(|path| path.display().to_string())
             .unwrap_or_else(|| "(not captured)".to_string()),
@@ -5238,7 +5238,7 @@ pub fn render_runtime_execution_human(capture: &RuntimeExecutionCapture) -> Stri
 pub fn render_runtime_execution_json(capture: &RuntimeExecutionCapture) -> String {
     let event = runtime_event_for_capture(capture);
     format!(
-        "{{\n  \"status\": \"runtime_execution_captured\",\n  \"execution_path\": {},\n  \"runtime_event_path\": {},\n  \"runtime_event_stream_path\": {},\n  \"worker_request_path\": {},\n  \"worker_result_path\": {},\n  \"worker_log_path\": {},\n  \"decision_path\": {},\n  \"audit_log_path\": {},\n  \"parity_stream_path\": {},\n  \"parity_report_path\": {},\n  \"openclaw_live_probe_path\": {},\n  \"openclaw_live_probe_stream_path\": {},\n  \"agent_id\": {},\n  \"org_id\": {},\n  \"action_type\": {},\n  \"resource\": {},\n  \"input_hash\": {},\n  \"estimated_cost_usd\": {:.6},\n  \"runtime_outcome\": {},\n  \"budget_reservation_id\": {},\n  \"budget_reservation_status\": {},\n  \"budget_reservation_reason\": {},\n  \"worker_status\": {},\n  \"worker_kind\": {},\n  \"worker_note\": {},\n  \"overall_decision\": {},\n  \"effective_source\": {},\n  \"effective_stage\": {},\n  \"reference_decision\": {},\n  \"reference_stage\": {},\n  \"audit_emission_status\": {},\n  \"openclaw_live_probe_status\": {},\n  \"openclaw_live_probe_note\": {},\n  \"parity_status\": {},\n  \"parity_reason\": {},\n  \"event_schema_version\": {},\n  \"event_id\": {},\n  \"job_id\": {},\n  \"execution_id\": {},\n  \"decision_id\": {},\n  \"parity_id\": {},\n  \"audit_id\": {},\n  \"artifact_refs\": {},\n  \"note\": \"experimental local supervisor path exists for allow decisions; governed hosted supervisor remains future work\"\n}}\n",
+        "{{\n  \"status\": \"runtime_execution_captured\",\n  \"execution_path\": {},\n  \"runtime_event_path\": {},\n  \"runtime_event_stream_path\": {},\n  \"worker_request_path\": {},\n  \"worker_result_path\": {},\n  \"worker_log_path\": {},\n  \"decision_path\": {},\n  \"audit_log_path\": {},\n  \"parity_stream_path\": {},\n  \"parity_report_path\": {},\n  \"reference_probe_path\": {},\n  \"reference_probe_stream_path\": {},\n  \"agent_id\": {},\n  \"org_id\": {},\n  \"action_type\": {},\n  \"resource\": {},\n  \"input_hash\": {},\n  \"estimated_cost_usd\": {:.6},\n  \"runtime_outcome\": {},\n  \"budget_reservation_id\": {},\n  \"budget_reservation_status\": {},\n  \"budget_reservation_reason\": {},\n  \"worker_status\": {},\n  \"worker_kind\": {},\n  \"worker_note\": {},\n  \"overall_decision\": {},\n  \"effective_source\": {},\n  \"effective_stage\": {},\n  \"reference_decision\": {},\n  \"reference_stage\": {},\n  \"audit_emission_status\": {},\n  \"reference_probe_status\": {},\n  \"reference_probe_note\": {},\n  \"parity_status\": {},\n  \"parity_reason\": {},\n  \"event_schema_version\": {},\n  \"event_id\": {},\n  \"job_id\": {},\n  \"execution_id\": {},\n  \"decision_id\": {},\n  \"parity_id\": {},\n  \"audit_id\": {},\n  \"artifact_refs\": {},\n  \"note\": \"experimental local supervisor path exists for allow decisions; governed hosted supervisor remains future work\"\n}}\n",
         json_string(&capture.execution_path.display().to_string()),
         json_string(&capture.runtime_event_path.display().to_string()),
         json_string(&capture.runtime_event_stream_path.display().to_string()),
@@ -5250,12 +5250,12 @@ pub fn render_runtime_execution_json(capture: &RuntimeExecutionCapture) -> Strin
         json_string(&capture.parity_stream_path.display().to_string()),
         json_string(&capture.parity_report_path.display().to_string()),
         capture
-            .openclaw_live_probe_path
+            .reference_probe_path
             .as_ref()
             .map(|path| json_string(&path.display().to_string()))
             .unwrap_or_else(|| "null".to_string()),
         capture
-            .openclaw_live_probe_stream_path
+            .reference_probe_stream_path
             .as_ref()
             .map(|path| json_string(&path.display().to_string()))
             .unwrap_or_else(|| "null".to_string()),
@@ -5282,8 +5282,8 @@ pub fn render_runtime_execution_json(capture: &RuntimeExecutionCapture) -> Strin
         json_string(&capture.reference_decision),
         json_string(&capture.reference_stage),
         json_string(&capture.audit_emission_status),
-        json_string(&capture.openclaw_live_probe_status),
-        json_string(&capture.openclaw_live_probe_note),
+        json_string(&capture.reference_probe_status),
+        json_string(&capture.reference_probe_note),
         json_string(&capture.parity_status),
         json_string(&capture.parity_reason),
         json_string(&event.schema_version),
@@ -6266,7 +6266,7 @@ pub fn render_runtime_service_human(snapshot: &RuntimeServiceSnapshot) -> String
     }
 
     format!(
-        "Meridian Loom // RUNTIME SERVICE\n=================================\nphase:       experimental local runtime service\nboundary:    service-owned ingress is locally real; live OpenClaw replacement is not\n\nCurrent state\n=============\nroot:                {}\nconfig:              {}\nservice_dir:         {}\nservice_lock:        {}\nmetrics:             {}\nsocket_path:         {}\nhttp_address:        {}\nhttp_token_required: {}\ntransport:           {}\nhealth:              {}\nsession_id:          {}\npid:                 {}\nrunning:             {}\nstatus:              {}\nbooted_at:           {}\nupdated_at:          {}\nstopped_at:          {}\npoll_seconds:        {}\nmax_jobs:            {}\nmax_iterations:      {}\niterations_completed:{}\nrequests_received:   {}\nsubmitted:           {}\nprocessed:           {}\nallowed:             {}\ndenied:              {}\nfailed:              {}\npending_jobs:        {}\nprocessed_jobs:      {}\nfailed_jobs:         {}\nlast_request_id:     {}\nlast_job_id:         {}\nruntime_state:       {}\nstdout_log:          {}\nevent_log:           {}\ningress_stream:      {}\nstop_request:        {}\nnote:                {}\n\nNext\n====\n1. loom service submit --root {} --agent-id agent_atlas --action-type research --resource web_search --estimated-cost-usd 0.05\n2. loom service status --root {}\n3. loom parity report --root {}\n4. loom job inspect --job-id {} --root {}\n",
+        "Meridian Loom // RUNTIME SERVICE\n=================================\nphase:       experimental local runtime service\nboundary:    service-owned ingress is locally real; live replacement is not\n\nCurrent state\n=============\nroot:                {}\nconfig:              {}\nservice_dir:         {}\nservice_lock:        {}\nmetrics:             {}\nsocket_path:         {}\nhttp_address:        {}\nhttp_token_required: {}\ntransport:           {}\nhealth:              {}\nsession_id:          {}\npid:                 {}\nrunning:             {}\nstatus:              {}\nbooted_at:           {}\nupdated_at:          {}\nstopped_at:          {}\npoll_seconds:        {}\nmax_jobs:            {}\nmax_iterations:      {}\niterations_completed:{}\nrequests_received:   {}\nsubmitted:           {}\nprocessed:           {}\nallowed:             {}\ndenied:              {}\nfailed:              {}\npending_jobs:        {}\nprocessed_jobs:      {}\nfailed_jobs:         {}\nlast_request_id:     {}\nlast_job_id:         {}\nruntime_state:       {}\nstdout_log:          {}\nevent_log:           {}\ningress_stream:      {}\nstop_request:        {}\nnote:                {}\n\nNext\n====\n1. loom service submit --root {} --agent-id agent_atlas --action-type research --resource web_search --estimated-cost-usd 0.05\n2. loom service status --root {}\n3. loom parity report --root {}\n4. loom job inspect --job-id {} --root {}\n",
         snapshot.root.display(),
         snapshot.config_path.display(),
         snapshot.service_dir.display(),
@@ -6728,10 +6728,10 @@ pub fn render_parity_report(root: &Path) -> ShadowResult<String> {
     let event_latest = fs::read_to_string(&event_latest_path).ok();
     let event_stream_path = runtime_event_stream_path(root)?;
     let event_stream = fs::read_to_string(&event_stream_path).ok();
-    let openclaw_live_path = parity_dir.join("openclaw_live.json");
-    let openclaw_live = fs::read_to_string(&openclaw_live_path).ok();
-    let openclaw_stream_path = parity_dir.join("openclaw_live_stream.jsonl");
-    let openclaw_stream = fs::read_to_string(&openclaw_stream_path).ok();
+    let reference_probe_path = parity_dir.join("reference_probe.json");
+    let reference_probe = fs::read_to_string(&reference_probe_path).ok();
+    let reference_probe_stream_path = parity_dir.join("reference_probe_stream.jsonl");
+    let reference_probe_stream = fs::read_to_string(&reference_probe_stream_path).ok();
     if contents.is_none()
         && stream.is_none()
         && reference_latest.is_none()
@@ -6740,17 +6740,17 @@ pub fn render_parity_report(root: &Path) -> ShadowResult<String> {
         && comparison_stream.is_none()
         && event_latest.is_none()
         && event_stream.is_none()
-        && openclaw_live.is_none()
-        && openclaw_stream.is_none()
+        && reference_probe.is_none()
+        && reference_probe_stream.is_none()
     {
         return Ok(format!(
-            "Meridian Loom // PARITY REPORT\n===============================\nphase:       runtime-side parity surface\nboundary:    parity artifacts appear only after runtime rehearsal\n\nCurrent state\n=============\nstatus:      not_started\nmeaning:     no parity stream, parity report, or live OpenClaw probe has been captured yet\n\nRecommended next step\n=====================\n1. loom action execute --agent-id agent_atlas --action-type research --resource web_search --kernel-path /tmp/meridian-kernel --root {}\n2. loom shadow report --root {}\n3. Re-run loom parity report after runtime rehearsal artifacts exist.\n",
+            "Meridian Loom // PARITY REPORT\n===============================\nphase:       runtime-side parity surface\nboundary:    parity artifacts appear only after runtime rehearsal\n\nCurrent state\n=============\nstatus:      not_started\nmeaning:     no parity stream, parity report, or live reference probe has been captured yet\n\nRecommended next step\n=====================\n1. loom action execute --agent-id agent_atlas --action-type research --resource web_search --kernel-path /tmp/meridian-kernel --root {}\n2. loom shadow report --root {}\n3. Re-run loom parity report after runtime rehearsal artifacts exist.\n",
             root.display(),
             root.display(),
         ));
     }
     let mut out = format!(
-        "Meridian Loom // PARITY REPORT\n===============================\nphase:       runtime-side parity surface\nboundary:    action-level parity now compares Loom runtime events to the OpenClaw-compatible reference adapter; live host probe remains supplementary\n\nParity latest\n=============\nsource: {}\n\n{}\nParity stream\n=============\nsource: {}\n\n{}\n",
+        "Meridian Loom // PARITY REPORT\n===============================\nphase:       runtime-side parity surface\nboundary:    action-level parity now compares Loom runtime events to the reference adapter; live host probe remains supplementary\n\nParity latest\n=============\nsource: {}\n\n{}\nParity stream\n=============\nsource: {}\n\n{}\n",
         report_path.display(),
         contents.unwrap_or_else(|| "{\n  \"status\": \"missing\",\n  \"note\": \"latest parity report has not been captured yet\"\n}\n".to_string()),
         stream_path.display(),
@@ -6800,7 +6800,7 @@ pub fn render_parity_report(root: &Path) -> ShadowResult<String> {
     out.push_str(&render_action_parity_summary(
         event_latest.as_deref(),
         reference_latest.as_deref(),
-        openclaw_live.as_deref(),
+        reference_probe.as_deref(),
     ));
     out.push('\n');
     out.push_str(
@@ -6824,24 +6824,24 @@ pub fn render_parity_report(root: &Path) -> ShadowResult<String> {
             .unwrap_or_else(|| "Runtime event stream\n====================\nsource: (not captured)\n\n".to_string()),
     );
     out.push_str(
-        &openclaw_live
+        &reference_probe
             .as_ref()
             .map(|contents| format!(
-                "OpenClaw live probe\n===================\nsource: {}\n\n{}\n",
-                openclaw_live_path.display(),
+                "Reference probe\n===================\nsource: {}\n\n{}\n",
+                reference_probe_path.display(),
                 contents
             ))
-            .unwrap_or_else(|| "OpenClaw live probe\n===================\nsource: (not captured)\n\n".to_string()),
+            .unwrap_or_else(|| "Reference probe\n===================\nsource: (not captured)\n\n".to_string()),
     );
     out.push_str(
-        &openclaw_stream
+        &reference_probe_stream
             .as_ref()
             .map(|contents| format!(
-                "OpenClaw live probe stream\n==========================\nsource: {}\n\n{}\n",
-                openclaw_stream_path.display(),
+                "Reference probe stream\n==========================\nsource: {}\n\n{}\n",
+                reference_probe_stream_path.display(),
                 contents
             ))
-            .unwrap_or_else(|| "OpenClaw live probe stream\n==========================\nsource: (not captured)\n\n".to_string()),
+            .unwrap_or_else(|| "Reference probe stream\n==========================\nsource: (not captured)\n\n".to_string()),
     );
 
     Ok(out)
@@ -6850,11 +6850,11 @@ pub fn render_parity_report(root: &Path) -> ShadowResult<String> {
 fn render_action_parity_summary(
     runtime_event: Option<&str>,
     reference_latest: Option<&str>,
-    openclaw_live: Option<&str>,
+    reference_probe: Option<&str>,
 ) -> String {
     let mut out = String::from("Action parity summary\n=====================\n");
     let Some(reference_latest) = reference_latest else {
-        out.push_str("status:      not_started\nmeaning:     no action-level OpenClaw-compatible reference artifact has been captured yet\n\n");
+        out.push_str("status:      not_started\nmeaning:     no action-level reference artifact has been captured yet\n\n");
         return out;
     };
 
@@ -6897,12 +6897,12 @@ fn render_action_parity_summary(
         "pending_runtime_event".to_string()
     };
 
-    if let Some(openclaw_live) = openclaw_live {
+    if let Some(reference_probe) = reference_probe {
         let proof_level =
-            extract_json_string(openclaw_live, "\"proof_level\"").unwrap_or_else(|| "unknown".to_string());
+            extract_json_string(reference_probe, "\"proof_level\"").unwrap_or_else(|| "unknown".to_string());
         let deployment_mode =
-            extract_json_string(openclaw_live, "\"deployment_mode\"").unwrap_or_else(|| "unknown".to_string());
-        let health_ok = extract_json_bool(openclaw_live, "\"health_ok\"").unwrap_or(false);
+            extract_json_string(reference_probe, "\"deployment_mode\"").unwrap_or_else(|| "unknown".to_string());
+        let health_ok = extract_json_bool(reference_probe, "\"health_ok\"").unwrap_or(false);
         out.push_str(&format!(
             "live_probe:  {} (proof_level={} deployment_mode={})\n",
             if health_ok { "healthy" } else { "degraded" },
@@ -6913,7 +6913,7 @@ fn render_action_parity_summary(
         out.push_str("live_probe:  not_captured\n");
     }
     out.push_str(&format!(
-        "note:        action-level parity is {} against the OpenClaw-compatible reference adapter; live OpenClaw proof remains supplementary\n\n",
+        "note:        action-level parity is {} against the reference adapter; live reference probe remains supplementary\n\n",
         runtime_status
     ));
     out
@@ -6921,7 +6921,7 @@ fn render_action_parity_summary(
 
 fn render_parity_report_json(capture: &RuntimeExecutionCapture) -> String {
     format!(
-        "{{\n  \"status\": \"parity_report_captured\",\n  \"execution_path\": {},\n  \"runtime_event_path\": {},\n  \"runtime_event_stream_path\": {},\n  \"decision_path\": {},\n  \"audit_log_path\": {},\n  \"parity_stream_path\": {},\n  \"comparison_latest_path\": {},\n  \"comparison_stream_path\": {},\n  \"openclaw_live_probe_path\": {},\n  \"openclaw_live_probe_stream_path\": {},\n  \"reference_decision\": {},\n  \"reference_stage\": {},\n  \"overall_decision\": {},\n  \"effective_stage\": {},\n  \"openclaw_live_probe_status\": {},\n  \"openclaw_live_probe_note\": {},\n  \"parity_status\": {},\n  \"parity_reason\": {},\n  \"note\": \"runtime-side parity stream now captures Loom execution plus a per-action OpenClaw live probe artifact when available; hosted per-action parity remains future work\"\n}}\n",
+        "{{\n  \"status\": \"parity_report_captured\",\n  \"execution_path\": {},\n  \"runtime_event_path\": {},\n  \"runtime_event_stream_path\": {},\n  \"decision_path\": {},\n  \"audit_log_path\": {},\n  \"parity_stream_path\": {},\n  \"comparison_latest_path\": {},\n  \"comparison_stream_path\": {},\n  \"reference_probe_path\": {},\n  \"reference_probe_stream_path\": {},\n  \"reference_decision\": {},\n  \"reference_stage\": {},\n  \"overall_decision\": {},\n  \"effective_stage\": {},\n  \"reference_probe_status\": {},\n  \"reference_probe_note\": {},\n  \"parity_status\": {},\n  \"parity_reason\": {},\n  \"note\": \"runtime-side parity stream now captures Loom execution plus a per-action Reference probe artifact when available; hosted per-action parity remains future work\"\n}}\n",
         json_string(&capture.execution_path.display().to_string()),
         json_string(&capture.runtime_event_path.display().to_string()),
         json_string(&capture.runtime_event_stream_path.display().to_string()),
@@ -6931,12 +6931,12 @@ fn render_parity_report_json(capture: &RuntimeExecutionCapture) -> String {
         json_string("artifacts/parity/comparison_latest.json"),
         json_string("artifacts/parity/comparison_stream.jsonl"),
         capture
-            .openclaw_live_probe_path
+            .reference_probe_path
             .as_ref()
             .map(|path| json_string(&path.display().to_string()))
             .unwrap_or_else(|| "null".to_string()),
         capture
-            .openclaw_live_probe_stream_path
+            .reference_probe_stream_path
             .as_ref()
             .map(|path| json_string(&path.display().to_string()))
             .unwrap_or_else(|| "null".to_string()),
@@ -6944,8 +6944,8 @@ fn render_parity_report_json(capture: &RuntimeExecutionCapture) -> String {
         json_string(&capture.reference_stage),
         json_string(&capture.overall_decision),
         json_string(&capture.effective_stage),
-        json_string(&capture.openclaw_live_probe_status),
-        json_string(&capture.openclaw_live_probe_note),
+        json_string(&capture.reference_probe_status),
+        json_string(&capture.reference_probe_note),
         json_string(&capture.parity_status),
         json_string(&capture.parity_reason),
     )
@@ -7620,7 +7620,7 @@ fn write_reference_parity_artifacts(
     let stream_path = parity_reference_stream_path(root)?;
     let decision_status = if reference.allowed { "allow" } else { "deny" };
     let rendered = format!(
-        "{{\n  \"status\": \"reference_action_captured\",\n  \"source\": \"openclaw_compatible_reference_adapter\",\n  \"input_hash\": {},\n  \"agent_id\": {},\n  \"org_id\": {},\n  \"action_type\": {},\n  \"resource\": {},\n  \"estimated_cost_usd\": {:.6},\n  \"reference_allowed\": {},\n  \"reference_decision\": {},\n  \"reference_stage\": {},\n  \"reference_reason\": {},\n  \"effective_source\": {},\n  \"effective_stage\": {},\n  \"overall_decision\": {},\n  \"note\": \"action-level OpenClaw-compatible reference snapshot for parity comparison\"\n}}\n",
+        "{{\n  \"status\": \"reference_action_captured\",\n  \"source\": \"reference_adapter\",\n  \"input_hash\": {},\n  \"agent_id\": {},\n  \"org_id\": {},\n  \"action_type\": {},\n  \"resource\": {},\n  \"estimated_cost_usd\": {:.6},\n  \"reference_allowed\": {},\n  \"reference_decision\": {},\n  \"reference_stage\": {},\n  \"reference_reason\": {},\n  \"effective_source\": {},\n  \"effective_stage\": {},\n  \"overall_decision\": {},\n  \"note\": \"action-level reference snapshot for parity comparison\"\n}}\n",
         json_string(&decision.input_hash),
         json_string(&envelope.agent_id),
         json_string(&envelope.org_id),
@@ -7662,7 +7662,7 @@ fn write_parity_comparison_artifacts(
     let latest_path = parity_comparison_latest_path(root)?;
     let stream_path = parity_comparison_stream_path(root)?;
     let rendered = format!(
-        "{{\n  \"status\": \"action_parity_compared\",\n  \"comparison_id\": {},\n  \"event_schema_version\": {},\n  \"input_hash\": {},\n  \"job_id\": {},\n  \"execution_id\": {},\n  \"decision_id\": {},\n  \"parity_id\": {},\n  \"audit_id\": {},\n  \"runtime_event_id\": {},\n  \"action_type\": {},\n  \"resource\": {},\n  \"reference_decision\": {},\n  \"reference_stage\": {},\n  \"runtime_decision\": {},\n  \"runtime_stage\": {},\n  \"runtime_outcome\": {},\n  \"comparison_status\": {},\n  \"openclaw_live_probe_status\": {},\n  \"execution_path\": {},\n  \"runtime_event_path\": {},\n  \"audit_log_path\": {},\n  \"note\": \"action-level parity comparison between Loom runtime execution and the OpenClaw-compatible reference adapter; live probe remains supplementary\"\n}}\n",
+        "{{\n  \"status\": \"action_parity_compared\",\n  \"comparison_id\": {},\n  \"event_schema_version\": {},\n  \"input_hash\": {},\n  \"job_id\": {},\n  \"execution_id\": {},\n  \"decision_id\": {},\n  \"parity_id\": {},\n  \"audit_id\": {},\n  \"runtime_event_id\": {},\n  \"action_type\": {},\n  \"resource\": {},\n  \"reference_decision\": {},\n  \"reference_stage\": {},\n  \"runtime_decision\": {},\n  \"runtime_stage\": {},\n  \"runtime_outcome\": {},\n  \"comparison_status\": {},\n  \"reference_probe_status\": {},\n  \"execution_path\": {},\n  \"runtime_event_path\": {},\n  \"audit_log_path\": {},\n  \"note\": \"action-level parity comparison between Loom runtime execution and the reference adapter; live probe remains supplementary\"\n}}\n",
         json_string(&runtime_event.parity_id),
         json_string(runtime_event.schema_version.as_str()),
         json_string(&capture.input_hash),
@@ -7680,7 +7680,7 @@ fn write_parity_comparison_artifacts(
         json_string(&capture.effective_stage),
         json_string(&capture.runtime_outcome),
         json_string(&capture.parity_status),
-        json_string(&capture.openclaw_live_probe_status),
+        json_string(&capture.reference_probe_status),
         json_string(&capture.execution_path.display().to_string()),
         json_string(&capture.runtime_event_path.display().to_string()),
         json_string(&capture.audit_log_path.display().to_string()),
@@ -7690,7 +7690,7 @@ fn write_parity_comparison_artifacts(
     append_line(
         &stream_path,
         &format!(
-            "{{\"timestamp\":{},\"comparison_id\":{},\"input_hash\":{},\"job_id\":{},\"execution_id\":{},\"runtime_event_id\":{},\"reference_decision\":{},\"runtime_decision\":{},\"comparison_status\":{},\"openclaw_live_probe_status\":{},\"artifact_path\":{}}}\n",
+            "{{\"timestamp\":{},\"comparison_id\":{},\"input_hash\":{},\"job_id\":{},\"execution_id\":{},\"runtime_event_id\":{},\"reference_decision\":{},\"runtime_decision\":{},\"comparison_status\":{},\"reference_probe_status\":{},\"artifact_path\":{}}}\n",
             json_string(&timestamp_now()),
             json_string(&runtime_event.parity_id),
             json_string(&capture.input_hash),
@@ -7700,7 +7700,7 @@ fn write_parity_comparison_artifacts(
             json_string(&capture.reference_decision),
             json_string(&capture.overall_decision),
             json_string(&capture.parity_status),
-            json_string(&capture.openclaw_live_probe_status),
+            json_string(&capture.reference_probe_status),
             json_string(&action_path.display().to_string()),
         ),
     )?;
@@ -8032,19 +8032,24 @@ fn dispatch_wasm_worker(
     }
 }
 
-fn capture_openclaw_live_probe(
+fn capture_reference_probe(
     root: &Path,
     input_hash: &str,
 ) -> ShadowResult<(Option<PathBuf>, Option<PathBuf>, String, String)> {
     let parity_dir = ensure_parity_dir(root)?;
-    let live_dir = parity_dir.join("openclaw");
+    let live_dir = parity_dir.join("reference");
     fs::create_dir_all(&live_dir).map_err(io_err)?;
     let probe_path = live_dir.join(format!("{}.json", input_hash));
-    let latest_probe_path = parity_dir.join("openclaw_live.json");
-    let probe_stream_path = parity_dir.join("openclaw_live_stream.jsonl");
-    let proof_script = std::env::var("MERIDIAN_OPENCLAW_PROOF_SCRIPT")
+    let latest_probe_path = parity_dir.join("reference_probe.json");
+    let probe_stream_path = parity_dir.join("reference_probe_stream.jsonl");
+    let proof_script = std::env::var("MERIDIAN_REFERENCE_PROOF_SCRIPT")
         .ok()
         .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            std::env::var("MERIDIAN_OPENCLAW_PROOF_SCRIPT")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
         .map(PathBuf::from)
         .unwrap_or_else(|| {
             PathBuf::from("/root/.openclaw/workspace/company/meridian_platform/openclaw_runtime_proof.py")
@@ -8056,14 +8061,14 @@ fn capture_openclaw_live_probe(
                 "{{\"timestamp\":{},\"input_hash\":{},\"status\":\"not_available\",\"reason\":{},\"probe_path\":null}}\n",
                 json_string(&timestamp_now()),
                 json_string(input_hash),
-                json_string(&format!("live OpenClaw proof script not found at {}", proof_script.display())),
+                json_string(&format!("reference probe script not found at {}", proof_script.display())),
             ),
         )?;
         return Ok((
             None,
             Some(probe_stream_path),
             "not_available".to_string(),
-            format!("live OpenClaw proof script not found at {}", proof_script.display()),
+            format!("reference probe script not found at {}", proof_script.display()),
         ));
     }
 
@@ -8081,7 +8086,7 @@ fn capture_openclaw_live_probe(
                 json_string(&timestamp_now()),
                 json_string(input_hash),
                 json_string(if stderr.is_empty() {
-                    "openclaw live proof command failed"
+                    "reference probe command failed"
                 } else {
                     &stderr
                 }),
@@ -8092,7 +8097,7 @@ fn capture_openclaw_live_probe(
             Some(probe_stream_path),
             "probe_failed".to_string(),
             if stderr.is_empty() {
-                "openclaw live proof command failed".to_string()
+                "reference probe command failed".to_string()
             } else {
                 stderr
             },
@@ -8108,7 +8113,7 @@ fn capture_openclaw_live_probe(
     let deployment_mode =
         extract_json_string(&stdout, "\"deployment_mode\"").unwrap_or_else(|| "unknown".to_string());
     let note = format!(
-        "live OpenClaw probe {} with proof_level={} deployment_mode={}",
+        "reference probe {} with proof_level={} deployment_mode={}",
         if health_ok { "healthy" } else { "degraded" },
         proof_level,
         deployment_mode,
@@ -9100,7 +9105,7 @@ mod tests {
         assert!(json.contains("\"status\": \"runtime_execution_captured\""));
         assert!(json.contains("\"runtime_event_path\":"));
         assert!(json.contains("\"worker_status\": \"completed\""));
-        assert!(json.contains("\"openclaw_live_probe_status\":"));
+        assert!(json.contains("\"reference_probe_status\":"));
         let parity = render_parity_report(&root).expect("parity report");
         assert!(parity.contains("Meridian Loom // PARITY REPORT"));
         assert!(parity.contains("Reference action latest"));
@@ -9108,7 +9113,7 @@ mod tests {
         assert!(parity.contains("Action parity stream"));
         assert!(parity.contains("Action parity summary"));
         assert!(parity.contains("Runtime event latest"));
-        assert!(parity.contains("OpenClaw live probe stream"));
+        assert!(parity.contains("Reference probe stream"));
         assert!(parity.contains("\"parity_status\": \"match\""));
     }
 
@@ -9124,8 +9129,8 @@ mod tests {
             audit_log_path: PathBuf::new(),
             parity_stream_path: PathBuf::new(),
             parity_report_path: PathBuf::new(),
-            openclaw_live_probe_path: None,
-            openclaw_live_probe_stream_path: None,
+            reference_probe_path: None,
+            reference_probe_stream_path: None,
             decision_path: PathBuf::new(),
             input_hash: "test_hash".to_string(),
             agent_id: "agent_test".to_string(),
@@ -9147,8 +9152,8 @@ mod tests {
             reference_stage: "".to_string(),
             audit_emission_status: "".to_string(),
             economy_hook_status: "".to_string(),
-            openclaw_live_probe_status: "".to_string(),
-            openclaw_live_probe_note: "".to_string(),
+            reference_probe_status: "".to_string(),
+            reference_probe_note: "".to_string(),
             parity_status: "parity_test".to_string(),
             parity_reason: "".to_string(),
         };
