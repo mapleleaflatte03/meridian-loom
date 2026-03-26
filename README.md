@@ -32,6 +32,14 @@
 
 Meridian Loom is the operator-facing local runtime boundary for Meridian. It is installable, inspectable, and runnable on a single Linux host.
 
+## Three-Part Architecture
+
+Meridian Loom is one part of a three-repo runtime stack:
+
+- [meridian-loom](https://github.com/mapleleaflatte03/meridian-loom) provides the operator-facing local runtime surface.
+- [meridian-kernel](https://github.com/mapleleaflatte03/meridian-kernel) provides the governance and policy kernel.
+- [meridian-intelligence](https://github.com/mapleleaflatte03/meridian-intelligence) provides the intelligence and route layer.
+
 ## What Exists Today
 
 - Local service lifecycle with foreground and background modes.
@@ -58,10 +66,17 @@ export LOOM_ROOT="$HOME/.local/share/meridian-loom/runtime/default"
 export MERIDIAN_KERNEL_PATH=/tmp/meridian-kernel
 export LOOM_SERVICE_TOKEN=loom-local-token
 
-target/release/loom init   --mode embedded   --root "$LOOM_ROOT"   --kernel-path "$MERIDIAN_KERNEL_PATH"   --org-id local_foundry
+target/release/loom init \
+  --mode embedded \
+  --root "$LOOM_ROOT" \
+  --kernel-path "$MERIDIAN_KERNEL_PATH" \
+  --org-id local_foundry
 
-target/release/loom start   --root "$LOOM_ROOT"   --kernel-path "$MERIDIAN_KERNEL_PATH"   --http-address 127.0.0.1:18910   --service-token "$LOOM_SERVICE_TOKEN"
-
+target/release/loom start \
+  --root "$LOOM_ROOT" \
+  --kernel-path "$MERIDIAN_KERNEL_PATH" \
+  --http-address 127.0.0.1:18910 \
+  --service-token "$LOOM_SERVICE_TOKEN"
 ```
 
 ## More

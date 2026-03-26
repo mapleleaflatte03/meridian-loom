@@ -15,7 +15,7 @@
 <p align="center">
   <a href="../README.md">Loom README</a> ·
   <a href="PUBLICATION_CHECKLIST.md">Publication Checklist</a> ·
-  <a href="ARCHITECTURE.md">100 Improvements</a> ·
+  <a href="ARCHITECTURE.md">Architecture</a> ·
   <a href="https://github.com/mapleleaflatte03/meridian-kernel/blob/main/docs/LOOM_SPEC.md">Loom Spec</a> ·
   <a href="https://app.welliam.codes">Live Host</a>
 </p>
@@ -337,6 +337,5 @@ That script creates a synthetic kernel fixture where:
 
 This is intentionally a fixture-backed proof surface, not a claim about the
 founder host's current kernel state. The fixture rehearsal explicitly disables
-the founder-host OpenClaw probe so the transcript stays synthetic. Its
-transcript lives at
-`examples/local-sanction-preview.txt`.
+the founder-host OpenClaw probe so the transcript stays synthetic. The
+transcript is not checked in.

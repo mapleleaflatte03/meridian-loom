@@ -15,7 +15,7 @@
 <p align="center">
   <a href="../README.md">Loom README</a> ·
   <a href="SETUP_REHEARSAL.md">Setup Rehearsal</a> ·
-  <a href="ARCHITECTURE.md">100 Improvements</a> ·
+  <a href="ARCHITECTURE.md">Architecture</a> ·
   <a href="https://github.com/mapleleaflatte03/meridian-kernel/blob/main/docs/LOOM_SPEC.md">Loom Spec</a> ·
   <a href="https://github.com/mapleleaflatte03/meridian-kernel">Kernel Repo</a>
 </p>
@@ -35,7 +35,7 @@ strict so the repo does not overclaim maturity.
 - [x] `loom.toml.example` exists
 - [x] Setup rehearsal script exists
 - [x] Runtime rehearsal surface exists (`loom action execute` + `loom parity report`)
-- [x] Setup rehearsal transcript is committed
+- [x] Setup rehearsal documentation is current
 - [x] Cargo workspace builds locally
 - [x] Cargo workspace tests pass locally
 
