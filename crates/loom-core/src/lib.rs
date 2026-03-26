@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub mod advanced_primitives;
 pub mod capability_shims;
 pub mod capabilities;
 pub mod wasm_host;

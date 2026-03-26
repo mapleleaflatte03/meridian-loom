@@ -18,6 +18,249 @@ pub use wasm_runner::{
     WasmMemoryProbe,
 };
 
+pub const WASM_HOST_CALL_NAMESPACE: &str = "loom_host";
+pub const HOST_BROWSER_NAVIGATE: &str = "host_browser_navigate";
+pub const HOST_SCHEDULE_HEARTBEAT: &str = "host_schedule_heartbeat";
+pub const HOST_TERMINAL_EXEC: &str = "host_terminal_exec";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WasmHostCallKind {
+    BrowserNavigate,
+    ScheduleHeartbeat,
+    TerminalExec,
+}
+
+impl WasmHostCallKind {
+    pub fn import_name(self) -> &'static str {
+        match self {
+            Self::BrowserNavigate => HOST_BROWSER_NAVIGATE,
+            Self::ScheduleHeartbeat => HOST_SCHEDULE_HEARTBEAT,
+            Self::TerminalExec => HOST_TERMINAL_EXEC,
+        }
+    }
+
+    pub fn purpose(self) -> &'static str {
+        match self {
+            Self::BrowserNavigate => "bounded browser navigation and semantic snapshot capture",
+            Self::ScheduleHeartbeat => "register or refresh proactive background work independent of user input",
+            Self::TerminalExec => "execute a bounded local argv command inside a constrained workspace context",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WasmHostCallDecision {
+    Pending,
+    Allowed,
+    Denied,
+}
+
+impl WasmHostCallDecision {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Allowed => "allowed",
+            Self::Denied => "denied",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WasmHostSecurityContext {
+    pub capability_name: String,
+    pub agent_id: String,
+    pub org_id: String,
+    pub session_id: String,
+    pub operation_id: String,
+    pub max_timeout_ms: u64,
+    pub max_response_bytes: usize,
+    pub allowed_hosts: Vec<String>,
+    pub allowed_workdir_roots: Vec<String>,
+    pub require_user_present: bool,
+}
+
+impl Default for WasmHostSecurityContext {
+    fn default() -> Self {
+        Self {
+            capability_name: String::new(),
+            agent_id: String::new(),
+            org_id: String::new(),
+            session_id: String::new(),
+            operation_id: String::new(),
+            max_timeout_ms: 3_000,
+            max_response_bytes: 16_384,
+            allowed_hosts: Vec::new(),
+            allowed_workdir_roots: vec![".".to_string()],
+            require_user_present: false,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WasmBrowserNavigateRequest {
+    pub security: WasmHostSecurityContext,
+    pub session_id: String,
+    pub url: String,
+    pub allowed_hosts: Vec<String>,
+    pub wait_for: String,
+    pub timeout_ms: u64,
+    pub capture_semantic_snapshot: bool,
+}
+
+impl Default for WasmBrowserNavigateRequest {
+    fn default() -> Self {
+        Self {
+            security: WasmHostSecurityContext::default(),
+            session_id: String::new(),
+            url: String::new(),
+            allowed_hosts: Vec::new(),
+            wait_for: "dom_content_loaded".to_string(),
+            timeout_ms: 4_000,
+            capture_semantic_snapshot: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WasmBrowserNavigateResponse {
+    pub decision: WasmHostCallDecision,
+    pub navigation_id: String,
+    pub final_url: String,
+    pub title: String,
+    pub semantic_snapshot_ref: String,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WasmHeartbeatScheduleKind {
+    Once,
+    Interval,
+    Cron,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WasmHeartbeatScheduleRequest {
+    pub security: WasmHostSecurityContext,
+    pub heartbeat_id: String,
+    pub capability_name: String,
+    pub schedule_kind: WasmHeartbeatScheduleKind,
+    pub schedule_expression: String,
+    pub not_before_unix_ms: Option<u64>,
+    pub interval_seconds: Option<u64>,
+    pub jitter_seconds: u64,
+    pub payload_json: String,
+    pub max_runs: Option<u32>,
+}
+
+impl Default for WasmHeartbeatScheduleRequest {
+    fn default() -> Self {
+        Self {
+            security: WasmHostSecurityContext::default(),
+            heartbeat_id: String::new(),
+            capability_name: String::new(),
+            schedule_kind: WasmHeartbeatScheduleKind::Interval,
+            schedule_expression: String::new(),
+            not_before_unix_ms: None,
+            interval_seconds: Some(300),
+            jitter_seconds: 15,
+            payload_json: String::new(),
+            max_runs: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WasmHeartbeatScheduleResponse {
+    pub decision: WasmHostCallDecision,
+    pub heartbeat_id: String,
+    pub next_fire_at_unix_ms: Option<u64>,
+    pub accepted_run_id: String,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WasmTerminalExecRequest {
+    pub security: WasmHostSecurityContext,
+    pub argv: Vec<String>,
+    pub working_dir: String,
+    pub env_allowlist: Vec<String>,
+    pub stdin_utf8: String,
+    pub timeout_ms: u64,
+    pub max_output_bytes: usize,
+    pub require_clean_environment: bool,
+}
+
+impl Default for WasmTerminalExecRequest {
+    fn default() -> Self {
+        Self {
+            security: WasmHostSecurityContext::default(),
+            argv: Vec::new(),
+            working_dir: ".".to_string(),
+            env_allowlist: Vec::new(),
+            stdin_utf8: String::new(),
+            timeout_ms: 2_000,
+            max_output_bytes: 16_384,
+            require_clean_environment: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WasmTerminalExecResponse {
+    pub decision: WasmHostCallDecision,
+    pub exit_code: Option<i32>,
+    pub stdout_utf8: String,
+    pub stderr_utf8: String,
+    pub timed_out: bool,
+    pub truncated: bool,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WasmHostCallSignature {
+    pub kind: WasmHostCallKind,
+    pub import_module: &'static str,
+    pub request_type: &'static str,
+    pub response_type: &'static str,
+    pub purpose: &'static str,
+    pub truth_boundary: &'static str,
+}
+
+impl WasmHostCallSignature {
+    pub fn import_name(&self) -> &'static str {
+        self.kind.import_name()
+    }
+}
+
+pub fn wasm_host_call_signatures() -> Vec<WasmHostCallSignature> {
+    vec![
+        WasmHostCallSignature {
+            kind: WasmHostCallKind::BrowserNavigate,
+            import_module: WASM_HOST_CALL_NAMESPACE,
+            request_type: "WasmBrowserNavigateRequest",
+            response_type: "WasmBrowserNavigateResponse",
+            purpose: WasmHostCallKind::BrowserNavigate.purpose(),
+            truth_boundary: "foundation only; host approval, browser execution, and storage policy remain separate runtime concerns",
+        },
+        WasmHostCallSignature {
+            kind: WasmHostCallKind::ScheduleHeartbeat,
+            import_module: WASM_HOST_CALL_NAMESPACE,
+            request_type: "WasmHeartbeatScheduleRequest",
+            response_type: "WasmHeartbeatScheduleResponse",
+            purpose: WasmHostCallKind::ScheduleHeartbeat.purpose(),
+            truth_boundary: "foundation only; no autonomous scheduler is claimed active until a runtime service implements leases and acknowledgements",
+        },
+        WasmHostCallSignature {
+            kind: WasmHostCallKind::TerminalExec,
+            import_module: WASM_HOST_CALL_NAMESPACE,
+            request_type: "WasmTerminalExecRequest",
+            response_type: "WasmTerminalExecResponse",
+            purpose: WasmHostCallKind::TerminalExec.purpose(),
+            truth_boundary: "foundation only; safe terminal execution still requires an explicit adapter implementation and policy gate",
+        },
+    ]
+}
+
 /// Host-side runtime backend selection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HostBackend {
@@ -373,5 +616,36 @@ mod tests {
         assert!(rendered.contains("\"profile_name\""));
         assert!(rendered.contains("\"epoch_deadline_ms\": 2500"));
         assert!(rendered.contains("\"notes\""));
+    }
+
+    #[test]
+    fn host_call_signature_surface_covers_browser_heartbeat_and_terminal() {
+        let signatures = wasm_host_call_signatures();
+        assert_eq!(signatures.len(), 3);
+        assert!(signatures.iter().all(|signature| signature.import_module == WASM_HOST_CALL_NAMESPACE));
+        assert!(signatures.iter().any(|signature| signature.import_name() == HOST_BROWSER_NAVIGATE));
+        assert!(signatures.iter().any(|signature| signature.import_name() == HOST_SCHEDULE_HEARTBEAT));
+        assert!(signatures.iter().any(|signature| signature.import_name() == HOST_TERMINAL_EXEC));
+    }
+
+    #[test]
+    fn host_security_context_defaults_remain_bounded() {
+        let security = WasmHostSecurityContext::default();
+        assert_eq!(security.max_timeout_ms, 3_000);
+        assert_eq!(security.max_response_bytes, 16_384);
+        assert_eq!(security.allowed_workdir_roots, vec![".".to_string()]);
+        assert!(!security.require_user_present);
+
+        let terminal = WasmTerminalExecRequest::default();
+        assert!(terminal.require_clean_environment);
+        assert_eq!(terminal.timeout_ms, 2_000);
+
+        let browser = WasmBrowserNavigateRequest::default();
+        assert!(browser.capture_semantic_snapshot);
+        assert_eq!(browser.wait_for, "dom_content_loaded");
+
+        let heartbeat = WasmHeartbeatScheduleRequest::default();
+        assert_eq!(heartbeat.interval_seconds, Some(300));
+        assert_eq!(heartbeat.jitter_seconds, 15);
     }
 }
