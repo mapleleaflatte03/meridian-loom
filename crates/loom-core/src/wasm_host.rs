@@ -24,6 +24,7 @@ pub const WASM_HOST_CALL_NAMESPACE: &str = "loom_host";
 pub const HOST_BROWSER_NAVIGATE: &str = "host_browser_navigate";
 pub const HOST_SCHEDULE_HEARTBEAT: &str = "host_schedule_heartbeat";
 pub const HOST_TERMINAL_EXEC: &str = "host_terminal_exec";
+pub const HOST_SYSTEM_INFO: &str = "host_system_info";
 pub const HOST_FS_READ: &str = "host_fs_read";
 pub const HOST_FS_WRITE: &str = "host_fs_write";
 pub const HOST_LLM_INFERENCE: &str = "host_llm_inference";
@@ -40,6 +41,7 @@ pub enum WasmHostCallKind {
     BrowserNavigate,
     ScheduleHeartbeat,
     TerminalExec,
+    SystemInfo,
     FsRead,
     FsWrite,
     LlmInference,
@@ -53,6 +55,7 @@ impl WasmHostCallKind {
             Self::BrowserNavigate => HOST_BROWSER_NAVIGATE,
             Self::ScheduleHeartbeat => HOST_SCHEDULE_HEARTBEAT,
             Self::TerminalExec => HOST_TERMINAL_EXEC,
+            Self::SystemInfo => HOST_SYSTEM_INFO,
             Self::FsRead => HOST_FS_READ,
             Self::FsWrite => HOST_FS_WRITE,
             Self::LlmInference => HOST_LLM_INFERENCE,
@@ -66,7 +69,8 @@ impl WasmHostCallKind {
             Self::BrowserNavigate => "bounded browser navigation and semantic snapshot capture",
             Self::ScheduleHeartbeat => "register or refresh proactive background work independent of user input",
             Self::TerminalExec => "execute a bounded local argv command inside a constrained workspace context",
-            Self::FsRead => "read a bounded UTF-8 excerpt from the runtime workspace sandbox",
+            Self::SystemInfo => "collect bounded host diagnostics from a fixed allowlist without exposing arbitrary host access",
+            Self::FsRead => "read a bounded UTF-8 excerpt from the runtime workspace sandbox or a fixed diagnostic allowlist",
             Self::FsWrite => "write bounded UTF-8 content into the runtime workspace sandbox",
             Self::LlmInference => "perform bounded native inference through the host-side OpenAI chat completions bridge",
             Self::KvGet => "read a namespaced value from the runtime-backed KV memory file",
@@ -270,6 +274,29 @@ pub struct WasmTerminalExecResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WasmSystemInfoRequest {
+    pub security: WasmHostSecurityContext,
+}
+
+impl Default for WasmSystemInfoRequest {
+    fn default() -> Self {
+        Self {
+            security: WasmHostSecurityContext::default(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WasmSystemInfoResponse {
+    pub decision: WasmHostCallDecision,
+    pub uname_utf8: String,
+    pub os_release_utf8: String,
+    pub hostname_utf8: String,
+    pub truncated: bool,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WasmFsReadRequest {
     pub security: WasmHostSecurityContext,
     pub path: String,
@@ -457,12 +484,20 @@ pub fn wasm_host_call_signatures() -> Vec<WasmHostCallSignature> {
             truth_boundary: "bounded local command execution is real only inside explicit timeout and path policy",
         },
         WasmHostCallSignature {
+            kind: WasmHostCallKind::SystemInfo,
+            import_module: WASM_HOST_CALL_NAMESPACE,
+            request_type: "WasmSystemInfoRequest",
+            response_type: "WasmSystemInfoResponse",
+            purpose: WasmHostCallKind::SystemInfo.purpose(),
+            truth_boundary: "system diagnostics are limited to a fixed allowlist of host metadata and never expose arbitrary shell access",
+        },
+        WasmHostCallSignature {
             kind: WasmHostCallKind::FsRead,
             import_module: WASM_HOST_CALL_NAMESPACE,
             request_type: "WasmFsReadRequest",
             response_type: "WasmFsReadResponse",
             purpose: WasmHostCallKind::FsRead.purpose(),
-            truth_boundary: "file reads are limited to the local Loom runtime workspace sandbox",
+            truth_boundary: "file reads are limited to the local Loom runtime workspace sandbox plus a small diagnostic allowlist",
         },
         WasmHostCallSignature {
             kind: WasmHostCallKind::FsWrite,
@@ -546,6 +581,13 @@ pub fn render_wasm_heartbeat_schedule_request_json(request: &WasmHeartbeatSchedu
     .to_string()
 }
 
+pub fn render_wasm_system_info_request_json(request: &WasmSystemInfoRequest) -> String {
+    json!({
+        "security": render_security_context_value(&request.security),
+    })
+    .to_string()
+}
+
 pub fn render_wasm_fs_read_request_json(request: &WasmFsReadRequest) -> String {
     json!({
         "security": render_security_context_value(&request.security),
@@ -606,6 +648,10 @@ pub fn builtin_terminal_exec_guest_bytes(request_json: &str) -> Result<Vec<u8>, 
 
 pub fn builtin_heartbeat_schedule_guest_bytes(request_json: &str) -> Result<Vec<u8>, String> {
     build_host_call_guest(HOST_SCHEDULE_HEARTBEAT, request_json)
+}
+
+pub fn builtin_system_info_guest_bytes(request_json: &str) -> Result<Vec<u8>, String> {
+    build_host_call_guest(HOST_SYSTEM_INFO, request_json)
 }
 
 pub fn builtin_fs_read_guest_bytes(request_json: &str) -> Result<Vec<u8>, String> {
@@ -676,6 +722,14 @@ pub(crate) fn parse_wasm_heartbeat_schedule_request(raw: &str) -> Result<WasmHea
         jitter_seconds: value_u64_or(value.get("jitter_seconds"), 15),
         payload_json: value_string(value.get("payload_json")),
         max_runs: value.get("max_runs").and_then(Value::as_u64).map(|value| value as u32),
+    })
+}
+
+pub(crate) fn parse_wasm_system_info_request(raw: &str) -> Result<WasmSystemInfoRequest, String> {
+    let value: Value = serde_json::from_str(raw)
+        .map_err(|error| format!("invalid system info request json: {error}"))?;
+    Ok(WasmSystemInfoRequest {
+        security: parse_security_context(value.get("security")),
     })
 }
 
@@ -768,6 +822,18 @@ pub(crate) fn render_wasm_heartbeat_schedule_response_json(response: &WasmHeartb
         "heartbeat_id": response.heartbeat_id,
         "next_fire_at_unix_ms": response.next_fire_at_unix_ms,
         "accepted_run_id": response.accepted_run_id,
+        "note": response.note,
+    })
+    .to_string()
+}
+
+pub(crate) fn render_wasm_system_info_response_json(response: &WasmSystemInfoResponse) -> String {
+    json!({
+        "decision": response.decision.label(),
+        "uname_utf8": response.uname_utf8,
+        "os_release_utf8": response.os_release_utf8,
+        "hostname_utf8": response.hostname_utf8,
+        "truncated": response.truncated,
         "note": response.note,
     })
     .to_string()
@@ -1305,11 +1371,12 @@ mod tests {
     #[test]
     fn host_call_signature_surface_covers_builtin_host_calls() {
         let signatures = wasm_host_call_signatures();
-        assert_eq!(signatures.len(), 8);
+        assert_eq!(signatures.len(), 9);
         assert!(signatures.iter().all(|signature| signature.import_module == WASM_HOST_CALL_NAMESPACE));
         assert!(signatures.iter().any(|signature| signature.import_name() == HOST_BROWSER_NAVIGATE));
         assert!(signatures.iter().any(|signature| signature.import_name() == HOST_SCHEDULE_HEARTBEAT));
         assert!(signatures.iter().any(|signature| signature.import_name() == HOST_TERMINAL_EXEC));
+        assert!(signatures.iter().any(|signature| signature.import_name() == HOST_SYSTEM_INFO));
         assert!(signatures.iter().any(|signature| signature.import_name() == HOST_FS_READ));
         assert!(signatures.iter().any(|signature| signature.import_name() == HOST_FS_WRITE));
         assert!(signatures.iter().any(|signature| signature.import_name() == HOST_LLM_INFERENCE));

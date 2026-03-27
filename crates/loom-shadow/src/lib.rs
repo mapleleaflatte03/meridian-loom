@@ -7,16 +7,17 @@ use loom_core::{
         builtin_browser_navigate_guest_bytes, builtin_fs_read_guest_bytes,
         builtin_fs_write_guest_bytes, builtin_heartbeat_schedule_guest_bytes,
         builtin_kv_get_guest_bytes, builtin_kv_set_guest_bytes,
-        builtin_llm_inference_guest_bytes, builtin_terminal_exec_guest_bytes,
-        render_wasm_browser_navigate_request_json, render_wasm_fs_read_request_json,
-        render_wasm_fs_write_request_json, render_wasm_heartbeat_schedule_request_json,
-        render_wasm_kv_get_request_json, render_wasm_kv_set_request_json,
-        render_wasm_llm_inference_request_json, render_wasm_terminal_exec_request_json,
+        builtin_llm_inference_guest_bytes, builtin_system_info_guest_bytes,
+        builtin_terminal_exec_guest_bytes, render_wasm_browser_navigate_request_json,
+        render_wasm_fs_read_request_json, render_wasm_fs_write_request_json,
+        render_wasm_heartbeat_schedule_request_json, render_wasm_kv_get_request_json,
+        render_wasm_kv_set_request_json, render_wasm_llm_inference_request_json,
+        render_wasm_system_info_request_json, render_wasm_terminal_exec_request_json,
         run_wasm_guest, HostBackend, WasmBrowserNavigateRequest, WasmExecutionRequest,
         WasmExecutionResult, WasmFsReadRequest, WasmFsWriteRequest, WasmGuestSource,
         WasmHeartbeatScheduleKind, WasmHeartbeatScheduleRequest, WasmHostBuilder,
         WasmHostSecurityContext, WasmKvGetRequest, WasmKvSetRequest,
-        WasmLlmInferenceRequest, WasmTerminalExecRequest,
+        WasmLlmInferenceRequest, WasmSystemInfoRequest, WasmTerminalExecRequest,
     },
     ActionEnvelope, AgentIdentityResolution, Config, ReferenceGateCheck,
 };
@@ -7964,6 +7965,8 @@ fn dispatch_wasm_worker(
         build_builtin_terminal_exec_guest(capability, worker_request_path)?
     } else if module_source == "builtin:heartbeat.schedule" {
         build_builtin_heartbeat_schedule_guest(capability, worker_request_path)?
+    } else if module_source == "builtin:system.info" {
+        build_builtin_system_info_guest(capability, worker_request_path)?
     } else if module_source == "builtin:fs.read" {
         build_builtin_fs_read_guest(capability, worker_request_path)?
     } else if module_source == "builtin:fs.write" {
@@ -8292,6 +8295,31 @@ fn build_builtin_heartbeat_schedule_guest(
     };
     let request_json = render_wasm_heartbeat_schedule_request_json(&request);
     builtin_heartbeat_schedule_guest_bytes(&request_json)
+}
+
+fn build_builtin_system_info_guest(
+    capability: &CapabilityDescriptor,
+    worker_request_path: &Path,
+) -> ShadowResult<Vec<u8>> {
+    let raw = fs::read_to_string(worker_request_path).map_err(io_err)?;
+    let body: Value = serde_json::from_str(&raw).map_err(io_err)?;
+    let envelope = body.get("envelope");
+    let request = WasmSystemInfoRequest {
+        security: WasmHostSecurityContext {
+            capability_name: capability.name.clone(),
+            agent_id: value_string(envelope.and_then(|value| value.get("agent_id"))),
+            org_id: value_string(envelope.and_then(|value| value.get("org_id"))),
+            session_id: value_string(envelope.and_then(|value| value.get("runtime_id"))),
+            operation_id: value_string(body.get("input_hash")),
+            max_timeout_ms: 500,
+            max_response_bytes: 4_096,
+            allowed_hosts: Vec::new(),
+            allowed_workdir_roots: vec!["/home/ubuntu/.local/share/meridian-loom/runtime/default/workspace".to_string()],
+            require_user_present: false,
+        },
+    };
+    let request_json = render_wasm_system_info_request_json(&request);
+    builtin_system_info_guest_bytes(&request_json)
 }
 
 fn build_builtin_fs_read_guest(

@@ -20,18 +20,19 @@ use super::{
     host_config_hints, parse_wasm_browser_navigate_request, parse_wasm_fs_read_request,
     parse_wasm_fs_write_request, parse_wasm_heartbeat_schedule_request,
     parse_wasm_kv_get_request, parse_wasm_kv_set_request,
-    parse_wasm_llm_inference_request, parse_wasm_terminal_exec_request,
-    render_wasm_browser_navigate_response_json, render_wasm_fs_read_response_json,
-    render_wasm_fs_write_response_json, render_wasm_heartbeat_schedule_response_json,
-    render_wasm_kv_get_response_json, render_wasm_kv_set_response_json,
-    render_wasm_llm_inference_response_json, render_wasm_terminal_exec_response_json,
+    parse_wasm_llm_inference_request, parse_wasm_system_info_request,
+    parse_wasm_terminal_exec_request, render_wasm_browser_navigate_response_json,
+    render_wasm_fs_read_response_json, render_wasm_fs_write_response_json,
+    render_wasm_heartbeat_schedule_response_json, render_wasm_kv_get_response_json,
+    render_wasm_kv_set_response_json, render_wasm_llm_inference_response_json,
+    render_wasm_system_info_response_json, render_wasm_terminal_exec_response_json,
     WasmBrowserNavigateResponse, WasmFsReadResponse, WasmFsWriteResponse,
     WasmHeartbeatScheduleResponse, WasmHostCallDecision, WasmHostCallStatusCode,
     WasmHostConfig, WasmKvGetResponse, WasmKvSetResponse, WasmLlmInferenceResponse,
-    WasmTerminalExecResponse, HOST_BROWSER_NAVIGATE, HOST_FS_READ, HOST_FS_WRITE,
-    HOST_KV_GET, HOST_KV_SET, HOST_LLM_INFERENCE, HOST_SCHEDULE_HEARTBEAT,
-    HOST_TERMINAL_EXEC, WASM_HOST_CALL_NAMESPACE, WASM_HOST_RESULT_LEN_EXPORT,
-    WASM_HOST_RESULT_PTR_EXPORT,
+    WasmSystemInfoResponse, WasmTerminalExecResponse, HOST_BROWSER_NAVIGATE,
+    HOST_FS_READ, HOST_FS_WRITE, HOST_KV_GET, HOST_KV_SET, HOST_LLM_INFERENCE,
+    HOST_SCHEDULE_HEARTBEAT, HOST_SYSTEM_INFO, HOST_TERMINAL_EXEC,
+    WASM_HOST_CALL_NAMESPACE, WASM_HOST_RESULT_LEN_EXPORT, WASM_HOST_RESULT_PTR_EXPORT,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -172,6 +173,15 @@ pub fn run_wasm_guest(request: &WasmExecutionRequest) -> Result<WasmExecutionRes
             },
         )
         .map_err(|error| format!("failed to define {HOST_TERMINAL_EXEC}: {error}"))?;
+    linker
+        .func_wrap(
+            WASM_HOST_CALL_NAMESPACE,
+            HOST_SYSTEM_INFO,
+            |caller: Caller<'_, RunnerState>, request_ptr: i32, request_len: i32, response_ptr: i32, response_capacity: i32| {
+                host_system_info(caller, request_ptr, request_len, response_ptr, response_capacity)
+            },
+        )
+        .map_err(|error| format!("failed to define {HOST_SYSTEM_INFO}: {error}"))?;
     linker
         .func_wrap(
             WASM_HOST_CALL_NAMESPACE,
@@ -354,6 +364,33 @@ fn host_terminal_exec(
     }
 }
 
+fn host_system_info(
+    mut caller: Caller<'_, RunnerState>,
+    request_ptr: i32,
+    request_len: i32,
+    response_ptr: i32,
+    response_capacity: i32,
+) -> i32 {
+    caller.data_mut().host_calls.push("system.info".to_string());
+    let input = read_guest_bytes_for_poge(&mut caller, request_ptr, request_len);
+    let result = dispatch_system_info(&mut caller, request_ptr, request_len, response_ptr, response_capacity);
+    let (return_val, is_error, out_len) = match result {
+        Ok(n) => (n, false, n.max(0) as usize),
+        Err(status) => (status.code(), true, 0usize),
+    };
+    let output = if out_len > 0 {
+        read_guest_bytes_for_poge(&mut caller, response_ptr, out_len as i32)
+    } else {
+        Vec::new()
+    };
+    let epoch_ms = epoch_ms_now();
+    let data = caller.data_mut();
+    if let Some(poge) = data.poge.as_mut() {
+        let _ = poge.record_event(HostCallKind::SystemInfo, epoch_ms, &input, &output, is_error);
+    }
+    return_val
+}
+
 fn host_fs_read(
     mut caller: Caller<'_, RunnerState>,
     request_ptr: i32,
@@ -362,10 +399,23 @@ fn host_fs_read(
     response_capacity: i32,
 ) -> i32 {
     caller.data_mut().host_calls.push("fs.read".to_string());
-    match dispatch_fs_read(&mut caller, request_ptr, request_len, response_ptr, response_capacity) {
-        Ok(bytes_written) => bytes_written,
-        Err(status) => status.code(),
+    let input = read_guest_bytes_for_poge(&mut caller, request_ptr, request_len);
+    let result = dispatch_fs_read(&mut caller, request_ptr, request_len, response_ptr, response_capacity);
+    let (return_val, is_error, out_len) = match result {
+        Ok(n) => (n, false, n.max(0) as usize),
+        Err(status) => (status.code(), true, 0usize),
+    };
+    let output = if out_len > 0 {
+        read_guest_bytes_for_poge(&mut caller, response_ptr, out_len as i32)
+    } else {
+        Vec::new()
+    };
+    let epoch_ms = epoch_ms_now();
+    let data = caller.data_mut();
+    if let Some(poge) = data.poge.as_mut() {
+        let _ = poge.record_event(HostCallKind::FsRead, epoch_ms, &input, &output, is_error);
     }
+    return_val
 }
 
 fn host_fs_write(
@@ -694,6 +744,50 @@ fn dispatch_terminal_exec(
     write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_terminal_exec_response_json(&response))
 }
 
+fn dispatch_system_info(
+    caller: &mut Caller<'_, RunnerState>,
+    request_ptr: i32,
+    request_len: i32,
+    response_ptr: i32,
+    response_capacity: i32,
+) -> Result<i32, WasmHostCallStatusCode> {
+    let memory = guest_memory(caller)?;
+    let request_json = read_guest_utf8(&memory, caller, request_ptr, request_len)?;
+    let request = parse_wasm_system_info_request(&request_json)
+        .map_err(|_| WasmHostCallStatusCode::InvalidRequest)?;
+    let max_response_bytes = bounded_response_bytes(request.security.max_response_bytes, response_capacity);
+    let field_bytes = (max_response_bytes / 3).max(256);
+    let (uname_utf8, uname_truncated, uname_note) = read_uname_excerpt(field_bytes);
+    let (os_release_utf8, os_release_truncated, os_release_note) =
+        read_allowlisted_text_file(Path::new("/etc/os-release"), field_bytes);
+    let (hostname_utf8, hostname_truncated, hostname_note) =
+        read_allowlisted_text_file(Path::new("/etc/hostname"), field_bytes);
+    let truncated = uname_truncated || os_release_truncated || hostname_truncated;
+    let mut notes = Vec::new();
+    if let Some(note) = uname_note {
+        notes.push(note);
+    }
+    if let Some(note) = os_release_note {
+        notes.push(note);
+    }
+    if let Some(note) = hostname_note {
+        notes.push(note);
+    }
+    let response = WasmSystemInfoResponse {
+        decision: WasmHostCallDecision::Allowed,
+        uname_utf8,
+        os_release_utf8,
+        hostname_utf8,
+        truncated,
+        note: if notes.is_empty() {
+            "bounded system diagnostics collected from allowlisted host probes".to_string()
+        } else {
+            notes.join("; ")
+        },
+    };
+    write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_system_info_response_json(&response))
+}
+
 fn dispatch_fs_read(
     caller: &mut Caller<'_, RunnerState>,
     request_ptr: i32,
@@ -716,7 +810,7 @@ fn dispatch_fs_read(
         };
         return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_fs_read_response_json(&response));
     }
-    let sandbox_path = match resolve_runtime_workspace_path(&request.path) {
+    let sandbox_path = match resolve_runtime_read_path(&request.path) {
         Ok(path) => path,
         Err(error) => {
             let response = WasmFsReadResponse {
@@ -1241,27 +1335,101 @@ fn runtime_workspace_root() -> PathBuf {
     PathBuf::from("/home/ubuntu/.local/share/meridian-loom/runtime/default/workspace")
 }
 
-fn resolve_runtime_workspace_path(raw: &str) -> Result<PathBuf, String> {
+fn normalize_guest_requested_path(raw: &str) -> Result<PathBuf, String> {
     if raw.trim().is_empty() {
         return Err("path must not be empty".to_string());
     }
-    let mut relative = PathBuf::new();
+    let absolute = Path::new(raw).is_absolute();
+    let mut normalized = if absolute {
+        PathBuf::from("/")
+    } else {
+        PathBuf::new()
+    };
     for component in Path::new(raw).components() {
         match component {
-            Component::Normal(segment) => relative.push(segment),
-            Component::CurDir => {}
-            Component::ParentDir => return Err(format!("path '{}' escapes the runtime workspace", raw)),
-            Component::RootDir | Component::Prefix(_) => {
-                return Err(format!("absolute path '{}' is not allowed", raw));
-            }
+            Component::Normal(segment) => normalized.push(segment),
+            Component::CurDir | Component::RootDir => {}
+            Component::ParentDir => return Err(format!("path '{}' escapes the allowed read roots", raw)),
+            Component::Prefix(_) => return Err(format!("path '{}' contains an unsupported prefix", raw)),
         }
     }
-    if relative.as_os_str().is_empty() {
+    let is_root_only = absolute && normalized == Path::new("/");
+    if normalized.as_os_str().is_empty() || is_root_only {
         return Err("path must not be empty".to_string());
+    }
+    Ok(normalized)
+}
+
+fn is_allowlisted_diagnostic_path(path: &Path) -> bool {
+    matches!(path.to_str(), Some("/etc/os-release" | "/etc/hostname"))
+}
+
+fn resolve_runtime_read_path(raw: &str) -> Result<PathBuf, String> {
+    let normalized = normalize_guest_requested_path(raw)?;
+    if normalized.is_absolute() {
+        if is_allowlisted_diagnostic_path(&normalized) {
+            return Ok(normalized);
+        }
+        let workspace_root = runtime_workspace_root();
+        if normalized.starts_with(&workspace_root) {
+            return Ok(normalized);
+        }
+        return Err(format!(
+            "absolute path '{}' is outside the workspace sandbox and diagnostic allowlist",
+            raw
+        ));
     }
     let root = runtime_workspace_root();
     fs::create_dir_all(&root).map_err(|error| format!("failed to create runtime workspace root '{}': {error}", root.display()))?;
-    Ok(root.join(relative))
+    Ok(root.join(normalized))
+}
+
+fn resolve_runtime_workspace_path(raw: &str) -> Result<PathBuf, String> {
+    let normalized = normalize_guest_requested_path(raw)?;
+    if normalized.is_absolute() {
+        return Err(format!("absolute path '{}' is not allowed", raw));
+    }
+    let root = runtime_workspace_root();
+    fs::create_dir_all(&root).map_err(|error| format!("failed to create runtime workspace root '{}': {error}", root.display()))?;
+    Ok(root.join(normalized))
+}
+
+fn read_allowlisted_text_file(path: &Path, max_bytes: usize) -> (String, bool, Option<String>) {
+    match fs::read(path) {
+        Ok(bytes) => {
+            let (content_utf8, truncated) = truncate_lossy_utf8(&bytes, max_bytes);
+            (content_utf8, truncated, None)
+        }
+        Err(error) => (
+            String::new(),
+            false,
+            Some(format!("failed to read '{}': {error}", path.display())),
+        ),
+    }
+}
+
+fn read_uname_excerpt(max_bytes: usize) -> (String, bool, Option<String>) {
+    match Command::new("uname").arg("-a").output() {
+        Ok(output) => {
+            let (stdout_utf8, truncated) = truncate_lossy_utf8(&output.stdout, max_bytes);
+            if output.status.success() {
+                (stdout_utf8.trim().to_string(), truncated, None)
+            } else {
+                let stderr_utf8 = truncate_lossy_utf8(&output.stderr, max_bytes).0;
+                let note = if stderr_utf8.trim().is_empty() {
+                    format!("uname -a exited with status {:?}", output.status.code())
+                } else {
+                    format!("uname -a failed: {}", stderr_utf8.trim())
+                };
+                (stdout_utf8.trim().to_string(), truncated, Some(note))
+            }
+        }
+        Err(error) => (
+            String::new(),
+            false,
+            Some(format!("failed to execute 'uname -a': {error}")),
+        ),
+    }
 }
 
 type RuntimeKvStore = BTreeMap<String, BTreeMap<String, Value>>;
@@ -1397,4 +1565,35 @@ fn call_i32_function(
         Some(Val::I32(value)) => Some(*value),
         _ => None,
     })
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::{resolve_runtime_read_path, runtime_workspace_root};
+    use std::path::PathBuf;
+
+    #[test]
+    fn runtime_read_path_allows_workspace_relative_inputs() {
+        let resolved = resolve_runtime_read_path("notes/summary.txt").expect("workspace relative path");
+        assert_eq!(resolved, runtime_workspace_root().join("notes/summary.txt"));
+    }
+
+    #[test]
+    fn runtime_read_path_allows_explicit_diagnostic_allowlist() {
+        assert_eq!(
+            resolve_runtime_read_path("/etc/os-release").expect("allowlisted diagnostic"),
+            PathBuf::from("/etc/os-release")
+        );
+        assert_eq!(
+            resolve_runtime_read_path("/etc/hostname").expect("allowlisted diagnostic"),
+            PathBuf::from("/etc/hostname")
+        );
+    }
+
+    #[test]
+    fn runtime_read_path_rejects_parent_segments_and_non_allowlisted_absolutes() {
+        assert!(resolve_runtime_read_path("../secrets.txt").is_err());
+        assert!(resolve_runtime_read_path("/etc/shadow").is_err());
+    }
 }
