@@ -339,7 +339,7 @@ impl Default for WasmLlmInferenceRequest {
     fn default() -> Self {
         Self {
             security: WasmHostSecurityContext::default(),
-            model: "gpt-4o-mini".to_string(),
+            model: "gpt-3.5-turbo".to_string(),
             system_prompt: String::new(),
             user_prompt: String::new(),
             max_tokens: Some(256),
@@ -706,7 +706,7 @@ pub(crate) fn parse_wasm_llm_inference_request(raw: &str) -> Result<WasmLlmInfer
         .map_err(|error| format!("invalid llm inference request json: {error}"))?;
     Ok(WasmLlmInferenceRequest {
         security: parse_security_context(value.get("security")),
-        model: value_string_or(value.get("model"), "gpt-4o-mini"),
+        model: value_string_or(value.get("model"), "gpt-3.5-turbo"),
         system_prompt: value_string(value.get("system_prompt")),
         user_prompt: value_string(value.get("user_prompt")),
         max_tokens: value.get("max_tokens").and_then(Value::as_u64).map(|value| value as u32),
