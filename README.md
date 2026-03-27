@@ -9,8 +9,7 @@
 </p>
 
 <p align="center">
-  <strong>Universal Personal AI Assistant Runtime</strong><br>
-  Autonomous intelligence inside a governed shell.
+  <strong>A governed local runtime for bounded autonomous work.</strong>
 </p>
 
 <p align="center">
@@ -24,7 +23,7 @@
 
 # Meridian Loom
 
-Meridian Loom is the premium local runtime surface for Meridian v0.1.0. It carries the Mantis-branded installer and CLI, provisions into the operator's home directory, and exposes the bounded primitive surface that the broader Meridian launch story points to.
+Meridian Loom is the primary hands-on product surface for Meridian v0.1.0. It carries the Mantis-branded installer and CLI, provisions into the operator's home directory, and exposes the bounded execution primitives that operators can install, inspect, and run directly.
 
 ## 1-Command Install
 
@@ -34,7 +33,7 @@ curl -fsSL https://raw.githubusercontent.com/meridian/loom/main/scripts/install.
 
 The installer keeps the Mantis banner, bootstraps Rust when missing, provisions the runtime under `$HOME/.local/share/meridian-loom`, and seeds the built-in Wasm capability registry.
 
-## Universal OS Primitive Story
+## Runtime Primitive Story
 
 Meridian Loom is the local runtime layer for the following primitive surfaces:
 
