@@ -5,7 +5,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/license-MIT-1f6feb?style=flat-square" alt="MIT license">
   <img src="https://img.shields.io/github/actions/workflow/status/mapleleaflatte03/meridian-loom/rust.yml?branch=main&style=flat-square" alt="Build passing">
-  <img src="https://img.shields.io/badge/version-0.1.0--alpha.1-0c1117?style=flat-square" alt="Version 0.1.0-alpha.1">
+  <img src="https://img.shields.io/badge/version-0.1.0-0c1117?style=flat-square" alt="Version 0.1.0">
 </p>
 
 <p align="center">

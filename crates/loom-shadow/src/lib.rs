@@ -4613,7 +4613,7 @@ fn a2a_agent_card(root: &Path, _override_kernel_path: Option<&str>) -> String {
             "  \"description\": \"Governance-first execution runtime for operator-scale AI. ",
             "Policy, economy, and isolation are in the execution loop.\",\n",
             "  \"url\": \"http://localhost:3120\",\n",
-            "  \"version\": \"0.1.0-alpha.1\",\n",
+            "  \"version\": \"0.1.0\",\n",
             "  \"capabilities\": [\"governed_execution\", \"budget_gate\", \"sanction_enforcement\", \"audit_emission\", \"economy_hook\"],\n",
             "  \"defaultInputModes\": [\"application/json\"],\n",
             "  \"defaultOutputModes\": [\"application/json\"],\n",
