@@ -7,6 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub mod advanced_primitives;
 pub mod capability_shims;
 pub mod capabilities;
+pub mod provider_router;
 pub mod wasm_host;
 pub mod wasm_limits;
 pub mod wasm_profiles;
@@ -291,6 +292,7 @@ pub fn init_workspace(
     };
     ensure_runtime_worker_scaffold(&root, &config)?;
     capabilities::ensure_capability_registry_scaffold(&root, &config)?;
+    provider_router::ensure_provider_profiles_scaffold(&root)?;
 
     fs::write(&config_path, render_config(&config)).map_err(io_err)?;
     fs::write(
@@ -2034,6 +2036,7 @@ mod tests {
         assert_eq!(loaded.org_id, "org_demo");
         assert_eq!(loaded.kernel_path, "/tmp/meridian-kernel");
         assert!(root.join("artifacts/shadow/events.jsonl").exists());
+        assert!(root.join(provider_router::DEFAULT_PROVIDER_PROFILES_PATH).exists());
     }
 
     #[test]

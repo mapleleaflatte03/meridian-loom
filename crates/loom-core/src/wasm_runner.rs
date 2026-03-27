@@ -16,6 +16,11 @@ use wasmtime::{
     PoolingAllocationConfig, Store, StoreLimitsBuilder, Val,
 };
 
+#[cfg(not(test))]
+use crate::provider_router::{resolve_llm_route, ProviderRouteIntent};
+#[cfg(test)]
+use super::provider_router::{resolve_llm_route, ProviderRouteIntent};
+
 use super::{
     host_config_hints, parse_wasm_browser_navigate_request, parse_wasm_fs_read_request,
     parse_wasm_fs_write_request, parse_wasm_heartbeat_schedule_request,
@@ -943,11 +948,16 @@ fn dispatch_llm_inference(
     let request_json = read_guest_utf8(&memory, caller, request_ptr, request_len)?;
     let request = parse_wasm_llm_inference_request(&request_json)
         .map_err(|_| WasmHostCallStatusCode::InvalidRequest)?;
-    let effective_model = configured_llm_model(&request.model);
+    let route_intent = ProviderRouteIntent::llm_inference(&request.model);
+    let requested_model = if route_intent.requested_model.is_empty() {
+        "gpt-3.5-turbo".to_string()
+    } else {
+        route_intent.requested_model.clone()
+    };
     if request.user_prompt.trim().is_empty() {
         let response = WasmLlmInferenceResponse {
             decision: WasmHostCallDecision::Denied,
-            model: effective_model,
+            model: requested_model,
             output_text: String::new(),
             finish_reason: String::new(),
             prompt_tokens: None,
@@ -957,12 +967,12 @@ fn dispatch_llm_inference(
         };
         return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_llm_inference_response_json(&response));
     }
-    let endpoint_url = match configured_llm_endpoint() {
-        Ok(url) => url,
+    let route = match resolve_llm_route(None, &route_intent) {
+        Ok(route) => route,
         Err(error) => {
             let response = WasmLlmInferenceResponse {
                 decision: WasmHostCallDecision::Denied,
-                model: effective_model,
+                model: requested_model,
                 output_text: String::new(),
                 finish_reason: String::new(),
                 prompt_tokens: None,
@@ -973,18 +983,33 @@ fn dispatch_llm_inference(
             return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_llm_inference_response_json(&response));
         }
     };
-    let is_local_endpoint = llm_endpoint_is_local(&endpoint_url);
-    let api_key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
-    if !is_local_endpoint && api_key.trim().is_empty() {
+    let endpoint_url = route.endpoint_url.clone();
+    let auth_header = match route.resolve_auth_header() {
+        Ok(auth_header) => auth_header,
+        Err(error) => {
+            let response = WasmLlmInferenceResponse {
+                decision: WasmHostCallDecision::Denied,
+                model: route.model.clone(),
+                output_text: String::new(),
+                finish_reason: String::new(),
+                prompt_tokens: None,
+                completion_tokens: None,
+                total_tokens: None,
+                note: error,
+            };
+            return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_llm_inference_response_json(&response));
+        }
+    };
+    if route.model.trim().is_empty() {
         let response = WasmLlmInferenceResponse {
             decision: WasmHostCallDecision::Denied,
-            model: effective_model,
+            model: requested_model,
             output_text: String::new(),
             finish_reason: String::new(),
             prompt_tokens: None,
             completion_tokens: None,
             total_tokens: None,
-            note: "OPENAI_API_KEY is missing from the host environment".to_string(),
+            note: "resolved provider route did not provide a model".to_string(),
         };
         return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_llm_inference_response_json(&response));
     }
@@ -996,7 +1021,7 @@ fn dispatch_llm_inference(
     }
     messages.push(json!({"role": "user", "content": request.user_prompt}));
     let payload = json!({
-        "model": effective_model,
+        "model": route.model,
         "messages": messages,
         "max_tokens": request.max_tokens,
     });
@@ -1006,10 +1031,9 @@ fn dispatch_llm_inference(
         .http_status_as_error(false)
         .build()
         .header("content-type", "application/json");
-    let request_builder = if api_key.trim().is_empty() {
-        request_builder
-    } else {
-        request_builder.header("authorization", &format!("Bearer {api_key}"))
+    let request_builder = match auth_header {
+        Some((header_name, header_value)) => request_builder.header(&header_name, &header_value),
+        None => request_builder,
     };
     let mut response = match request_builder.send(payload.to_string()) {
         Ok(response) => response,
@@ -1045,7 +1069,7 @@ fn dispatch_llm_inference(
         .get("model")
         .and_then(Value::as_str)
         .map(|value| value.to_string())
-        .unwrap_or_else(|| configured_llm_model(&request.model));
+        .unwrap_or_else(|| requested_model.clone());
     if !(200..300).contains(&status) {
         let response = WasmLlmInferenceResponse {
             decision: WasmHostCallDecision::Denied,
@@ -1071,40 +1095,14 @@ fn dispatch_llm_inference(
         prompt_tokens: payload.pointer("/usage/prompt_tokens").and_then(Value::as_u64),
         completion_tokens: payload.pointer("/usage/completion_tokens").and_then(Value::as_u64),
         total_tokens: payload.pointer("/usage/total_tokens").and_then(Value::as_u64),
-        note: format!("bounded llm host call completed against {}", endpoint_url),
+        note: format!(
+            "bounded llm host call completed against {} via provider profile {} ({})",
+            endpoint_url,
+            route.profile_name,
+            route.profile_kind.label()
+        ),
     };
     write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_llm_inference_response_json(&response))
-}
-
-fn configured_llm_endpoint() -> Result<Url, String> {
-    let raw = std::env::var("LLM_BASE_URL")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "https://api.openai.com/v1/chat/completions".to_string());
-    let mut url = Url::parse(raw.trim())
-        .map_err(|error| format!("LLM_BASE_URL is invalid: {error}"))?;
-    if url.path().is_empty() || url.path() == "/" {
-        url.set_path("/v1/chat/completions");
-    }
-    Ok(url)
-}
-
-fn configured_llm_model(requested_model: &str) -> String {
-    std::env::var("LLM_MODEL")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| {
-            let requested = requested_model.trim();
-            if requested.is_empty() {
-                "gpt-3.5-turbo".to_string()
-            } else {
-                requested.to_string()
-            }
-        })
-}
-
-fn llm_endpoint_is_local(url: &Url) -> bool {
-    matches!(url.host_str(), Some("localhost") | Some("127.0.0.1") | Some("::1"))
 }
 
 fn dispatch_kv_get(

@@ -11,6 +11,10 @@ use serde_json::{json, Value};
 use crate::wasm_limits::{default_limits, render_limits_human, validate_limits, WasmStoreLimits};
 use crate::wasm_profiles::{render_pooling_config_human, PoolingConfig, PoolingProfile};
 
+#[cfg(test)]
+#[path = "provider_router.rs"]
+mod provider_router;
+
 #[path = "wasm_runner.rs"]
 mod wasm_runner;
 
