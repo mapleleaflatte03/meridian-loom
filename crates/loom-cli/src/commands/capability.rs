@@ -145,16 +145,16 @@ pub(crate) fn handle_capability(args: &[String]) -> LoomResult<()> {
             }
             Ok(())
         }
-        Some("import-openclaw-plugin-skill-subset") => {
+        Some("import-legacy-v1-plugin-skill-subset") => {
             let root = root_from(take_value(args, "--root").as_deref())?;
             let config = read_config(&root)?;
             let plugin_root = PathBuf::from(required_flag(args, "--plugin-root")?);
             let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
-            let result = import_openclaw_plugin_skill_subset(&root, &config, &plugin_root)?;
+            let result = import_legacy_v1_plugin_skill_subset(&root, &config, &plugin_root)?;
             if format == "json" {
-                print!("{}", render_openclaw_plugin_import_json(&result));
+                print!("{}", render_legacy_v1_plugin_import_json(&result));
             } else {
-                print_human(&render_openclaw_plugin_import_human(&result));
+                print_human(&render_legacy_v1_plugin_import_human(&result));
             }
             Ok(())
         }
@@ -411,7 +411,7 @@ pub(crate) fn handle_capability(args: &[String]) -> LoomResult<()> {
             }
             Ok(())
         }
-        _ => Err("capability supports 'list', 'show', 'scaffold', 'forge', 'import-workspace-skill', 'import-openclaw-plugin-skill-subset', 'verify', 'promote', and 'shim'".to_string()),
+        _ => Err("capability supports 'list', 'show', 'scaffold', 'forge', 'import-workspace-skill', 'import-legacy-v1-plugin-skill-subset', 'verify', 'promote', and 'shim'".to_string()),
     }
 }
 
@@ -749,7 +749,7 @@ Commands\n\
   loom capability gap replay --gap-id ID [--root PATH] [--format human|json]\n\
   loom capability scaffold --name NAME --action-type TYPE --resource RESOURCE [--description TEXT] [--worker-kind python|wasm] [--worker-entry PATH] [--wasm-module builtin:minimal|wasm:PATH] [--payload-mode json|none] [--root PATH]\n\
   loom capability forge [--name NAME] [--gap-id ID] [--template echo_json_v0|artifact_inspect_v0|url_bundle_v0] [--gap-class artifact_triage|url_collection|response_echo] [--goal TEXT] [--description TEXT] [--root PATH] [--format human|json]\n\
-  loom capability import-workspace-skill --skill-root PATH [--entrypoint PATH] [--name NAME] [--root PATH] [--format human|json]\n  loom capability import-openclaw-plugin-skill-subset --plugin-root PATH [--root PATH] [--format human|json]\n\
+  loom capability import-workspace-skill --skill-root PATH [--entrypoint PATH] [--name NAME] [--root PATH] [--format human|json]\n  loom capability import-legacy-v1-plugin-skill-subset --plugin-root PATH [--root PATH] [--format human|json]\n\
   loom capability verify --name NAME --agent-id ID --kernel-path PATH [--gap-id ID] [--org-id ORG] [--payload-json JSON] [--estimated-cost-usd USD] [--expect-summary-contains TEXT] [--expect-result-field PATH=VALUE]... [--root PATH] [--format human|json]\n\
   loom capability promote --name NAME [--gap-id ID] [--root PATH] [--format human|json]\n\
   loom capability shim --tool-name NAME --input-schema JSON --output-schema JSON [--version SEMVER] [--format human|json]\n\
@@ -757,7 +757,7 @@ Commands\n\
 Notes\n\
 -----\n\
   - forge creates a candidate Loom-native capability from either a bounded template, a bounded gap-class, or a recorded capability gap.\n\
-  - import-workspace-skill supports a bounded clawfamily contract v0 subset: workspace python entrypoint skills and bundle-manifest python skills. Workspace imports can disambiguate multi-script trees with --entrypoint or entrypoint: front matter.\n  - import-openclaw-plugin-skill-subset imports only immediate child skill dirs under the declared plugin skills roots and reports every unsupported source surface explicitly.\n\
+  - import-workspace-skill supports a bounded clawfamily contract v0 subset: workspace python entrypoint skills and bundle-manifest python skills. Workspace imports can disambiguate multi-script trees with --entrypoint or entrypoint: front matter.\n  - import-legacy-v1-plugin-skill-subset imports only immediate child skill dirs under the declared plugin skills roots and reports every unsupported source surface explicitly.\n\
   - verify executes the capability through Loom's runtime path, can assert expectations over the worker result, and writes verification state back into the custom manifest.\n\
   - promote is only for custom/imported capabilities that have already been verified.\n\
   - action execute / service submit with --capability plus --gap-class records a bounded gap object instead of pretending the capability exists.\n\

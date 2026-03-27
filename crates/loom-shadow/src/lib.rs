@@ -8586,6 +8586,7 @@ fn value_string_vec(value: Option<&Value>) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Legacy Execution Parity Adapter: Used by Meridian to benchmark and audit legacy un-governed runtimes against the Meridian constitutional ledger.
 fn capture_reference_probe(
     root: &Path,
     input_hash: &str,
@@ -8600,13 +8601,13 @@ fn capture_reference_probe(
         .ok()
         .filter(|value| !value.trim().is_empty())
         .or_else(|| {
-            std::env::var("MERIDIAN_OPENCLAW_PROOF_SCRIPT")
+            std::env::var("MERIDIAN_LEGACY_V1_PROOF_SCRIPT")
                 .ok()
                 .filter(|value| !value.trim().is_empty())
         })
         .map(PathBuf::from)
         .unwrap_or_else(|| {
-            PathBuf::from("/root/.meridian/workspace/company/meridian_platform/openclaw_runtime_proof.py")
+            PathBuf::from("/root/.meridian/workspace/company/meridian_platform/meridian_compatible_runtime_proof.py")
         });
     if !proof_script.exists() {
         append_line(
@@ -9859,7 +9860,7 @@ mod tests {
             .expect("write audit");
         fs::write(kernel_dir.join("adapters/__init__.py"), "").expect("write adapter init");
         fs::write(
-            kernel_dir.join("adapters/openclaw_compatible.py"),
+            kernel_dir.join("adapters/meridian_compatible.py"),
             "def pre_action_check(org_id, envelope):\n    return {'allowed': True, 'stage': 'ok', 'reason': 'ok', 'restrictions': []}\n",
         )
         .expect("write adapter");
@@ -9925,7 +9926,7 @@ mod tests {
         fs::create_dir_all(&adapters_dir).expect("adapters dir");
         fs::write(adapters_dir.join("__init__.py"), "").expect("write adapters init");
         fs::write(
-            adapters_dir.join("openclaw_compatible.py"),
+            adapters_dir.join("meridian_compatible.py"),
             "import treasury\n\ndef pre_action_check(org_id, envelope):\n    allowed, reason = treasury.check_budget(envelope.get('agent_id'), float(envelope.get('estimated_cost_usd', 0.0)), org_id)\n    if not allowed:\n        return {'allowed': False, 'stage': 'budget_gate', 'reason': reason, 'restrictions': []}\n    return {'allowed': True, 'stage': 'ok', 'reason': 'ok', 'restrictions': []}\n",
         )
         .expect("write adapter");
@@ -10085,7 +10086,7 @@ if __name__ == '__main__':
         .expect("write audit");
         fs::write(kernel_dir.join("adapters/__init__.py"), "").expect("write adapter init");
         fs::write(
-            kernel_dir.join("adapters/openclaw_compatible.py"),
+            kernel_dir.join("adapters/meridian_compatible.py"),
             "def pre_action_check(org_id, envelope):\n    return {'allowed': True, 'stage': 'ok', 'reason': 'ok', 'restrictions': []}\n",
         )
         .expect("write adapter");
@@ -10159,7 +10160,7 @@ if __name__ == '__main__':
         .expect("write audit");
         fs::write(kernel_dir.join("adapters/__init__.py"), "").expect("write adapter init");
         fs::write(
-            kernel_dir.join("adapters/openclaw_compatible.py"),
+            kernel_dir.join("adapters/meridian_compatible.py"),
             "def pre_action_check(org_id, envelope):\n    return {'allowed': True, 'stage': 'ok', 'reason': 'ok', 'restrictions': []}\n",
         )
         .expect("write adapter");
@@ -10225,7 +10226,7 @@ if __name__ == '__main__':
         .expect("write audit");
         fs::write(kernel_dir.join("adapters/__init__.py"), "").expect("write adapter init");
         fs::write(
-            kernel_dir.join("adapters/openclaw_compatible.py"),
+            kernel_dir.join("adapters/meridian_compatible.py"),
             "def pre_action_check(org_id, envelope):\n    return {'allowed': True, 'stage': 'ok', 'reason': 'ok', 'restrictions': []}\n",
         )
         .expect("write adapter");
@@ -10296,7 +10297,7 @@ if __name__ == '__main__':
         .expect("write audit");
         fs::write(kernel_dir.join("adapters/__init__.py"), "").expect("write adapter init");
         fs::write(
-            kernel_dir.join("adapters/openclaw_compatible.py"),
+            kernel_dir.join("adapters/meridian_compatible.py"),
             "def pre_action_check(org_id, envelope):\n    return {'allowed': True, 'stage': 'ok', 'reason': 'ok', 'restrictions': []}\n",
         )
         .expect("write adapter");
@@ -10377,7 +10378,7 @@ if __name__ == '__main__':
         fs::write(kernel_dir.join("audit.py"), "def log_event(*args, **kwargs):\n    return 'evt_service'\n").expect("write audit");
         fs::write(kernel_dir.join("adapters/__init__.py"), "").expect("write adapter init");
         fs::write(
-            kernel_dir.join("adapters/openclaw_compatible.py"),
+            kernel_dir.join("adapters/meridian_compatible.py"),
             "def pre_action_check(org_id, envelope):\n    return {'allowed': True, 'stage': 'ok', 'reason': 'ok', 'restrictions': []}\n",
         )
         .expect("write adapter");
@@ -10472,7 +10473,7 @@ if __name__ == '__main__':
         fs::write(kernel_dir.join("audit.py"), "def log_event(*args, **kwargs):\n    return 'evt_service'\n").expect("write audit");
         fs::write(kernel_dir.join("adapters/__init__.py"), "").expect("write adapter init");
         fs::write(
-            kernel_dir.join("adapters/openclaw_compatible.py"),
+            kernel_dir.join("adapters/meridian_compatible.py"),
             "def pre_action_check(org_id, envelope):\n    return {'allowed': True, 'stage': 'ok', 'reason': 'ok', 'restrictions': []}\n",
         )
         .expect("write adapter");
@@ -10617,7 +10618,7 @@ if __name__ == '__main__':
         fs::write(kernel_dir.join("audit.py"), "def log_event(*args, **kwargs):\n    return 'evt_import'\n").expect("write audit");
         fs::write(kernel_dir.join("adapters/__init__.py"), "").expect("write adapter init");
         fs::write(
-            kernel_dir.join("adapters/openclaw_compatible.py"),
+            kernel_dir.join("adapters/meridian_compatible.py"),
             "def pre_action_check(org_id, envelope):\n    return {'allowed': True, 'stage': 'ok', 'reason': 'ok', 'restrictions': []}\n",
         )
         .expect("write adapter");
@@ -10859,7 +10860,7 @@ print(json.dumps({'id': agent_id, 'name': 'Atlas', 'org_id': org_id, 'role': 'an
         .expect("write audit");
         fs::write(kernel_dir.join("adapters/__init__.py"), "").expect("write adapter init");
         fs::write(
-            kernel_dir.join("adapters/openclaw_compatible.py"),
+            kernel_dir.join("adapters/meridian_compatible.py"),
             r#"def pre_action_check(org_id, envelope):
     return {'allowed': True, 'stage': 'ok', 'reason': 'ok', 'restrictions': []}
 "#,

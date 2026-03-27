@@ -456,12 +456,12 @@ pub fn read_config(root: &Path) -> LoomResult<Config> {
             .unwrap_or(DEFAULT_LOG_MAX_FILES),
         handoff_mode: values
             .get("handoff_mode")
-            .or_else(|| values.get("openclaw_integration"))
+            .or_else(|| values.get("legacy_v1_integration"))
             .cloned()
             .unwrap_or_else(|| "off".to_string()),
         delivery_queue: values
             .get("delivery_queue")
-            .or_else(|| values.get("openclaw_delivery_queue"))
+            .or_else(|| values.get("legacy_v1_delivery_queue"))
             .cloned()
             .unwrap_or_else(|| DEFAULT_DELIVERY_QUEUE.to_string()),
     };
@@ -1543,12 +1543,13 @@ pub fn evaluate_reference_gates(
     let config = read_config(root)?;
     let kernel_path = resolve_kernel_path(root, override_kernel_path, Some(&config))?;
     let kernel_dir = kernel_path.join("kernel");
+    // Legacy Execution Parity Adapter: Used by Meridian to benchmark and audit legacy un-governed runtimes against the Meridian constitutional ledger.
     let script = r#"import json, sys
 kernel_dir = sys.argv[1]
 org_id = sys.argv[2]
 envelope = json.loads(sys.argv[3])
 sys.path.insert(0, kernel_dir)
-from adapters.openclaw_compatible import pre_action_check
+from adapters.meridian_compatible import pre_action_check
 print(json.dumps(pre_action_check(org_id, envelope)))
 "#;
 
@@ -2380,7 +2381,7 @@ mod tests {
         )
         .expect("write metering");
         fs::write(
-            adapters_dir.join("openclaw_compatible.py"),
+            adapters_dir.join("meridian_compatible.py"),
             "from audit import log_event\nfrom authority import check_authority\nfrom court import get_restrictions\nfrom metering import record as meter_record\nfrom treasury import check_budget\n\n\
 def pre_session_check(org_id, agent_id):\n    restrictions = list(get_restrictions(agent_id, org_id=org_id) or [])\n    if 'execute' in restrictions or 'remediation_only' in restrictions:\n        return {'allowed': False, 'reason': f'Agent {agent_id} is restricted from execute', 'restrictions': restrictions}\n    return {'allowed': True, 'reason': 'ok', 'restrictions': restrictions}\n\n\
 def pre_action_check(org_id, envelope):\n    session_gate = pre_session_check(org_id, envelope['agent_id'])\n    if not session_gate['allowed']:\n        return {'allowed': False, 'reason': session_gate['reason'], 'stage': 'sanction_controls', 'envelope': envelope, 'restrictions': session_gate['restrictions']}\n    allowed, reason = check_authority(envelope['agent_id'], envelope['action_type'], org_id=org_id)\n    if not allowed:\n        return {'allowed': False, 'reason': reason, 'stage': 'approval_hook', 'envelope': envelope, 'restrictions': session_gate['restrictions']}\n    estimated_cost = envelope.get('estimated_cost_usd', 0.0)\n    if estimated_cost > 0:\n        allowed, reason = check_budget(envelope['agent_id'], estimated_cost, org_id=org_id)\n        if not allowed:\n            return {'allowed': False, 'reason': reason, 'stage': 'budget_gate', 'envelope': envelope, 'restrictions': session_gate['restrictions']}\n    return {'allowed': True, 'reason': 'ok', 'stage': 'ok', 'envelope': envelope, 'restrictions': session_gate['restrictions']}\n",

@@ -139,28 +139,28 @@ pub struct CapabilityImportResult {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct OpenClawPluginImportResult {
+pub struct LegacyV1PluginImportResult {
     pub manifest_path: PathBuf,
     pub plugin_root: PathBuf,
     pub plugin_id: String,
     pub config_schema_json: String,
     pub skills_roots: Vec<PathBuf>,
-    pub imported_skills: Vec<OpenClawPluginSkillImportResult>,
-    pub unsupported_items: Vec<OpenClawPluginUnsupportedItem>,
+    pub imported_skills: Vec<LegacyV1PluginSkillImportResult>,
+    pub unsupported_items: Vec<LegacyV1PluginUnsupportedItem>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct OpenClawPluginSkillImportResult {
+pub struct LegacyV1PluginSkillImportResult {
     pub manifest_path: PathBuf,
     pub worker_path: PathBuf,
     pub capability: CapabilityDescriptor,
     pub skill_root: PathBuf,
     pub skill_doc: PathBuf,
-    pub normalized_metadata: OpenClawPluginNormalizedMetadata,
+    pub normalized_metadata: LegacyV1PluginNormalizedMetadata,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct OpenClawPluginNormalizedMetadata {
+pub struct LegacyV1PluginNormalizedMetadata {
     pub plugin_id: String,
     pub plugin_root: String,
     pub skills_root: String,
@@ -175,7 +175,7 @@ pub struct OpenClawPluginNormalizedMetadata {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct OpenClawPluginUnsupportedItem {
+pub struct LegacyV1PluginUnsupportedItem {
     pub path: String,
     pub reason: String,
     pub detail: String,
@@ -260,16 +260,16 @@ struct ClawfamilyImportSpec {
 }
 
 #[derive(Clone, Debug)]
-struct OpenClawPluginManifestSpec {
+struct LegacyV1PluginManifestSpec {
     manifest_path: PathBuf,
     plugin_id: String,
     config_schema_json: String,
-    skill_roots: Vec<OpenClawPluginSkillRootSpec>,
-    unsupported_items: Vec<OpenClawPluginUnsupportedItem>,
+    skill_roots: Vec<LegacyV1PluginSkillRootSpec>,
+    unsupported_items: Vec<LegacyV1PluginUnsupportedItem>,
 }
 
 #[derive(Clone, Debug)]
-struct OpenClawPluginSkillRootSpec {
+struct LegacyV1PluginSkillRootSpec {
     raw_path: String,
     config_gated: bool,
     gate_detail: String,
@@ -777,30 +777,30 @@ pub fn import_workspace_skill(
     })
 }
 
-pub fn import_openclaw_plugin_skill_subset(
+pub fn import_legacy_v1_plugin_skill_subset(
     root: &Path,
     config: &Config,
     plugin_root: &Path,
-) -> LoomResult<OpenClawPluginImportResult> {
+) -> LoomResult<LegacyV1PluginImportResult> {
     let plugin_root = plugin_root
         .canonicalize()
         .map_err(io_err)?;
-    let plugin_spec = load_openclaw_plugin_manifest_spec(&plugin_root)?;
+    let plugin_spec = load_legacy_v1_plugin_manifest_spec(&plugin_root)?;
     ensure_capability_registry_scaffold(root, config)?;
 
-    let mut unsupported_items = collect_openclaw_plugin_surface_unsupported_items(&plugin_root);
+    let mut unsupported_items = collect_legacy_v1_plugin_surface_unsupported_items(&plugin_root);
     unsupported_items.extend(plugin_spec.unsupported_items);
 
     let mut skills_roots = Vec::new();
     let mut imported_skills = Vec::new();
 
     if plugin_spec.skill_roots.is_empty() {
-        unsupported_items.push(OpenClawPluginUnsupportedItem {
+        unsupported_items.push(LegacyV1PluginUnsupportedItem {
             path: plugin_spec.manifest_path.display().to_string(),
             reason: "missing_skills_root".to_string(),
-            detail: "openclaw.plugin.json does not declare any skills roots".to_string(),
+            detail: "legacy_v1.plugin.json does not declare any skills roots".to_string(),
         });
-        return Ok(OpenClawPluginImportResult {
+        return Ok(LegacyV1PluginImportResult {
             manifest_path: plugin_spec.manifest_path,
             plugin_root,
             plugin_id: plugin_spec.plugin_id,
@@ -812,15 +812,15 @@ pub fn import_openclaw_plugin_skill_subset(
     }
 
     if plugin_spec.skill_roots.len() > 1 {
-        unsupported_items.push(OpenClawPluginUnsupportedItem {
+        unsupported_items.push(LegacyV1PluginUnsupportedItem {
             path: plugin_spec.manifest_path.display().to_string(),
             reason: "multiple_skill_roots".to_string(),
             detail: format!(
-                "openclaw.plugin.json declares {} skills roots; this tranche supports only one",
+                "legacy_v1.plugin.json declares {} skills roots; this tranche supports only one",
                 plugin_spec.skill_roots.len()
             ),
         });
-        return Ok(OpenClawPluginImportResult {
+        return Ok(LegacyV1PluginImportResult {
             manifest_path: plugin_spec.manifest_path,
             plugin_root,
             plugin_id: plugin_spec.plugin_id,
@@ -833,7 +833,7 @@ pub fn import_openclaw_plugin_skill_subset(
 
     let skill_root_spec = &plugin_spec.skill_roots[0];
     if skill_root_spec.config_gated {
-        unsupported_items.push(OpenClawPluginUnsupportedItem {
+        unsupported_items.push(LegacyV1PluginUnsupportedItem {
             path: plugin_spec.manifest_path.display().to_string(),
             reason: "config_gated_skills_not_supported".to_string(),
             detail: if skill_root_spec.gate_detail.is_empty() {
@@ -845,7 +845,7 @@ pub fn import_openclaw_plugin_skill_subset(
                 skill_root_spec.gate_detail.clone()
             },
         });
-        return Ok(OpenClawPluginImportResult {
+        return Ok(LegacyV1PluginImportResult {
             manifest_path: plugin_spec.manifest_path,
             plugin_root,
             plugin_id: plugin_spec.plugin_id,
@@ -856,11 +856,11 @@ pub fn import_openclaw_plugin_skill_subset(
         });
     }
 
-    let resolved_skill_root = match resolve_openclaw_plugin_skill_root(&plugin_root, &skill_root_spec.raw_path) {
+    let resolved_skill_root = match resolve_legacy_v1_plugin_skill_root(&plugin_root, &skill_root_spec.raw_path) {
         Ok(path) => path,
         Err(item) => {
             unsupported_items.push(item);
-            return Ok(OpenClawPluginImportResult {
+            return Ok(LegacyV1PluginImportResult {
                 manifest_path: plugin_spec.manifest_path,
                 plugin_root,
                 plugin_id: plugin_spec.plugin_id,
@@ -872,7 +872,7 @@ pub fn import_openclaw_plugin_skill_subset(
         }
     };
     if !resolved_skill_root.exists() {
-        unsupported_items.push(OpenClawPluginUnsupportedItem {
+        unsupported_items.push(LegacyV1PluginUnsupportedItem {
             path: resolved_skill_root.display().to_string(),
             reason: "missing_skills_root_path".to_string(),
             detail: format!(
@@ -881,7 +881,7 @@ pub fn import_openclaw_plugin_skill_subset(
                 plugin_root.display()
             ),
         });
-        return Ok(OpenClawPluginImportResult {
+        return Ok(LegacyV1PluginImportResult {
             manifest_path: plugin_spec.manifest_path,
             plugin_root,
             plugin_id: plugin_spec.plugin_id,
@@ -892,7 +892,7 @@ pub fn import_openclaw_plugin_skill_subset(
         });
     }
     if !resolved_skill_root.is_dir() {
-        unsupported_items.push(OpenClawPluginUnsupportedItem {
+        unsupported_items.push(LegacyV1PluginUnsupportedItem {
             path: resolved_skill_root.display().to_string(),
             reason: "skills_root_not_directory".to_string(),
             detail: format!(
@@ -900,7 +900,7 @@ pub fn import_openclaw_plugin_skill_subset(
                 skill_root_spec.raw_path
             ),
         });
-        return Ok(OpenClawPluginImportResult {
+        return Ok(LegacyV1PluginImportResult {
             manifest_path: plugin_spec.manifest_path,
             plugin_root,
             plugin_id: plugin_spec.plugin_id,
@@ -927,7 +927,7 @@ pub fn import_openclaw_plugin_skill_subset(
         let (skill_name, skill_description, _) = match parse_workspace_skill_front_matter(&skill_doc) {
             Ok(values) => values,
             Err(error) => {
-                unsupported_items.push(OpenClawPluginUnsupportedItem {
+                unsupported_items.push(LegacyV1PluginUnsupportedItem {
                     path: skill_doc.display().to_string(),
                     reason: "invalid_skill_front_matter".to_string(),
                     detail: error,
@@ -936,16 +936,16 @@ pub fn import_openclaw_plugin_skill_subset(
             }
         };
         if skill_description.trim().is_empty() {
-            unsupported_items.push(OpenClawPluginUnsupportedItem {
+            unsupported_items.push(LegacyV1PluginUnsupportedItem {
                 path: skill_doc.display().to_string(),
                 reason: "missing_skill_description".to_string(),
-                detail: "OpenClaw plugin skills need SKILL.md front matter with both name and description".to_string(),
+                detail: "Legacy v1 plugin skills need SKILL.md front matter with both name and description".to_string(),
             });
             continue;
         }
-        let capability_name = openclaw_plugin_skill_capability_name(&plugin_spec.plugin_id, &skill_name);
+        let capability_name = legacy_v1_plugin_skill_capability_name(&plugin_spec.plugin_id, &skill_name);
         if !discovered_skill_names.insert(capability_name.clone()) {
-            unsupported_items.push(OpenClawPluginUnsupportedItem {
+            unsupported_items.push(LegacyV1PluginUnsupportedItem {
                 path: skill_doc.display().to_string(),
                 reason: "duplicate_skill_name".to_string(),
                 detail: format!(
@@ -988,28 +988,28 @@ pub fn import_openclaw_plugin_skill_subset(
             worker_entry: relative_worker_entry,
             wasm_module: String::new(),
             payload_mode: "json".to_string(),
-            source_kind: "openclaw_plugin_skill".to_string(),
+            source_kind: "legacy_v1_plugin_skill".to_string(),
             source_path: child_path.display().to_string(),
             source_manifest: plugin_spec.manifest_path.display().to_string(),
-            adapter_kind: "openclaw_plugin_skill_contract_v0".to_string(),
-            import_provenance: "openclaw_plugin_contract_v0/immediate_child_skill_dir".to_string(),
+            adapter_kind: "legacy_v1_plugin_skill_contract_v0".to_string(),
+            import_provenance: "legacy_v1_plugin_contract_v0/immediate_child_skill_dir".to_string(),
             verification_status: "unverified".to_string(),
             last_verified_at: String::new(),
             last_verification_job_id: String::new(),
             last_verification_execution_id: String::new(),
-            verification_note: "imported OpenClaw plugin skill subset has not been verified by Loom yet".to_string(),
+            verification_note: "imported legacy v1 plugin skill subset has not been verified by Loom yet".to_string(),
             promotion_state: "candidate".to_string(),
             promoted_at: String::new(),
             enabled: true,
         };
         fs::write(&manifest_path, descriptor_json(&capability)).map_err(io_err)?;
-        imported_skills.push(OpenClawPluginSkillImportResult {
+        imported_skills.push(LegacyV1PluginSkillImportResult {
             manifest_path,
             worker_path,
             capability: capability.clone(),
             skill_root: child_path.clone(),
             skill_doc: skill_doc.clone(),
-            normalized_metadata: OpenClawPluginNormalizedMetadata {
+            normalized_metadata: LegacyV1PluginNormalizedMetadata {
                 plugin_id: plugin_spec.plugin_id.clone(),
                 plugin_root: plugin_root.display().to_string(),
                 skills_root: resolved_skill_root.display().to_string(),
@@ -1017,15 +1017,15 @@ pub fn import_openclaw_plugin_skill_subset(
                 skill_name,
                 skill_description,
                 capability_name,
-                source_kind: "openclaw_plugin_skill".to_string(),
+                source_kind: "legacy_v1_plugin_skill".to_string(),
                 source_manifest: plugin_spec.manifest_path.display().to_string(),
-                import_provenance: "openclaw_plugin_contract_v0/immediate_child_skill_dir".to_string(),
+                import_provenance: "legacy_v1_plugin_contract_v0/immediate_child_skill_dir".to_string(),
                 import_scope: "immediate_child_skill_dir".to_string(),
             },
         });
     }
 
-    Ok(OpenClawPluginImportResult {
+    Ok(LegacyV1PluginImportResult {
         manifest_path: plugin_spec.manifest_path,
         plugin_root,
         plugin_id: plugin_spec.plugin_id,
@@ -1161,7 +1161,7 @@ pub fn capability_binary_surface(capability: &CapabilityDescriptor) -> String {
 pub fn capability_isolation_expectation(capability: &CapabilityDescriptor) -> &'static str {
     match capability.worker_kind.as_str() {
         "wasm" => "local Wasmtime guest sandbox",
-        "python" if capability.source_kind == "openclaw_workspace_skill" => {
+        "python" if capability.source_kind == "legacy_v1_workspace_skill" => {
             "host python process, workspace-skill wrapper"
         }
         "python" if capability.source_kind == "clawfamily_skill_bundle" => {
@@ -1366,9 +1366,9 @@ pub fn render_capability_import_json(result: &CapabilityImportResult) -> String 
     )
 }
 
-pub fn render_openclaw_plugin_import_human(result: &OpenClawPluginImportResult) -> String {
+pub fn render_legacy_v1_plugin_import_human(result: &LegacyV1PluginImportResult) -> String {
     let mut out = String::new();
-    out.push_str(r#"Meridian Loom // OPENCLAW PLUGIN IMPORT
+    out.push_str(r#"Meridian Loom // LEGACY V1 PLUGIN IMPORT
 "#);
     out.push_str(r#"======================================
 "#);
@@ -1449,7 +1449,7 @@ unsupported_items:  {}
     }
     out
 }
-pub fn render_openclaw_plugin_import_json(result: &OpenClawPluginImportResult) -> String {
+pub fn render_legacy_v1_plugin_import_json(result: &LegacyV1PluginImportResult) -> String {
     let imported_skills = result
         .imported_skills
         .iter()
@@ -1948,7 +1948,7 @@ fn load_workspace_skill_spec(
         adapter_kind: detected_signature,
         action_type: "skill_exec".to_string(),
         payload_mode: "json".to_string(),
-        source_kind: "openclaw_workspace_skill".to_string(),
+        source_kind: "legacy_v1_workspace_skill".to_string(),
         import_provenance: "clawfamily_skill_contract_v0/workspace_python_entrypoint".to_string(),
     })
 }
@@ -2062,11 +2062,11 @@ fn load_bundle_skill_spec(skill_root: &Path, bundle_manifest: &Path) -> LoomResu
     })
 }
 
-fn load_openclaw_plugin_manifest_spec(plugin_root: &Path) -> LoomResult<OpenClawPluginManifestSpec> {
-    let manifest_path = plugin_root.join("openclaw.plugin.json");
+fn load_legacy_v1_plugin_manifest_spec(plugin_root: &Path) -> LoomResult<LegacyV1PluginManifestSpec> {
+    let manifest_path = plugin_root.join("legacy_v1.plugin.json");
     if !manifest_path.exists() {
         return Err(format!(
-            "openclaw plugin root {} is missing {}",
+            "legacy_v1 plugin root {} is missing {}",
             plugin_root.display(),
             manifest_path.display()
         ));
@@ -2078,8 +2078,8 @@ fn load_openclaw_plugin_manifest_spec(plugin_root: &Path) -> LoomResult<OpenClaw
         .get("configSchema")
         .map(|schema| serde_json::to_string(schema).unwrap_or_else(|_| schema.to_string()))
         .unwrap_or_default();
-    let (skill_roots, unsupported_items) = parse_openclaw_plugin_skill_roots(&value, &manifest_path);
-    Ok(OpenClawPluginManifestSpec {
+    let (skill_roots, unsupported_items) = parse_legacy_v1_plugin_skill_roots(&value, &manifest_path);
+    Ok(LegacyV1PluginManifestSpec {
         manifest_path,
         plugin_id,
         config_schema_json,
@@ -2088,16 +2088,16 @@ fn load_openclaw_plugin_manifest_spec(plugin_root: &Path) -> LoomResult<OpenClaw
     })
 }
 
-fn parse_openclaw_plugin_skill_roots(
+fn parse_legacy_v1_plugin_skill_roots(
     value: &Value,
     manifest_path: &Path,
-) -> (Vec<OpenClawPluginSkillRootSpec>, Vec<OpenClawPluginUnsupportedItem>) {
+) -> (Vec<LegacyV1PluginSkillRootSpec>, Vec<LegacyV1PluginUnsupportedItem>) {
     let mut unsupported_items = Vec::new();
     let Some(raw_skills) = value.get("skills") else {
-        unsupported_items.push(OpenClawPluginUnsupportedItem {
+        unsupported_items.push(LegacyV1PluginUnsupportedItem {
             path: manifest_path.display().to_string(),
             reason: "missing_skills_field".to_string(),
-            detail: "openclaw.plugin.json does not declare a skills field".to_string(),
+            detail: "legacy_v1.plugin.json does not declare a skills field".to_string(),
         });
         return (Vec::new(), unsupported_items);
     };
@@ -2106,10 +2106,10 @@ fn parse_openclaw_plugin_skill_roots(
         Value::String(_) | Value::Object(_) => vec![raw_skills],
         Value::Array(entries) => entries.iter().collect(),
         _ => {
-            unsupported_items.push(OpenClawPluginUnsupportedItem {
+            unsupported_items.push(LegacyV1PluginUnsupportedItem {
                 path: manifest_path.display().to_string(),
                 reason: "invalid_skills_field_shape".to_string(),
-                detail: "openclaw.plugin.json skills must be a string path or an array of path entries".to_string(),
+                detail: "legacy_v1.plugin.json skills must be a string path or an array of path entries".to_string(),
             });
             return (Vec::new(), unsupported_items);
         }
@@ -2117,7 +2117,7 @@ fn parse_openclaw_plugin_skill_roots(
 
     let mut skill_roots = Vec::new();
     for entry in skill_entries {
-        match parse_openclaw_plugin_skill_root_entry(entry, manifest_path) {
+        match parse_legacy_v1_plugin_skill_root_entry(entry, manifest_path) {
             Ok(skill_root) => skill_roots.push(skill_root),
             Err(item) => unsupported_items.push(item),
         }
@@ -2125,21 +2125,21 @@ fn parse_openclaw_plugin_skill_roots(
     (skill_roots, unsupported_items)
 }
 
-fn parse_openclaw_plugin_skill_root_entry(
+fn parse_legacy_v1_plugin_skill_root_entry(
     entry: &Value,
     manifest_path: &Path,
-) -> Result<OpenClawPluginSkillRootSpec, OpenClawPluginUnsupportedItem> {
+) -> Result<LegacyV1PluginSkillRootSpec, LegacyV1PluginUnsupportedItem> {
     match entry {
         Value::String(path) => {
             let trimmed = path.trim();
             if trimmed.is_empty() {
-                return Err(OpenClawPluginUnsupportedItem {
+                return Err(LegacyV1PluginUnsupportedItem {
                     path: manifest_path.display().to_string(),
                     reason: "empty_skills_root_path".to_string(),
-                    detail: "openclaw.plugin.json skills entries must not be empty".to_string(),
+                    detail: "legacy_v1.plugin.json skills entries must not be empty".to_string(),
                 });
             }
-            Ok(OpenClawPluginSkillRootSpec {
+            Ok(LegacyV1PluginSkillRootSpec {
                 raw_path: trimmed.to_string(),
                 config_gated: false,
                 gate_detail: String::new(),
@@ -2153,7 +2153,7 @@ fn parse_openclaw_plugin_skill_root_entry(
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(ToString::to_string)
-                .ok_or_else(|| OpenClawPluginUnsupportedItem {
+                .ok_or_else(|| LegacyV1PluginUnsupportedItem {
                     path: manifest_path.display().to_string(),
                     reason: "invalid_skills_root_entry".to_string(),
                     detail: "skills root objects need a path or root string".to_string(),
@@ -2171,13 +2171,13 @@ fn parse_openclaw_plugin_skill_root_entry(
             } else {
                 String::new()
             };
-            Ok(OpenClawPluginSkillRootSpec {
+            Ok(LegacyV1PluginSkillRootSpec {
                 raw_path,
                 config_gated,
                 gate_detail,
             })
         }
-        _ => Err(OpenClawPluginUnsupportedItem {
+        _ => Err(LegacyV1PluginUnsupportedItem {
             path: manifest_path.display().to_string(),
             reason: "invalid_skills_root_entry_shape".to_string(),
             detail: "skills entries must be string paths or objects with a path".to_string(),
@@ -2185,7 +2185,7 @@ fn parse_openclaw_plugin_skill_root_entry(
     }
 }
 
-fn collect_openclaw_plugin_surface_unsupported_items(plugin_root: &Path) -> Vec<OpenClawPluginUnsupportedItem> {
+fn collect_legacy_v1_plugin_surface_unsupported_items(plugin_root: &Path) -> Vec<LegacyV1PluginUnsupportedItem> {
     let mut unsupported_items = Vec::new();
     let checks = [
         ("package.json", "package_json_not_supported", "package.json is not supported for this bounded plugin skill import"),
@@ -2200,7 +2200,7 @@ fn collect_openclaw_plugin_surface_unsupported_items(plugin_root: &Path) -> Vec<
     for (relative, reason, detail) in checks {
         let path = plugin_root.join(relative);
         if path.exists() {
-            unsupported_items.push(OpenClawPluginUnsupportedItem {
+            unsupported_items.push(LegacyV1PluginUnsupportedItem {
                 path: path.display().to_string(),
                 reason: reason.to_string(),
                 detail: detail.to_string(),
@@ -2210,13 +2210,13 @@ fn collect_openclaw_plugin_surface_unsupported_items(plugin_root: &Path) -> Vec<
     unsupported_items
 }
 
-fn resolve_openclaw_plugin_skill_root(
+fn resolve_legacy_v1_plugin_skill_root(
     plugin_root: &Path,
     raw_path: &str,
-) -> Result<PathBuf, OpenClawPluginUnsupportedItem> {
+) -> Result<PathBuf, LegacyV1PluginUnsupportedItem> {
     let trimmed = raw_path.trim();
     if trimmed.is_empty() {
-        return Err(OpenClawPluginUnsupportedItem {
+        return Err(LegacyV1PluginUnsupportedItem {
             path: plugin_root.display().to_string(),
             reason: "empty_skills_root_path".to_string(),
             detail: "skills roots must not be empty".to_string(),
@@ -2224,23 +2224,23 @@ fn resolve_openclaw_plugin_skill_root(
     }
     let candidate = Path::new(trimmed);
     if candidate.is_absolute() {
-        return Err(OpenClawPluginUnsupportedItem {
+        return Err(LegacyV1PluginUnsupportedItem {
             path: candidate.display().to_string(),
             reason: "absolute_skills_root_path_not_supported".to_string(),
-            detail: "openclaw.plugin.json skills roots must be relative to the plugin root".to_string(),
+            detail: "legacy_v1.plugin.json skills roots must be relative to the plugin root".to_string(),
         });
     }
     if candidate.components().any(|component| matches!(component, std::path::Component::ParentDir)) {
-        return Err(OpenClawPluginUnsupportedItem {
+        return Err(LegacyV1PluginUnsupportedItem {
             path: candidate.display().to_string(),
             reason: "escaping_skills_root_path_not_supported".to_string(),
-            detail: "openclaw.plugin.json skills roots must stay under the plugin root".to_string(),
+            detail: "legacy_v1.plugin.json skills roots must stay under the plugin root".to_string(),
         });
     }
     Ok(plugin_root.join(candidate))
 }
 
-fn openclaw_plugin_skill_capability_name(plugin_id: &str, skill_name: &str) -> String {
+fn legacy_v1_plugin_skill_capability_name(plugin_id: &str, skill_name: &str) -> String {
     format!(
         "clawskill.{}.{}.v0",
         sanitize_name(plugin_id),
@@ -2701,9 +2701,9 @@ fn default_forge_description(template: &str, goal: &str) -> String {
 pub fn capability_runtime_lane(capability: &CapabilityDescriptor) -> &'static str {
     match capability.worker_kind.as_str() {
         "wasm" => "wasmtime_local_guest",
-        "python" if capability.source_kind == "openclaw_workspace_skill" => "python_host_process/imported_workspace_skill",
+        "python" if capability.source_kind == "legacy_v1_workspace_skill" => "python_host_process/imported_workspace_skill",
         "python" if capability.source_kind == "clawfamily_skill_bundle" => "python_host_process/imported_skill_bundle",
-        "python" if capability.source_kind == "openclaw_plugin_skill" => "python_host_process/imported_openclaw_plugin_skill",
+        "python" if capability.source_kind == "legacy_v1_plugin_skill" => "python_host_process/imported_legacy_v1_plugin_skill",
         "python" if capability.source_kind == "loom_forge_candidate" => "python_host_process/forged_candidate",
         "python" => "python_host_process",
         _ => "unknown",
@@ -2712,9 +2712,9 @@ pub fn capability_runtime_lane(capability: &CapabilityDescriptor) -> &'static st
 
 pub fn capability_dependency_mode(capability: &CapabilityDescriptor) -> &'static str {
     match capability.source_kind.as_str() {
-        "openclaw_workspace_skill" => "workspace_host_python",
+        "legacy_v1_workspace_skill" => "workspace_host_python",
         "clawfamily_skill_bundle" => "bundle_host_python",
-        "openclaw_plugin_skill" => "plugin_host_python",
+        "legacy_v1_plugin_skill" => "plugin_host_python",
         "loom_forge_candidate" => "loom_generated_python",
         "loom_builtin" if capability.worker_kind == "wasm" => "builtin_wasm_guest",
         "loom_builtin" => "builtin_runtime_worker",
@@ -2725,7 +2725,7 @@ pub fn capability_dependency_mode(capability: &CapabilityDescriptor) -> &'static
 
 pub fn capability_env_contract(capability: &CapabilityDescriptor) -> String {
     match capability.source_kind.as_str() {
-        "openclaw_workspace_skill" => format!(
+        "legacy_v1_workspace_skill" => format!(
             "host python3 + source skill root {} + wrapper {}",
             if capability.source_path.is_empty() {
                 "(unknown)"
@@ -2751,7 +2751,7 @@ pub fn capability_env_contract(capability: &CapabilityDescriptor) -> String {
                 &capability.worker_entry
             }
         ),
-        "openclaw_plugin_skill" => format!(
+        "legacy_v1_plugin_skill" => format!(
             "host python3 + plugin skill root {} + wrapper {}",
             if capability.source_path.is_empty() {
                 "(unknown)"
@@ -3211,9 +3211,9 @@ mod tests {
         }
     }
 
-    fn write_openclaw_plugin_manifest(plugin_root: &Path, skills_json: &str) {
+    fn write_legacy_v1_plugin_manifest(plugin_root: &Path, skills_json: &str) {
         fs::write(
-            plugin_root.join("openclaw.plugin.json"),
+            plugin_root.join("legacy_v1.plugin.json"),
             format!(
                 r#"{{
   "id": "acme-plugin",
@@ -3313,17 +3313,17 @@ description: {}
     }
 
     #[test]
-    fn import_openclaw_plugin_skill_subset_imports_immediate_child_skills_and_tracks_unsupported_items() {
-        let root = temp_path("loom-openclaw-import-root");
+    fn import_legacy_v1_plugin_skill_subset_imports_immediate_child_skills_and_tracks_unsupported_items() {
+        let root = temp_path("loom-legacy_v1-import-root");
         let config = sample_config();
         ensure_capability_registry_scaffold(&root, &config).expect("registry scaffold");
 
-        let plugin_root = temp_path("loom-openclaw-plugin");
+        let plugin_root = temp_path("loom-legacy_v1-plugin");
         fs::create_dir_all(plugin_root.join("skills/alpha/nested"))
             .expect("create plugin skill dirs");
         fs::write(plugin_root.join("package.json"), "{\"name\":\"acme\"}\n")
             .expect("write package manifest");
-        write_openclaw_plugin_manifest(&plugin_root, r#""skills""#);
+        write_legacy_v1_plugin_manifest(&plugin_root, r#""skills""#);
         write_skill_doc(
             &plugin_root.join("skills/alpha"),
             "alpha-review",
@@ -3346,7 +3346,7 @@ name: beta-review
             "Nested review skill",
         );
 
-        let result = import_openclaw_plugin_skill_subset(&root, &config, &plugin_root)
+        let result = import_legacy_v1_plugin_skill_subset(&root, &config, &plugin_root)
             .expect("import plugin skills");
         assert_eq!(result.plugin_id, "acme-plugin");
         assert_eq!(result.skills_roots.len(), 1);
@@ -3374,29 +3374,29 @@ name: beta-review
         assert_eq!(imported.normalized_metadata.capability_name, "clawskill.acme-plugin.alpha-review.v0");
         assert!(imported.manifest_path.exists());
         assert!(imported.worker_path.exists());
-        let human = render_openclaw_plugin_import_human(&result);
+        let human = render_legacy_v1_plugin_import_human(&result);
         assert!(human.contains("worker_kind: python"));
         assert!(human.contains("worker_entry: workers/python/imported-clawskill-acme-plugin-alpha-review-v0.py"));
         assert!(human.contains("payload_mode: json"));
-        assert!(human.contains("runtime_lane: python_host_process/imported_openclaw_plugin_skill"));
+        assert!(human.contains("runtime_lane: python_host_process/imported_legacy_v1_plugin_skill"));
         assert!(human.contains("dependency: plugin_host_python"));
         assert!(human.contains("env_contract: host python3 + plugin skill root"));
     }
 
     #[test]
-    fn import_openclaw_plugin_skill_subset_rejects_multiple_skill_roots() {
-        let root = temp_path("loom-openclaw-multi-root");
+    fn import_legacy_v1_plugin_skill_subset_rejects_multiple_skill_roots() {
+        let root = temp_path("loom-legacy_v1-multi-root");
         let config = sample_config();
         ensure_capability_registry_scaffold(&root, &config).expect("registry scaffold");
 
-        let plugin_root = temp_path("loom-openclaw-plugin-multi-root");
+        let plugin_root = temp_path("loom-legacy_v1-plugin-multi-root");
         fs::create_dir_all(plugin_root.join("skills-one/alpha")).expect("create skills one");
         fs::create_dir_all(plugin_root.join("skills-two/beta")).expect("create skills two");
-        write_openclaw_plugin_manifest(&plugin_root, r#"["skills-one", "skills-two"]"#);
+        write_legacy_v1_plugin_manifest(&plugin_root, r#"["skills-one", "skills-two"]"#);
         write_skill_doc(&plugin_root.join("skills-one/alpha"), "alpha", "Alpha skill");
         write_skill_doc(&plugin_root.join("skills-two/beta"), "beta", "Beta skill");
 
-        let result = import_openclaw_plugin_skill_subset(&root, &config, &plugin_root)
+        let result = import_legacy_v1_plugin_skill_subset(&root, &config, &plugin_root)
             .expect("import plugin skills");
         assert!(result.imported_skills.is_empty());
         assert!(result
@@ -3406,20 +3406,20 @@ name: beta-review
     }
 
     #[test]
-    fn import_openclaw_plugin_skill_subset_rejects_config_gated_skill_root() {
-        let root = temp_path("loom-openclaw-config-gated");
+    fn import_legacy_v1_plugin_skill_subset_rejects_config_gated_skill_root() {
+        let root = temp_path("loom-legacy_v1-config-gated");
         let config = sample_config();
         ensure_capability_registry_scaffold(&root, &config).expect("registry scaffold");
 
-        let plugin_root = temp_path("loom-openclaw-plugin-config-gated");
+        let plugin_root = temp_path("loom-legacy_v1-plugin-config-gated");
         fs::create_dir_all(plugin_root.join("skills/alpha")).expect("create skills");
-        write_openclaw_plugin_manifest(
+        write_legacy_v1_plugin_manifest(
             &plugin_root,
             r#"[{"path": "skills", "when": "beta"}]"#,
         );
         write_skill_doc(&plugin_root.join("skills/alpha"), "alpha", "Alpha skill");
 
-        let result = import_openclaw_plugin_skill_subset(&root, &config, &plugin_root)
+        let result = import_legacy_v1_plugin_skill_subset(&root, &config, &plugin_root)
             .expect("import plugin skills");
         assert!(result.imported_skills.is_empty());
         assert!(result
@@ -3463,7 +3463,7 @@ parser.add_argument("--skip-container", action="store_true")
         assert!(result.manifest_path.exists());
         assert!(result.worker_path.exists());
         assert_eq!(result.detected_signature, "artifact_report_v0");
-        assert_eq!(result.capability.source_kind, "openclaw_workspace_skill");
+        assert_eq!(result.capability.source_kind, "legacy_v1_workspace_skill");
         assert_eq!(result.skill_shape, "workspace_python_entrypoint");
         assert_eq!(result.capability.adapter_kind, "artifact_report_v0");
         assert!(result.capability.import_provenance.contains("workspace_python_entrypoint"));
@@ -3476,7 +3476,7 @@ parser.add_argument("--skip-container", action="store_true")
             .into_iter()
             .find(|item| item.name == "clawskill.malware-triage.v0")
             .expect("imported capability present");
-        assert_eq!(imported.source_kind, "openclaw_workspace_skill");
+        assert_eq!(imported.source_kind, "legacy_v1_workspace_skill");
         assert!(imported.source_path.contains("loom-cap-import-skill"));
         let human = render_capability_import_human(&result);
         assert!(human.contains("worker_kind:       python"));
@@ -3534,7 +3534,7 @@ parser.add_argument("--skip-container", action="store_true")
         assert!(result.worker_path.exists());
         assert_eq!(result.skill_script, skill_root.join("scripts/triage_artifact.py"));
         assert_eq!(result.detected_signature, "artifact_report_v0");
-        assert_eq!(result.capability.source_kind, "openclaw_workspace_skill");
+        assert_eq!(result.capability.source_kind, "legacy_v1_workspace_skill");
         assert_eq!(result.skill_shape, "workspace_python_entrypoint");
         assert_eq!(result.capability.adapter_kind, "artifact_report_v0");
         assert!(result.capability.import_provenance.contains("workspace_python_entrypoint"));

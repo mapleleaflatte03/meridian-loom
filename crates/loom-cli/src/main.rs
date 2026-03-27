@@ -8,11 +8,11 @@ use loom_core::{
     evaluate_reference_gates, Config, LoomResult, capability_shims::{generate_shim, render_shim_human, render_shim_json, validate_shim, LegacyToolSpec},
     capabilities::{
         find_capability_by_name, forge_capability, import_workspace_skill, load_capability_registry, promote_capability,
-        load_capability_gap, capability_gap_replay_request, record_capability_gap, import_openclaw_plugin_skill_subset,
+        load_capability_gap, capability_gap_replay_request, record_capability_gap, import_legacy_v1_plugin_skill_subset,
         render_capability_forge_human, render_capability_forge_json,
         render_capability_gap_human, render_capability_gap_json,
         render_capability_human, render_capability_import_human, render_capability_import_json,
-        render_openclaw_plugin_import_human, render_openclaw_plugin_import_json,
+        render_legacy_v1_plugin_import_human, render_legacy_v1_plugin_import_json,
         render_capability_json, render_capability_registry_human, render_capability_registry_json,
         render_capability_state_update_human, render_capability_state_update_json,
         scaffold_capability, timestamp_now as capability_timestamp_now,
@@ -277,7 +277,7 @@ Governance surfaces\n\
   loom capability gap replay --gap-id ID [--root PATH] [--format human|json]\n\
   loom capability scaffold --name NAME --action-type TYPE --resource RESOURCE [--description TEXT] [--worker-kind python|wasm] [--worker-entry PATH] [--wasm-module builtin:minimal|wasm:PATH] [--payload-mode json|none] [--root PATH]\n\
   loom capability forge [--name NAME] [--gap-id ID] [--template echo_json_v0|artifact_inspect_v0|url_bundle_v0] [--gap-class artifact_triage|url_collection|response_echo] [--goal TEXT] [--description TEXT] [--root PATH] [--format human|json]\n\
-  loom capability import-workspace-skill --skill-root PATH [--entrypoint PATH] [--name NAME] [--root PATH] [--format human|json]\n  loom capability import-openclaw-plugin-skill-subset --plugin-root PATH [--root PATH] [--format human|json]\n\
+  loom capability import-workspace-skill --skill-root PATH [--entrypoint PATH] [--name NAME] [--root PATH] [--format human|json]\n  loom capability import-legacy-v1-plugin-skill-subset --plugin-root PATH [--root PATH] [--format human|json]\n\
   loom capability verify --name NAME --agent-id ID --kernel-path PATH [--gap-id ID] [--org-id ORG] [--payload-json JSON] [--estimated-cost-usd USD] [--expect-summary-contains TEXT] [--expect-result-field PATH=VALUE]... [--root PATH] [--format human|json]\n\
   loom capability promote --name NAME [--gap-id ID] [--root PATH] [--format human|json]\n\
   loom capability shim --tool-name NAME --input-schema JSON --output-schema JSON [--version SEMVER] [--format human|json]\n\
