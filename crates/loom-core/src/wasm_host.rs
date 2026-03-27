@@ -24,6 +24,11 @@ pub const WASM_HOST_CALL_NAMESPACE: &str = "loom_host";
 pub const HOST_BROWSER_NAVIGATE: &str = "host_browser_navigate";
 pub const HOST_SCHEDULE_HEARTBEAT: &str = "host_schedule_heartbeat";
 pub const HOST_TERMINAL_EXEC: &str = "host_terminal_exec";
+pub const HOST_FS_READ: &str = "host_fs_read";
+pub const HOST_FS_WRITE: &str = "host_fs_write";
+pub const HOST_LLM_INFERENCE: &str = "host_llm_inference";
+pub const HOST_KV_GET: &str = "host_kv_get";
+pub const HOST_KV_SET: &str = "host_kv_set";
 pub const WASM_HOST_REQUEST_OFFSET: i32 = 1_024;
 pub const WASM_HOST_RESPONSE_OFFSET: i32 = 8_192;
 pub const WASM_HOST_RESPONSE_CAPACITY: i32 = 16_384;
@@ -35,6 +40,11 @@ pub enum WasmHostCallKind {
     BrowserNavigate,
     ScheduleHeartbeat,
     TerminalExec,
+    FsRead,
+    FsWrite,
+    LlmInference,
+    KvGet,
+    KvSet,
 }
 
 impl WasmHostCallKind {
@@ -43,6 +53,11 @@ impl WasmHostCallKind {
             Self::BrowserNavigate => HOST_BROWSER_NAVIGATE,
             Self::ScheduleHeartbeat => HOST_SCHEDULE_HEARTBEAT,
             Self::TerminalExec => HOST_TERMINAL_EXEC,
+            Self::FsRead => HOST_FS_READ,
+            Self::FsWrite => HOST_FS_WRITE,
+            Self::LlmInference => HOST_LLM_INFERENCE,
+            Self::KvGet => HOST_KV_GET,
+            Self::KvSet => HOST_KV_SET,
         }
     }
 
@@ -51,6 +66,11 @@ impl WasmHostCallKind {
             Self::BrowserNavigate => "bounded browser navigation and semantic snapshot capture",
             Self::ScheduleHeartbeat => "register or refresh proactive background work independent of user input",
             Self::TerminalExec => "execute a bounded local argv command inside a constrained workspace context",
+            Self::FsRead => "read a bounded UTF-8 excerpt from the runtime workspace sandbox",
+            Self::FsWrite => "write bounded UTF-8 content into the runtime workspace sandbox",
+            Self::LlmInference => "perform bounded native inference through the host-side OpenAI chat completions bridge",
+            Self::KvGet => "read a namespaced value from the runtime-backed KV memory file",
+            Self::KvSet => "persist a namespaced value into the runtime-backed KV memory file",
         }
     }
 }
@@ -250,6 +270,151 @@ pub struct WasmTerminalExecResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WasmFsReadRequest {
+    pub security: WasmHostSecurityContext,
+    pub path: String,
+    pub max_bytes: usize,
+}
+
+impl Default for WasmFsReadRequest {
+    fn default() -> Self {
+        Self {
+            security: WasmHostSecurityContext::default(),
+            path: String::new(),
+            max_bytes: 8_192,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WasmFsReadResponse {
+    pub decision: WasmHostCallDecision,
+    pub path: String,
+    pub content_utf8: String,
+    pub bytes_read: usize,
+    pub truncated: bool,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WasmFsWriteRequest {
+    pub security: WasmHostSecurityContext,
+    pub path: String,
+    pub content_utf8: String,
+    pub create_dirs: bool,
+    pub append: bool,
+}
+
+impl Default for WasmFsWriteRequest {
+    fn default() -> Self {
+        Self {
+            security: WasmHostSecurityContext::default(),
+            path: String::new(),
+            content_utf8: String::new(),
+            create_dirs: true,
+            append: false,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WasmFsWriteResponse {
+    pub decision: WasmHostCallDecision,
+    pub path: String,
+    pub bytes_written: usize,
+    pub created_dirs: bool,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WasmLlmInferenceRequest {
+    pub security: WasmHostSecurityContext,
+    pub model: String,
+    pub system_prompt: String,
+    pub user_prompt: String,
+    pub max_tokens: Option<u32>,
+}
+
+impl Default for WasmLlmInferenceRequest {
+    fn default() -> Self {
+        Self {
+            security: WasmHostSecurityContext::default(),
+            model: "gpt-4o-mini".to_string(),
+            system_prompt: String::new(),
+            user_prompt: String::new(),
+            max_tokens: Some(256),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WasmLlmInferenceResponse {
+    pub decision: WasmHostCallDecision,
+    pub model: String,
+    pub output_text: String,
+    pub finish_reason: String,
+    pub prompt_tokens: Option<u64>,
+    pub completion_tokens: Option<u64>,
+    pub total_tokens: Option<u64>,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WasmKvGetRequest {
+    pub security: WasmHostSecurityContext,
+    pub namespace: String,
+    pub key: String,
+}
+
+impl Default for WasmKvGetRequest {
+    fn default() -> Self {
+        Self {
+            security: WasmHostSecurityContext::default(),
+            namespace: "default".to_string(),
+            key: String::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WasmKvGetResponse {
+    pub decision: WasmHostCallDecision,
+    pub namespace: String,
+    pub key: String,
+    pub found: bool,
+    pub value_json: String,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WasmKvSetRequest {
+    pub security: WasmHostSecurityContext,
+    pub namespace: String,
+    pub key: String,
+    pub value_json: String,
+}
+
+impl Default for WasmKvSetRequest {
+    fn default() -> Self {
+        Self {
+            security: WasmHostSecurityContext::default(),
+            namespace: "default".to_string(),
+            key: String::new(),
+            value_json: "null".to_string(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WasmKvSetResponse {
+    pub decision: WasmHostCallDecision,
+    pub namespace: String,
+    pub key: String,
+    pub stored: bool,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WasmHostCallSignature {
     pub kind: WasmHostCallKind,
     pub import_module: &'static str,
@@ -290,6 +455,46 @@ pub fn wasm_host_call_signatures() -> Vec<WasmHostCallSignature> {
             response_type: "WasmTerminalExecResponse",
             purpose: WasmHostCallKind::TerminalExec.purpose(),
             truth_boundary: "bounded local command execution is real only inside explicit timeout and path policy",
+        },
+        WasmHostCallSignature {
+            kind: WasmHostCallKind::FsRead,
+            import_module: WASM_HOST_CALL_NAMESPACE,
+            request_type: "WasmFsReadRequest",
+            response_type: "WasmFsReadResponse",
+            purpose: WasmHostCallKind::FsRead.purpose(),
+            truth_boundary: "file reads are limited to the local Loom runtime workspace sandbox",
+        },
+        WasmHostCallSignature {
+            kind: WasmHostCallKind::FsWrite,
+            import_module: WASM_HOST_CALL_NAMESPACE,
+            request_type: "WasmFsWriteRequest",
+            response_type: "WasmFsWriteResponse",
+            purpose: WasmHostCallKind::FsWrite.purpose(),
+            truth_boundary: "file writes are limited to the local Loom runtime workspace sandbox",
+        },
+        WasmHostCallSignature {
+            kind: WasmHostCallKind::LlmInference,
+            import_module: WASM_HOST_CALL_NAMESPACE,
+            request_type: "WasmLlmInferenceRequest",
+            response_type: "WasmLlmInferenceResponse",
+            purpose: WasmHostCallKind::LlmInference.purpose(),
+            truth_boundary: "native inference is bounded by host-side API policy and never exposes credentials to Wasm",
+        },
+        WasmHostCallSignature {
+            kind: WasmHostCallKind::KvGet,
+            import_module: WASM_HOST_CALL_NAMESPACE,
+            request_type: "WasmKvGetRequest",
+            response_type: "WasmKvGetResponse",
+            purpose: WasmHostCallKind::KvGet.purpose(),
+            truth_boundary: "KV lookups are local runtime-state reads only",
+        },
+        WasmHostCallSignature {
+            kind: WasmHostCallKind::KvSet,
+            import_module: WASM_HOST_CALL_NAMESPACE,
+            request_type: "WasmKvSetRequest",
+            response_type: "WasmKvSetResponse",
+            purpose: WasmHostCallKind::KvSet.purpose(),
+            truth_boundary: "KV writes are local runtime-state mutations only",
         },
     ]
 }
@@ -341,6 +546,56 @@ pub fn render_wasm_heartbeat_schedule_request_json(request: &WasmHeartbeatSchedu
     .to_string()
 }
 
+pub fn render_wasm_fs_read_request_json(request: &WasmFsReadRequest) -> String {
+    json!({
+        "security": render_security_context_value(&request.security),
+        "path": request.path,
+        "max_bytes": request.max_bytes,
+    })
+    .to_string()
+}
+
+pub fn render_wasm_fs_write_request_json(request: &WasmFsWriteRequest) -> String {
+    json!({
+        "security": render_security_context_value(&request.security),
+        "path": request.path,
+        "content_utf8": request.content_utf8,
+        "create_dirs": request.create_dirs,
+        "append": request.append,
+    })
+    .to_string()
+}
+
+pub fn render_wasm_llm_inference_request_json(request: &WasmLlmInferenceRequest) -> String {
+    json!({
+        "security": render_security_context_value(&request.security),
+        "model": request.model,
+        "system_prompt": request.system_prompt,
+        "user_prompt": request.user_prompt,
+        "max_tokens": request.max_tokens,
+    })
+    .to_string()
+}
+
+pub fn render_wasm_kv_get_request_json(request: &WasmKvGetRequest) -> String {
+    json!({
+        "security": render_security_context_value(&request.security),
+        "namespace": request.namespace,
+        "key": request.key,
+    })
+    .to_string()
+}
+
+pub fn render_wasm_kv_set_request_json(request: &WasmKvSetRequest) -> String {
+    json!({
+        "security": render_security_context_value(&request.security),
+        "namespace": request.namespace,
+        "key": request.key,
+        "value_json": request.value_json,
+    })
+    .to_string()
+}
+
 pub fn builtin_browser_navigate_guest_bytes(request_json: &str) -> Result<Vec<u8>, String> {
     build_host_call_guest(HOST_BROWSER_NAVIGATE, request_json)
 }
@@ -351,6 +606,26 @@ pub fn builtin_terminal_exec_guest_bytes(request_json: &str) -> Result<Vec<u8>, 
 
 pub fn builtin_heartbeat_schedule_guest_bytes(request_json: &str) -> Result<Vec<u8>, String> {
     build_host_call_guest(HOST_SCHEDULE_HEARTBEAT, request_json)
+}
+
+pub fn builtin_fs_read_guest_bytes(request_json: &str) -> Result<Vec<u8>, String> {
+    build_host_call_guest(HOST_FS_READ, request_json)
+}
+
+pub fn builtin_fs_write_guest_bytes(request_json: &str) -> Result<Vec<u8>, String> {
+    build_host_call_guest(HOST_FS_WRITE, request_json)
+}
+
+pub fn builtin_llm_inference_guest_bytes(request_json: &str) -> Result<Vec<u8>, String> {
+    build_host_call_guest(HOST_LLM_INFERENCE, request_json)
+}
+
+pub fn builtin_kv_get_guest_bytes(request_json: &str) -> Result<Vec<u8>, String> {
+    build_host_call_guest(HOST_KV_GET, request_json)
+}
+
+pub fn builtin_kv_set_guest_bytes(request_json: &str) -> Result<Vec<u8>, String> {
+    build_host_call_guest(HOST_KV_SET, request_json)
 }
 
 pub(crate) fn parse_wasm_browser_navigate_request(raw: &str) -> Result<WasmBrowserNavigateRequest, String> {
@@ -404,6 +679,61 @@ pub(crate) fn parse_wasm_heartbeat_schedule_request(raw: &str) -> Result<WasmHea
     })
 }
 
+pub(crate) fn parse_wasm_fs_read_request(raw: &str) -> Result<WasmFsReadRequest, String> {
+    let value: Value = serde_json::from_str(raw)
+        .map_err(|error| format!("invalid fs read request json: {error}"))?;
+    Ok(WasmFsReadRequest {
+        security: parse_security_context(value.get("security")),
+        path: value_string(value.get("path")),
+        max_bytes: value_usize_or(value.get("max_bytes"), 8_192),
+    })
+}
+
+pub(crate) fn parse_wasm_fs_write_request(raw: &str) -> Result<WasmFsWriteRequest, String> {
+    let value: Value = serde_json::from_str(raw)
+        .map_err(|error| format!("invalid fs write request json: {error}"))?;
+    Ok(WasmFsWriteRequest {
+        security: parse_security_context(value.get("security")),
+        path: value_string(value.get("path")),
+        content_utf8: value_string(value.get("content_utf8")),
+        create_dirs: value_bool_or(value.get("create_dirs"), true),
+        append: value_bool_or(value.get("append"), false),
+    })
+}
+
+pub(crate) fn parse_wasm_llm_inference_request(raw: &str) -> Result<WasmLlmInferenceRequest, String> {
+    let value: Value = serde_json::from_str(raw)
+        .map_err(|error| format!("invalid llm inference request json: {error}"))?;
+    Ok(WasmLlmInferenceRequest {
+        security: parse_security_context(value.get("security")),
+        model: value_string_or(value.get("model"), "gpt-4o-mini"),
+        system_prompt: value_string(value.get("system_prompt")),
+        user_prompt: value_string(value.get("user_prompt")),
+        max_tokens: value.get("max_tokens").and_then(Value::as_u64).map(|value| value as u32),
+    })
+}
+
+pub(crate) fn parse_wasm_kv_get_request(raw: &str) -> Result<WasmKvGetRequest, String> {
+    let value: Value = serde_json::from_str(raw)
+        .map_err(|error| format!("invalid kv get request json: {error}"))?;
+    Ok(WasmKvGetRequest {
+        security: parse_security_context(value.get("security")),
+        namespace: value_string_or(value.get("namespace"), "default"),
+        key: value_string(value.get("key")),
+    })
+}
+
+pub(crate) fn parse_wasm_kv_set_request(raw: &str) -> Result<WasmKvSetRequest, String> {
+    let value: Value = serde_json::from_str(raw)
+        .map_err(|error| format!("invalid kv set request json: {error}"))?;
+    Ok(WasmKvSetRequest {
+        security: parse_security_context(value.get("security")),
+        namespace: value_string_or(value.get("namespace"), "default"),
+        key: value_string(value.get("key")),
+        value_json: value_string_or(value.get("value_json"), "null"),
+    })
+}
+
 pub(crate) fn render_wasm_browser_navigate_response_json(response: &WasmBrowserNavigateResponse) -> String {
     json!({
         "decision": response.decision.label(),
@@ -438,6 +768,66 @@ pub(crate) fn render_wasm_heartbeat_schedule_response_json(response: &WasmHeartb
         "heartbeat_id": response.heartbeat_id,
         "next_fire_at_unix_ms": response.next_fire_at_unix_ms,
         "accepted_run_id": response.accepted_run_id,
+        "note": response.note,
+    })
+    .to_string()
+}
+
+pub(crate) fn render_wasm_fs_read_response_json(response: &WasmFsReadResponse) -> String {
+    json!({
+        "decision": response.decision.label(),
+        "path": response.path,
+        "content_utf8": response.content_utf8,
+        "bytes_read": response.bytes_read,
+        "truncated": response.truncated,
+        "note": response.note,
+    })
+    .to_string()
+}
+
+pub(crate) fn render_wasm_fs_write_response_json(response: &WasmFsWriteResponse) -> String {
+    json!({
+        "decision": response.decision.label(),
+        "path": response.path,
+        "bytes_written": response.bytes_written,
+        "created_dirs": response.created_dirs,
+        "note": response.note,
+    })
+    .to_string()
+}
+
+pub(crate) fn render_wasm_llm_inference_response_json(response: &WasmLlmInferenceResponse) -> String {
+    json!({
+        "decision": response.decision.label(),
+        "model": response.model,
+        "output_text": response.output_text,
+        "finish_reason": response.finish_reason,
+        "prompt_tokens": response.prompt_tokens,
+        "completion_tokens": response.completion_tokens,
+        "total_tokens": response.total_tokens,
+        "note": response.note,
+    })
+    .to_string()
+}
+
+pub(crate) fn render_wasm_kv_get_response_json(response: &WasmKvGetResponse) -> String {
+    json!({
+        "decision": response.decision.label(),
+        "namespace": response.namespace,
+        "key": response.key,
+        "found": response.found,
+        "value_json": response.value_json,
+        "note": response.note,
+    })
+    .to_string()
+}
+
+pub(crate) fn render_wasm_kv_set_response_json(response: &WasmKvSetResponse) -> String {
+    json!({
+        "decision": response.decision.label(),
+        "namespace": response.namespace,
+        "key": response.key,
+        "stored": response.stored,
         "note": response.note,
     })
     .to_string()
@@ -913,13 +1303,18 @@ mod tests {
     }
 
     #[test]
-    fn host_call_signature_surface_covers_browser_heartbeat_and_terminal() {
+    fn host_call_signature_surface_covers_builtin_host_calls() {
         let signatures = wasm_host_call_signatures();
-        assert_eq!(signatures.len(), 3);
+        assert_eq!(signatures.len(), 8);
         assert!(signatures.iter().all(|signature| signature.import_module == WASM_HOST_CALL_NAMESPACE));
         assert!(signatures.iter().any(|signature| signature.import_name() == HOST_BROWSER_NAVIGATE));
         assert!(signatures.iter().any(|signature| signature.import_name() == HOST_SCHEDULE_HEARTBEAT));
         assert!(signatures.iter().any(|signature| signature.import_name() == HOST_TERMINAL_EXEC));
+        assert!(signatures.iter().any(|signature| signature.import_name() == HOST_FS_READ));
+        assert!(signatures.iter().any(|signature| signature.import_name() == HOST_FS_WRITE));
+        assert!(signatures.iter().any(|signature| signature.import_name() == HOST_LLM_INFERENCE));
+        assert!(signatures.iter().any(|signature| signature.import_name() == HOST_KV_GET));
+        assert!(signatures.iter().any(|signature| signature.import_name() == HOST_KV_SET));
     }
 
     #[test]

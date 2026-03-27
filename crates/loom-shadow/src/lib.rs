@@ -4,13 +4,19 @@ use loom_core::{
     preview_local_sanction_controls, read_config, resolve_agent_identity, runtime_worker_entry,
     capabilities::{resolve_capability_for_request, render_capability_json, render_capability_readiness_human, render_capability_readiness_json, CapabilityDescriptor},
     wasm_host::{
-        builtin_browser_navigate_guest_bytes, builtin_heartbeat_schedule_guest_bytes,
-        builtin_terminal_exec_guest_bytes, render_wasm_browser_navigate_request_json,
-        render_wasm_heartbeat_schedule_request_json, render_wasm_terminal_exec_request_json,
+        builtin_browser_navigate_guest_bytes, builtin_fs_read_guest_bytes,
+        builtin_fs_write_guest_bytes, builtin_heartbeat_schedule_guest_bytes,
+        builtin_kv_get_guest_bytes, builtin_kv_set_guest_bytes,
+        builtin_llm_inference_guest_bytes, builtin_terminal_exec_guest_bytes,
+        render_wasm_browser_navigate_request_json, render_wasm_fs_read_request_json,
+        render_wasm_fs_write_request_json, render_wasm_heartbeat_schedule_request_json,
+        render_wasm_kv_get_request_json, render_wasm_kv_set_request_json,
+        render_wasm_llm_inference_request_json, render_wasm_terminal_exec_request_json,
         run_wasm_guest, HostBackend, WasmBrowserNavigateRequest, WasmExecutionRequest,
-        WasmExecutionResult, WasmGuestSource, WasmHeartbeatScheduleKind,
-        WasmHeartbeatScheduleRequest, WasmHostBuilder, WasmHostSecurityContext,
-        WasmTerminalExecRequest,
+        WasmExecutionResult, WasmFsReadRequest, WasmFsWriteRequest, WasmGuestSource,
+        WasmHeartbeatScheduleKind, WasmHeartbeatScheduleRequest, WasmHostBuilder,
+        WasmHostSecurityContext, WasmKvGetRequest, WasmKvSetRequest,
+        WasmLlmInferenceRequest, WasmTerminalExecRequest,
     },
     ActionEnvelope, AgentIdentityResolution, Config, ReferenceGateCheck,
 };
@@ -7958,6 +7964,16 @@ fn dispatch_wasm_worker(
         build_builtin_terminal_exec_guest(capability, worker_request_path)?
     } else if module_source == "builtin:heartbeat.schedule" {
         build_builtin_heartbeat_schedule_guest(capability, worker_request_path)?
+    } else if module_source == "builtin:fs.read" {
+        build_builtin_fs_read_guest(capability, worker_request_path)?
+    } else if module_source == "builtin:fs.write" {
+        build_builtin_fs_write_guest(capability, worker_request_path)?
+    } else if module_source == "builtin:llm.inference" {
+        build_builtin_llm_inference_guest(capability, worker_request_path)?
+    } else if module_source == "builtin:kv.get" {
+        build_builtin_kv_get_guest(capability, worker_request_path)?
+    } else if module_source == "builtin:kv.set" {
+        build_builtin_kv_set_guest(capability, worker_request_path)?
     } else if let Some(module_path) = module_source.strip_prefix("wasm:") {
         fs::read(module_path).map_err(|error| format!("failed to read wasm module {}: {}", module_path, error))?
     } else {
@@ -8276,6 +8292,231 @@ fn build_builtin_heartbeat_schedule_guest(
     };
     let request_json = render_wasm_heartbeat_schedule_request_json(&request);
     builtin_heartbeat_schedule_guest_bytes(&request_json)
+}
+
+fn build_builtin_fs_read_guest(
+    capability: &CapabilityDescriptor,
+    worker_request_path: &Path,
+) -> ShadowResult<Vec<u8>> {
+    let raw = fs::read_to_string(worker_request_path).map_err(io_err)?;
+    let body: Value = serde_json::from_str(&raw).map_err(io_err)?;
+    let envelope = body.get("envelope");
+    let payload_json = value_json_string(envelope.and_then(|value| value.get("payload_json")));
+    let payload = if payload_json.is_empty() {
+        Value::Object(serde_json::Map::new())
+    } else {
+        serde_json::from_str(&payload_json)
+            .map_err(|error| format!("invalid fs read payload_json for {}: {}", capability.name, error))?
+    };
+    let path = value_string(payload.get("path"));
+    if path.is_empty() {
+        return Err(format!("capability '{}' requires payload_json.path", capability.name));
+    }
+    let max_bytes = payload.get("max_bytes").and_then(Value::as_u64).unwrap_or(8_192) as usize;
+    let request = WasmFsReadRequest {
+        security: WasmHostSecurityContext {
+            capability_name: capability.name.clone(),
+            agent_id: value_string(envelope.and_then(|value| value.get("agent_id"))),
+            org_id: value_string(envelope.and_then(|value| value.get("org_id"))),
+            session_id: value_string(envelope.and_then(|value| value.get("runtime_id"))),
+            operation_id: value_string(body.get("input_hash")),
+            max_timeout_ms: 1_000,
+            max_response_bytes: max_bytes.max(256),
+            allowed_hosts: Vec::new(),
+            allowed_workdir_roots: vec!["/home/ubuntu/.local/share/meridian-loom/runtime/default/workspace".to_string()],
+            require_user_present: false,
+        },
+        path,
+        max_bytes,
+    };
+    let request_json = render_wasm_fs_read_request_json(&request);
+    builtin_fs_read_guest_bytes(&request_json)
+}
+
+fn build_builtin_fs_write_guest(
+    capability: &CapabilityDescriptor,
+    worker_request_path: &Path,
+) -> ShadowResult<Vec<u8>> {
+    let raw = fs::read_to_string(worker_request_path).map_err(io_err)?;
+    let body: Value = serde_json::from_str(&raw).map_err(io_err)?;
+    let envelope = body.get("envelope");
+    let payload_json = value_json_string(envelope.and_then(|value| value.get("payload_json")));
+    let payload = if payload_json.is_empty() {
+        Value::Object(serde_json::Map::new())
+    } else {
+        serde_json::from_str(&payload_json)
+            .map_err(|error| format!("invalid fs write payload_json for {}: {}", capability.name, error))?
+    };
+    let path = value_string(payload.get("path"));
+    if path.is_empty() {
+        return Err(format!("capability '{}' requires payload_json.path", capability.name));
+    }
+    let content_utf8 = {
+        let direct = value_string(payload.get("content_utf8"));
+        if direct.is_empty() {
+            value_string(payload.get("content"))
+        } else {
+            direct
+        }
+    };
+    let request = WasmFsWriteRequest {
+        security: WasmHostSecurityContext {
+            capability_name: capability.name.clone(),
+            agent_id: value_string(envelope.and_then(|value| value.get("agent_id"))),
+            org_id: value_string(envelope.and_then(|value| value.get("org_id"))),
+            session_id: value_string(envelope.and_then(|value| value.get("runtime_id"))),
+            operation_id: value_string(body.get("input_hash")),
+            max_timeout_ms: 1_000,
+            max_response_bytes: 8_192,
+            allowed_hosts: Vec::new(),
+            allowed_workdir_roots: vec!["/home/ubuntu/.local/share/meridian-loom/runtime/default/workspace".to_string()],
+            require_user_present: false,
+        },
+        path,
+        content_utf8,
+        create_dirs: payload.get("create_dirs").and_then(Value::as_bool).unwrap_or(true),
+        append: payload.get("append").and_then(Value::as_bool).unwrap_or(false),
+    };
+    let request_json = render_wasm_fs_write_request_json(&request);
+    builtin_fs_write_guest_bytes(&request_json)
+}
+
+fn build_builtin_llm_inference_guest(
+    capability: &CapabilityDescriptor,
+    worker_request_path: &Path,
+) -> ShadowResult<Vec<u8>> {
+    let raw = fs::read_to_string(worker_request_path).map_err(io_err)?;
+    let body: Value = serde_json::from_str(&raw).map_err(io_err)?;
+    let envelope = body.get("envelope");
+    let payload_json = value_json_string(envelope.and_then(|value| value.get("payload_json")));
+    let payload = if payload_json.is_empty() {
+        Value::Object(serde_json::Map::new())
+    } else {
+        serde_json::from_str(&payload_json)
+            .map_err(|error| format!("invalid llm payload_json for {}: {}", capability.name, error))?
+    };
+    let user_prompt = {
+        let prompt = value_string(payload.get("user_prompt"));
+        if prompt.is_empty() {
+            value_string(payload.get("prompt"))
+        } else {
+            prompt
+        }
+    };
+    if user_prompt.is_empty() {
+        return Err(format!("capability '{}' requires payload_json.user_prompt", capability.name));
+    }
+    let timeout_ms = payload.get("timeout_ms").and_then(Value::as_u64).unwrap_or(15_000);
+    let request = WasmLlmInferenceRequest {
+        security: WasmHostSecurityContext {
+            capability_name: capability.name.clone(),
+            agent_id: value_string(envelope.and_then(|value| value.get("agent_id"))),
+            org_id: value_string(envelope.and_then(|value| value.get("org_id"))),
+            session_id: value_string(envelope.and_then(|value| value.get("runtime_id"))),
+            operation_id: value_string(body.get("input_hash")),
+            max_timeout_ms: timeout_ms.max(1),
+            max_response_bytes: 16_384,
+            allowed_hosts: vec!["api.openai.com".to_string()],
+            allowed_workdir_roots: vec!["/home/ubuntu/.local/share/meridian-loom/runtime/default/workspace".to_string()],
+            require_user_present: false,
+        },
+        model: {
+            let model = value_string(payload.get("model"));
+            if model.is_empty() { "gpt-4o-mini".to_string() } else { model }
+        },
+        system_prompt: value_string(payload.get("system_prompt")),
+        user_prompt,
+        max_tokens: payload.get("max_tokens").and_then(Value::as_u64).map(|value| value as u32),
+    };
+    let request_json = render_wasm_llm_inference_request_json(&request);
+    builtin_llm_inference_guest_bytes(&request_json)
+}
+
+fn build_builtin_kv_get_guest(
+    capability: &CapabilityDescriptor,
+    worker_request_path: &Path,
+) -> ShadowResult<Vec<u8>> {
+    let raw = fs::read_to_string(worker_request_path).map_err(io_err)?;
+    let body: Value = serde_json::from_str(&raw).map_err(io_err)?;
+    let envelope = body.get("envelope");
+    let payload_json = value_json_string(envelope.and_then(|value| value.get("payload_json")));
+    let payload = if payload_json.is_empty() {
+        Value::Object(serde_json::Map::new())
+    } else {
+        serde_json::from_str(&payload_json)
+            .map_err(|error| format!("invalid kv get payload_json for {}: {}", capability.name, error))?
+    };
+    let key = value_string(payload.get("key"));
+    if key.is_empty() {
+        return Err(format!("capability '{}' requires payload_json.key", capability.name));
+    }
+    let request = WasmKvGetRequest {
+        security: WasmHostSecurityContext {
+            capability_name: capability.name.clone(),
+            agent_id: value_string(envelope.and_then(|value| value.get("agent_id"))),
+            org_id: value_string(envelope.and_then(|value| value.get("org_id"))),
+            session_id: value_string(envelope.and_then(|value| value.get("runtime_id"))),
+            operation_id: value_string(body.get("input_hash")),
+            max_timeout_ms: 1_000,
+            max_response_bytes: 4_096,
+            allowed_hosts: Vec::new(),
+            allowed_workdir_roots: vec!["/home/ubuntu/.local/share/meridian-loom/runtime/default/workspace".to_string()],
+            require_user_present: false,
+        },
+        namespace: {
+            let namespace = value_string(payload.get("namespace"));
+            if namespace.is_empty() { "default".to_string() } else { namespace }
+        },
+        key,
+    };
+    let request_json = render_wasm_kv_get_request_json(&request);
+    builtin_kv_get_guest_bytes(&request_json)
+}
+
+fn build_builtin_kv_set_guest(
+    capability: &CapabilityDescriptor,
+    worker_request_path: &Path,
+) -> ShadowResult<Vec<u8>> {
+    let raw = fs::read_to_string(worker_request_path).map_err(io_err)?;
+    let body: Value = serde_json::from_str(&raw).map_err(io_err)?;
+    let envelope = body.get("envelope");
+    let payload_json = value_json_string(envelope.and_then(|value| value.get("payload_json")));
+    let payload = if payload_json.is_empty() {
+        Value::Object(serde_json::Map::new())
+    } else {
+        serde_json::from_str(&payload_json)
+            .map_err(|error| format!("invalid kv set payload_json for {}: {}", capability.name, error))?
+    };
+    let key = value_string(payload.get("key"));
+    if key.is_empty() {
+        return Err(format!("capability '{}' requires payload_json.key", capability.name));
+    }
+    let value_json = {
+        let raw = value_json_string(payload.get("value_json"));
+        if !raw.is_empty() { raw } else { value_json_string(payload.get("value")) }
+    };
+    let request = WasmKvSetRequest {
+        security: WasmHostSecurityContext {
+            capability_name: capability.name.clone(),
+            agent_id: value_string(envelope.and_then(|value| value.get("agent_id"))),
+            org_id: value_string(envelope.and_then(|value| value.get("org_id"))),
+            session_id: value_string(envelope.and_then(|value| value.get("runtime_id"))),
+            operation_id: value_string(body.get("input_hash")),
+            max_timeout_ms: 1_000,
+            max_response_bytes: 4_096,
+            allowed_hosts: Vec::new(),
+            allowed_workdir_roots: vec!["/home/ubuntu/.local/share/meridian-loom/runtime/default/workspace".to_string()],
+            require_user_present: false,
+        },
+        namespace: {
+            let namespace = value_string(payload.get("namespace"));
+            if namespace.is_empty() { "default".to_string() } else { namespace }
+        },
+        key,
+        value_json: if value_json.is_empty() { "null".to_string() } else { value_json },
+    };
+    let request_json = render_wasm_kv_set_request_json(&request);
+    builtin_kv_set_guest_bytes(&request_json)
 }
 
 fn append_builtin_heartbeat_receipt(

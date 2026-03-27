@@ -1,10 +1,12 @@
 use std::collections::BTreeMap;
+use std::fs;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use serde_json::{json, Value};
 use ureq::ResponseExt;
 use url::Url;
 use wasmtime::{
@@ -13,13 +15,21 @@ use wasmtime::{
 };
 
 use super::{
-    host_config_hints, parse_wasm_browser_navigate_request, parse_wasm_heartbeat_schedule_request,
-    parse_wasm_terminal_exec_request, render_wasm_browser_navigate_response_json,
-    render_wasm_heartbeat_schedule_response_json, render_wasm_terminal_exec_response_json,
-    WasmBrowserNavigateResponse, WasmHeartbeatScheduleResponse, WasmHostCallDecision,
-    WasmHostCallStatusCode, WasmHostConfig, WasmTerminalExecResponse,
-    HOST_BROWSER_NAVIGATE, HOST_SCHEDULE_HEARTBEAT, HOST_TERMINAL_EXEC,
-    WASM_HOST_CALL_NAMESPACE, WASM_HOST_RESULT_LEN_EXPORT, WASM_HOST_RESULT_PTR_EXPORT,
+    host_config_hints, parse_wasm_browser_navigate_request, parse_wasm_fs_read_request,
+    parse_wasm_fs_write_request, parse_wasm_heartbeat_schedule_request,
+    parse_wasm_kv_get_request, parse_wasm_kv_set_request,
+    parse_wasm_llm_inference_request, parse_wasm_terminal_exec_request,
+    render_wasm_browser_navigate_response_json, render_wasm_fs_read_response_json,
+    render_wasm_fs_write_response_json, render_wasm_heartbeat_schedule_response_json,
+    render_wasm_kv_get_response_json, render_wasm_kv_set_response_json,
+    render_wasm_llm_inference_response_json, render_wasm_terminal_exec_response_json,
+    WasmBrowserNavigateResponse, WasmFsReadResponse, WasmFsWriteResponse,
+    WasmHeartbeatScheduleResponse, WasmHostCallDecision, WasmHostCallStatusCode,
+    WasmHostConfig, WasmKvGetResponse, WasmKvSetResponse, WasmLlmInferenceResponse,
+    WasmTerminalExecResponse, HOST_BROWSER_NAVIGATE, HOST_FS_READ, HOST_FS_WRITE,
+    HOST_KV_GET, HOST_KV_SET, HOST_LLM_INFERENCE, HOST_SCHEDULE_HEARTBEAT,
+    HOST_TERMINAL_EXEC, WASM_HOST_CALL_NAMESPACE, WASM_HOST_RESULT_LEN_EXPORT,
+    WASM_HOST_RESULT_PTR_EXPORT,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -155,6 +165,51 @@ pub fn run_wasm_guest(request: &WasmExecutionRequest) -> Result<WasmExecutionRes
             },
         )
         .map_err(|error| format!("failed to define {HOST_TERMINAL_EXEC}: {error}"))?;
+    linker
+        .func_wrap(
+            WASM_HOST_CALL_NAMESPACE,
+            HOST_FS_READ,
+            |caller: Caller<'_, RunnerState>, request_ptr: i32, request_len: i32, response_ptr: i32, response_capacity: i32| {
+                host_fs_read(caller, request_ptr, request_len, response_ptr, response_capacity)
+            },
+        )
+        .map_err(|error| format!("failed to define {HOST_FS_READ}: {error}"))?;
+    linker
+        .func_wrap(
+            WASM_HOST_CALL_NAMESPACE,
+            HOST_FS_WRITE,
+            |caller: Caller<'_, RunnerState>, request_ptr: i32, request_len: i32, response_ptr: i32, response_capacity: i32| {
+                host_fs_write(caller, request_ptr, request_len, response_ptr, response_capacity)
+            },
+        )
+        .map_err(|error| format!("failed to define {HOST_FS_WRITE}: {error}"))?;
+    linker
+        .func_wrap(
+            WASM_HOST_CALL_NAMESPACE,
+            HOST_LLM_INFERENCE,
+            |caller: Caller<'_, RunnerState>, request_ptr: i32, request_len: i32, response_ptr: i32, response_capacity: i32| {
+                host_llm_inference(caller, request_ptr, request_len, response_ptr, response_capacity)
+            },
+        )
+        .map_err(|error| format!("failed to define {HOST_LLM_INFERENCE}: {error}"))?;
+    linker
+        .func_wrap(
+            WASM_HOST_CALL_NAMESPACE,
+            HOST_KV_GET,
+            |caller: Caller<'_, RunnerState>, request_ptr: i32, request_len: i32, response_ptr: i32, response_capacity: i32| {
+                host_kv_get(caller, request_ptr, request_len, response_ptr, response_capacity)
+            },
+        )
+        .map_err(|error| format!("failed to define {HOST_KV_GET}: {error}"))?;
+    linker
+        .func_wrap(
+            WASM_HOST_CALL_NAMESPACE,
+            HOST_KV_SET,
+            |caller: Caller<'_, RunnerState>, request_ptr: i32, request_len: i32, response_ptr: i32, response_capacity: i32| {
+                host_kv_set(caller, request_ptr, request_len, response_ptr, response_capacity)
+            },
+        )
+        .map_err(|error| format!("failed to define {HOST_KV_SET}: {error}"))?;
 
     let instance = linker
         .instantiate(&mut store, &module)
@@ -252,6 +307,76 @@ fn host_terminal_exec(
 ) -> i32 {
     caller.data_mut().host_calls.push("terminal.exec".to_string());
     match dispatch_terminal_exec(&mut caller, request_ptr, request_len, response_ptr, response_capacity) {
+        Ok(bytes_written) => bytes_written,
+        Err(status) => status.code(),
+    }
+}
+
+fn host_fs_read(
+    mut caller: Caller<'_, RunnerState>,
+    request_ptr: i32,
+    request_len: i32,
+    response_ptr: i32,
+    response_capacity: i32,
+) -> i32 {
+    caller.data_mut().host_calls.push("fs.read".to_string());
+    match dispatch_fs_read(&mut caller, request_ptr, request_len, response_ptr, response_capacity) {
+        Ok(bytes_written) => bytes_written,
+        Err(status) => status.code(),
+    }
+}
+
+fn host_fs_write(
+    mut caller: Caller<'_, RunnerState>,
+    request_ptr: i32,
+    request_len: i32,
+    response_ptr: i32,
+    response_capacity: i32,
+) -> i32 {
+    caller.data_mut().host_calls.push("fs.write".to_string());
+    match dispatch_fs_write(&mut caller, request_ptr, request_len, response_ptr, response_capacity) {
+        Ok(bytes_written) => bytes_written,
+        Err(status) => status.code(),
+    }
+}
+
+fn host_llm_inference(
+    mut caller: Caller<'_, RunnerState>,
+    request_ptr: i32,
+    request_len: i32,
+    response_ptr: i32,
+    response_capacity: i32,
+) -> i32 {
+    caller.data_mut().host_calls.push("llm.inference".to_string());
+    match dispatch_llm_inference(&mut caller, request_ptr, request_len, response_ptr, response_capacity) {
+        Ok(bytes_written) => bytes_written,
+        Err(status) => status.code(),
+    }
+}
+
+fn host_kv_get(
+    mut caller: Caller<'_, RunnerState>,
+    request_ptr: i32,
+    request_len: i32,
+    response_ptr: i32,
+    response_capacity: i32,
+) -> i32 {
+    caller.data_mut().host_calls.push("kv.get".to_string());
+    match dispatch_kv_get(&mut caller, request_ptr, request_len, response_ptr, response_capacity) {
+        Ok(bytes_written) => bytes_written,
+        Err(status) => status.code(),
+    }
+}
+
+fn host_kv_set(
+    mut caller: Caller<'_, RunnerState>,
+    request_ptr: i32,
+    request_len: i32,
+    response_ptr: i32,
+    response_capacity: i32,
+) -> i32 {
+    caller.data_mut().host_calls.push("kv.set".to_string());
+    match dispatch_kv_set(&mut caller, request_ptr, request_len, response_ptr, response_capacity) {
         Ok(bytes_written) => bytes_written,
         Err(status) => status.code(),
     }
@@ -501,6 +626,355 @@ fn dispatch_terminal_exec(
     write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_terminal_exec_response_json(&response))
 }
 
+fn dispatch_fs_read(
+    caller: &mut Caller<'_, RunnerState>,
+    request_ptr: i32,
+    request_len: i32,
+    response_ptr: i32,
+    response_capacity: i32,
+) -> Result<i32, WasmHostCallStatusCode> {
+    let memory = guest_memory(caller)?;
+    let request_json = read_guest_utf8(&memory, caller, request_ptr, request_len)?;
+    let request = parse_wasm_fs_read_request(&request_json)
+        .map_err(|_| WasmHostCallStatusCode::InvalidRequest)?;
+    if request.path.trim().is_empty() {
+        let response = WasmFsReadResponse {
+            decision: WasmHostCallDecision::Denied,
+            path: request.path,
+            content_utf8: String::new(),
+            bytes_read: 0,
+            truncated: false,
+            note: "path must not be empty".to_string(),
+        };
+        return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_fs_read_response_json(&response));
+    }
+    let sandbox_path = match resolve_runtime_workspace_path(&request.path) {
+        Ok(path) => path,
+        Err(error) => {
+            let response = WasmFsReadResponse {
+                decision: WasmHostCallDecision::Denied,
+                path: request.path,
+                content_utf8: String::new(),
+                bytes_read: 0,
+                truncated: false,
+                note: error,
+            };
+            return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_fs_read_response_json(&response));
+        }
+    };
+    let bytes = match fs::read(&sandbox_path) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            let response = WasmFsReadResponse {
+                decision: WasmHostCallDecision::Denied,
+                path: request.path,
+                content_utf8: String::new(),
+                bytes_read: 0,
+                truncated: false,
+                note: format!("failed to read '{}': {error}", sandbox_path.display()),
+            };
+            return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_fs_read_response_json(&response));
+        }
+    };
+    let max_bytes = bounded_response_bytes(request.max_bytes.min(request.security.max_response_bytes), response_capacity);
+    let (content_utf8, truncated) = truncate_lossy_utf8(&bytes, max_bytes);
+    let response = WasmFsReadResponse {
+        decision: WasmHostCallDecision::Allowed,
+        path: request.path,
+        bytes_read: content_utf8.as_bytes().len(),
+        content_utf8,
+        truncated,
+        note: format!("bounded fs read completed inside {}", runtime_workspace_root().display()),
+    };
+    write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_fs_read_response_json(&response))
+}
+
+fn dispatch_fs_write(
+    caller: &mut Caller<'_, RunnerState>,
+    request_ptr: i32,
+    request_len: i32,
+    response_ptr: i32,
+    response_capacity: i32,
+) -> Result<i32, WasmHostCallStatusCode> {
+    let memory = guest_memory(caller)?;
+    let request_json = read_guest_utf8(&memory, caller, request_ptr, request_len)?;
+    let request = parse_wasm_fs_write_request(&request_json)
+        .map_err(|_| WasmHostCallStatusCode::InvalidRequest)?;
+    if request.path.trim().is_empty() {
+        let response = WasmFsWriteResponse {
+            decision: WasmHostCallDecision::Denied,
+            path: request.path,
+            bytes_written: 0,
+            created_dirs: false,
+            note: "path must not be empty".to_string(),
+        };
+        return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_fs_write_response_json(&response));
+    }
+    let sandbox_path = match resolve_runtime_workspace_path(&request.path) {
+        Ok(path) => path,
+        Err(error) => {
+            let response = WasmFsWriteResponse {
+                decision: WasmHostCallDecision::Denied,
+                path: request.path,
+                bytes_written: 0,
+                created_dirs: false,
+                note: error,
+            };
+            return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_fs_write_response_json(&response));
+        }
+    };
+    let mut created_dirs = false;
+    if let Some(parent) = sandbox_path.parent() {
+        if request.create_dirs {
+            fs::create_dir_all(parent)
+                .map_err(|_| WasmHostCallStatusCode::InternalError)?;
+            created_dirs = true;
+        } else if !parent.exists() {
+            let response = WasmFsWriteResponse {
+                decision: WasmHostCallDecision::Denied,
+                path: request.path,
+                bytes_written: 0,
+                created_dirs: false,
+                note: format!("parent directory '{}' is missing", parent.display()),
+            };
+            return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_fs_write_response_json(&response));
+        }
+    }
+    let content = request.content_utf8.as_bytes();
+    let write_result = if request.append {
+        fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&sandbox_path)
+            .and_then(|mut stream| stream.write_all(content))
+    } else {
+        fs::write(&sandbox_path, content)
+    };
+    if let Err(error) = write_result {
+        let response = WasmFsWriteResponse {
+            decision: WasmHostCallDecision::Denied,
+            path: request.path,
+            bytes_written: 0,
+            created_dirs,
+            note: format!("failed to write '{}': {error}", sandbox_path.display()),
+        };
+        return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_fs_write_response_json(&response));
+    }
+    let response = WasmFsWriteResponse {
+        decision: WasmHostCallDecision::Allowed,
+        path: request.path,
+        bytes_written: content.len(),
+        created_dirs,
+        note: format!("bounded fs write completed inside {}", runtime_workspace_root().display()),
+    };
+    write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_fs_write_response_json(&response))
+}
+
+fn dispatch_llm_inference(
+    caller: &mut Caller<'_, RunnerState>,
+    request_ptr: i32,
+    request_len: i32,
+    response_ptr: i32,
+    response_capacity: i32,
+) -> Result<i32, WasmHostCallStatusCode> {
+    let memory = guest_memory(caller)?;
+    let request_json = read_guest_utf8(&memory, caller, request_ptr, request_len)?;
+    let request = parse_wasm_llm_inference_request(&request_json)
+        .map_err(|_| WasmHostCallStatusCode::InvalidRequest)?;
+    if request.user_prompt.trim().is_empty() {
+        let response = WasmLlmInferenceResponse {
+            decision: WasmHostCallDecision::Denied,
+            model: request.model,
+            output_text: String::new(),
+            finish_reason: String::new(),
+            prompt_tokens: None,
+            completion_tokens: None,
+            total_tokens: None,
+            note: "user_prompt must not be empty".to_string(),
+        };
+        return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_llm_inference_response_json(&response));
+    }
+    let api_key = match std::env::var("OPENAI_API_KEY") {
+        Ok(value) if !value.trim().is_empty() => value,
+        _ => {
+            let response = WasmLlmInferenceResponse {
+                decision: WasmHostCallDecision::Denied,
+                model: request.model,
+                output_text: String::new(),
+                finish_reason: String::new(),
+                prompt_tokens: None,
+                completion_tokens: None,
+                total_tokens: None,
+                note: "OPENAI_API_KEY is missing from the host environment".to_string(),
+            };
+            return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_llm_inference_response_json(&response));
+        }
+    };
+    let timeout_ms = request.security.max_timeout_ms.max(1);
+    let response_limit = request.security.max_response_bytes.max(1_024).min(65_536);
+    let mut messages = vec![];
+    if !request.system_prompt.trim().is_empty() {
+        messages.push(json!({"role": "system", "content": request.system_prompt}));
+    }
+    messages.push(json!({"role": "user", "content": request.user_prompt}));
+    let payload = json!({
+        "model": request.model,
+        "messages": messages,
+        "max_tokens": request.max_tokens,
+    });
+    let mut response = match ureq::post("https://api.openai.com/v1/chat/completions")
+        .config()
+        .timeout_global(Some(Duration::from_millis(timeout_ms)))
+        .http_status_as_error(false)
+        .build()
+        .header("authorization", &format!("Bearer {api_key}"))
+        .header("content-type", "application/json")
+        .send(payload.to_string())
+    {
+        Ok(response) => response,
+        Err(error) => {
+            let response = WasmLlmInferenceResponse {
+                decision: WasmHostCallDecision::Denied,
+                model: request.model,
+                output_text: String::new(),
+                finish_reason: String::new(),
+                prompt_tokens: None,
+                completion_tokens: None,
+                total_tokens: None,
+                note: format!("OpenAI request failed: {error}"),
+            };
+            return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_llm_inference_response_json(&response));
+        }
+    };
+    let status = response.status().as_u16();
+    let response_body = response
+        .body_mut()
+        .with_config()
+        .limit(response_limit as u64)
+        .read_to_string()
+        .unwrap_or_else(|error| json!({"error": {"message": format!("failed to read body: {error}")}}).to_string());
+    let payload: Value = serde_json::from_str(&response_body).unwrap_or_else(|_| json!({"raw_body": response_body}));
+    let error_message = payload
+        .get("error")
+        .and_then(|value| value.get("message"))
+        .and_then(Value::as_str)
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| value_string_from_json(payload.get("raw_body")));
+    if !(200..300).contains(&status) {
+        let response = WasmLlmInferenceResponse {
+            decision: WasmHostCallDecision::Denied,
+            model: request.model,
+            output_text: String::new(),
+            finish_reason: String::new(),
+            prompt_tokens: payload.pointer("/usage/prompt_tokens").and_then(Value::as_u64),
+            completion_tokens: payload.pointer("/usage/completion_tokens").and_then(Value::as_u64),
+            total_tokens: payload.pointer("/usage/total_tokens").and_then(Value::as_u64),
+            note: format!("OpenAI chat completions returned HTTP {status}: {error_message}"),
+        };
+        return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_llm_inference_response_json(&response));
+    }
+    let response = WasmLlmInferenceResponse {
+        decision: WasmHostCallDecision::Allowed,
+        model: request.model,
+        output_text: extract_openai_output_text(&payload),
+        finish_reason: payload
+            .pointer("/choices/0/finish_reason")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        prompt_tokens: payload.pointer("/usage/prompt_tokens").and_then(Value::as_u64),
+        completion_tokens: payload.pointer("/usage/completion_tokens").and_then(Value::as_u64),
+        total_tokens: payload.pointer("/usage/total_tokens").and_then(Value::as_u64),
+        note: "bounded native llm host call completed against OpenAI chat completions".to_string(),
+    };
+    write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_llm_inference_response_json(&response))
+}
+
+fn dispatch_kv_get(
+    caller: &mut Caller<'_, RunnerState>,
+    request_ptr: i32,
+    request_len: i32,
+    response_ptr: i32,
+    response_capacity: i32,
+) -> Result<i32, WasmHostCallStatusCode> {
+    let memory = guest_memory(caller)?;
+    let request_json = read_guest_utf8(&memory, caller, request_ptr, request_len)?;
+    let request = parse_wasm_kv_get_request(&request_json)
+        .map_err(|_| WasmHostCallStatusCode::InvalidRequest)?;
+    if request.key.trim().is_empty() {
+        let response = WasmKvGetResponse {
+            decision: WasmHostCallDecision::Denied,
+            namespace: request.namespace,
+            key: request.key,
+            found: false,
+            value_json: "null".to_string(),
+            note: "key must not be empty".to_string(),
+        };
+        return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_kv_get_response_json(&response));
+    }
+    let store = load_runtime_kv_store().map_err(|_| WasmHostCallStatusCode::InternalError)?;
+    let value = store.get(&request.namespace).and_then(|entries| entries.get(&request.key));
+    let response = WasmKvGetResponse {
+        decision: WasmHostCallDecision::Allowed,
+        namespace: request.namespace,
+        key: request.key,
+        found: value.is_some(),
+        value_json: value.map(|value| value.to_string()).unwrap_or_else(|| "null".to_string()),
+        note: "local runtime KV lookup completed".to_string(),
+    };
+    write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_kv_get_response_json(&response))
+}
+
+fn dispatch_kv_set(
+    caller: &mut Caller<'_, RunnerState>,
+    request_ptr: i32,
+    request_len: i32,
+    response_ptr: i32,
+    response_capacity: i32,
+) -> Result<i32, WasmHostCallStatusCode> {
+    let memory = guest_memory(caller)?;
+    let request_json = read_guest_utf8(&memory, caller, request_ptr, request_len)?;
+    let request = parse_wasm_kv_set_request(&request_json)
+        .map_err(|_| WasmHostCallStatusCode::InvalidRequest)?;
+    if request.key.trim().is_empty() {
+        let response = WasmKvSetResponse {
+            decision: WasmHostCallDecision::Denied,
+            namespace: request.namespace,
+            key: request.key,
+            stored: false,
+            note: "key must not be empty".to_string(),
+        };
+        return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_kv_set_response_json(&response));
+    }
+    let value: Value = match serde_json::from_str(&request.value_json) {
+        Ok(value) => value,
+        Err(error) => {
+            let response = WasmKvSetResponse {
+                decision: WasmHostCallDecision::Denied,
+                namespace: request.namespace,
+                key: request.key,
+                stored: false,
+                note: format!("value_json must be valid JSON: {error}"),
+            };
+            return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_kv_set_response_json(&response));
+        }
+    };
+    let mut store = load_runtime_kv_store().map_err(|_| WasmHostCallStatusCode::InternalError)?;
+    store
+        .entry(request.namespace.clone())
+        .or_default()
+        .insert(request.key.clone(), value);
+    save_runtime_kv_store(&store).map_err(|_| WasmHostCallStatusCode::InternalError)?;
+    let response = WasmKvSetResponse {
+        decision: WasmHostCallDecision::Allowed,
+        namespace: request.namespace,
+        key: request.key,
+        stored: true,
+        note: "local runtime KV write completed".to_string(),
+    };
+    write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_kv_set_response_json(&response))
+}
+
 fn capture_host_response_json(
     store: &mut Store<RunnerState>,
     instance: &Instance,
@@ -637,6 +1111,93 @@ fn truncate_lossy_utf8(bytes: &[u8], max_bytes: usize) -> (String, bool) {
     let truncated = bytes.len() > limit;
     let slice = if truncated { &bytes[..limit] } else { bytes };
     (String::from_utf8_lossy(slice).into_owned(), truncated)
+}
+
+
+fn runtime_workspace_root() -> PathBuf {
+    PathBuf::from("/home/ubuntu/.local/share/meridian-loom/runtime/default/workspace")
+}
+
+fn resolve_runtime_workspace_path(raw: &str) -> Result<PathBuf, String> {
+    if raw.trim().is_empty() {
+        return Err("path must not be empty".to_string());
+    }
+    let mut relative = PathBuf::new();
+    for component in Path::new(raw).components() {
+        match component {
+            Component::Normal(segment) => relative.push(segment),
+            Component::CurDir => {}
+            Component::ParentDir => return Err(format!("path '{}' escapes the runtime workspace", raw)),
+            Component::RootDir | Component::Prefix(_) => {
+                return Err(format!("absolute path '{}' is not allowed", raw));
+            }
+        }
+    }
+    if relative.as_os_str().is_empty() {
+        return Err("path must not be empty".to_string());
+    }
+    let root = runtime_workspace_root();
+    fs::create_dir_all(&root).map_err(|error| format!("failed to create runtime workspace root '{}': {error}", root.display()))?;
+    Ok(root.join(relative))
+}
+
+type RuntimeKvStore = BTreeMap<String, BTreeMap<String, Value>>;
+
+fn runtime_kv_store_path() -> PathBuf {
+    PathBuf::from("/home/ubuntu/.local/share/meridian-loom/runtime/default/state/runtime/kv_memory.json")
+}
+
+fn load_runtime_kv_store() -> Result<RuntimeKvStore, String> {
+    let path = runtime_kv_store_path();
+    if !path.exists() {
+        return Ok(BTreeMap::new());
+    }
+    let raw = fs::read_to_string(&path)
+        .map_err(|error| format!("failed to read kv store '{}': {error}", path.display()))?;
+    if raw.trim().is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    serde_json::from_str(&raw)
+        .map_err(|error| format!("failed to parse kv store '{}': {error}", path.display()))
+}
+
+fn save_runtime_kv_store(store: &RuntimeKvStore) -> Result<(), String> {
+    let path = runtime_kv_store_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("failed to create kv store directory '{}': {error}", parent.display()))?;
+    }
+    let raw = serde_json::to_string_pretty(store)
+        .map_err(|error| format!("failed to serialize kv store: {error}"))?;
+    fs::write(&path, raw)
+        .map_err(|error| format!("failed to write kv store '{}': {error}", path.display()))
+}
+
+fn extract_openai_output_text(payload: &Value) -> String {
+    let Some(content) = payload.pointer("/choices/0/message/content") else {
+        return String::new();
+    };
+    match content {
+        Value::String(text) => text.clone(),
+        Value::Array(parts) => parts
+            .iter()
+            .filter_map(|part| {
+                part.get("text")
+                    .and_then(Value::as_str)
+                    .or_else(|| part.get("content").and_then(Value::as_str))
+            })
+            .collect::<Vec<_>>()
+            .join(""),
+        _ => String::new(),
+    }
+}
+
+fn value_string_from_json(value: Option<&Value>) -> String {
+    match value {
+        Some(Value::String(text)) => text.clone(),
+        Some(other) => other.to_string(),
+        None => String::new(),
+    }
 }
 
 fn call_i32_function(
