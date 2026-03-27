@@ -4,7 +4,9 @@ use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use loom_poge::{HostCallKind, KernelWarrant, PoGEInterceptor};
 
 use serde_json::{json, Value};
 use ureq::ResponseExt;
@@ -78,6 +80,9 @@ pub struct WasmExecutionResult {
 struct RunnerState {
     limits: wasmtime::StoreLimits,
     host_calls: Vec<String>,
+    /// PoGE interceptor for this execution session. Wrapped in Option so we
+    /// can take ownership via `.take()` at finalization time without cloning.
+    poge: Option<PoGEInterceptor>,
 }
 
 pub fn build_wasmtime_config(host: &WasmHostConfig) -> Result<Config, Vec<String>> {
@@ -123,11 +128,13 @@ pub fn run_wasm_guest(request: &WasmExecutionRequest) -> Result<WasmExecutionRes
         .memories(request.host.store_limits.max_memories as usize)
         .trap_on_grow_failure(false)
         .build();
+    let poge = PoGEInterceptor::new(poge_dummy_warrant(), [0u8; 32], "airgapped-researcher");
     let mut store = Store::new(
         &engine,
         RunnerState {
             limits: store_limits,
             host_calls: Vec::new(),
+            poge: Some(poge),
         },
     );
     store.limiter(|state| &mut state.limits);
@@ -236,6 +243,28 @@ pub fn run_wasm_guest(request: &WasmExecutionRequest) -> Result<WasmExecutionRes
     let host_response_json = capture_host_response_json(&mut store, &instance)?;
     let host_calls = store.data().host_calls.clone();
 
+    // --- PoGE Finalization ---
+    // Extract the interceptor from state (taking ownership) and finalize the
+    // Merkle tree over all recorded host-call receipts.
+    if let Some(interceptor) = store.data_mut().poge.take() {
+        match interceptor.finalize() {
+            Ok(audit_root) => {
+                let root_hex = audit_root.merkle_root_hex();
+                let trace_len = audit_root.trace_len;
+                println!(
+                    "\n\x1b[1;32m[🛡️ PoGE PROTOCOL] Cryptographic Audit Root Settled:\x1b[0m \x1b[1;36m{}\x1b[0m",
+                    root_hex
+                );
+                println!(
+                    "\x1b[1;32m[🛡️ PoGE PROTOCOL] Trace Length:\x1b[0m \x1b[1;36m{} events securely hashed.\x1b[0m\n",
+                    trace_len
+                );
+            }
+            // EmptyTrace is expected when the guest made no PoGE-instrumented calls.
+            Err(_) => {}
+        }
+    }
+
     let mut notes = vec![
         "experimental local Wasmtime guest execution".to_string(),
         "truth boundary: local-only execution path, not hosted runtime replacement".to_string(),
@@ -278,10 +307,23 @@ fn host_browser_navigate(
     response_capacity: i32,
 ) -> i32 {
     caller.data_mut().host_calls.push("browser.navigate".to_string());
-    match dispatch_browser_navigate(&mut caller, request_ptr, request_len, response_ptr, response_capacity) {
-        Ok(bytes_written) => bytes_written,
-        Err(status) => status.code(),
+    let input = read_guest_bytes_for_poge(&mut caller, request_ptr, request_len);
+    let result = dispatch_browser_navigate(&mut caller, request_ptr, request_len, response_ptr, response_capacity);
+    let (return_val, is_error, out_len) = match result {
+        Ok(n) => (n, false, n.max(0) as usize),
+        Err(status) => (status.code(), true, 0usize),
+    };
+    let output = if out_len > 0 {
+        read_guest_bytes_for_poge(&mut caller, response_ptr, out_len as i32)
+    } else {
+        Vec::new()
+    };
+    let epoch_ms = epoch_ms_now();
+    let data = caller.data_mut();
+    if let Some(poge) = data.poge.as_mut() {
+        let _ = poge.record_event(HostCallKind::WebFetch, epoch_ms, &input, &output, is_error);
     }
+    return_val
 }
 
 fn host_schedule_heartbeat(
@@ -334,10 +376,23 @@ fn host_fs_write(
     response_capacity: i32,
 ) -> i32 {
     caller.data_mut().host_calls.push("fs.write".to_string());
-    match dispatch_fs_write(&mut caller, request_ptr, request_len, response_ptr, response_capacity) {
-        Ok(bytes_written) => bytes_written,
-        Err(status) => status.code(),
+    let input = read_guest_bytes_for_poge(&mut caller, request_ptr, request_len);
+    let result = dispatch_fs_write(&mut caller, request_ptr, request_len, response_ptr, response_capacity);
+    let (return_val, is_error, out_len) = match result {
+        Ok(n) => (n, false, n.max(0) as usize),
+        Err(status) => (status.code(), true, 0usize),
+    };
+    let output = if out_len > 0 {
+        read_guest_bytes_for_poge(&mut caller, response_ptr, out_len as i32)
+    } else {
+        Vec::new()
+    };
+    let epoch_ms = epoch_ms_now();
+    let data = caller.data_mut();
+    if let Some(poge) = data.poge.as_mut() {
+        let _ = poge.record_event(HostCallKind::FsWrite, epoch_ms, &input, &output, is_error);
     }
+    return_val
 }
 
 fn host_llm_inference(
@@ -348,10 +403,23 @@ fn host_llm_inference(
     response_capacity: i32,
 ) -> i32 {
     caller.data_mut().host_calls.push("llm.inference".to_string());
-    match dispatch_llm_inference(&mut caller, request_ptr, request_len, response_ptr, response_capacity) {
-        Ok(bytes_written) => bytes_written,
-        Err(status) => status.code(),
+    let input = read_guest_bytes_for_poge(&mut caller, request_ptr, request_len);
+    let result = dispatch_llm_inference(&mut caller, request_ptr, request_len, response_ptr, response_capacity);
+    let (return_val, is_error, out_len) = match result {
+        Ok(n) => (n, false, n.max(0) as usize),
+        Err(status) => (status.code(), true, 0usize),
+    };
+    let output = if out_len > 0 {
+        read_guest_bytes_for_poge(&mut caller, response_ptr, out_len as i32)
+    } else {
+        Vec::new()
+    };
+    let epoch_ms = epoch_ms_now();
+    let data = caller.data_mut();
+    if let Some(poge) = data.poge.as_mut() {
+        let _ = poge.record_event(HostCallKind::LlmInference, epoch_ms, &input, &output, is_error);
     }
+    return_val
 }
 
 fn host_kv_get(
@@ -1226,6 +1294,58 @@ fn save_runtime_kv_store(store: &RuntimeKvStore) -> Result<(), String> {
         .map_err(|error| format!("failed to serialize kv store: {error}"))?;
     fs::write(&path, raw)
         .map_err(|error| format!("failed to write kv store '{}': {error}", path.display()))
+}
+
+// ---------------------------------------------------------------------------
+// PoGE helpers
+// ---------------------------------------------------------------------------
+
+/// Returns a dummy KernelWarrant suitable for airgapped / development sessions.
+/// All credential fields are zeroed; expiry is set to u64::MAX so the
+/// interceptor never rejects a call due to expiry.
+fn poge_dummy_warrant() -> KernelWarrant {
+    KernelWarrant {
+        id: [0u8; 32],
+        scope_cbor: vec![],
+        expiry_epoch_ms: u64::MAX,
+        kernel_sig: [0u8; 64],
+        kernel_pub: [0u8; 32],
+    }
+}
+
+/// Returns the current wall-clock time as UTC milliseconds since the Unix epoch.
+fn epoch_ms_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Read up to 4 KiB from guest memory at `(ptr, len)` for PoGE receipt hashing.
+///
+/// Returns an empty Vec on any error (invalid pointer, OOB, no memory export).
+/// The 4 KiB cap keeps per-call overhead constant regardless of payload size.
+fn read_guest_bytes_for_poge(
+    caller: &mut Caller<'_, RunnerState>,
+    ptr: i32,
+    len: i32,
+) -> Vec<u8> {
+    const MAX_POGE_BYTES: usize = 4096;
+    if ptr < 0 || len <= 0 {
+        return Vec::new();
+    }
+    let clamped = (len as usize).min(MAX_POGE_BYTES);
+    // guest_memory needs &mut caller to call get_export; the borrow is released
+    // when the function returns and memory is just a lightweight handle.
+    let Ok(memory) = guest_memory(caller) else {
+        return Vec::new();
+    };
+    let mut buf = vec![0u8; clamped];
+    // &*caller coerces &mut Caller<T> → &Caller<T>, satisfying AsContext.
+    if memory.read(&*caller, ptr as usize, &mut buf).is_err() {
+        return Vec::new();
+    }
+    buf
 }
 
 fn extract_openai_output_text(payload: &Value) -> String {
