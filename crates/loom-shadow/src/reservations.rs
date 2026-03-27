@@ -201,38 +201,6 @@ pub fn nack_job(
     Ok(())
 }
 
-/// Extend the lease of an active reservation. The reserver_id must match.
-pub fn extend_lease(
-    ledger: &mut ReservationLedger,
-    job_id: &str,
-    reserver_id: &str,
-    additional_secs: u64,
-) -> ReservationResult<u64> {
-    let reservation = ledger
-        .reservations
-        .get_mut(job_id)
-        .ok_or_else(|| format!("no reservation for job {}", job_id))?;
-    if reservation.reserver_id != reserver_id {
-        return Err(format!(
-            "reserver mismatch: expected {}, got {}",
-            reservation.reserver_id, reserver_id
-        ));
-    }
-    if reservation.state != ReservationState::Reserved {
-        return Err(format!(
-            "cannot extend lease for job {} in state {:?}",
-            job_id, reservation.state
-        ));
-    }
-    reservation.lease_duration_secs += additional_secs;
-    Ok(reservation.lease_started_at + reservation.lease_duration_secs)
-}
-
-/// Query the current reservation state for a job.
-pub fn reservation_state<'a>(ledger: &'a ReservationLedger, job_id: &str) -> Option<&'a JobReservation> {
-    ledger.reservations.get(job_id)
-}
-
 /// Expire all reservations whose lease has elapsed. Returns freed job IDs.
 pub fn expire_stale(ledger: &mut ReservationLedger, now_epoch: u64) -> Vec<String> {
     let mut freed = Vec::new();
