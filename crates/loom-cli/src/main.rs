@@ -327,21 +327,21 @@ Next\n\
 
 fn render_startup_banner(color: bool) -> String {
     let icon = [
-        "      /\\/\\",
-        "   .-/ /\\ \\-.",
-        "  /__/_/\\_\\__\\",
-        "  \\  \\ \\/ /  /",
-        "   '.__\\__/_.",
+        r#"      /\/\"#,
+        r#"   .-/ /\ \-."#,
+        r#"  /__/_/\_\__\"#,
+        r#"  \  \ \/ /  /"#,
+        r#"   '.__\__/_."#,
     ]
     .join("\n");
     if color {
         format!(
-            "\x1b[1;92m{}\x1b[0m\n\x1b[1;96mMERIDIAN LOOM\x1b[0m\n\x1b[96mConstitutional Runtime v0.1.0.\x1b[0m\n\x1b[37mAutonomous intelligence inside a governed shell.\x1b[0m\n\n",
+            "\x1b[1;92m{}\x1b[0m\n\x1b[1;96mMERIDIAN LOOM\x1b[0m\n\x1b[37mMeridian Loom v0.1.0 - A governed local runtime for bounded autonomous work.\x1b[0m\n\n",
             icon,
         )
     } else {
         format!(
-            "{}\nMERIDIAN LOOM\nConstitutional Runtime v0.1.0.\nAutonomous intelligence inside a governed shell.\n\n",
+            "{}\nMERIDIAN LOOM\nMeridian Loom v0.1.0 - A governed local runtime for bounded autonomous work.\n\n",
             icon,
         )
     }

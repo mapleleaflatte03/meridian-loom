@@ -1,3 +1,5 @@
+use std::io::IsTerminal;
+
 use crate::*;
 
 pub(crate) fn handle_init(args: &[String]) -> LoomResult<()> {
@@ -25,10 +27,19 @@ pub(crate) fn handle_init(args: &[String]) -> LoomResult<()> {
 
 pub(crate) fn handle_doctor(args: &[String]) -> LoomResult<()> {
     let root = root_from(take_value(args, "--root").as_deref())?;
-    let format = take_value(args, "--format").unwrap_or_else(|| "json".to_string());
+    let format = take_value(args, "--format").unwrap_or_else(|| {
+        if std::io::stdout().is_terminal() {
+            "human".to_string()
+        } else {
+            "json".to_string()
+        }
+    });
     let checks = doctor(&root)?;
     match format.as_str() {
-        "human" => print_human(&render_doctor_human(&checks)),
+        "human" => {
+            print_startup_banner();
+            print_human(&render_doctor_human(&checks));
+        }
         _ => print!("{}", render_doctor_json(&checks)),
     }
     Ok(())
@@ -52,6 +63,7 @@ pub(crate) fn handle_status(args: &[String]) -> LoomResult<()> {
     let root = root_from(take_value(args, "--root").as_deref())?;
     let base = status_human(&root)?;
     let service = runtime_service_status(&root, take_value(args, "--socket").as_deref())?;
+    print_startup_banner();
     print_human_block(&[base, render_runtime_service_human(&service)]);
     Ok(())
 }
