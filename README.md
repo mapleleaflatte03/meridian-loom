@@ -9,11 +9,8 @@
 </p>
 
 <p align="center">
-  <img src="./docs/assets/loom_runtime_panels.svg" alt="Meridian Loom runtime panels" width="960">
-</p>
-
-<p align="center">
-  Meridian Loom is the local-first runtime surface for Meridian.
+  <strong>Universal Personal AI Assistant Runtime</strong><br>
+  Autonomous intelligence inside a governed shell.
 </p>
 
 <p align="center">
@@ -22,72 +19,61 @@
   <a href="docs/SERVICE.md">Service</a> ·
   <a href="docs/CONFIG.md">Config</a> ·
   <a href="docs/OPERATIONS.md">Operations</a> ·
-  <a href="docs/ARCHITECTURE.md">Architecture</a> ·
-  <a href="docs/RELEASE.md">Release</a>
+  <a href="docs/ARCHITECTURE.md">Architecture</a>
 </p>
 
 # Meridian Loom
 
-## What It Is
+Meridian Loom is the premium local runtime surface for Meridian v0.1.0. It carries the Mantis-branded installer and CLI, provisions into the operator's home directory, and exposes the bounded primitive surface that the broader Meridian launch story points to.
 
-Meridian Loom is the operator-facing local runtime boundary for Meridian. It is installable, inspectable, and runnable on a single Linux host.
+## 1-Command Install
 
-## Three-Part Architecture
+```bash
+curl -fsSL https://raw.githubusercontent.com/meridian/loom/main/scripts/install.sh | bash
+```
 
-Meridian Loom is one part of a three-repo runtime stack:
+The installer keeps the Mantis banner, bootstraps Rust when missing, provisions the runtime under `$HOME/.local/share/meridian-loom`, and seeds the built-in Wasm capability registry.
 
-- [meridian-loom](https://github.com/mapleleaflatte03/meridian-loom) provides the operator-facing local runtime surface.
-- [meridian-kernel](https://github.com/mapleleaflatte03/meridian-kernel) provides the governance and policy kernel.
-- [meridian-intelligence](https://github.com/mapleleaflatte03/meridian-intelligence) provides the intelligence and route layer.
+## Universal OS Primitive Story
 
-## What Exists Today
+Meridian Loom is the local runtime layer for the following primitive surfaces:
 
+- Terminal Execution: bounded local argv execution through the native Wasm host-call lane.
+- Browser Vision: bounded browser navigation and content capture through the local web/Wasm path.
+- Omni-channel Presence: declared gateway surface for delivery and presence routing.
+- Persistent Memory: architecture surface for durable memory records and state entries.
+- Heartbeat / Background Autonomy: built-in heartbeat scheduling primitive with local receipt logging and truthful scheduler boundaries.
+- Dynamic Skill Loading: imported workspace skills, plugin compatibility, and capability loading through the operator surface.
+
+## What Ships In v0.1.0
+
+- 1-command installer with the Mantis banner.
 - Local service lifecycle with foreground and background modes.
 - Tokenized local HTTP control plane.
 - Queue, job ledger, audit, parity, and shadow artifacts on disk.
-- Docker, tarball, and source install paths.
-- Rehearsal scripts split between operational tests and migration/back-compat tooling.
+- Built-in Wasm capabilities for browser navigation, terminal execution, and heartbeat scheduling.
+- Capability tooling for list/show/import/verify/promote flows.
 
-## What Is Not Claimed
-
-- Hosted runtime replacement.
-- Live transport cutover.
-- Distributed queue orchestration.
-- Retired OpenClaw dependency in the live host.
-
-Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the compact architecture and truth boundary.
-
-## Quick Start
+## Quick Start After Install
 
 ```bash
-cargo build --release --workspace --locked
-
-export LOOM_ROOT="$HOME/.local/share/meridian-loom/runtime/default"
-export MERIDIAN_KERNEL_PATH=/tmp/meridian-kernel
-export LOOM_SERVICE_TOKEN=loom-local-token
-
-target/release/loom init \
-  --mode embedded \
-  --root "$LOOM_ROOT" \
-  --kernel-path "$MERIDIAN_KERNEL_PATH" \
-  --org-id local_foundry
-
-target/release/loom start \
-  --root "$LOOM_ROOT" \
-  --kernel-path "$MERIDIAN_KERNEL_PATH" \
-  --http-address 127.0.0.1:18910 \
-  --service-token "$LOOM_SERVICE_TOKEN"
+loom doctor --root "$HOME/.local/share/meridian-loom/runtime/default" --format human
+loom capability list --root "$HOME/.local/share/meridian-loom/runtime/default" --format human
 ```
 
-## More
+## Three-Part Stack
 
-- Install: [docs/INSTALL.md](docs/INSTALL.md)
-- Run Local: [docs/RUN_LOCAL.md](docs/RUN_LOCAL.md)
-- Service: [docs/SERVICE.md](docs/SERVICE.md)
-- Config: [docs/CONFIG.md](docs/CONFIG.md)
-- Operations: [docs/OPERATIONS.md](docs/OPERATIONS.md)
-- Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- Release: [docs/RELEASE.md](docs/RELEASE.md)
+- [meridian-loom](https://github.com/mapleleaflatte03/meridian-loom): local runtime surface and operator tooling.
+- [meridian-kernel](https://github.com/mapleleaflatte03/meridian-kernel): governance, policy, authority, treasury, and court.
+- [meridian-intelligence](https://github.com/mapleleaflatte03/meridian-intelligence): public intelligence surface and route layer.
+
+## Truth Boundary
+
+- Local install, queue, audit, parity, and operator surfaces are real.
+- Terminal execution, browser navigation, and heartbeat scheduling are real local primitives with bounded scope.
+- Omni-channel presence and persistent memory remain broader architecture surfaces beyond the current local proof line.
+- This repo does not claim hosted runtime replacement or broad production cutover.
+- Legacy OpenClaw-named compatibility surfaces remain only where they still serve migration or import compatibility.
 
 ## Operational Surface
 
@@ -105,10 +91,3 @@ target/release/loom start \
 - Operational rehearsals live in `scripts/tests/`.
 - Migration and backward-compatibility rehearsals live in `scripts/migration_tools/`.
 - Generated `examples/*-output.txt` transcripts are not checked in.
-
-## Truth Boundary
-
-- Local service, queue, audit, parity, and operator surfaces are real.
-- Queue ack, run-once, run-until-empty, and status are real local queue operations.
-- The repo is not a hosted replacement claim.
-- Legacy OpenClaw-named compatibility surfaces remain only where they still serve import or migration compatibility.
