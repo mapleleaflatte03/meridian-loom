@@ -4,9 +4,13 @@ use loom_core::{
     preview_local_sanction_controls, read_config, resolve_agent_identity, runtime_worker_entry,
     capabilities::{resolve_capability_for_request, render_capability_json, render_capability_readiness_human, render_capability_readiness_json, CapabilityDescriptor},
     wasm_host::{
-        builtin_browser_navigate_guest_bytes, render_wasm_browser_navigate_request_json, run_wasm_guest,
-        HostBackend, WasmBrowserNavigateRequest, WasmExecutionRequest, WasmGuestSource, WasmHostBuilder,
-        WasmHostSecurityContext,
+        builtin_browser_navigate_guest_bytes, builtin_heartbeat_schedule_guest_bytes,
+        builtin_terminal_exec_guest_bytes, render_wasm_browser_navigate_request_json,
+        render_wasm_heartbeat_schedule_request_json, render_wasm_terminal_exec_request_json,
+        run_wasm_guest, HostBackend, WasmBrowserNavigateRequest, WasmExecutionRequest,
+        WasmExecutionResult, WasmGuestSource, WasmHeartbeatScheduleKind,
+        WasmHeartbeatScheduleRequest, WasmHostBuilder, WasmHostSecurityContext,
+        WasmTerminalExecRequest,
     },
     ActionEnvelope, AgentIdentityResolution, Config, ReferenceGateCheck,
 };
@@ -7950,6 +7954,10 @@ fn dispatch_wasm_worker(
         ]
     } else if module_source == "builtin:browser.navigate" {
         build_builtin_browser_navigate_guest(capability, worker_request_path)?
+    } else if module_source == "builtin:terminal.exec" {
+        build_builtin_terminal_exec_guest(capability, worker_request_path)?
+    } else if module_source == "builtin:heartbeat.schedule" {
+        build_builtin_heartbeat_schedule_guest(capability, worker_request_path)?
     } else if let Some(module_path) = module_source.strip_prefix("wasm:") {
         fs::read(module_path).map_err(|error| format!("failed to read wasm module {}: {}", module_path, error))?
     } else {
@@ -7977,6 +7985,11 @@ fn dispatch_wasm_worker(
 
     match run_wasm_guest(&request) {
         Ok(result) => {
+            let heartbeat_receipt_path = if module_source == "builtin:heartbeat.schedule" {
+                Some(append_builtin_heartbeat_receipt(jobs_dir, capability, worker_request_path, &result)?)
+            } else {
+                None
+            };
             let host_response_json = result.host_response_json.clone().unwrap_or_else(|| "null".to_string());
             let host_calls_json = serde_json::to_string(&result.host_calls).unwrap_or_else(|_| "[]".to_string());
             let result_json = format!(
@@ -8008,13 +8021,17 @@ fn dispatch_wasm_worker(
                 result.host_calls.join(",")
             };
             let log_msg = format!(
-                "wasm worker completed: module={} entrypoint=run result={} backend={} host_calls={} jobs_dir={}
+                "wasm worker completed: module={} entrypoint=run result={} backend={} host_calls={} jobs_dir={} heartbeat_receipt={}
 ",
                 result.module_name,
                 result.entrypoint_result.map(|value| value.to_string()).unwrap_or_else(|| "null".to_string()),
                 result.host_backend,
                 host_calls_label,
                 jobs_dir.display(),
+                heartbeat_receipt_path
+                    .as_ref()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|| "<none>".to_string()),
             );
             fs::write(worker_log_path, &log_msg).map_err(io_err)?;
             Ok(WorkerExecutionCapture {
@@ -8024,12 +8041,16 @@ fn dispatch_wasm_worker(
                 worker_status: "completed".to_string(),
                 worker_kind: format!("wasm_wasmtime/{}", capability.name),
                 worker_note: format!(
-                    "wasm capability {} executed: module={} entrypoint_result={} host_calls={} fuel_budget={}",
+                    "wasm capability {} executed: module={} entrypoint_result={} host_calls={} fuel_budget={} heartbeat_receipt={}",
                     capability.name,
                     result.module_name,
                     result.entrypoint_result.map(|value| value.to_string()).unwrap_or_else(|| "null".to_string()),
                     if result.host_calls.is_empty() { "none".to_string() } else { result.host_calls.join(",") },
                     fuel_budget,
+                    heartbeat_receipt_path
+                        .as_ref()
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_else(|| "<none>".to_string()),
                 ),
                 runtime_outcome: "worker_executed".to_string(),
             })
@@ -8127,6 +8148,189 @@ fn build_builtin_browser_navigate_guest(
     builtin_browser_navigate_guest_bytes(&request_json)
 }
 
+fn build_builtin_terminal_exec_guest(
+    capability: &CapabilityDescriptor,
+    worker_request_path: &Path,
+) -> ShadowResult<Vec<u8>> {
+    let raw = fs::read_to_string(worker_request_path).map_err(io_err)?;
+    let body: Value = serde_json::from_str(&raw).map_err(io_err)?;
+    let envelope = body.get("envelope");
+    let payload_json = value_json_string(envelope.and_then(|value| value.get("payload_json")));
+    let payload = if payload_json.is_empty() {
+        Value::Object(serde_json::Map::new())
+    } else {
+        serde_json::from_str(&payload_json)
+            .map_err(|error| format!("invalid terminal payload_json for {}: {}", capability.name, error))?
+    };
+    let argv = value_string_vec(payload.get("argv"));
+    if argv.is_empty() {
+        return Err(format!("capability '{}' requires payload_json.argv", capability.name));
+    }
+    let timeout_ms = payload.get("timeout_ms").and_then(Value::as_u64).unwrap_or(2_000);
+    let max_output_bytes = payload.get("max_output_bytes").and_then(Value::as_u64).unwrap_or(16_384) as usize;
+    let allowed_workdir_roots = value_string_vec(payload.get("allowed_workdir_roots"));
+    let request = WasmTerminalExecRequest {
+        security: WasmHostSecurityContext {
+            capability_name: capability.name.clone(),
+            agent_id: value_string(envelope.and_then(|value| value.get("agent_id"))),
+            org_id: value_string(envelope.and_then(|value| value.get("org_id"))),
+            session_id: value_string(envelope.and_then(|value| value.get("runtime_id"))),
+            operation_id: value_string(body.get("input_hash")),
+            max_timeout_ms: timeout_ms.max(1),
+            max_response_bytes: max_output_bytes.max(256),
+            allowed_hosts: Vec::new(),
+            allowed_workdir_roots: if allowed_workdir_roots.is_empty() {
+                vec![".".to_string()]
+            } else {
+                allowed_workdir_roots
+            },
+            require_user_present: false,
+        },
+        argv,
+        working_dir: {
+            let working_dir = value_string(payload.get("working_dir"));
+            if working_dir.is_empty() {
+                ".".to_string()
+            } else {
+                working_dir
+            }
+        },
+        env_allowlist: value_string_vec(payload.get("env_allowlist")),
+        stdin_utf8: value_string(payload.get("stdin_utf8")),
+        timeout_ms,
+        max_output_bytes,
+        require_clean_environment: payload
+            .get("require_clean_environment")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+    };
+    let request_json = render_wasm_terminal_exec_request_json(&request);
+    builtin_terminal_exec_guest_bytes(&request_json)
+}
+
+fn build_builtin_heartbeat_schedule_guest(
+    capability: &CapabilityDescriptor,
+    worker_request_path: &Path,
+) -> ShadowResult<Vec<u8>> {
+    let raw = fs::read_to_string(worker_request_path).map_err(io_err)?;
+    let body: Value = serde_json::from_str(&raw).map_err(io_err)?;
+    let envelope = body.get("envelope");
+    let payload_json = value_json_string(envelope.and_then(|value| value.get("payload_json")));
+    let payload = if payload_json.is_empty() {
+        Value::Object(serde_json::Map::new())
+    } else {
+        serde_json::from_str(&payload_json)
+            .map_err(|error| format!("invalid heartbeat payload_json for {}: {}", capability.name, error))?
+    };
+    let schedule_kind = match value_string(payload.get("schedule_kind")).as_str() {
+        "once" => WasmHeartbeatScheduleKind::Once,
+        "cron" => WasmHeartbeatScheduleKind::Cron,
+        _ => WasmHeartbeatScheduleKind::Interval,
+    };
+    let timeout_ms = payload.get("timeout_ms").and_then(Value::as_u64).unwrap_or(1_000);
+    let heartbeat_id = {
+        let explicit = value_string(payload.get("heartbeat_id"));
+        if explicit.is_empty() {
+            value_string(body.get("input_hash"))
+        } else {
+            explicit
+        }
+    };
+    let nested_payload_json = {
+        let raw = value_json_string(payload.get("payload_json"));
+        if !raw.is_empty() {
+            raw
+        } else {
+            value_json_string(payload.get("payload"))
+        }
+    };
+    let request = WasmHeartbeatScheduleRequest {
+        security: WasmHostSecurityContext {
+            capability_name: capability.name.clone(),
+            agent_id: value_string(envelope.and_then(|value| value.get("agent_id"))),
+            org_id: value_string(envelope.and_then(|value| value.get("org_id"))),
+            session_id: value_string(envelope.and_then(|value| value.get("runtime_id"))),
+            operation_id: value_string(body.get("input_hash")),
+            max_timeout_ms: timeout_ms.max(1),
+            max_response_bytes: 4_096,
+            allowed_hosts: Vec::new(),
+            allowed_workdir_roots: vec![".".to_string()],
+            require_user_present: false,
+        },
+        heartbeat_id,
+        capability_name: {
+            let requested = value_string(payload.get("capability_name"));
+            if requested.is_empty() {
+                capability.name.clone()
+            } else {
+                requested
+            }
+        },
+        schedule_kind,
+        schedule_expression: value_string(payload.get("schedule_expression")),
+        not_before_unix_ms: payload.get("not_before_unix_ms").and_then(Value::as_u64),
+        interval_seconds: payload.get("interval_seconds").and_then(Value::as_u64).or(Some(300)),
+        jitter_seconds: payload.get("jitter_seconds").and_then(Value::as_u64).unwrap_or(15),
+        payload_json: nested_payload_json,
+        max_runs: payload.get("max_runs").and_then(Value::as_u64).map(|value| value as u32),
+    };
+    let request_json = render_wasm_heartbeat_schedule_request_json(&request);
+    builtin_heartbeat_schedule_guest_bytes(&request_json)
+}
+
+fn append_builtin_heartbeat_receipt(
+    jobs_dir: &Path,
+    capability: &CapabilityDescriptor,
+    worker_request_path: &Path,
+    result: &WasmExecutionResult,
+) -> ShadowResult<PathBuf> {
+    let raw = fs::read_to_string(worker_request_path).map_err(io_err)?;
+    let body: Value = serde_json::from_str(&raw).map_err(io_err)?;
+    let envelope = body.get("envelope");
+    let payload_json = value_json_string(envelope.and_then(|value| value.get("payload_json")));
+    let payload = if payload_json.is_empty() {
+        Value::Object(serde_json::Map::new())
+    } else {
+        serde_json::from_str(&payload_json)
+            .map_err(|error| format!("invalid heartbeat payload_json for {}: {}", capability.name, error))?
+    };
+    let receipt_path = jobs_dir.join("heartbeat_schedule.jsonl");
+    let host_response = result
+        .host_response_json
+        .as_ref()
+        .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+        .unwrap_or(Value::Null);
+    let schedule_kind = {
+        let schedule_kind = value_string(payload.get("schedule_kind"));
+        if schedule_kind.is_empty() {
+            "interval".to_string()
+        } else {
+            schedule_kind
+        }
+    };
+    let receipt = serde_json::json!({
+        "timestamp": timestamp_now(),
+        "capability_name": capability.name,
+        "module": result.module_name,
+        "runtime_path": result.runtime_path,
+        "input_hash": value_string(body.get("input_hash")),
+        "heartbeat_id": value_string(payload.get("heartbeat_id")),
+        "requested_capability": value_string(payload.get("capability_name")),
+        "schedule_kind": schedule_kind,
+        "schedule_expression": value_string(payload.get("schedule_expression")),
+        "interval_seconds": payload.get("interval_seconds").and_then(Value::as_u64),
+        "host_calls": result.host_calls,
+        "host_response": host_response,
+    });
+    let mut stream = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&receipt_path)
+        .map_err(io_err)?;
+    writeln!(stream, "{}", receipt).map_err(io_err)?;
+    Ok(receipt_path)
+}
+
 fn value_string_vec(value: Option<&Value>) -> Vec<String> {
     value
         .and_then(Value::as_array)
@@ -8161,7 +8365,7 @@ fn capture_reference_probe(
         })
         .map(PathBuf::from)
         .unwrap_or_else(|| {
-            PathBuf::from("/root/.openclaw/workspace/company/meridian_platform/openclaw_runtime_proof.py")
+            PathBuf::from("/root/.meridian/workspace/company/meridian_platform/openclaw_runtime_proof.py")
         });
     if !proof_script.exists() {
         append_line(

@@ -321,12 +321,36 @@ pub fn render_wasm_terminal_exec_request_json(request: &WasmTerminalExecRequest)
     .to_string()
 }
 
+pub fn render_wasm_heartbeat_schedule_request_json(request: &WasmHeartbeatScheduleRequest) -> String {
+    json!({
+        "security": render_security_context_value(&request.security),
+        "heartbeat_id": request.heartbeat_id,
+        "capability_name": request.capability_name,
+        "schedule_kind": match request.schedule_kind {
+            WasmHeartbeatScheduleKind::Once => "once",
+            WasmHeartbeatScheduleKind::Interval => "interval",
+            WasmHeartbeatScheduleKind::Cron => "cron",
+        },
+        "schedule_expression": request.schedule_expression,
+        "not_before_unix_ms": request.not_before_unix_ms,
+        "interval_seconds": request.interval_seconds,
+        "jitter_seconds": request.jitter_seconds,
+        "payload_json": request.payload_json,
+        "max_runs": request.max_runs,
+    })
+    .to_string()
+}
+
 pub fn builtin_browser_navigate_guest_bytes(request_json: &str) -> Result<Vec<u8>, String> {
     build_host_call_guest(HOST_BROWSER_NAVIGATE, request_json)
 }
 
 pub fn builtin_terminal_exec_guest_bytes(request_json: &str) -> Result<Vec<u8>, String> {
     build_host_call_guest(HOST_TERMINAL_EXEC, request_json)
+}
+
+pub fn builtin_heartbeat_schedule_guest_bytes(request_json: &str) -> Result<Vec<u8>, String> {
+    build_host_call_guest(HOST_SCHEDULE_HEARTBEAT, request_json)
 }
 
 pub(crate) fn parse_wasm_browser_navigate_request(raw: &str) -> Result<WasmBrowserNavigateRequest, String> {
