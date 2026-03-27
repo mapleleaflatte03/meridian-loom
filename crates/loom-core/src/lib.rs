@@ -1544,13 +1544,25 @@ pub fn evaluate_reference_gates(
     let kernel_path = resolve_kernel_path(root, override_kernel_path, Some(&config))?;
     let kernel_dir = kernel_path.join("kernel");
     // Legacy Execution Parity Adapter: Used by Meridian to benchmark and audit legacy un-governed runtimes against the Meridian constitutional ledger.
-    let script = r#"import json, sys
+    let script = r#"import importlib, json, os, sys
 kernel_dir = sys.argv[1]
 org_id = sys.argv[2]
 envelope = json.loads(sys.argv[3])
 sys.path.insert(0, kernel_dir)
-from adapters.meridian_compatible import pre_action_check
-print(json.dumps(pre_action_check(org_id, envelope)))
+module = None
+for module_name, module_path in (
+    ("adapters.meridian_compatible", os.path.join(kernel_dir, "adapters", "meridian_compatible.py")),
+    ("adapters.legacy_v1_compatible", os.path.join(kernel_dir, "adapters", "legacy_v1_compatible.py")),
+    ("adapters.openclaw_compatible", os.path.join(kernel_dir, "adapters", "openclaw_compatible.py")),
+):
+    if os.path.exists(module_path):
+        module = importlib.import_module(module_name)
+        break
+if module is None:
+    raise FileNotFoundError(
+        "no reference adapter found in kernel/adapters (tried meridian_compatible.py, legacy_v1_compatible.py, openclaw_compatible.py)"
+    )
+print(json.dumps(module.pre_action_check(org_id, envelope)))
 "#;
 
     let reference_agent = if identity.economy_key.trim().is_empty() {
