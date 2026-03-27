@@ -25,6 +25,13 @@
 
 Meridian Loom is the primary hands-on product surface for Meridian v0.1.0. It carries the Mantis-branded installer and CLI, provisions into the operator's home directory, and exposes the bounded execution primitives that operators can install, inspect, and run directly.
 
+## Proof of Governed Execution (PoGE)
+
+The platform's cryptographic execution-receipt architecture is defined in the [Meridian PoGE Protocol RFC](docs/MERIDIAN_PoGE_PROTOCOL.md).
+
+- Purpose: bind governed host-calls to verifiable receipts, Merkle roots, and future settlement surfaces.
+- Scope: Loom runtime host-call evidence and audit architecture, not a blanket claim that every future chain settlement primitive is already live here.
+
 ## 1-Command Install
 
 ```bash
