@@ -99,6 +99,7 @@ fn run() -> LoomResult<()> {
         "logs" => commands::service::handle_logs(&args[1..]),
         "config" => commands::runtime::handle_config(&args[1..]),
         "provider" => commands::provider::handle_provider(&args[1..]),
+        "heartbeat" => commands::heartbeat::handle_heartbeat(&args[1..]),
         "contract" => commands::runtime::handle_contract(&args[1..]),
         "capsule" => commands::runtime::handle_capsule(&args[1..]),
         "capability" => commands::capability::handle_capability(&args[1..]),
@@ -269,6 +270,13 @@ Bootstrap\n\
   loom provider status [--root PATH] [--format human|json]\n\
   loom provider route [--root PATH] [--capability NAME] [--model NAME] [--agent-id ID] [--org-id ORG] [--profile NAME] [--format human|json]\n\
   loom provider auth [--root PATH] [--profile NAME] [--format human|json]\n\
+  loom heartbeat status [--root PATH] [--now-unix-ms MS] [--format human|json]\n\
+  loom heartbeat list [--root PATH] [--format human|json]\n\
+  loom heartbeat show --heartbeat-id ID [--root PATH] [--format human|json]\n\
+  loom heartbeat schedule --agent-id ID --capability NAME [--heartbeat-id ID] [--schedule interval|once|cron] [--every-seconds N] [--jitter-seconds N] [--not-before-unix-ms MS] [--expression EXPR] [--timezone TZ] [--payload-json JSON] [--max-attempts N] [--root PATH] [--format human|json]\n\
+  loom heartbeat pause --heartbeat-id ID [--root PATH] [--format human|json]\n\
+  loom heartbeat cancel --heartbeat-id ID [--root PATH] [--format human|json]\n\
+  loom heartbeat run-due [--root PATH] [--now-unix-ms MS] [--limit N] [--format human|json]\n\
 \n\
 Governance surfaces\n\
 -------------------\n\

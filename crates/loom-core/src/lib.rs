@@ -9,6 +9,7 @@ pub mod agent_runtime;
 pub mod capability_shims;
 pub mod capabilities;
 pub mod provider_router;
+pub mod recurring;
 pub mod wasm_host;
 pub mod wasm_limits;
 pub mod wasm_profiles;
@@ -294,6 +295,7 @@ pub fn init_workspace(
     ensure_runtime_worker_scaffold(&root, &config)?;
     capabilities::ensure_capability_registry_scaffold(&root, &config)?;
     agent_runtime::ensure_agent_runtime_scaffold(&root)?;
+    recurring::ensure_heartbeat_runtime_scaffold(&root)?;
     provider_router::ensure_provider_profiles_scaffold(&root)?;
 
     fs::write(&config_path, render_config(&config)).map_err(io_err)?;
@@ -635,6 +637,46 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             level: "WARN",
             label: "agent_runtime_registry",
             detail: format!("agent runtime scaffold unavailable: {}", error),
+        }),
+    }
+    match recurring::ensure_heartbeat_runtime_scaffold(&root) {
+        Ok(heartbeat_registry) => {
+            push_path_check(
+                &mut checks,
+                "heartbeat_registry",
+                &heartbeat_registry,
+                true,
+                "heartbeat runtime registry present",
+            );
+            match recurring::heartbeat_overview(
+                &root,
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64,
+            ) {
+                Ok(overview) => checks.push(Check {
+                    level: "OK",
+                    label: "heartbeat_runtime",
+                    detail: format!(
+                        "total={} enabled={} due={} runs_path={}",
+                        overview.total_count,
+                        overview.enabled_count,
+                        overview.due_count,
+                        overview.runs_path.display()
+                    ),
+                }),
+                Err(error) => checks.push(Check {
+                    level: "WARN",
+                    label: "heartbeat_runtime",
+                    detail: format!("heartbeat runtime unavailable: {}", error),
+                }),
+            }
+        }
+        Err(error) => checks.push(Check {
+            level: "WARN",
+            label: "heartbeat_registry",
+            detail: format!("heartbeat runtime scaffold unavailable: {}", error),
         }),
     }
     let delivery_queue = delivery_queue_path(&root, &config);
