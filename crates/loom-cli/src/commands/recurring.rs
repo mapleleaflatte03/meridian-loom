@@ -7,11 +7,33 @@ use loom_core::recurring_executor::{
 };
 
 pub(crate) fn handle_recurring(args: &[String]) -> LoomResult<()> {
+    if args.is_empty() || matches!(args.first().map(String::as_str), Some("help" | "--help" | "-h")) {
+        print_recurring_help();
+        return Ok(());
+    }
     match args.first().map(String::as_str) {
         Some("runs") => handle_recurring_runs(&args[1..]),
         Some("show") => handle_recurring_show(&args[1..]),
         _ => Err("recurring supports: runs, show".to_string()),
     }
+}
+
+fn print_recurring_help() {
+    println!(
+        "Meridian Loom // RECURRING
+
+Inspect recurring job execution runs (schedules and heartbeats).
+
+USAGE: loom recurring <COMMAND> [OPTIONS]
+
+COMMANDS:
+  runs [--limit N] [--job-type TYPE]  List recurring run records
+  show --run-id ID                    Show details of a specific run
+
+GLOBAL OPTIONS:
+  --root ROOT                         Workspace root path
+  --format human|json                 Output format (default: human)"
+    );
 }
 
 fn handle_recurring_runs(args: &[String]) -> LoomResult<()> {

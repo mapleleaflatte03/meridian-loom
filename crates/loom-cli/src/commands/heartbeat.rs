@@ -13,6 +13,10 @@ use loom_core::recurring_executor::{
 };
 
 pub(crate) fn handle_heartbeat(args: &[String]) -> LoomResult<()> {
+    if args.is_empty() || matches!(args.first().map(String::as_str), Some("help" | "--help" | "-h")) {
+        print_heartbeat_help();
+        return Ok(());
+    }
     match args.first().map(String::as_str) {
         Some("status") => handle_heartbeat_status(&args[1..]),
         Some("list") => handle_heartbeat_list(&args[1..]),
@@ -22,8 +26,35 @@ pub(crate) fn handle_heartbeat(args: &[String]) -> LoomResult<()> {
         Some("cancel") => handle_heartbeat_cancel(&args[1..]),
         Some("run-due") => handle_heartbeat_run_due(&args[1..]),
         Some("run") => handle_heartbeat_run(&args[1..]),
-        _ => Err("heartbeat supports 'status', 'list', 'show', 'schedule', 'pause', 'cancel', 'run-due', and 'run'".to_string()),
+        _ => Err("heartbeat supports: status, list, show, schedule, pause, cancel, run-due, run".to_string()),
     }
+}
+
+fn print_heartbeat_help() {
+    println!(
+        "Meridian Loom // HEARTBEAT
+
+Manage recurring heartbeat checks for background agent autonomy.
+
+USAGE: loom heartbeat <COMMAND> [OPTIONS]
+
+COMMANDS:
+  status [--now-unix-ms MS]           Heartbeat runtime overview
+  list                                List all registered heartbeats
+  show --heartbeat-id ID              Show heartbeat details
+  schedule --agent-id AGENT           Register a new heartbeat
+        --capability CAP
+        [--schedule interval]
+        [--every-seconds SEC]
+  pause --heartbeat-id ID             Pause a heartbeat
+  cancel --heartbeat-id ID            Cancel a heartbeat
+  run-due [--now-unix-ms MS]          Execute all due heartbeats now
+  run --heartbeat-id ID               Execute a specific heartbeat now
+
+GLOBAL OPTIONS:
+  --root ROOT                         Workspace root path
+  --format human|json                 Output format (default: human)"
+    );
 }
 
 fn handle_heartbeat_status(args: &[String]) -> LoomResult<()> {

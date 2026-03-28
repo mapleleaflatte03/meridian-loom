@@ -17,6 +17,10 @@ use loom_core::session_provenance::{
 };
 
 pub(crate) fn handle_session(args: &[String]) -> LoomResult<()> {
+    if args.is_empty() || matches!(args.first().map(String::as_str), Some("help" | "--help" | "-h")) {
+        print_session_help();
+        return Ok(());
+    }
     match args.first().map(String::as_str) {
         Some("status") => handle_session_status(&args[1..]),
         Some("list") => handle_session_list(&args[1..]),
@@ -31,6 +35,34 @@ pub(crate) fn handle_session(args: &[String]) -> LoomResult<()> {
                 .to_string(),
         ),
     }
+}
+
+fn print_session_help() {
+    println!(
+        "Meridian Loom // SESSION
+
+Manage session provenance, overrides, and send policies.
+
+USAGE: loom session <COMMAND> [OPTIONS]
+
+COMMANDS:
+  status                              Show session provenance overview
+  list [--limit N]                    List active sessions
+  show --session-key KEY              Show session details + override + send policy
+  override --session-key KEY          Set provider override for a session
+        [--provider-profile PROFILE]
+        [--model MODEL]
+  clear-override --session-key KEY    Remove provider override
+  send-policy --session-key KEY       Set delivery mode for a session
+        --mode MODE
+        [--channel-target TARGET]
+  overrides                           List all active overrides
+  policies                            List all active send policies
+
+GLOBAL OPTIONS:
+  --root ROOT                         Workspace root path
+  --format human|json                 Output format (default: human)"
+    );
 }
 
 fn handle_session_status(args: &[String]) -> LoomResult<()> {

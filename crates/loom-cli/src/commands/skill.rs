@@ -15,6 +15,10 @@ use loom_core::skills::{
 };
 
 pub(crate) fn handle_skill(args: &[String]) -> LoomResult<()> {
+    if args.is_empty() || matches!(args.first().map(String::as_str), Some("help" | "--help" | "-h")) {
+        print_skill_help();
+        return Ok(());
+    }
     match args.first().map(String::as_str) {
         Some("status") => handle_skill_status(&args[1..]),
         Some("sync") => handle_skill_sync(&args[1..]),
@@ -29,6 +33,35 @@ pub(crate) fn handle_skill(args: &[String]) -> LoomResult<()> {
         Some("installs") => handle_skill_installs(&args[1..]),
         _ => Err("skill supports: status, sync, list, show, install, remove, enable, disable, update, locks, installs".to_string()),
     }
+}
+
+fn print_skill_help() {
+    println!(
+        "Meridian Loom // SKILL
+
+Manage skill registry and lifecycle (install, enable, lock, remove).
+
+USAGE: loom skill <COMMAND> [OPTIONS]
+
+COMMANDS:
+  status                              Skill registry overview
+  sync                                Rebuild skill registry from manifests
+  list                                List all registered skills
+  show --skill-id ID                  Show skill details
+  install --skill-root PATH           Install a skill from a local directory
+        [--skill-id ID]
+  remove --skill-id ID [--force]      Remove an installed skill
+  enable --skill-id ID                Enable a disabled skill
+  disable --skill-id ID               Disable a skill
+  update --skill-id ID                Update skill metadata
+        [--name NAME] [--desc DESC]
+  locks                               List skill dependency locks
+  installs                            List skill installation records
+
+GLOBAL OPTIONS:
+  --root ROOT                         Workspace root path
+  --format human|json                 Output format (default: human)"
+    );
 }
 
 fn handle_skill_status(args: &[String]) -> LoomResult<()> {

@@ -12,6 +12,10 @@ use loom_core::schedules::{
 };
 
 pub(crate) fn handle_schedule(args: &[String]) -> LoomResult<()> {
+    if args.is_empty() || matches!(args.first().map(String::as_str), Some("help" | "--help" | "-h")) {
+        print_schedule_help();
+        return Ok(());
+    }
     match args.first().map(String::as_str) {
         Some("status") => handle_schedule_status(&args[1..]),
         Some("list") => handle_schedule_list(&args[1..]),
@@ -21,8 +25,37 @@ pub(crate) fn handle_schedule(args: &[String]) -> LoomResult<()> {
         Some("cancel") => handle_schedule_cancel(&args[1..]),
         Some("run-due") => handle_schedule_run_due(&args[1..]),
         Some("run") => handle_schedule_run(&args[1..]),
-        _ => Err("schedule supports 'status', 'list', 'show', 'add', 'pause', 'cancel', 'run-due', and 'run'".to_string()),
+        _ => Err("schedule supports: status, list, show, add, pause, cancel, run-due, run".to_string()),
     }
+}
+
+fn print_schedule_help() {
+    println!(
+        "Meridian Loom // SCHEDULE
+
+Manage scheduled recurring jobs.
+
+USAGE: loom schedule <COMMAND> [OPTIONS]
+
+COMMANDS:
+  status                              Schedule runtime overview
+  list                                List all scheduled jobs
+  show --job-id ID                    Show schedule details
+  add --agent-id AGENT                Create a new schedule
+        --job-kind KIND
+        [--schedule daily|interval]
+        [--expression EXPR]
+        [--every-seconds SEC]
+        [--timezone TZ]
+  pause --job-id ID                   Pause a scheduled job
+  cancel --job-id ID                  Cancel a scheduled job
+  run-due                             Execute all due schedules now
+  run --job-id ID                     Execute a specific schedule now
+
+GLOBAL OPTIONS:
+  --root ROOT                         Workspace root path
+  --format human|json                 Output format (default: human)"
+    );
 }
 
 fn handle_schedule_status(args: &[String]) -> LoomResult<()> {
