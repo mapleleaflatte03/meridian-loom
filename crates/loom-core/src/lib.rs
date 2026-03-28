@@ -12,6 +12,7 @@ pub mod capability_shims;
 pub mod capabilities;
 pub mod context_engine;
 pub mod gateway_runtime;
+pub mod memory_service;
 pub mod onboarding;
 pub mod output_guard;
 pub mod pipeline;
