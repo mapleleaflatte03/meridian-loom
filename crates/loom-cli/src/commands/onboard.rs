@@ -165,39 +165,90 @@ hint:                {}\n\n",
     }
 
     if interactive && config_action != "keep" {
-        print_setup_stage(
-            1,
-            5,
-            "Manager brain",
-            "Pick the lane, model, and account Meridian should use for Leviathann.",
+        // Security acknowledgment
+        print_human(
+            "SECURITY NOTICE\n\
+             ===============\n\
+             Meridian Loom governs autonomous agent actions on your behalf.\n\
+             All pipeline runs are subject to the constitutional contract.\n\
+             Actions are audited and cost-attributed to the owning org.\n\
+             Provider credentials are stored locally under the runtime root.\n\
+             No telemetry leaves this host without explicit configuration.\n",
         );
-        manager_lane = prompt_choice(
-            "Manager brain lane",
-            &manager_lane,
-            &["frontier", "local"],
+        let ack = prompt_bool("Acknowledge and continue", true)?;
+        if !ack {
+            return Err("Setup cancelled — security acknowledgment declined.".to_string());
+        }
+
+        // Quickstart vs manual mode
+        let setup_mode = prompt_choice(
+            "Setup mode",
+            "quickstart",
+            &["quickstart", "manual"],
         )?;
-        manager_model = prompt_text("Manager model", &manager_model)?;
-        if manager_lane == "frontier" {
-            codex_auth_source = prompt_choice(
-                "Codex auth source",
-                &codex_auth_source,
-                &["loom", "cli", "path"],
+
+        if setup_mode == "quickstart" {
+            // Quickstart: provider chooser only, rest is defaults
+            print_setup_stage(
+                1,
+                2,
+                "Provider",
+                "Choose where inference runs. Local uses Ollama on this host. Frontier uses a remote provider via OAuth.",
+            );
+            manager_lane = prompt_choice(
+                "Provider lane",
+                &manager_lane,
+                &["local", "frontier"],
             )?;
-            codex_auth_path = match codex_auth_source.as_str() {
-                "loom" => None,
-                "cli" => None,
-                _ => {
-                    let hint = codex_auth_path.clone().unwrap_or_else(|| {
-                        default_codex_auth_path_hint()
-                            .map(|path| path.display().to_string())
-                            .unwrap_or_else(|_| "~/.meridian/auth/codex/auth.json".to_string())
-                    });
-                    Some(prompt_text("Custom Codex auth.json path", &hint)?)
-                }
-            };
+            if manager_lane == "frontier" {
+                codex_auth_source = "loom".to_string();
+                codex_auth_path = None;
+            } else {
+                codex_auth_source = "none".to_string();
+                codex_auth_path = None;
+            }
+            print_setup_stage(
+                2,
+                2,
+                "Defaults",
+                "Applying quickstart defaults for gateway, channels, and scheduling.",
+            );
         } else {
-            codex_auth_source = "none".to_string();
-            codex_auth_path = None;
+            // Manual: full interactive flow
+            print_setup_stage(
+                1,
+                5,
+                "Manager brain",
+                "Pick the lane, model, and account Meridian should use for Leviathann.",
+            );
+            manager_lane = prompt_choice(
+                "Manager brain lane",
+                &manager_lane,
+                &["frontier", "local"],
+            )?;
+            manager_model = prompt_text("Manager model", &manager_model)?;
+            if manager_lane == "frontier" {
+                codex_auth_source = prompt_choice(
+                    "Codex auth source",
+                    &codex_auth_source,
+                    &["loom", "cli", "path"],
+                )?;
+                codex_auth_path = match codex_auth_source.as_str() {
+                    "loom" => None,
+                    "cli" => None,
+                    _ => {
+                        let hint = codex_auth_path.clone().unwrap_or_else(|| {
+                            default_codex_auth_path_hint()
+                                .map(|path| path.display().to_string())
+                                .unwrap_or_else(|_| "~/.meridian/auth/codex/auth.json".to_string())
+                        });
+                        Some(prompt_text("Custom Codex auth.json path", &hint)?)
+                    }
+                };
+            } else {
+                codex_auth_source = "none".to_string();
+                codex_auth_path = None;
+            }
         }
         apply_interactive_overrides(&mut manifest)?;
     }

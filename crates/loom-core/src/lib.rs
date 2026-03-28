@@ -142,6 +142,8 @@ pub struct Check {
     pub level: &'static str,
     pub label: &'static str,
     pub detail: String,
+    pub category: &'static str,
+    pub remediation: &'static str,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -538,6 +540,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
         level: "OK",
         label: "config",
         detail: format!("loaded {}", root.join("loom.toml").display()),
+        category: "config",
+        remediation: "",
     });
 
     let state_dir = root.join(&config.state_dir);
@@ -551,6 +555,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
         &state_dir,
         true,
         "state directory present",
+        "config",
+        "loom onboard",
     );
     push_path_check(
         &mut checks,
@@ -558,6 +564,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
         &run_dir,
         true,
         "runtime run directory present",
+        "config",
+        "loom onboard",
     );
     push_path_check(
         &mut checks,
@@ -565,6 +573,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
         &log_dir,
         true,
         "log directory present",
+        "config",
+        "loom onboard",
     );
     push_path_check(
         &mut checks,
@@ -572,6 +582,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
         &artifact_dir,
         true,
         "artifact directory present",
+        "config",
+        "loom onboard",
     );
     push_path_check(
         &mut checks,
@@ -579,6 +591,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
         &capabilities_dir,
         true,
         "capability registry directory present",
+        "config",
+        "loom onboard",
     );
     push_path_check(
         &mut checks,
@@ -586,6 +600,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
         &capabilities::capability_registry_path(&root, &config),
         true,
         "capability registry manifest present",
+        "config",
+        "loom onboard",
     );
     let provider_profiles_path = provider_router::provider_profiles_runtime_path(Some(&root))?;
     push_path_check(
@@ -594,6 +610,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
         &provider_profiles_path,
         false,
         "provider profiles manifest present",
+        "provider",
+        "loom onboard",
     );
     match provider_router::provider_plane_summary(Some(&root)) {
         Ok(summary) => checks.push(Check {
@@ -606,11 +624,15 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                 summary.capability_route_count,
                 summary.agent_route_count
             ),
+            category: "provider",
+            remediation: "",
         }),
         Err(error) => checks.push(Check {
             level: "WARN",
             label: "provider_plane",
             detail: format!("provider plane unavailable: {}", error),
+            category: "provider",
+            remediation: "loom provider login --source loom",
         }),
     }
 
@@ -625,11 +647,15 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                 status.ready,
                 status.detail
             ),
+            category: "provider",
+            remediation: if status.ready { "" } else { "loom provider login --source loom" },
         }),
         Err(error) => checks.push(Check {
             level: "WARN",
             label: "provider_auth",
             detail: format!("provider auth unavailable: {}", error),
+            category: "provider",
+            remediation: "loom provider login --source loom",
         }),
     }
     match provider_auth_store::ensure_provider_auth_store_scaffold(&root) {
@@ -640,6 +666,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                 &store_path,
                 false,
                 "provider auth store present",
+                "provider",
+                "loom onboard",
             );
             match provider_auth_store::sync_provider_auth_store(&root) {
                 Ok(summary) => checks.push(Check {
@@ -652,11 +680,15 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                         summary.last_good_count,
                         summary.usage_stats_count
                     ),
+                    category: "provider",
+                    remediation: if summary.ready_count > 0 { "" } else { "loom provider login --source loom" },
                 }),
                 Err(error) => checks.push(Check {
                     level: "WARN",
                     label: "provider_auth_runtime",
                     detail: format!("provider auth store unavailable: {}", error),
+                    category: "provider",
+                    remediation: "loom provider login --source loom",
                 }),
             }
         }
@@ -664,6 +696,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             level: "WARN",
             label: "provider_auth_store",
             detail: format!("provider auth store unavailable: {}", error),
+            category: "provider",
+            remediation: "loom onboard",
         }),
     }
     match gateway_runtime::ensure_gateway_runtime_scaffold(&root) {
@@ -674,6 +708,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                 &gateway_registry,
                 false,
                 "gateway runtime registry present",
+                "gateway",
+                "loom onboard",
             );
             match gateway_runtime::gateway_runtime_overview(&root) {
                 Ok(summary) => checks.push(Check {
@@ -689,11 +725,15 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                         summary.total_channel_count,
                         summary.daemon_summary
                     ),
+                    category: "gateway",
+                    remediation: if summary.enabled_channel_count > 0 { "" } else { "loom onboard --gateway-port 18910" },
                 }),
                 Err(error) => checks.push(Check {
                     level: "WARN",
                     label: "gateway_runtime",
                     detail: format!("gateway runtime unavailable: {}", error),
+                    category: "gateway",
+                    remediation: "loom onboard --gateway-port 18910",
                 }),
             }
         }
@@ -701,6 +741,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             level: "WARN",
             label: "gateway_registry",
             detail: format!("gateway runtime unavailable: {}", error),
+            category: "gateway",
+            remediation: "loom onboard --gateway-port 18910",
         }),
     }
     match service_runtime::ensure_service_runtime_scaffold(&root) {
@@ -711,6 +753,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                 &service_registry,
                 false,
                 "service runtime registry present",
+                "service",
+                "loom onboard",
             );
             match service_runtime::sync_service_runtime(&root) {
                 Ok(summary) => checks.push(Check {
@@ -725,11 +769,15 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                         summary.supervisor_pending_jobs,
                         summary.supervisor_processed_jobs,
                     ),
+                    category: "service",
+                    remediation: if summary.service_health.starts_with("crashed") || summary.supervisor_health.starts_with("crashed") { "loom service start" } else { "" },
                 }),
                 Err(error) => checks.push(Check {
                     level: "WARN",
                     label: "service_runtime",
                     detail: format!("service runtime unavailable: {}", error),
+                    category: "service",
+                    remediation: "loom service start",
                 }),
             }
         }
@@ -737,6 +785,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             level: "WARN",
             label: "service_runtime_registry",
             detail: format!("service runtime unavailable: {}", error),
+            category: "service",
+            remediation: "loom service start",
         }),
     }
     match service_ingress_runtime::ensure_service_ingress_runtime_scaffold(&root) {
@@ -747,6 +797,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                 &ingress_registry,
                 false,
                 "service ingress registry present",
+                "service",
+                "loom onboard",
             );
             match service_ingress_runtime::sync_service_ingress_runtime(&root) {
                 Ok(summary) => checks.push(Check {
@@ -760,11 +812,15 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                         if summary.last_request_id.is_empty() { "(none)" } else { summary.last_request_id.as_str() },
                         if summary.last_job_id.is_empty() { "(none)" } else { summary.last_job_id.as_str() },
                     ),
+                    category: "service",
+                    remediation: "",
                 }),
                 Err(error) => checks.push(Check {
                     level: "WARN",
                     label: "service_ingress_runtime",
                     detail: format!("service ingress runtime unavailable: {}", error),
+                    category: "service",
+                    remediation: "loom service start",
                 }),
             }
         }
@@ -772,6 +828,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             level: "WARN",
             label: "service_ingress_registry",
             detail: format!("service ingress runtime unavailable: {}", error),
+            category: "service",
+            remediation: "loom service start",
         }),
     }
     match onboarding::ensure_onboard_manifest(&root, &config) {
@@ -782,6 +840,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                 &onboard_manifest,
                 true,
                 "onboard manifest present",
+                "config",
+                "loom onboard",
             );
             match onboarding::onboard_overview(&root) {
                 Ok(overview) => checks.push(Check {
@@ -795,11 +855,15 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                         overview.daemon_summary,
                         overview.remote_mode
                     ),
+                    category: "config",
+                    remediation: "",
                 }),
                 Err(error) => checks.push(Check {
                     level: "WARN",
                     label: "onboard_runtime",
                     detail: format!("onboard overview unavailable: {}", error),
+                    category: "config",
+                    remediation: "loom onboard",
                 }),
             }
         }
@@ -807,6 +871,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             level: "WARN",
             label: "onboard_manifest",
             detail: format!("onboard manifest unavailable: {}", error),
+            category: "config",
+            remediation: "loom onboard",
         }),
     }
     match agent_runtime::ensure_agent_runtime_scaffold(&root) {
@@ -817,6 +883,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                 &agent_runtime_registry,
                 true,
                 "agent runtime registry present",
+                "agent",
+                "loom onboard",
             );
             match agent_runtime::agent_runtime_overview(&root) {
                 Ok(overview) => checks.push(Check {
@@ -837,11 +905,21 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                         overview.session_ready_count,
                         overview.profile_count
                     ),
+                    category: "agent",
+                    remediation: if overview.memory_ready_count == overview.profile_count
+                        && overview.session_ready_count == overview.profile_count
+                    {
+                        ""
+                    } else {
+                        "loom onboard"
+                    },
                 }),
                 Err(error) => checks.push(Check {
                     level: "WARN",
                     label: "agent_runtime",
                     detail: format!("agent runtime unavailable: {}", error),
+                    category: "agent",
+                    remediation: "loom onboard",
                 }),
             }
         }
@@ -849,6 +927,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             level: "WARN",
             label: "agent_runtime_registry",
             detail: format!("agent runtime scaffold unavailable: {}", error),
+            category: "agent",
+            remediation: "loom onboard",
         }),
     }
     match context_engine::ensure_context_engine_scaffold(&root) {
@@ -859,6 +939,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                 &context_registry,
                 false,
                 "context engine registry present",
+                "context",
+                "loom onboard",
             );
             match context_engine::context_engine_overview(&root) {
                 Ok(summary) => checks.push(Check {
@@ -871,11 +953,15 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                         summary.mutable_count,
                         summary.overlay_root.display()
                     ),
+                    category: "context",
+                    remediation: if summary.layer_count > 0 { "" } else { "loom onboard" },
                 }),
                 Err(error) => checks.push(Check {
                     level: "WARN",
                     label: "context_engine",
                     detail: format!("context engine unavailable: {}", error),
+                    category: "context",
+                    remediation: "loom onboard",
                 }),
             }
         }
@@ -883,6 +969,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             level: "WARN",
             label: "context_registry",
             detail: format!("context engine scaffold unavailable: {}", error),
+            category: "context",
+            remediation: "loom onboard",
         }),
     }
     match recurring::ensure_heartbeat_runtime_scaffold(&root) {
@@ -893,6 +981,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                 &heartbeat_registry,
                 true,
                 "heartbeat runtime registry present",
+                "lifecycle",
+                "loom onboard",
             );
             match recurring::heartbeat_overview(
                 &root,
@@ -911,11 +1001,15 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                         overview.due_count,
                         overview.runs_path.display()
                     ),
+                    category: "lifecycle",
+                    remediation: "",
                 }),
                 Err(error) => checks.push(Check {
                     level: "WARN",
                     label: "heartbeat_runtime",
                     detail: format!("heartbeat runtime unavailable: {}", error),
+                    category: "lifecycle",
+                    remediation: "loom doctor",
                 }),
             }
         }
@@ -923,6 +1017,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             level: "WARN",
             label: "heartbeat_registry",
             detail: format!("heartbeat runtime scaffold unavailable: {}", error),
+            category: "lifecycle",
+            remediation: "loom onboard",
         }),
     }
     match schedules::ensure_schedule_runtime_scaffold(&root) {
@@ -933,6 +1029,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                 &schedule_registry,
                 true,
                 "schedule runtime registry present",
+                "lifecycle",
+                "loom onboard",
             );
             match schedules::schedule_overview(
                 &root,
@@ -956,11 +1054,15 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                             overview.job_ids.join(",")
                         }
                     ),
+                    category: "lifecycle",
+                    remediation: if overview.enabled_count > 0 || overview.total_count == 0 { "" } else { "loom doctor" },
                 }),
                 Err(error) => checks.push(Check {
                     level: "WARN",
                     label: "schedule_runtime",
                     detail: format!("schedule runtime unavailable: {}", error),
+                    category: "lifecycle",
+                    remediation: "loom doctor",
                 }),
             }
         }
@@ -968,6 +1070,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             level: "WARN",
             label: "schedule_registry",
             detail: format!("schedule runtime scaffold unavailable: {}", error),
+            category: "lifecycle",
+            remediation: "loom onboard",
         }),
     }
     match channels::ensure_channel_runtime_scaffold(&root) {
@@ -978,6 +1082,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                 &channel_registry,
                 true,
                 "channel runtime registry present",
+                "channel",
+                "loom onboard",
             );
             match channels::channel_overview(&root) {
                 Ok(overview) => checks.push(Check {
@@ -996,11 +1102,15 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                             overview.channel_ids.join(",")
                         }
                     ),
+                    category: "channel",
+                    remediation: if overview.enabled_count > 0 || overview.total_count == 0 { "" } else { "loom onboard" },
                 }),
                 Err(error) => checks.push(Check {
                     level: "WARN",
                     label: "channel_runtime",
                     detail: format!("channel runtime unavailable: {}", error),
+                    category: "channel",
+                    remediation: "loom onboard",
                 }),
             }
         }
@@ -1008,6 +1118,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             level: "WARN",
             label: "channel_registry",
             detail: format!("channel runtime scaffold unavailable: {}", error),
+            category: "channel",
+            remediation: "loom onboard",
         }),
     }
     match bindings::ensure_binding_runtime_scaffold(&root) {
@@ -1018,6 +1130,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                 &binding_registry,
                 true,
                 "binding runtime registry present",
+                "channel",
+                "loom onboard",
             );
             match bindings::binding_overview(&root) {
                 Ok(overview) => checks.push(Check {
@@ -1033,11 +1147,15 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                             overview.binding_ids.join(",")
                         }
                     ),
+                    category: "channel",
+                    remediation: if overview.enabled_count > 0 || overview.total_count == 0 { "" } else { "loom onboard" },
                 }),
                 Err(error) => checks.push(Check {
                     level: "WARN",
                     label: "binding_runtime",
                     detail: format!("binding runtime unavailable: {}", error),
+                    category: "channel",
+                    remediation: "loom onboard",
                 }),
             }
         }
@@ -1045,6 +1163,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             level: "WARN",
             label: "binding_registry",
             detail: format!("binding runtime scaffold unavailable: {}", error),
+            category: "channel",
+            remediation: "loom onboard",
         }),
     }
     match skills::ensure_skill_runtime_scaffold(&root) {
@@ -1055,6 +1175,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                 &skill_registry,
                 true,
                 "skill runtime registry present",
+                "skills",
+                "loom onboard",
             );
             match skills::skill_overview(&root) {
                 Ok(overview) => checks.push(Check {
@@ -1073,11 +1195,15 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                             overview.skill_ids.join(",")
                         }
                     ),
+                    category: "skills",
+                    remediation: if overview.enabled_count > 0 || overview.total_count == 0 { "" } else { "loom onboard" },
                 }),
                 Err(error) => checks.push(Check {
                     level: "WARN",
                     label: "skill_runtime",
                     detail: format!("skill runtime unavailable: {}", error),
+                    category: "skills",
+                    remediation: "loom onboard",
                 }),
             }
         }
@@ -1085,6 +1211,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             level: "WARN",
             label: "skill_registry",
             detail: format!("skill runtime scaffold unavailable: {}", error),
+            category: "skills",
+            remediation: "loom onboard",
         }),
     }
     match session_provenance::ensure_session_provenance_scaffold(&root) {
@@ -1095,6 +1223,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                 &prov_registry,
                 false,
                 "session provenance registry present",
+                "session",
+                "loom onboard",
             );
             match session_provenance::session_provenance_overview(&root) {
                 Ok(overview) => checks.push(Check {
@@ -1109,11 +1239,15 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                             overview.session_keys.join(",")
                         }
                     ),
+                    category: "session",
+                    remediation: "",
                 }),
                 Err(error) => checks.push(Check {
                     level: "WARN",
                     label: "session_provenance",
                     detail: format!("session provenance unavailable: {}", error),
+                    category: "session",
+                    remediation: "loom onboard",
                 }),
             }
         }
@@ -1121,6 +1255,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             level: "WARN",
             label: "session_provenance_registry",
             detail: format!("session provenance scaffold unavailable: {}", error),
+            category: "session",
+            remediation: "loom onboard",
         }),
     }
     match skill_lifecycle::ensure_skill_lifecycle_scaffold(&root) {
@@ -1131,6 +1267,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                 &installs_dir,
                 false,
                 "skill installs directory present",
+                "skills",
+                "loom onboard",
             );
             match skill_lifecycle::list_skill_installs(&root) {
                 Ok(installs) => {
@@ -1145,12 +1283,16 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                             enabled,
                             locked
                         ),
+                        category: "skills",
+                        remediation: "",
                     });
                 }
                 Err(error) => checks.push(Check {
                     level: "WARN",
                     label: "skill_lifecycle",
                     detail: format!("skill installs unavailable: {}", error),
+                    category: "skills",
+                    remediation: "loom onboard",
                 }),
             }
         }
@@ -1158,6 +1300,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             level: "WARN",
             label: "skill_installs_dir",
             detail: format!("skill lifecycle scaffold unavailable: {}", error),
+            category: "skills",
+            remediation: "loom onboard",
         }),
     }
     match recurring_executor::ensure_recurring_executor_scaffold(&root) {
@@ -1168,6 +1312,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                 &runs_dir,
                 false,
                 "recurring runs directory present",
+                "pipeline",
+                "loom onboard",
             );
             match recurring_executor::list_recurring_runs(&root, 50, None) {
                 Ok(runs) => {
@@ -1182,12 +1328,16 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                             completed,
                             failed
                         ),
+                        category: "pipeline",
+                        remediation: "",
                     });
                 }
                 Err(error) => checks.push(Check {
                     level: "WARN",
                     label: "recurring_executor",
                     detail: format!("recurring runs unavailable: {}", error),
+                    category: "pipeline",
+                    remediation: "loom doctor",
                 }),
             }
         }
@@ -1195,6 +1345,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             level: "WARN",
             label: "recurring_runs_dir",
             detail: format!("recurring executor scaffold unavailable: {}", error),
+            category: "pipeline",
+            remediation: "loom onboard",
         }),
     }
     match pipeline::ensure_pipeline_scaffold(&root) {
@@ -1205,6 +1357,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                 &runs_dir,
                 false,
                 "pipeline runs directory present",
+                "pipeline",
+                "loom onboard",
             );
             match pipeline::pipeline_overview(&root) {
                 Ok(overview) => checks.push(Check {
@@ -1216,11 +1370,15 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                         overview.completed_count,
                         overview.failed_count
                     ),
+                    category: "pipeline",
+                    remediation: "",
                 }),
                 Err(error) => checks.push(Check {
                     level: "WARN",
                     label: "pipeline",
                     detail: format!("pipeline overview unavailable: {}", error),
+                    category: "pipeline",
+                    remediation: "loom doctor",
                 }),
             }
         }
@@ -1228,6 +1386,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             level: "WARN",
             label: "pipeline_runs_dir",
             detail: format!("pipeline scaffold unavailable: {}", error),
+            category: "pipeline",
+            remediation: "loom onboard",
         }),
     }
     let delivery_queue = delivery_queue_path(&root, &config);
@@ -1242,6 +1402,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
         } else {
             "delivery queue configured"
         },
+        "runtime",
+        "loom onboard",
     );
     push_path_check(
         &mut checks,
@@ -1249,6 +1411,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
         &root.join(&config.python_path),
         true,
         "python worker path present",
+        "runtime",
+        "loom onboard",
     );
     push_path_check(
         &mut checks,
@@ -1256,6 +1420,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
         &root.join(&config.typescript_path),
         true,
         "typescript worker path present",
+        "runtime",
+        "loom onboard",
     );
     push_path_check(
         &mut checks,
@@ -1263,6 +1429,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
         &root.join(&config.wasm_dir),
         true,
         "wasm module path present",
+        "runtime",
+        "loom onboard",
     );
     push_path_check(
         &mut checks,
@@ -1273,6 +1441,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             .join("manifest.json"),
         true,
         "capsule manifest present",
+        "runtime",
+        "loom onboard",
     );
     let kernel_required = config.mode == "shadow" || config.mode == "standalone";
     let kernel_path = if config.kernel_path.is_empty() {
@@ -1285,6 +1455,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             level: "CRITICAL",
             label: "kernel_path",
             detail: "standalone/shadow mode requires --kernel-path".to_string(),
+            category: "kernel",
+            remediation: "loom onboard",
         }),
         (_, Some(path)) => {
             push_path_check(
@@ -1293,6 +1465,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                 &path,
                 true,
                 "kernel path present",
+                "kernel",
+                "loom onboard",
             );
             let registry = path.join("kernel/runtimes.json");
             push_path_check(
@@ -1301,6 +1475,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                 &registry,
                 true,
                 "Meridian runtime registry available",
+                "kernel",
+                "loom onboard",
             );
             let agent_registry = path.join("kernel/agent_registry.py");
             push_path_check(
@@ -1309,12 +1485,16 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                 &agent_registry,
                 true,
                 "Meridian agent registry CLI available",
+                "kernel",
+                "loom onboard",
             );
         }
         (false, None) => checks.push(Check {
             level: "WARN",
             label: "kernel_path",
             detail: "embedded mode can run without kernel_path; contract inspection needs it".to_string(),
+            category: "kernel",
+            remediation: "loom onboard",
         }),
     }
 
@@ -1323,11 +1503,34 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
 
 pub fn render_doctor_human(checks: &[Check]) -> String {
     let mut out = String::from(
-        "Meridian Loom // DOCTOR\n=======================\nphase:       experimental runtime rehearsal\nboundary:    public scaffold, not governed runtime\n\nChecks\n------\n",
+        "Meridian Loom // DOCTOR\n=======================\nphase:       production-oriented local runtime surface\nboundary:    local-first service is real; hosted replacement is not\n\n",
     );
+    // Group by category
+    let mut categories: Vec<&str> = Vec::new();
     for check in checks {
-        out.push_str(&format!("[{:<8}] {:<18} {}\n", check.level, check.label, check.detail));
+        if !categories.contains(&check.category) {
+            categories.push(check.category);
+        }
     }
+    for cat in &categories {
+        let cat_checks: Vec<&Check> = checks.iter().filter(|c| c.category == *cat).collect();
+        if cat_checks.is_empty() {
+            continue;
+        }
+        out.push_str(&format!("[{}]\n", cat));
+        for check in &cat_checks {
+            out.push_str(&format!("  [{:<8}] {:<30} {}\n", check.level, check.label, check.detail));
+            if !check.remediation.is_empty() && check.level != "OK" {
+                out.push_str(&format!("             remediation: {}\n", check.remediation));
+            }
+        }
+        out.push('\n');
+    }
+    // Summary
+    let ok_count = checks.iter().filter(|c| c.level == "OK").count();
+    let warn_count = checks.iter().filter(|c| c.level == "WARN").count();
+    let crit_count = checks.iter().filter(|c| c.level == "CRITICAL").count();
+    out.push_str(&format!("Summary: {} checks — {} OK, {} WARN, {} CRITICAL\n", checks.len(), ok_count, warn_count, crit_count));
     out
 }
 
@@ -1335,12 +1538,18 @@ pub fn render_doctor_json(checks: &[Check]) -> String {
     let parts: Vec<String> = checks
         .iter()
         .map(|check| {
-            format!(
-                "{{\"level\":{},\"label\":{},\"detail\":{}}}",
+            let mut s = format!(
+                "{{\"level\":{},\"label\":{},\"detail\":{},\"category\":{}",
                 json_string(check.level),
                 json_string(check.label),
-                json_string(&check.detail)
-            )
+                json_string(&check.detail),
+                json_string(check.category)
+            );
+            if !check.remediation.is_empty() {
+                s.push_str(&format!(",\"remediation\":{}", json_string(check.remediation)));
+            }
+            s.push('}');
+            s
         })
         .collect();
     format!("[{}]\n", parts.join(","))
@@ -2572,24 +2781,32 @@ fn push_path_check(
     path: &Path,
     required: bool,
     success: &'static str,
+    category: &'static str,
+    remediation: &'static str,
 ) {
     if path.exists() {
         checks.push(Check {
             level: "OK",
             label,
             detail: format!("{} ({})", success, path.display()),
+            category,
+            remediation: "",
         });
     } else if required {
         checks.push(Check {
             level: "CRITICAL",
             label,
             detail: format!("missing {}", path.display()),
+            category,
+            remediation,
         });
     } else {
         checks.push(Check {
             level: "WARN",
             label,
             detail: format!("optional path missing {}", path.display()),
+            category,
+            remediation,
         });
     }
 }
