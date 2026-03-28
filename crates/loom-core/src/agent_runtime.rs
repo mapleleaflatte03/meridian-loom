@@ -11,6 +11,13 @@ pub const DEFAULT_AGENT_RUNTIME_REGISTRY_PATH: &str = "agents/registry.json";
 const DEFAULT_AGENT_MEMORY_FILE: &str = "core.json";
 const DEFAULT_AGENT_SESSION_CURRENT_FILE: &str = "current.json";
 const DEFAULT_AGENT_SESSION_HISTORY_DIR: &str = "history";
+const DEFAULT_GLOBAL_CONTEXT_DIR: &str = "context/global";
+const DEFAULT_SOUL_FILE: &str = "SOUL.md";
+const DEFAULT_MARKDOWN_MEMORY_FILE: &str = "MEMORY.md";
+const DEFAULT_USER_FILE: &str = "USER.md";
+const DEFAULT_TOOLS_FILE: &str = "TOOLS.md";
+const DEFAULT_HEARTBEAT_FILE: &str = "HEARTBEAT.md";
+const DEFAULT_AGENTS_FILE: &str = "AGENTS.md";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AgentRuntimeProfile {
@@ -83,6 +90,14 @@ pub struct AgentRuntimeSummary {
     pub history_entry_count: usize,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentContextBundle {
+    pub agent_id: String,
+    pub role: String,
+    pub sections: BTreeMap<String, String>,
+    pub section_sources: BTreeMap<String, Vec<String>>,
+}
+
 pub fn agent_runtime_registry_path(root: &Path) -> PathBuf {
     root.join(DEFAULT_AGENT_RUNTIME_REGISTRY_PATH)
 }
@@ -96,6 +111,7 @@ pub fn ensure_agent_runtime_scaffold(root: &Path) -> LoomResult<PathBuf> {
         fs::write(&registry_path, render_default_agent_runtime_registry()).map_err(io_err)?;
     }
     let profiles = load_agent_runtime_registry(root)?;
+    ensure_global_context_scaffold(root, &profiles)?;
     for profile in &profiles {
         let workspace_path = root.join(&profile.workspace_root);
         let memory_path = root.join(&profile.memory_root);
@@ -104,6 +120,7 @@ pub fn ensure_agent_runtime_scaffold(root: &Path) -> LoomResult<PathBuf> {
         fs::create_dir_all(&memory_path).map_err(io_err)?;
         fs::create_dir_all(&session_path).map_err(io_err)?;
         fs::create_dir_all(session_history_path_for_profile(root, profile)).map_err(io_err)?;
+        ensure_agent_operating_files(root, profile)?;
 
         let memory_file_path = agent_memory_file_path_for_profile(root, profile);
         if !memory_file_path.exists() {
@@ -262,6 +279,96 @@ pub fn write_agent_memory_snapshot(
     agent_memory_summary(root, agent_id)
 }
 
+
+pub fn agent_context_bundle(root: &Path, agent_id: &str) -> LoomResult<AgentContextBundle> {
+    let profile = resolve_agent_runtime_profile(root, agent_id)?;
+    let global_context_path = root.join(DEFAULT_GLOBAL_CONTEXT_DIR);
+    let workspace_path = root.join(&profile.workspace_root);
+    let mut sections = BTreeMap::new();
+    let mut section_sources = BTreeMap::new();
+
+    let soul = merge_markdown_sources(&[
+        global_context_path.join(DEFAULT_SOUL_FILE),
+        workspace_path.join(DEFAULT_SOUL_FILE),
+    ])?;
+    if !soul.0.is_empty() {
+        sections.insert("soul".to_string(), soul.0);
+        section_sources.insert("soul".to_string(), soul.1);
+    }
+
+    let user = merge_markdown_sources(&[global_context_path.join(DEFAULT_USER_FILE)])?;
+    if !user.0.is_empty() {
+        sections.insert("user".to_string(), user.0);
+        section_sources.insert("user".to_string(), user.1);
+    }
+
+    let tools = merge_markdown_sources(&[
+        global_context_path.join(DEFAULT_TOOLS_FILE),
+        workspace_path.join(DEFAULT_TOOLS_FILE),
+    ])?;
+    if !tools.0.is_empty() {
+        sections.insert("tools".to_string(), tools.0);
+        section_sources.insert("tools".to_string(), tools.1);
+    }
+
+    let heartbeat = merge_markdown_sources(&[
+        global_context_path.join(DEFAULT_HEARTBEAT_FILE),
+        workspace_path.join(DEFAULT_HEARTBEAT_FILE),
+    ])?;
+    if !heartbeat.0.is_empty() {
+        sections.insert("heartbeat".to_string(), heartbeat.0);
+        section_sources.insert("heartbeat".to_string(), heartbeat.1);
+    }
+
+    let agents = merge_markdown_sources(&[global_context_path.join(DEFAULT_AGENTS_FILE)])?;
+    if !agents.0.is_empty() {
+        sections.insert("agents".to_string(), agents.0);
+        section_sources.insert("agents".to_string(), agents.1);
+    }
+
+    let memory = merge_markdown_sources(&[workspace_path.join(DEFAULT_MARKDOWN_MEMORY_FILE)])?;
+    if !memory.0.is_empty() {
+        sections.insert("memory".to_string(), memory.0);
+        section_sources.insert("memory".to_string(), memory.1);
+    }
+
+    Ok(AgentContextBundle {
+        agent_id: profile.agent_id,
+        role: profile.role,
+        sections,
+        section_sources,
+    })
+}
+
+pub fn render_agent_context_human(bundle: &AgentContextBundle) -> String {
+    let mut rendered = format!(
+        "agent_id:          {}\nrole:              {}\nsection_count:     {}\n",
+        bundle.agent_id,
+        bundle.role,
+        bundle.sections.len()
+    );
+    for (section, content) in &bundle.sections {
+        rendered.push_str(&format!("\n[{}]\n", section));
+        if let Some(sources) = bundle.section_sources.get(section) {
+            rendered.push_str(&format!("sources: {}\n", sources.join(", ")));
+        }
+        rendered.push_str(content.trim_end());
+        rendered.push('\n');
+    }
+    rendered
+}
+
+pub fn render_agent_context_json(bundle: &AgentContextBundle) -> String {
+    serde_json::to_string_pretty(&json!({
+        "agent_id": bundle.agent_id,
+        "role": bundle.role,
+        "sections": bundle.sections,
+        "section_sources": bundle.section_sources,
+    }))
+    .unwrap_or_else(|_| "{}".to_string())
+        + "\n"
+}
+
 pub fn render_agent_runtime_human(summary: &AgentRuntimeSummary) -> String {
     format!(
         "registry_path:      {}\nprofile_count:      {}\nagent_id:           {}\ndisplay_name:       {}\nrole:               {}\nworkspace_root:     {}\nmemory_root:        {}\nsession_root:       {}\nmemory_file:        {}\ncurrent_session:    {}\nsession_history:    {}\ncurrent_status:     {}\ncurrent_task:       {}\ncurrent_summary:    {}\nhistory_entries:    {}\nmemory_fact_count:  {}\nprovider_profile:   {}\ntool_scope:         {}\nheartbeat_policy:   {}\n",
@@ -368,6 +475,101 @@ pub fn render_agent_memory_json(summary: &AgentMemorySummary) -> String {
     }))
     .unwrap_or_else(|_| "{}".to_string())
         + "\n"
+}
+
+fn merge_markdown_sources(paths: &[PathBuf]) -> LoomResult<(String, Vec<String>)> {
+    let mut rendered = String::new();
+    let mut sources = Vec::new();
+    for path in paths {
+        if !path.exists() {
+            continue;
+        }
+        let raw = fs::read_to_string(path).map_err(io_err)?;
+        if raw.trim().is_empty() {
+            continue;
+        }
+        if !rendered.is_empty() {
+            rendered.push_str("\n\n");
+        }
+        rendered.push_str(raw.trim());
+        sources.push(path.display().to_string());
+    }
+    Ok((rendered, sources))
+}
+
+fn ensure_global_context_scaffold(root: &Path, profiles: &[AgentRuntimeProfile]) -> LoomResult<()> {
+    let global_context_path = root.join(DEFAULT_GLOBAL_CONTEXT_DIR);
+    fs::create_dir_all(&global_context_path).map_err(io_err)?;
+    write_text_if_missing(
+        &global_context_path.join(DEFAULT_SOUL_FILE),
+        "You are Meridian Loom, a governed local runtime for bounded autonomous work.\n",
+    )?;
+    write_text_if_missing(
+        &global_context_path.join(DEFAULT_USER_FILE),
+        "# User\n- Founder preferences arrive through governed overlays.\n",
+    )?;
+    write_text_if_missing(
+        &global_context_path.join(DEFAULT_TOOLS_FILE),
+        "# Tool Doctrine\n- Use only governed Loom capabilities.\n",
+    )?;
+    write_text_if_missing(
+        &global_context_path.join(DEFAULT_HEARTBEAT_FILE),
+        "# Heartbeat Doctrine\n- Stay silent unless recurring policy permits outreach.\n",
+    )?;
+    let mut roster = String::from("# Agent Roster\n");
+    for profile in profiles {
+        roster.push_str(&format!(
+            "- {} ({}) -> provider={}, scope={}, heartbeat={}\n",
+            profile.display_name,
+            profile.role,
+            profile.provider_profile,
+            profile.tool_scope,
+            profile.heartbeat_policy
+        ));
+    }
+    write_text_if_missing(&global_context_path.join(DEFAULT_AGENTS_FILE), &roster)?;
+    Ok(())
+}
+
+fn ensure_agent_operating_files(root: &Path, profile: &AgentRuntimeProfile) -> LoomResult<()> {
+    let workspace_path = root.join(&profile.workspace_root);
+    write_text_if_missing(
+        &workspace_path.join(DEFAULT_SOUL_FILE),
+        &format!(
+            "You are {}, Meridian's {} agent.\n",
+            profile.display_name, profile.role
+        ),
+    )?;
+    write_text_if_missing(
+        &workspace_path.join(DEFAULT_MARKDOWN_MEMORY_FILE),
+        &format!(
+            "# Core Memory\n- Display name: {}\n- Role: {}\n- Provider profile: {}\n- Tool scope: {}\n- Heartbeat policy: {}\n",
+            profile.display_name,
+            profile.role,
+            profile.provider_profile,
+            profile.tool_scope,
+            profile.heartbeat_policy
+        ),
+    )?;
+    write_text_if_missing(
+        &workspace_path.join(DEFAULT_TOOLS_FILE),
+        &format!("# Tool Scope\n- Bound tool scope: {}\n", profile.tool_scope),
+    )?;
+    write_text_if_missing(
+        &workspace_path.join(DEFAULT_HEARTBEAT_FILE),
+        &format!("# Heartbeat Policy\n- Policy: {}\n", profile.heartbeat_policy),
+    )?;
+    Ok(())
+}
+
+fn write_text_if_missing(path: &Path, value: &str) -> LoomResult<()> {
+    if path.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(io_err)?;
+    }
+    fs::write(path, value).map_err(io_err)
 }
 
 fn render_default_agent_runtime_registry() -> String {
@@ -696,6 +898,8 @@ mod tests {
         assert!(root.join("agents/atlas/workspace").exists());
         assert!(root.join("agents/pulse/memory/core.json").exists());
         assert!(root.join("agents/pulse/sessions/current.json").exists());
+        assert!(root.join("context/global/SOUL.md").exists());
+        assert!(root.join("agents/pulse/workspace/MEMORY.md").exists());
     }
 
     #[test]
@@ -741,5 +945,17 @@ mod tests {
         let summary = write_agent_memory_snapshot(&root, "forge", &updates).expect("write memory");
         assert_eq!(summary.snapshot.facts.get("mission"), Some(&"governed execution".to_string()));
         assert_eq!(summary.snapshot.facts.get("role"), Some(&"executor".to_string()));
+    }
+
+
+    #[test]
+    fn context_bundle_merges_global_and_agent_operating_files() {
+        let root = temp_path("loom-agent-runtime-context");
+        ensure_agent_runtime_scaffold(&root).expect("scaffold agent runtime registry");
+        let bundle = agent_context_bundle(&root, "atlas").expect("agent context bundle");
+        assert!(bundle.sections.get("soul").unwrap_or(&String::new()).contains("Meridian Loom"));
+        assert!(bundle.sections.get("soul").unwrap_or(&String::new()).contains("Atlas"));
+        assert!(bundle.sections.get("memory").unwrap_or(&String::new()).contains("Provider profile"));
+        assert!(bundle.section_sources.get("agents").map(|items| !items.is_empty()).unwrap_or(false));
     }
 }

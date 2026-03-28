@@ -3,8 +3,9 @@ use std::io::IsTerminal;
 
 use crate::*;
 use loom_core::agent_runtime::{
-    agent_memory_summary, agent_runtime_summary, agent_session_summary, commit_agent_session,
-    open_agent_session, render_agent_memory_human, render_agent_memory_json,
+    agent_context_bundle, agent_memory_summary, agent_runtime_summary, agent_session_summary,
+    commit_agent_session, open_agent_session, render_agent_context_human,
+    render_agent_context_json, render_agent_memory_human, render_agent_memory_json,
     render_agent_runtime_human, render_agent_runtime_json, render_agent_session_human,
     render_agent_session_json, write_agent_memory_snapshot,
 };
@@ -223,7 +224,19 @@ pub(crate) fn handle_agent(args: &[String]) -> LoomResult<()> {
             }
             Ok(())
         }
-        _ => Err("agent supports 'resolve', 'runtime', 'session', and 'memory'".to_string()),
+        Some("context") => {
+            let root = root_from(take_value(args, "--root").as_deref())?;
+            let agent_id = required_flag(args, "--agent-id")?;
+            let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+            let bundle = agent_context_bundle(&root, &agent_id)?;
+            if format == "json" {
+                print!("{}", render_agent_context_json(&bundle));
+            } else {
+                print_human(&render_agent_context_human(&bundle));
+            }
+            Ok(())
+        }
+        _ => Err("agent supports 'resolve', 'runtime', 'session', 'memory', and 'context'".to_string()),
     }
 }
 
