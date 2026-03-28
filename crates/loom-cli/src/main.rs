@@ -281,7 +281,7 @@ Bootstrap\n\
   loom heartbeat status [--root PATH] [--now-unix-ms MS] [--format human|json]\n\
   loom heartbeat list [--root PATH] [--format human|json]\n\
   loom heartbeat show --heartbeat-id ID [--root PATH] [--format human|json]\n\
-  loom heartbeat schedule --agent-id ID --capability NAME [--heartbeat-id ID] [--schedule interval|once|cron] [--every-seconds N] [--jitter-seconds N] [--not-before-unix-ms MS] [--expression EXPR] [--timezone TZ] [--payload-json JSON] [--max-attempts N] [--root PATH] [--format human|json]\n\
+  loom heartbeat schedule --agent-id ID --capability NAME [--heartbeat-id ID] [--schedule interval|once|cron] [--every-seconds N] [--jitter-seconds N] [--not-before-unix-ms MS] [--expression EXPR] [--timezone TZ] [--payload-json JSON] [--delivery-channel ID] [--delivery-recipient ID] [--delivery-allow-receipt-hashes] [--delivery-allow-operator-diagnostics] [--max-attempts N] [--root PATH] [--format human|json]\n\
   loom heartbeat pause --heartbeat-id ID [--root PATH] [--format human|json]\n\
   loom heartbeat cancel --heartbeat-id ID [--root PATH] [--format human|json]\n\
   loom heartbeat run-due [--root PATH] [--now-unix-ms MS] [--limit N] [--format human|json]\n\

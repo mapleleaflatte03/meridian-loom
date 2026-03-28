@@ -4,10 +4,20 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 
+use crate::channels::{enqueue_channel_delivery, ChannelDeliveryRequest};
+
 pub type LoomResult<T> = Result<T, String>;
 
 pub const DEFAULT_HEARTBEAT_REGISTRY_PATH: &str = "state/heartbeats/registry.json";
 pub const DEFAULT_HEARTBEAT_RUNS_DIR: &str = "state/heartbeats/runs";
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HeartbeatDeliveryTarget {
+    pub channel_id: String,
+    pub recipient: String,
+    pub allow_receipt_hashes: bool,
+    pub allow_operator_diagnostics: bool,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HeartbeatRecord {
@@ -21,6 +31,7 @@ pub struct HeartbeatRecord {
     pub jitter_seconds: u64,
     pub not_before_unix_ms: Option<u64>,
     pub payload_json: String,
+    pub delivery_target: Option<HeartbeatDeliveryTarget>,
     pub enabled: bool,
     pub status: String,
     pub max_attempts: u32,
@@ -41,6 +52,7 @@ pub struct HeartbeatScheduleRequest {
     pub jitter_seconds: u64,
     pub not_before_unix_ms: Option<u64>,
     pub payload_json: String,
+    pub delivery_target: Option<HeartbeatDeliveryTarget>,
     pub max_attempts: u32,
 }
 
@@ -68,6 +80,10 @@ pub struct HeartbeatRunRecord {
     pub fired_at_unix_ms: u64,
     pub payload_json: String,
     pub status: String,
+    pub delivery_channel_id: Option<String>,
+    pub delivery_recipient: Option<String>,
+    pub delivery_id: Option<String>,
+    pub delivery_status: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -75,6 +91,9 @@ pub struct HeartbeatRunSummary {
     pub registry_path: PathBuf,
     pub runs_path: PathBuf,
     pub dispatched_count: usize,
+    pub delivery_attempted_count: usize,
+    pub delivery_queued_count: usize,
+    pub delivery_blocked_count: usize,
     pub run_records: Vec<HeartbeatRunRecord>,
 }
 
@@ -157,6 +176,7 @@ pub fn schedule_heartbeat(root: &Path, request: &HeartbeatScheduleRequest) -> Lo
         jitter_seconds: request.jitter_seconds,
         not_before_unix_ms: request.not_before_unix_ms,
         payload_json: normalized_or(Some(&request.payload_json), "{}"),
+        delivery_target: request.delivery_target.clone(),
         enabled: true,
         status: "scheduled".to_string(),
         max_attempts: request.max_attempts.max(1),
@@ -191,6 +211,10 @@ pub fn run_due_heartbeats(root: &Path, now_unix_ms: u64, limit: usize) -> LoomRe
     let mut records = load_heartbeats(root)?;
     let effective_limit = if limit == 0 { usize::MAX } else { limit };
     let mut run_records = Vec::new();
+    let mut delivery_attempted_count: usize = 0;
+    let mut delivery_queued_count: usize = 0;
+    let mut delivery_blocked_count: usize = 0;
+
     for record in records.iter_mut() {
         if run_records.len() >= effective_limit {
             break;
@@ -198,7 +222,8 @@ pub fn run_due_heartbeats(root: &Path, now_unix_ms: u64, limit: usize) -> LoomRe
         if !heartbeat_is_due(record, now_unix_ms) {
             continue;
         }
-        let run_record = HeartbeatRunRecord {
+
+        let mut run_record = HeartbeatRunRecord {
             run_id: format!("run-{}", unique_token()),
             heartbeat_id: record.heartbeat_id.clone(),
             agent_id: record.agent_id.clone(),
@@ -206,7 +231,46 @@ pub fn run_due_heartbeats(root: &Path, now_unix_ms: u64, limit: usize) -> LoomRe
             fired_at_unix_ms: now_unix_ms,
             payload_json: record.payload_json.clone(),
             status: "dispatched".to_string(),
+            delivery_channel_id: None,
+            delivery_recipient: None,
+            delivery_id: None,
+            delivery_status: None,
         };
+
+        if let Some(target) = record.delivery_target.as_ref() {
+            delivery_attempted_count = delivery_attempted_count.saturating_add(1);
+            run_record.delivery_channel_id = Some(target.channel_id.clone());
+            run_record.delivery_recipient = Some(target.recipient.clone());
+            match delivery_text_from_payload(&record.payload_json) {
+                Some(text) => {
+                    let delivery = enqueue_channel_delivery(
+                        root,
+                        &ChannelDeliveryRequest {
+                            channel_id: target.channel_id.clone(),
+                            recipient: target.recipient.clone(),
+                            raw_text: text,
+                            allow_receipt_hashes: target.allow_receipt_hashes,
+                            allow_operator_diagnostics: target.allow_operator_diagnostics,
+                        },
+                    )?;
+                    run_record.delivery_id = Some(delivery.delivery_id.clone());
+                    run_record.delivery_status = Some(delivery.status.clone());
+                    run_record.status = if delivery.allowed {
+                        delivery_queued_count = delivery_queued_count.saturating_add(1);
+                        "delivery_queued".to_string()
+                    } else {
+                        delivery_blocked_count = delivery_blocked_count.saturating_add(1);
+                        "delivery_blocked".to_string()
+                    };
+                }
+                None => {
+                    delivery_blocked_count = delivery_blocked_count.saturating_add(1);
+                    run_record.delivery_status = Some("missing_text".to_string());
+                    run_record.status = "delivery_missing_text".to_string();
+                }
+            }
+        }
+
         persist_run_record(root, &run_record)?;
         record.run_count = record.run_count.saturating_add(1);
         record.last_fire_at_unix_ms = Some(now_unix_ms);
@@ -228,11 +292,15 @@ pub fn run_due_heartbeats(root: &Path, now_unix_ms: u64, limit: usize) -> LoomRe
         }
         run_records.push(run_record);
     }
+
     persist_heartbeat_registry(root, &records)?;
     Ok(HeartbeatRunSummary {
         registry_path: heartbeat_registry_path(root),
         runs_path: heartbeat_runs_path(root),
         dispatched_count: run_records.len(),
+        delivery_attempted_count,
+        delivery_queued_count,
+        delivery_blocked_count,
         run_records,
     })
 }
@@ -261,8 +329,17 @@ pub fn render_heartbeat_overview_json(summary: &HeartbeatRuntimeOverview) -> Str
 }
 
 pub fn render_heartbeat_record_human(record: &HeartbeatRecord) -> String {
+    let delivery = record.delivery_target.as_ref().map(|target| {
+        format!(
+            "{} -> {} receipts={} diagnostics={}",
+            target.channel_id,
+            target.recipient,
+            target.allow_receipt_hashes,
+            target.allow_operator_diagnostics
+        )
+    });
     format!(
-        "heartbeat_id:      {}\nagent_id:          {}\ncapability_name:   {}\nschedule_kind:     {}\nschedule_expr:     {}\ntimezone:          {}\nevery_seconds:     {}\njitter_seconds:    {}\nnot_before:        {}\nenabled:           {}\nstatus:            {}\nmax_attempts:      {}\nrun_count:         {}\nlast_fire_at:      {}\nnext_fire_at:      {}\n",
+        "heartbeat_id:      {}\nagent_id:          {}\ncapability_name:   {}\nschedule_kind:     {}\nschedule_expr:     {}\ntimezone:          {}\nevery_seconds:     {}\njitter_seconds:    {}\nnot_before:        {}\ndelivery:          {}\nenabled:           {}\nstatus:            {}\nmax_attempts:      {}\nrun_count:         {}\nlast_fire_at:      {}\nnext_fire_at:      {}\n",
         record.heartbeat_id,
         record.agent_id,
         record.capability_name,
@@ -272,6 +349,7 @@ pub fn render_heartbeat_record_human(record: &HeartbeatRecord) -> String {
         record.every_seconds,
         record.jitter_seconds,
         record.not_before_unix_ms.map(|value| value.to_string()).unwrap_or_else(|| "(none)".to_string()),
+        delivery.unwrap_or_else(|| "(none)".to_string()),
         record.enabled,
         record.status,
         record.max_attempts,
@@ -289,15 +367,25 @@ pub fn render_heartbeat_record_json(record: &HeartbeatRecord) -> String {
 
 pub fn render_heartbeat_run_summary_human(summary: &HeartbeatRunSummary) -> String {
     let mut rendered = format!(
-        "registry_path:   {}\nruns_path:       {}\ndispatched:      {}\n",
+        "registry_path:       {}\nruns_path:           {}\ndispatched:          {}\ndelivery_attempted:  {}\ndelivery_queued:     {}\ndelivery_blocked:    {}\n",
         summary.registry_path.display(),
         summary.runs_path.display(),
         summary.dispatched_count,
+        summary.delivery_attempted_count,
+        summary.delivery_queued_count,
+        summary.delivery_blocked_count,
     );
     for run in &summary.run_records {
         rendered.push_str(&format!(
-            "\n- {} agent={} capability={} fired_at={} status={}\n",
-            run.heartbeat_id, run.agent_id, run.capability_name, run.fired_at_unix_ms, run.status
+            "\n- {} agent={} capability={} fired_at={} status={} delivery={} recipient={} delivery_status={}\n",
+            run.heartbeat_id,
+            run.agent_id,
+            run.capability_name,
+            run.fired_at_unix_ms,
+            run.status,
+            run.delivery_channel_id.as_deref().unwrap_or("(none)"),
+            run.delivery_recipient.as_deref().unwrap_or("(none)"),
+            run.delivery_status.as_deref().unwrap_or("(none)"),
         ));
     }
     rendered
@@ -308,6 +396,9 @@ pub fn render_heartbeat_run_summary_json(summary: &HeartbeatRunSummary) -> Strin
         "registry_path": summary.registry_path.display().to_string(),
         "runs_path": summary.runs_path.display().to_string(),
         "dispatched_count": summary.dispatched_count,
+        "delivery_attempted_count": summary.delivery_attempted_count,
+        "delivery_queued_count": summary.delivery_queued_count,
+        "delivery_blocked_count": summary.delivery_blocked_count,
         "run_records": summary.run_records.iter().map(heartbeat_run_json).collect::<Vec<_>>(),
     }))
     .unwrap_or_else(|_| "{}".to_string())
@@ -361,12 +452,32 @@ fn parse_heartbeat_record(value: &Value) -> LoomResult<HeartbeatRecord> {
         jitter_seconds: value_u64(value.get("jitter_seconds")).unwrap_or(0),
         not_before_unix_ms: value_u64(value.get("not_before_unix_ms")),
         payload_json: value_string_or(value.get("payload_json"), "{}"),
+        delivery_target: value
+            .get("delivery_target")
+            .and_then(|entry| if entry.is_null() { None } else { Some(entry) })
+            .map(parse_delivery_target)
+            .transpose()?,
         enabled: value.get("enabled").and_then(Value::as_bool).unwrap_or(true),
         status: value_string_or(value.get("status"), "scheduled"),
         max_attempts: value_u64(value.get("max_attempts")).unwrap_or(1) as u32,
         run_count: value_u64(value.get("run_count")).unwrap_or(0) as u32,
         last_fire_at_unix_ms: value_u64(value.get("last_fire_at_unix_ms")),
         next_fire_at_unix_ms: value_u64(value.get("next_fire_at_unix_ms")),
+    })
+}
+
+fn parse_delivery_target(value: &Value) -> LoomResult<HeartbeatDeliveryTarget> {
+    Ok(HeartbeatDeliveryTarget {
+        channel_id: value_string(value.get("channel_id"), "delivery_target.channel_id")?,
+        recipient: value_string(value.get("recipient"), "delivery_target.recipient")?,
+        allow_receipt_hashes: value
+            .get("allow_receipt_hashes")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        allow_operator_diagnostics: value
+            .get("allow_operator_diagnostics")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
     })
 }
 
@@ -406,12 +517,22 @@ fn heartbeat_record_json(record: &HeartbeatRecord) -> Value {
         "jitter_seconds": record.jitter_seconds,
         "not_before_unix_ms": record.not_before_unix_ms,
         "payload_json": record.payload_json,
+        "delivery_target": record.delivery_target.as_ref().map(delivery_target_json),
         "enabled": record.enabled,
         "status": record.status,
         "max_attempts": record.max_attempts,
         "run_count": record.run_count,
         "last_fire_at_unix_ms": record.last_fire_at_unix_ms,
         "next_fire_at_unix_ms": record.next_fire_at_unix_ms,
+    })
+}
+
+fn delivery_target_json(target: &HeartbeatDeliveryTarget) -> Value {
+    json!({
+        "channel_id": target.channel_id,
+        "recipient": target.recipient,
+        "allow_receipt_hashes": target.allow_receipt_hashes,
+        "allow_operator_diagnostics": target.allow_operator_diagnostics,
     })
 }
 
@@ -424,6 +545,10 @@ fn heartbeat_run_json(run: &HeartbeatRunRecord) -> Value {
         "fired_at_unix_ms": run.fired_at_unix_ms,
         "payload_json": run.payload_json,
         "status": run.status,
+        "delivery_channel_id": run.delivery_channel_id,
+        "delivery_recipient": run.delivery_recipient,
+        "delivery_id": run.delivery_id,
+        "delivery_status": run.delivery_status,
     })
 }
 
@@ -433,6 +558,14 @@ fn validate_schedule_request(request: &HeartbeatScheduleRequest) -> LoomResult<(
     }
     if request.capability_name.trim().is_empty() {
         return Err("capability_name is required".to_string());
+    }
+    if let Some(target) = request.delivery_target.as_ref() {
+        if target.channel_id.trim().is_empty() {
+            return Err("delivery_target.channel_id is required".to_string());
+        }
+        if target.recipient.trim().is_empty() {
+            return Err("delivery_target.recipient is required".to_string());
+        }
     }
     match request.schedule_kind.trim() {
         "interval" => {
@@ -474,6 +607,32 @@ fn heartbeat_is_due(record: &HeartbeatRecord, now_unix_ms: u64) -> bool {
             .next_fire_at_unix_ms
             .map(|value| value <= now_unix_ms)
             .unwrap_or(false),
+    }
+}
+
+fn delivery_text_from_payload(payload_json: &str) -> Option<String> {
+    let trimmed = payload_json.trim();
+    if trimmed.is_empty() || trimmed == "{}" {
+        return None;
+    }
+    match serde_json::from_str::<Value>(trimmed) {
+        Ok(Value::String(value)) => {
+            let value = value.trim().to_string();
+            if value.is_empty() { None } else { Some(value) }
+        }
+        Ok(Value::Object(map)) => {
+            for key in ["message", "text", "content", "final_answer"] {
+                if let Some(value) = map.get(key).and_then(Value::as_str) {
+                    let value = value.trim().to_string();
+                    if !value.is_empty() {
+                        return Some(value);
+                    }
+                }
+            }
+            None
+        }
+        Ok(_) => None,
+        Err(_) => Some(trimmed.to_string()),
     }
 }
 
@@ -536,6 +695,8 @@ fn io_err(error: std::io::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::channels::list_channel_deliveries;
+    use crate::{init_workspace, onboarding::{load_onboard_manifest, write_onboard_manifest}};
 
     fn temp_path(label: &str) -> PathBuf {
         let unique = SystemTime::now()
@@ -576,6 +737,12 @@ mod tests {
                 jitter_seconds: 5,
                 not_before_unix_ms: None,
                 payload_json: "{}".to_string(),
+                delivery_target: Some(HeartbeatDeliveryTarget {
+                    channel_id: "web_api".to_string(),
+                    recipient: "founder".to_string(),
+                    allow_receipt_hashes: false,
+                    allow_operator_diagnostics: false,
+                }),
                 max_attempts: 2,
             },
         )
@@ -583,6 +750,7 @@ mod tests {
         assert_eq!(result.record.heartbeat_id, "beat-atlas");
         assert_eq!(result.record.status, "scheduled");
         assert!(result.record.next_fire_at_unix_ms.is_some());
+        assert!(result.record.delivery_target.is_some());
     }
 
     #[test]
@@ -602,6 +770,7 @@ mod tests {
                 jitter_seconds: 0,
                 not_before_unix_ms: None,
                 payload_json: "{}".to_string(),
+                delivery_target: None,
                 max_attempts: 1,
             },
         )
@@ -614,6 +783,97 @@ mod tests {
         let after = heartbeat_summary(&root, "beat-pulse").expect("summary after");
         assert_eq!(after.run_count, 1);
         assert!(after.next_fire_at_unix_ms.expect("advanced next fire") > now);
+    }
+
+    #[test]
+    fn run_due_heartbeats_queues_guarded_delivery() {
+        let root = temp_path("loom-heartbeat-delivery");
+        init_workspace(&root, "embedded", Some("/tmp/meridian-kernel"), "org_demo")
+            .expect("init workspace");
+        let mut manifest = load_onboard_manifest(&root).expect("load onboard manifest");
+        manifest.telegram_enabled = true;
+        write_onboard_manifest(&root, &manifest).expect("write onboard manifest");
+        crate::channels::sync_channel_registry(&root).expect("sync channel registry");
+
+        schedule_heartbeat(
+            &root,
+            &HeartbeatScheduleRequest {
+                heartbeat_id: Some("beat-leviathann".to_string()),
+                agent_id: "leviathann".to_string(),
+                capability_name: "loom.llm.inference.v1".to_string(),
+                schedule_kind: "once".to_string(),
+                schedule_expression: String::new(),
+                timezone: "UTC".to_string(),
+                every_seconds: 0,
+                jitter_seconds: 0,
+                not_before_unix_ms: Some(10),
+                payload_json: json!({
+                    "message": "[✅ FINAL ANSWER]\nMeridian proactive brief ready\n[🛡️ PoGE PROTOCOL] Cryptographic Audit Root Settled: 0xabc123"
+                })
+                .to_string(),
+                delivery_target: Some(HeartbeatDeliveryTarget {
+                    channel_id: "telegram".to_string(),
+                    recipient: "founder".to_string(),
+                    allow_receipt_hashes: true,
+                    allow_operator_diagnostics: false,
+                }),
+                max_attempts: 1,
+            },
+        )
+        .expect("schedule heartbeat");
+
+        let summary = run_due_heartbeats(&root, 10, 1).expect("run due heartbeats");
+        assert_eq!(summary.dispatched_count, 1);
+        assert_eq!(summary.delivery_attempted_count, 1);
+        assert_eq!(summary.delivery_queued_count, 1);
+        assert_eq!(summary.delivery_blocked_count, 0);
+        assert_eq!(summary.run_records[0].status, "delivery_queued");
+        assert_eq!(summary.run_records[0].delivery_channel_id.as_deref(), Some("telegram"));
+        let deliveries = list_channel_deliveries(&root, 10).expect("list deliveries");
+        assert_eq!(deliveries.len(), 1);
+        assert!(deliveries[0].display_text.contains("Meridian proactive brief ready"));
+        assert!(deliveries[0].display_text.contains("[PoGE Receipt] 0xabc123"));
+    }
+
+    #[test]
+    fn run_due_heartbeats_blocks_internal_delivery_payloads() {
+        let root = temp_path("loom-heartbeat-delivery-blocked");
+        init_workspace(&root, "embedded", Some("/tmp/meridian-kernel"), "org_demo")
+            .expect("init workspace");
+        crate::channels::sync_channel_registry(&root).expect("sync channel registry");
+
+        schedule_heartbeat(
+            &root,
+            &HeartbeatScheduleRequest {
+                heartbeat_id: Some("beat-sentinel".to_string()),
+                agent_id: "sentinel".to_string(),
+                capability_name: "loom.llm.inference.v1".to_string(),
+                schedule_kind: "once".to_string(),
+                schedule_expression: String::new(),
+                timezone: "UTC".to_string(),
+                every_seconds: 0,
+                jitter_seconds: 0,
+                not_before_unix_ms: Some(25),
+                payload_json: json!({"message": "SLEEP"}).to_string(),
+                delivery_target: Some(HeartbeatDeliveryTarget {
+                    channel_id: "web_api".to_string(),
+                    recipient: "founder".to_string(),
+                    allow_receipt_hashes: false,
+                    allow_operator_diagnostics: false,
+                }),
+                max_attempts: 1,
+            },
+        )
+        .expect("schedule heartbeat");
+
+        let summary = run_due_heartbeats(&root, 25, 1).expect("run due heartbeats");
+        assert_eq!(summary.delivery_attempted_count, 1);
+        assert_eq!(summary.delivery_queued_count, 0);
+        assert_eq!(summary.delivery_blocked_count, 1);
+        assert_eq!(summary.run_records[0].status, "delivery_blocked");
+        let deliveries = list_channel_deliveries(&root, 10).expect("list deliveries");
+        assert_eq!(deliveries.len(), 1);
+        assert!(!deliveries[0].allowed);
     }
 
     #[test]
@@ -633,6 +893,7 @@ mod tests {
                 jitter_seconds: 0,
                 not_before_unix_ms: Some(123),
                 payload_json: "{}".to_string(),
+                delivery_target: None,
                 max_attempts: 1,
             },
         )

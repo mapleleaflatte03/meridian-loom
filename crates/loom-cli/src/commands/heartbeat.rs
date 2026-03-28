@@ -6,7 +6,7 @@ use loom_core::recurring::{
     render_heartbeat_overview_human, render_heartbeat_overview_json,
     render_heartbeat_record_human, render_heartbeat_record_json,
     render_heartbeat_run_summary_human, render_heartbeat_run_summary_json,
-    run_due_heartbeats, schedule_heartbeat, HeartbeatRecord, HeartbeatScheduleRequest,
+    run_due_heartbeats, schedule_heartbeat, HeartbeatDeliveryTarget, HeartbeatRecord, HeartbeatScheduleRequest,
 };
 
 pub(crate) fn handle_heartbeat(args: &[String]) -> LoomResult<()> {
@@ -102,6 +102,12 @@ fn handle_heartbeat_schedule(args: &[String]) -> LoomResult<()> {
     let max_attempts = take_value(args, "--max-attempts")
         .and_then(|raw| raw.parse::<u32>().ok())
         .unwrap_or(1);
+    let delivery_target = take_value(args, "--delivery-channel").map(|channel_id| HeartbeatDeliveryTarget {
+        channel_id,
+        recipient: required_flag(args, "--delivery-recipient").unwrap_or_else(|_| "".to_string()),
+        allow_receipt_hashes: has_flag(args, "--delivery-allow-receipt-hashes"),
+        allow_operator_diagnostics: has_flag(args, "--delivery-allow-operator-diagnostics"),
+    });
     let request = HeartbeatScheduleRequest {
         heartbeat_id: take_value(args, "--heartbeat-id"),
         agent_id,
@@ -113,6 +119,7 @@ fn handle_heartbeat_schedule(args: &[String]) -> LoomResult<()> {
         jitter_seconds,
         not_before_unix_ms,
         payload_json: take_value(args, "--payload-json").unwrap_or_else(|| "{}".to_string()),
+        delivery_target,
         max_attempts,
     };
     let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
@@ -219,6 +226,12 @@ fn heartbeat_record_json(record: &HeartbeatRecord) -> serde_json::Value {
         "jitter_seconds": record.jitter_seconds,
         "not_before_unix_ms": record.not_before_unix_ms,
         "payload_json": record.payload_json,
+        "delivery_target": record.delivery_target.as_ref().map(|target| serde_json::json!({
+            "channel_id": target.channel_id,
+            "recipient": target.recipient,
+            "allow_receipt_hashes": target.allow_receipt_hashes,
+            "allow_operator_diagnostics": target.allow_operator_diagnostics,
+        })),
         "enabled": record.enabled,
         "status": record.status,
         "max_attempts": record.max_attempts,
