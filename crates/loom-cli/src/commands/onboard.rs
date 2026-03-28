@@ -8,6 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::*;
 use loom_core::agent_runtime::agent_runtime_overview;
 use loom_core::channels::sync_channel_registry;
+use loom_core::skills::sync_skill_registry;
 use loom_core::onboarding::{
     derive_service_http_address, ensure_onboard_manifest, load_onboard_manifest,
     onboard_manifest_path, onboard_overview, write_onboard_manifest, OnboardManifest,
@@ -113,6 +114,7 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
     loom_core::write_config(&root, &config)?;
     let manifest_path = write_onboard_manifest(&root, &manifest)?;
     let channel_summary = sync_channel_registry(&root)?;
+    let skill_summary = sync_skill_registry(&root)?;
 
     let provider_summary = provider_plane_summary(Some(&root))?;
     let runtime_overview = agent_runtime_overview(&root)?;
@@ -188,6 +190,13 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
                         "enabled_count": channel_summary.enabled_count,
                         "channel_ids": channel_summary.channel_ids.clone(),
                     },
+                    "skills_runtime": {
+                        "total_count": skill_summary.total_count,
+                        "enabled_count": skill_summary.enabled_count,
+                        "default_count": skill_summary.default_count,
+                        "imported_count": skill_summary.imported_count,
+                        "skill_ids": skill_summary.skill_ids.clone(),
+                    },
                 },
                 "manager_route": manager_route.as_ref().map(route_json),
                 "pulse_route": pulse_route.as_ref().map(route_json),
@@ -250,6 +259,7 @@ gateway:             {}
 telegram:            {}
 channels:            total={} enabled={} ids={}
 skills:              {}
+skills_runtime:      total={} enabled={} defaults={} imported={} ids={}
 daemon:              {}
 health:              {}
 manager_route:       {}
@@ -276,6 +286,11 @@ next_step:           loom doctor --root {} --format human
         channel_summary.enabled_count,
         if channel_summary.channel_ids.is_empty() { "(none)".to_string() } else { channel_summary.channel_ids.join(",") },
         overview.skills_summary,
+        skill_summary.total_count,
+        skill_summary.enabled_count,
+        skill_summary.default_count,
+        skill_summary.imported_count,
+        if skill_summary.skill_ids.is_empty() { "(none)".to_string() } else { skill_summary.skill_ids.join(",") },
         daemon_summary,
         health_summary,
         manager_profile,

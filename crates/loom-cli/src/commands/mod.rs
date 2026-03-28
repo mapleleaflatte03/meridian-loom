@@ -8,6 +8,7 @@ pub(crate) mod output;
 pub(crate) mod queue;
 pub(crate) mod runtime;
 pub(crate) mod service;
+pub(crate) mod skill;
 pub(crate) mod supervisor;
 pub(crate) mod wasm;
 pub(crate) mod provider;

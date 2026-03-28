@@ -13,6 +13,7 @@ pub mod onboarding;
 pub mod output_guard;
 pub mod provider_router;
 pub mod recurring;
+pub mod skills;
 pub mod wasm_host;
 pub mod wasm_limits;
 pub mod wasm_profiles;
@@ -304,6 +305,7 @@ pub fn init_workspace(
     channels::ensure_channel_runtime_scaffold(&root)?;
 
     fs::write(&config_path, render_config(&config)).map_err(io_err)?;
+    skills::ensure_skill_runtime_scaffold(&root)?;
     fs::write(
         state_dir.join("state.json"),
         format!(
@@ -762,6 +764,46 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             level: "WARN",
             label: "channel_registry",
             detail: format!("channel runtime scaffold unavailable: {}", error),
+        }),
+    }
+    match skills::ensure_skill_runtime_scaffold(&root) {
+        Ok(skill_registry) => {
+            push_path_check(
+                &mut checks,
+                "skill_registry",
+                &skill_registry,
+                true,
+                "skill runtime registry present",
+            );
+            match skills::skill_overview(&root) {
+                Ok(overview) => checks.push(Check {
+                    level: if overview.enabled_count > 0 { "OK" } else { "WARN" },
+                    label: "skill_runtime",
+                    detail: format!(
+                        "total={} enabled={} defaults={} imported={} installs_path={} skills={}",
+                        overview.total_count,
+                        overview.enabled_count,
+                        overview.default_count,
+                        overview.imported_count,
+                        overview.installs_path.display(),
+                        if overview.skill_ids.is_empty() {
+                            "(none)".to_string()
+                        } else {
+                            overview.skill_ids.join(",")
+                        }
+                    ),
+                }),
+                Err(error) => checks.push(Check {
+                    level: "WARN",
+                    label: "skill_runtime",
+                    detail: format!("skill runtime unavailable: {}", error),
+                }),
+            }
+        }
+        Err(error) => checks.push(Check {
+            level: "WARN",
+            label: "skill_registry",
+            detail: format!("skill runtime scaffold unavailable: {}", error),
         }),
     }
     let delivery_queue = delivery_queue_path(&root, &config);
