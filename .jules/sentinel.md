@@ -1,0 +1,4 @@
+## 2024-03-28 - Timing Attack in Service Token Validation
+**Vulnerability:** The HTTP control plane authenticated requests by comparing the provided service token with the expected token using a standard string comparison (`!=`). This allows an attacker to perform a timing attack, potentially guessing the token character by character.
+**Learning:** For straightforward security algorithms like constant-time string comparisons, the project prefers implementing simple inline helper functions (using bitwise XOR) over adding external cryptographic dependencies like the `subtle` crate. This minimizes dependencies while resolving the vulnerability.
+**Prevention:** Always use constant-time comparison functions when checking sensitive information such as authentication tokens, passwords, or cryptographic keys against user-provided input.
