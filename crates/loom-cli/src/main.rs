@@ -100,6 +100,7 @@ fn run() -> LoomResult<()> {
         "logs" => commands::service::handle_logs(&args[1..]),
         "config" => commands::runtime::handle_config(&args[1..]),
         "provider" => commands::provider::handle_provider(&args[1..]),
+        "binding" => commands::binding::handle_binding(&args[1..]),
         "channel" => commands::channel::handle_channel(&args[1..]),
         "skill" => commands::skill::handle_skill(&args[1..]),
         "heartbeat" => commands::heartbeat::handle_heartbeat(&args[1..]),
@@ -275,6 +276,11 @@ Bootstrap\n\
   loom provider status [--root PATH] [--format human|json]\n\
   loom provider route [--root PATH] [--capability NAME] [--model NAME] [--agent-id ID] [--org-id ORG] [--profile NAME] [--format human|json]\n\
   loom provider auth [--root PATH] [--profile NAME] [--format human|json]\n\
+  loom binding status [--root PATH] [--format human|json]\n\
+  loom binding sync [--root PATH] [--format human|json]\n\
+  loom binding list [--root PATH] [--format human|json]\n\
+  loom binding show --binding-id ID [--root PATH] [--format human|json]\n\
+  loom binding resolve --channel ID --peer ID [--thread ID] [--agent-id ID] [--root PATH] [--format human|json]\n\
   loom channel status [--root PATH] [--format human|json]\n\
   loom channel sync [--root PATH] [--format human|json]\n\
   loom channel send --channel ID --recipient ID [--text TEXT|--file PATH] [--allow-receipt-hashes] [--allow-operator-diagnostics] [--root PATH] [--format human|json]\n\

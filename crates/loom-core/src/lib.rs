@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub mod advanced_primitives;
 pub mod agent_runtime;
+pub mod bindings;
 pub mod channels;
 pub mod capability_shims;
 pub mod capabilities;
@@ -305,6 +306,7 @@ pub fn init_workspace(
     channels::ensure_channel_runtime_scaffold(&root)?;
 
     fs::write(&config_path, render_config(&config)).map_err(io_err)?;
+    bindings::ensure_binding_runtime_scaffold(&root)?;
     skills::ensure_skill_runtime_scaffold(&root)?;
     fs::write(
         state_dir.join("state.json"),
@@ -764,6 +766,43 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             level: "WARN",
             label: "channel_registry",
             detail: format!("channel runtime scaffold unavailable: {}", error),
+        }),
+    }
+    match bindings::ensure_binding_runtime_scaffold(&root) {
+        Ok(binding_registry) => {
+            push_path_check(
+                &mut checks,
+                "binding_registry",
+                &binding_registry,
+                true,
+                "binding runtime registry present",
+            );
+            match bindings::binding_overview(&root) {
+                Ok(overview) => checks.push(Check {
+                    level: if overview.enabled_count > 0 { "OK" } else { "WARN" },
+                    label: "binding_runtime",
+                    detail: format!(
+                        "total={} enabled={} bindings={}",
+                        overview.total_count,
+                        overview.enabled_count,
+                        if overview.binding_ids.is_empty() {
+                            "(none)".to_string()
+                        } else {
+                            overview.binding_ids.join(",")
+                        }
+                    ),
+                }),
+                Err(error) => checks.push(Check {
+                    level: "WARN",
+                    label: "binding_runtime",
+                    detail: format!("binding runtime unavailable: {}", error),
+                }),
+            }
+        }
+        Err(error) => checks.push(Check {
+            level: "WARN",
+            label: "binding_registry",
+            detail: format!("binding runtime scaffold unavailable: {}", error),
         }),
     }
     match skills::ensure_skill_runtime_scaffold(&root) {

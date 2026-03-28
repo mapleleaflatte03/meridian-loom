@@ -7,6 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::*;
 use loom_core::agent_runtime::agent_runtime_overview;
+use loom_core::bindings::sync_binding_registry;
 use loom_core::channels::sync_channel_registry;
 use loom_core::skills::sync_skill_registry;
 use loom_core::onboarding::{
@@ -114,6 +115,7 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
     loom_core::write_config(&root, &config)?;
     let manifest_path = write_onboard_manifest(&root, &manifest)?;
     let channel_summary = sync_channel_registry(&root)?;
+    let binding_summary = sync_binding_registry(&root)?;
     let skill_summary = sync_skill_registry(&root)?;
 
     let provider_summary = provider_plane_summary(Some(&root))?;
@@ -190,6 +192,11 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
                         "enabled_count": channel_summary.enabled_count,
                         "channel_ids": channel_summary.channel_ids.clone(),
                     },
+                    "bindings_runtime": {
+                        "total_count": binding_summary.total_count,
+                        "enabled_count": binding_summary.enabled_count,
+                        "binding_ids": binding_summary.binding_ids.clone(),
+                    },
                     "skills_runtime": {
                         "total_count": skill_summary.total_count,
                         "enabled_count": skill_summary.enabled_count,
@@ -258,6 +265,7 @@ codex_detail:        {}
 gateway:             {}
 telegram:            {}
 channels:            total={} enabled={} ids={}
+bindings_runtime:    total={} enabled={} ids={}
 skills:              {}
 skills_runtime:      total={} enabled={} defaults={} imported={} ids={}
 daemon:              {}
@@ -285,6 +293,9 @@ next_step:           loom doctor --root {} --format human
         channel_summary.total_count,
         channel_summary.enabled_count,
         if channel_summary.channel_ids.is_empty() { "(none)".to_string() } else { channel_summary.channel_ids.join(",") },
+        binding_summary.total_count,
+        binding_summary.enabled_count,
+        if binding_summary.binding_ids.is_empty() { "(none)".to_string() } else { binding_summary.binding_ids.join(",") },
         overview.skills_summary,
         skill_summary.total_count,
         skill_summary.enabled_count,
