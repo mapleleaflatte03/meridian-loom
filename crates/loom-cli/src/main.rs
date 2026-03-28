@@ -100,6 +100,7 @@ fn run() -> LoomResult<()> {
         "logs" => commands::service::handle_logs(&args[1..]),
         "config" => commands::runtime::handle_config(&args[1..]),
         "provider" => commands::provider::handle_provider(&args[1..]),
+        "context" => commands::context::handle_context(&args[1..]),
         "binding" => commands::binding::handle_binding(&args[1..]),
         "channel" => commands::channel::handle_channel(&args[1..]),
         "skill" => commands::skill::handle_skill(&args[1..]),
@@ -277,6 +278,9 @@ Bootstrap\n\
   loom provider status [--root PATH] [--format human|json]\n\
   loom provider route [--root PATH] [--capability NAME] [--model NAME] [--agent-id ID] [--org-id ORG] [--profile NAME] [--format human|json]\n\
   loom provider auth [--root PATH] [--profile NAME] [--format human|json]\n\
+  loom provider profiles [--root PATH] [--profile NAME] [--format human|json]\n\
+  loom provider mark-used --profile NAME [--root PATH] [--format human|json]\n\
+  loom provider mark-failure --profile NAME [--reason TEXT] [--cooldown-ms N] [--root PATH] [--format human|json]\n\
   loom binding status [--root PATH] [--format human|json]\n\
   loom binding sync [--root PATH] [--format human|json]\n\
   loom binding list [--root PATH] [--format human|json]\n\
@@ -286,6 +290,10 @@ Bootstrap\n\
   loom channel sync [--root PATH] [--format human|json]\n\
   loom channel send --channel ID --recipient ID [--text TEXT|--file PATH] [--allow-receipt-hashes] [--allow-operator-diagnostics] [--root PATH] [--format human|json]\n\
   loom channel deliveries [--root PATH] [--limit N] [--format human|json]\n\
+  loom context status [--root PATH] [--format human|json]\n\
+  loom context sync [--root PATH] [--format human|json]\n\
+  loom context bundle --agent-id ID [--session-id ID] [--root PATH] [--format human|json]\n\
+  loom context overlay --agent-id ID --session-id ID --section soul|user|tools|heartbeat|agents|memory [--text TEXT|--file PATH] [--root PATH] [--format human|json]\n\
   loom skill status [--root PATH] [--format human|json]\n\
   loom skill sync [--root PATH] [--format human|json]\n\
   loom skill list [--root PATH] [--format human|json]\n\
@@ -328,7 +336,7 @@ Governance surfaces\n\
   loom agent runtime --agent-id ID [--root PATH] [--format human|json]\n\
   loom agent session --agent-id ID [--new] [--task-kind KIND] [--status STATUS] [--summary TEXT] [--root PATH] [--format human|json]\n\
   loom agent memory --agent-id ID [--set KEY=VALUE]... [--root PATH] [--format human|json]\n\
-  loom agent context --agent-id ID [--root PATH] [--format human|json]\n\
+  loom agent context --agent-id ID [--session-id ID] [--root PATH] [--format human|json]\n\
   loom envelope build --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
   loom wasm limits [--config-file loom.toml.example] [--format human|json]\n\
   loom wasm profile show [--profile minimal|standard|heavy] [--format human|json]\n\

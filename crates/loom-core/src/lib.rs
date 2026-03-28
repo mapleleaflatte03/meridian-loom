@@ -10,6 +10,7 @@ pub mod bindings;
 pub mod channels;
 pub mod capability_shims;
 pub mod capabilities;
+pub mod context_engine;
 pub mod onboarding;
 pub mod output_guard;
 pub mod provider_auth_store;
@@ -304,6 +305,7 @@ pub fn init_workspace(
     ensure_runtime_worker_scaffold(&root, &config)?;
     capabilities::ensure_capability_registry_scaffold(&root, &config)?;
     agent_runtime::ensure_agent_runtime_scaffold(&root)?;
+    context_engine::ensure_context_engine_scaffold(&root)?;
     recurring::ensure_heartbeat_runtime_scaffold(&root)?;
     schedules::ensure_schedule_runtime_scaffold(&root)?;
     provider_router::ensure_provider_profiles_scaffold(&root)?;
@@ -728,6 +730,40 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             level: "WARN",
             label: "agent_runtime_registry",
             detail: format!("agent runtime scaffold unavailable: {}", error),
+        }),
+    }
+    match context_engine::ensure_context_engine_scaffold(&root) {
+        Ok(context_registry) => {
+            push_path_check(
+                &mut checks,
+                "context_registry",
+                &context_registry,
+                false,
+                "context engine registry present",
+            );
+            match context_engine::context_engine_overview(&root) {
+                Ok(summary) => checks.push(Check {
+                    level: if summary.layer_count > 0 { "OK" } else { "WARN" },
+                    label: "context_engine",
+                    detail: format!(
+                        "layers={} sections={} mutable={} overlay_root={}",
+                        summary.layer_count,
+                        summary.section_count,
+                        summary.mutable_count,
+                        summary.overlay_root.display()
+                    ),
+                }),
+                Err(error) => checks.push(Check {
+                    level: "WARN",
+                    label: "context_engine",
+                    detail: format!("context engine unavailable: {}", error),
+                }),
+            }
+        }
+        Err(error) => checks.push(Check {
+            level: "WARN",
+            label: "context_registry",
+            detail: format!("context engine scaffold unavailable: {}", error),
         }),
     }
     match recurring::ensure_heartbeat_runtime_scaffold(&root) {

@@ -3,12 +3,12 @@ use std::io::IsTerminal;
 
 use crate::*;
 use loom_core::agent_runtime::{
-    agent_context_bundle, agent_memory_summary, agent_runtime_summary, agent_session_summary,
-    commit_agent_session, open_agent_session, render_agent_context_human,
-    render_agent_context_json, render_agent_memory_human, render_agent_memory_json,
+    agent_memory_summary, agent_runtime_summary, agent_session_summary,
+    commit_agent_session, open_agent_session, render_agent_memory_human, render_agent_memory_json,
     render_agent_runtime_human, render_agent_runtime_json, render_agent_session_human,
     render_agent_session_json, write_agent_memory_snapshot,
 };
+use loom_core::context_engine::{context_bundle, render_context_bundle_human, render_context_bundle_json};
 
 pub(crate) fn handle_init(args: &[String]) -> LoomResult<()> {
     let mode = take_value(args, "--mode").unwrap_or_else(|| "standalone".to_string());
@@ -228,11 +228,12 @@ pub(crate) fn handle_agent(args: &[String]) -> LoomResult<()> {
             let root = root_from(take_value(args, "--root").as_deref())?;
             let agent_id = required_flag(args, "--agent-id")?;
             let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
-            let bundle = agent_context_bundle(&root, &agent_id)?;
+            let session_id = take_value(args, "--session-id");
+            let bundle = context_bundle(&root, &agent_id, session_id.as_deref())?;
             if format == "json" {
-                print!("{}", render_agent_context_json(&bundle));
+                print!("{}", render_context_bundle_json(&bundle));
             } else {
-                print_human(&render_agent_context_human(&bundle));
+                print_human(&render_context_bundle_human(&bundle));
             }
             Ok(())
         }
