@@ -793,10 +793,12 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                     level: if overview.enabled_count > 0 { "OK" } else { "WARN" },
                     label: "channel_runtime",
                     detail: format!(
-                        "total={} enabled={} delivery_path={} channels={}",
+                        "total={} enabled={} ingress={} delivery_path={} inbox_path={} channels={}",
                         overview.total_count,
                         overview.enabled_count,
+                        overview.ingress_count,
                         overview.delivery_path.display(),
+                        overview.inbox_path.display(),
                         if overview.channel_ids.is_empty() {
                             "(none)".to_string()
                         } else {

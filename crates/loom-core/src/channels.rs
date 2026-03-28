@@ -4,6 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 
+use crate::bindings::resolve_binding;
 use crate::onboarding::{bind_host_for, load_onboard_manifest, OnboardManifest};
 use crate::output_guard::{guard_user_visible_output, OutputGuardPolicy};
 
@@ -11,6 +12,7 @@ pub type LoomResult<T> = Result<T, String>;
 
 pub const DEFAULT_CHANNEL_REGISTRY_PATH: &str = "state/channels/registry.json";
 pub const DEFAULT_CHANNEL_DELIVERY_DIR: &str = "state/channels/delivery";
+pub const DEFAULT_CHANNEL_INBOX_DIR: &str = "state/channels/inbox";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChannelRecord {
@@ -30,8 +32,10 @@ pub struct ChannelRecord {
 pub struct ChannelRuntimeOverview {
     pub registry_path: PathBuf,
     pub delivery_path: PathBuf,
+    pub inbox_path: PathBuf,
     pub total_count: usize,
     pub enabled_count: usize,
+    pub ingress_count: usize,
     pub channel_ids: Vec<String>,
 }
 
@@ -68,6 +72,29 @@ pub struct ChannelDeliveryRecord {
     pub detected_tokens: Vec<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChannelIngressRequest {
+    pub channel_id: String,
+    pub peer_id: String,
+    pub thread_id: Option<String>,
+    pub text: String,
+    pub agent_override: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChannelIngressRecord {
+    pub ingress_id: String,
+    pub channel_id: String,
+    pub peer_id: String,
+    pub thread_id: Option<String>,
+    pub received_at_unix_ms: u64,
+    pub binding_id: String,
+    pub agent_id: String,
+    pub session_key: String,
+    pub route_kind: String,
+    pub text: String,
+}
+
 pub fn channel_registry_path(root: &Path) -> PathBuf {
     root.join(DEFAULT_CHANNEL_REGISTRY_PATH)
 }
@@ -76,12 +103,17 @@ pub fn channel_delivery_path(root: &Path) -> PathBuf {
     root.join(DEFAULT_CHANNEL_DELIVERY_DIR)
 }
 
+pub fn channel_inbox_path(root: &Path) -> PathBuf {
+    root.join(DEFAULT_CHANNEL_INBOX_DIR)
+}
+
 pub fn ensure_channel_runtime_scaffold(root: &Path) -> LoomResult<PathBuf> {
     let registry_path = channel_registry_path(root);
     if let Some(parent) = registry_path.parent() {
         fs::create_dir_all(parent).map_err(io_err)?;
     }
     fs::create_dir_all(channel_delivery_path(root)).map_err(io_err)?;
+    fs::create_dir_all(channel_inbox_path(root)).map_err(io_err)?;
     if !registry_path.exists() {
         sync_channel_registry(root)?;
     }
@@ -108,11 +140,14 @@ pub fn load_channels(root: &Path) -> LoomResult<Vec<ChannelRecord>> {
 
 pub fn channel_overview(root: &Path) -> LoomResult<ChannelRuntimeOverview> {
     let records = load_channels(root)?;
+    let ingress_count = list_channel_ingress(root, 0)?.len();
     Ok(ChannelRuntimeOverview {
         registry_path: channel_registry_path(root),
         delivery_path: channel_delivery_path(root),
+        inbox_path: channel_inbox_path(root),
         total_count: records.len(),
         enabled_count: records.iter().filter(|record| record.enabled).count(),
+        ingress_count,
         channel_ids: records.iter().map(|record| record.channel_id.clone()).collect(),
     })
 }
@@ -210,13 +245,93 @@ pub fn list_channel_deliveries(root: &Path, limit: usize) -> LoomResult<Vec<Chan
     Ok(records)
 }
 
+pub fn ingest_channel_message(root: &Path, request: &ChannelIngressRequest) -> LoomResult<ChannelIngressRecord> {
+    let channel_id = request.channel_id.trim();
+    if channel_id.is_empty() {
+        return Err("channel_id is required".to_string());
+    }
+    let peer_id = request.peer_id.trim();
+    if peer_id.is_empty() {
+        return Err("peer_id is required".to_string());
+    }
+    let text = request.text.trim();
+    if text.is_empty() {
+        return Err("text is required".to_string());
+    }
+
+    let channels = load_channels(root)?;
+    let channel = channels
+        .iter()
+        .find(|record| record.channel_id == channel_id)
+        .ok_or_else(|| format!("channel '{}' was not found", channel_id))?;
+    if !channel.enabled {
+        return Err(format!("channel '{}' is disabled", channel.channel_id));
+    }
+
+    let resolution = resolve_binding(
+        root,
+        channel_id,
+        peer_id,
+        request.thread_id.as_deref(),
+        request.agent_override.as_deref(),
+    )?;
+    let record = ChannelIngressRecord {
+        ingress_id: format!("ingress-{}", unique_token()),
+        channel_id: channel.channel_id.clone(),
+        peer_id: peer_id.to_string(),
+        thread_id: request
+            .thread_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_string()),
+        received_at_unix_ms: now_unix_ms(),
+        binding_id: resolution.binding_id,
+        agent_id: resolution.agent_id,
+        session_key: resolution.session_key,
+        route_kind: resolution.route_kind,
+        text: text.to_string(),
+    };
+    persist_ingress_record(root, &record)?;
+    Ok(record)
+}
+
+pub fn list_channel_ingress(root: &Path, limit: usize) -> LoomResult<Vec<ChannelIngressRecord>> {
+    ensure_channel_runtime_scaffold(root)?;
+    let mut records = Vec::new();
+    for entry in fs::read_dir(channel_inbox_path(root)).map_err(io_err)? {
+        let entry = entry.map_err(io_err)?;
+        if !entry.file_type().map_err(io_err)?.is_file() {
+            continue;
+        }
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("json") {
+            continue;
+        }
+        let raw = fs::read_to_string(&path).map_err(io_err)?;
+        records.push(parse_ingress_record(&raw)?);
+    }
+    records.sort_by(|left, right| {
+        right
+            .received_at_unix_ms
+            .cmp(&left.received_at_unix_ms)
+            .then_with(|| right.ingress_id.cmp(&left.ingress_id))
+    });
+    if limit > 0 && records.len() > limit {
+        records.truncate(limit);
+    }
+    Ok(records)
+}
+
 pub fn render_channel_overview_human(summary: &ChannelRuntimeOverview) -> String {
     format!(
-        "registry_path:   {}\ndelivery_path:   {}\ntotal_count:     {}\nenabled_count:   {}\nchannels:        {}\n",
+        "registry_path:   {}\ndelivery_path:   {}\ninbox_path:      {}\ntotal_count:     {}\nenabled_count:   {}\ningress_count:   {}\nchannels:        {}\n",
         summary.registry_path.display(),
         summary.delivery_path.display(),
+        summary.inbox_path.display(),
         summary.total_count,
         summary.enabled_count,
+        summary.ingress_count,
         if summary.channel_ids.is_empty() {
             "(none)".to_string()
         } else {
@@ -229,8 +344,10 @@ pub fn render_channel_overview_json(summary: &ChannelRuntimeOverview) -> String 
     serde_json::to_string_pretty(&json!({
         "registry_path": summary.registry_path.display().to_string(),
         "delivery_path": summary.delivery_path.display().to_string(),
+        "inbox_path": summary.inbox_path.display().to_string(),
         "total_count": summary.total_count,
         "enabled_count": summary.enabled_count,
+        "ingress_count": summary.ingress_count,
         "channel_ids": summary.channel_ids,
     }))
     .unwrap_or_else(|_| "{}".to_string())
@@ -319,6 +436,53 @@ pub fn render_channel_delivery_list_human(records: &[ChannelDeliveryRecord]) -> 
 
 pub fn render_channel_delivery_list_json(records: &[ChannelDeliveryRecord]) -> String {
     serde_json::to_string_pretty(&records.iter().map(delivery_record_json).collect::<Vec<_>>())
+        .unwrap_or_else(|_| "[]".to_string())
+        + "\n"
+}
+
+pub fn render_channel_ingress_human(record: &ChannelIngressRecord) -> String {
+    format!(
+        "ingress_id:         {}\nchannel_id:         {}\npeer_id:            {}\nthread_id:          {}\nreceived_at:        {}\nbinding_id:         {}\nagent_id:           {}\nsession_key:        {}\nroute_kind:         {}\ntext:\n{}\n",
+        record.ingress_id,
+        record.channel_id,
+        record.peer_id,
+        record.thread_id.as_deref().unwrap_or("(none)"),
+        record.received_at_unix_ms,
+        record.binding_id,
+        record.agent_id,
+        record.session_key,
+        record.route_kind,
+        record.text,
+    )
+}
+
+pub fn render_channel_ingress_json(record: &ChannelIngressRecord) -> String {
+    serde_json::to_string_pretty(&ingress_record_json(record))
+        .unwrap_or_else(|_| "{}".to_string())
+        + "\n"
+}
+
+pub fn render_channel_ingress_list_human(records: &[ChannelIngressRecord]) -> String {
+    if records.is_empty() {
+        return "ingress_count:     0\n".to_string();
+    }
+    let mut rendered = format!("ingress_count:     {}\n", records.len());
+    for record in records {
+        rendered.push_str(&format!(
+            "\n- {} channel={} peer={} agent={} session={} received_at={}\n",
+            record.ingress_id,
+            record.channel_id,
+            record.peer_id,
+            record.agent_id,
+            record.session_key,
+            record.received_at_unix_ms,
+        ));
+    }
+    rendered
+}
+
+pub fn render_channel_ingress_list_json(records: &[ChannelIngressRecord]) -> String {
+    serde_json::to_string_pretty(&records.iter().map(ingress_record_json).collect::<Vec<_>>())
         .unwrap_or_else(|_| "[]".to_string())
         + "\n"
 }
@@ -414,6 +578,22 @@ fn persist_delivery_record(root: &Path, record: &ChannelDeliveryRecord) -> LoomR
     fs::write(path, rendered).map_err(io_err)
 }
 
+fn persist_ingress_record(root: &Path, record: &ChannelIngressRecord) -> LoomResult<()> {
+    let file_name = format!(
+        "{}-{}.json",
+        record.received_at_unix_ms,
+        safe_file_token(&record.ingress_id)
+    );
+    let path = channel_inbox_path(root).join(file_name);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(io_err)?;
+    }
+    let mut rendered = serde_json::to_string_pretty(&ingress_record_json(record))
+        .map_err(|error| error.to_string())?;
+    rendered.push('\n');
+    fs::write(path, rendered).map_err(io_err)
+}
+
 fn parse_delivery_record(raw: &str) -> LoomResult<ChannelDeliveryRecord> {
     let value: Value = serde_json::from_str(raw)
         .map_err(|error| format!("invalid channel delivery json: {error}"))?;
@@ -430,6 +610,27 @@ fn parse_delivery_record(raw: &str) -> LoomResult<ChannelDeliveryRecord> {
         deny_reason: value_string_or(value.get("deny_reason"), ""),
         redactions_applied: value_array_strings(value.get("redactions_applied")),
         detected_tokens: value_array_strings(value.get("detected_tokens")),
+    })
+}
+
+fn parse_ingress_record(raw: &str) -> LoomResult<ChannelIngressRecord> {
+    let value: Value = serde_json::from_str(raw)
+        .map_err(|error| format!("invalid channel ingress json: {error}"))?;
+    Ok(ChannelIngressRecord {
+        ingress_id: value_string(value.get("ingress_id"), "ingress_id")?,
+        channel_id: value_string(value.get("channel_id"), "channel_id")?,
+        peer_id: value_string(value.get("peer_id"), "peer_id")?,
+        thread_id: value
+            .get("thread_id")
+            .and_then(Value::as_str)
+            .map(|raw| raw.trim().to_string())
+            .filter(|raw| !raw.is_empty()),
+        received_at_unix_ms: value_u64(value.get("received_at_unix_ms")).unwrap_or(0),
+        binding_id: value_string(value.get("binding_id"), "binding_id")?,
+        agent_id: value_string(value.get("agent_id"), "agent_id")?,
+        session_key: value_string(value.get("session_key"), "session_key")?,
+        route_kind: value_string_or(value.get("route_kind"), "default_manager"),
+        text: value_string(value.get("text"), "text")?,
     })
 }
 
@@ -462,6 +663,21 @@ fn delivery_record_json(record: &ChannelDeliveryRecord) -> Value {
         "deny_reason": record.deny_reason,
         "redactions_applied": record.redactions_applied,
         "detected_tokens": record.detected_tokens,
+    })
+}
+
+fn ingress_record_json(record: &ChannelIngressRecord) -> Value {
+    json!({
+        "ingress_id": record.ingress_id,
+        "channel_id": record.channel_id,
+        "peer_id": record.peer_id,
+        "thread_id": record.thread_id,
+        "received_at_unix_ms": record.received_at_unix_ms,
+        "binding_id": record.binding_id,
+        "agent_id": record.agent_id,
+        "session_key": record.session_key,
+        "route_kind": record.route_kind,
+        "text": record.text,
     })
 }
 
@@ -528,7 +744,7 @@ fn io_err(error: std::io::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{init_workspace, onboarding::write_onboard_manifest};
+    use crate::{bindings::sync_binding_registry, init_workspace, onboarding::write_onboard_manifest};
 
     fn temp_path(label: &str) -> PathBuf {
         let unique = SystemTime::now()
@@ -609,5 +825,35 @@ mod tests {
         let history = list_channel_deliveries(&root, 10).expect("list deliveries");
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].delivery_id, record.delivery_id);
+    }
+
+    #[test]
+    fn ingest_materializes_binding_resolution_and_inbox_history() {
+        let root = temp_path("loom-channel-ingress");
+        init_workspace(&root, "embedded", Some("/tmp/meridian-kernel"), "org_demo")
+            .expect("init workspace");
+        let mut manifest = load_onboard_manifest(&root).expect("load onboard manifest");
+        manifest.telegram_enabled = true;
+        write_onboard_manifest(&root, &manifest).expect("write manifest");
+        sync_channel_registry(&root).expect("sync channels");
+        sync_binding_registry(&root).expect("sync bindings");
+
+        let record = ingest_channel_message(
+            &root,
+            &ChannelIngressRequest {
+                channel_id: "telegram".to_string(),
+                peer_id: "founder".to_string(),
+                thread_id: None,
+                text: "Meridian live check".to_string(),
+                agent_override: None,
+            },
+        )
+        .expect("ingest");
+        assert_eq!(record.agent_id, "leviathann");
+        assert_eq!(record.session_key, "telegram:founder");
+
+        let history = list_channel_ingress(&root, 10).expect("list ingress");
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].ingress_id, record.ingress_id);
     }
 }
