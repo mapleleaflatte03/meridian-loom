@@ -260,6 +260,7 @@ Bootstrap\n\
 ---------\n\
   loom banner\n\
   loom version\n\
+  loom onboard [--root PATH] [--mode MODE] [--org-id ID] [--kernel-path PATH] [--config-action keep|modify|reset] [--gateway-port N] [--gateway-bind loopback|all] [--gateway-auth-mode token|none] [--gateway-token-env ENV] [--telegram-enabled yes|no] [--telegram-token-env ENV] [--telegram-dm-policy TEXT] [--telegram-group-policy TEXT] [--telegram-streaming TEXT] [--daemon-enabled yes|no] [--daemon-manager supervisor] [--start-daemon] [--skip-health-check] [--format human|json]\n\
   loom init --mode <embedded|shadow|standalone> [--kernel-path PATH] [--root PATH] [--org-id ID]\n\
   loom doctor [--root PATH] [--format json|human]\n\
   loom health [--root PATH] [--format json|human]\n\

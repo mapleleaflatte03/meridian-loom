@@ -8,6 +8,7 @@ pub mod advanced_primitives;
 pub mod agent_runtime;
 pub mod capability_shims;
 pub mod capabilities;
+pub mod onboarding;
 pub mod output_guard;
 pub mod provider_router;
 pub mod recurring;
@@ -298,6 +299,7 @@ pub fn init_workspace(
     agent_runtime::ensure_agent_runtime_scaffold(&root)?;
     recurring::ensure_heartbeat_runtime_scaffold(&root)?;
     provider_router::ensure_provider_profiles_scaffold(&root)?;
+    onboarding::ensure_onboard_manifest(&root, &config)?;
 
     fs::write(&config_path, render_config(&config)).map_err(io_err)?;
     fs::write(
@@ -337,6 +339,13 @@ pub fn init_workspace(
     fs::write(shadow_dir.join("events.jsonl"), "").map_err(io_err)?;
 
     Ok(config)
+}
+
+pub fn write_config(root: &Path, config: &Config) -> LoomResult<PathBuf> {
+    let root = ensure_root(root)?;
+    let config_path = root.join("loom.toml");
+    fs::write(&config_path, render_config(config)).map_err(io_err)?;
+    Ok(config_path)
 }
 
 pub fn read_config(root: &Path) -> LoomResult<Config> {
@@ -596,6 +605,41 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             level: "WARN",
             label: "provider_auth",
             detail: format!("provider auth unavailable: {}", error),
+        }),
+    }
+    match onboarding::ensure_onboard_manifest(&root, &config) {
+        Ok(onboard_manifest) => {
+            push_path_check(
+                &mut checks,
+                "onboard_manifest",
+                &onboard_manifest,
+                true,
+                "onboard manifest present",
+            );
+            match onboarding::onboard_overview(&root) {
+                Ok(overview) => checks.push(Check {
+                    level: "OK",
+                    label: "onboard_runtime",
+                    detail: format!(
+                        "action={} gateway={} telegram={} daemon={} remote={}",
+                        overview.last_action,
+                        overview.gateway_summary,
+                        overview.telegram_summary,
+                        overview.daemon_summary,
+                        overview.remote_mode
+                    ),
+                }),
+                Err(error) => checks.push(Check {
+                    level: "WARN",
+                    label: "onboard_runtime",
+                    detail: format!("onboard overview unavailable: {}", error),
+                }),
+            }
+        }
+        Err(error) => checks.push(Check {
+            level: "WARN",
+            label: "onboard_manifest",
+            detail: format!("onboard manifest unavailable: {}", error),
         }),
     }
     match agent_runtime::ensure_agent_runtime_scaffold(&root) {
