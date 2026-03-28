@@ -18,6 +18,7 @@ pub mod provider_auth_store;
 pub mod provider_router;
 pub mod recurring;
 pub mod schedules;
+pub mod service_ingress_runtime;
 pub mod service_runtime;
 pub mod skills;
 pub mod wasm_host;
@@ -318,6 +319,7 @@ pub fn init_workspace(
 
     fs::write(&config_path, render_config(&config)).map_err(io_err)?;
     service_runtime::ensure_service_runtime_scaffold(&root)?;
+    service_ingress_runtime::ensure_service_ingress_runtime_scaffold(&root)?;
     bindings::ensure_binding_runtime_scaffold(&root)?;
     skills::ensure_skill_runtime_scaffold(&root)?;
     fs::write(
@@ -730,6 +732,41 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             level: "WARN",
             label: "service_runtime_registry",
             detail: format!("service runtime unavailable: {}", error),
+        }),
+    }
+    match service_ingress_runtime::ensure_service_ingress_runtime_scaffold(&root) {
+        Ok(ingress_registry) => {
+            push_path_check(
+                &mut checks,
+                "service_ingress_registry",
+                &ingress_registry,
+                false,
+                "service ingress registry present",
+            );
+            match service_ingress_runtime::sync_service_ingress_runtime(&root) {
+                Ok(summary) => checks.push(Check {
+                    level: "OK",
+                    label: "service_ingress_runtime",
+                    detail: format!(
+                        "requests={} accepted={} pending={} last_request={} last_job={}",
+                        summary.total_requests,
+                        summary.accepted_count,
+                        summary.pending_count,
+                        if summary.last_request_id.is_empty() { "(none)" } else { summary.last_request_id.as_str() },
+                        if summary.last_job_id.is_empty() { "(none)" } else { summary.last_job_id.as_str() },
+                    ),
+                }),
+                Err(error) => checks.push(Check {
+                    level: "WARN",
+                    label: "service_ingress_runtime",
+                    detail: format!("service ingress runtime unavailable: {}", error),
+                }),
+            }
+        }
+        Err(error) => checks.push(Check {
+            level: "WARN",
+            label: "service_ingress_registry",
+            detail: format!("service ingress runtime unavailable: {}", error),
         }),
     }
     match onboarding::ensure_onboard_manifest(&root, &config) {

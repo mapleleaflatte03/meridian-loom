@@ -5,6 +5,7 @@ pub(crate) mod gateway;
 pub(crate) mod binding;
 pub(crate) mod channel;
 pub(crate) mod heartbeat;
+pub(crate) mod ingress;
 pub(crate) mod job;
 pub(crate) mod onboard;
 pub(crate) mod output;

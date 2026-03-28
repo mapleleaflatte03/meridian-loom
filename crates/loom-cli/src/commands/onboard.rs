@@ -12,6 +12,7 @@ use loom_core::channels::sync_channel_registry;
 use loom_core::gateway_runtime::sync_gateway_runtime;
 use loom_core::skills::sync_skill_registry;
 use loom_core::service_runtime::sync_service_runtime;
+use loom_core::service_ingress_runtime::sync_service_ingress_runtime;
 use loom_core::schedules::{schedule_overview, sync_schedule_registry};
 use loom_core::onboarding::{
     derive_service_http_address, ensure_onboard_manifest, load_onboard_manifest,
@@ -178,6 +179,7 @@ Choose your manager brain, edge bindings, and runtime defaults. Meridian will sc
     let channel_summary = sync_channel_registry(&root)?;
     let gateway_runtime = sync_gateway_runtime(&root)?;
     let service_runtime = sync_service_runtime(&root)?;
+    let ingress_runtime = sync_service_ingress_runtime(&root)?;
     let binding_summary = sync_binding_registry(&root)?;
     let skill_summary = sync_skill_registry(&root)?;
     let schedule_sync = sync_schedule_registry(&root)?;
@@ -288,6 +290,13 @@ Choose your manager brain, edge bindings, and runtime defaults. Meridian will sc
                         "supervisor_pending_jobs": service_runtime.supervisor_pending_jobs,
                         "supervisor_processed_jobs": service_runtime.supervisor_processed_jobs,
                     },
+                    "service_ingress_runtime": {
+                        "total_requests": ingress_runtime.total_requests,
+                        "accepted_count": ingress_runtime.accepted_count,
+                        "pending_count": ingress_runtime.pending_count,
+                        "last_request_id": ingress_runtime.last_request_id.clone(),
+                        "last_job_id": ingress_runtime.last_job_id.clone(),
+                    },
                     "bindings_runtime": {
                         "total_count": binding_summary.total_count,
                         "enabled_count": binding_summary.enabled_count,
@@ -374,6 +383,7 @@ telegram:            {}
 channels:            total={} enabled={} ids={}
 gateway_runtime:     endpoint={} auth={} remote={} daemon={} channels={}/{}
 service_runtime:     service={} jobs={}/{} supervisor={} jobs={}/{}
+ingress_runtime:     requests={} accepted={} pending={} last_request={} last_job={}
 bindings_runtime:    total={} enabled={} ids={}
 skills:              {}
 recurring:           {}
@@ -422,6 +432,11 @@ next_step:           loom doctor --root {} --format human
         service_runtime.supervisor_health,
         service_runtime.supervisor_pending_jobs,
         service_runtime.supervisor_processed_jobs,
+        ingress_runtime.total_requests,
+        ingress_runtime.accepted_count,
+        ingress_runtime.pending_count,
+        if ingress_runtime.last_request_id.is_empty() { "(none)".to_string() } else { ingress_runtime.last_request_id.clone() },
+        if ingress_runtime.last_job_id.is_empty() { "(none)".to_string() } else { ingress_runtime.last_job_id.clone() },
         binding_summary.total_count,
         binding_summary.enabled_count,
         if binding_summary.binding_ids.is_empty() { "(none)".to_string() } else { binding_summary.binding_ids.join(",") },

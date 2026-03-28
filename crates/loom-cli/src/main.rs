@@ -107,6 +107,7 @@ fn run() -> LoomResult<()> {
         "skill" => commands::skill::handle_skill(&args[1..]),
         "schedule" => commands::schedule::handle_schedule(&args[1..]),
         "heartbeat" => commands::heartbeat::handle_heartbeat(&args[1..]),
+        "ingress" => commands::ingress::handle_ingress(&args[1..]),
         "contract" => commands::runtime::handle_contract(&args[1..]),
         "capsule" => commands::runtime::handle_capsule(&args[1..]),
         "capability" => commands::capability::handle_capability(&args[1..]),
@@ -293,6 +294,9 @@ Bootstrap\n\
   loom channel sync [--root PATH] [--format human|json]\n\
   loom channel send --channel ID --recipient ID [--text TEXT|--file PATH] [--allow-receipt-hashes] [--allow-operator-diagnostics] [--root PATH] [--format human|json]\n\
   loom channel deliveries [--root PATH] [--limit N] [--format human|json]\n\
+  loom ingress status [--root PATH] [--format human|json]\n\
+  loom ingress list [--root PATH] [--limit N] [--format human|json]\n\
+  loom ingress show --request-id ID [--root PATH] [--format human|json]\n\
   loom context status [--root PATH] [--format human|json]\n\
   loom context sync [--root PATH] [--format human|json]\n\
   loom context bundle --agent-id ID [--session-id ID] [--root PATH] [--format human|json]\n\
