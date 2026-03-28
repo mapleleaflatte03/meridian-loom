@@ -8448,6 +8448,10 @@ fn build_builtin_llm_inference_guest(
             allowed_workdir_roots: vec!["/home/ubuntu/.local/share/meridian-loom/runtime/default/workspace".to_string()],
             require_user_present: false,
         },
+        provider_profile: {
+            let profile = value_string(payload.get("provider_profile"));
+            profile
+        },
         model: {
             let model = value_string(payload.get("model"));
             if model.is_empty() { "gpt-3.5-turbo".to_string() } else { model }

@@ -948,7 +948,10 @@ fn dispatch_llm_inference(
     let request_json = read_guest_utf8(&memory, caller, request_ptr, request_len)?;
     let request = parse_wasm_llm_inference_request(&request_json)
         .map_err(|_| WasmHostCallStatusCode::InvalidRequest)?;
-    let route_intent = ProviderRouteIntent::llm_inference(&request.model);
+    let route_intent = ProviderRouteIntent::llm_inference(&request.model)
+        .with_agent_id(&request.security.agent_id)
+        .with_org_id(&request.security.org_id)
+        .with_preferred_profile_name(&request.provider_profile);
     let requested_model = if route_intent.requested_model.is_empty() {
         "gpt-3.5-turbo".to_string()
     } else {

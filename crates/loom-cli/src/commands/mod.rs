@@ -6,3 +6,4 @@ pub(crate) mod runtime;
 pub(crate) mod service;
 pub(crate) mod supervisor;
 pub(crate) mod wasm;
+pub(crate) mod provider;

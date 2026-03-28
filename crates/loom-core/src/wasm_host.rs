@@ -360,6 +360,7 @@ pub struct WasmFsWriteResponse {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WasmLlmInferenceRequest {
     pub security: WasmHostSecurityContext,
+    pub provider_profile: String,
     pub model: String,
     pub system_prompt: String,
     pub user_prompt: String,
@@ -370,6 +371,7 @@ impl Default for WasmLlmInferenceRequest {
     fn default() -> Self {
         Self {
             security: WasmHostSecurityContext::default(),
+            provider_profile: String::new(),
             model: "gpt-3.5-turbo".to_string(),
             system_prompt: String::new(),
             user_prompt: String::new(),
@@ -764,6 +766,7 @@ pub(crate) fn parse_wasm_llm_inference_request(raw: &str) -> Result<WasmLlmInfer
         .map_err(|error| format!("invalid llm inference request json: {error}"))?;
     Ok(WasmLlmInferenceRequest {
         security: parse_security_context(value.get("security")),
+        provider_profile: value_string_or(value.get("provider_profile"), ""),
         model: value_string_or(value.get("model"), "gpt-3.5-turbo"),
         system_prompt: value_string(value.get("system_prompt")),
         user_prompt: value_string(value.get("user_prompt")),

@@ -98,6 +98,7 @@ fn run() -> LoomResult<()> {
         "restart" => commands::service::handle_restart(&args[1..]),
         "logs" => commands::service::handle_logs(&args[1..]),
         "config" => commands::runtime::handle_config(&args[1..]),
+        "provider" => commands::provider::handle_provider(&args[1..]),
         "contract" => commands::runtime::handle_contract(&args[1..]),
         "capsule" => commands::runtime::handle_capsule(&args[1..]),
         "capability" => commands::capability::handle_capability(&args[1..]),
@@ -265,6 +266,8 @@ Bootstrap\n\
   loom restart [--root PATH] [--kernel-path PATH] [--http-address HOST:PORT] [--service-token TOKEN] [--foreground]\n\
   loom logs [--root PATH] [--lines N] [--follow]\n\
   loom config show [--root PATH]\n\
+  loom provider status [--root PATH] [--format human|json]\n\
+  loom provider route [--root PATH] [--capability NAME] [--model NAME] [--agent-id ID] [--org-id ORG] [--profile NAME] [--format human|json]\n\
 \n\
 Governance surfaces\n\
 -------------------\n\

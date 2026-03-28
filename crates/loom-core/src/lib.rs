@@ -548,6 +548,32 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
         true,
         "capability registry manifest present",
     );
+    let provider_profiles_path = provider_router::provider_profiles_runtime_path(Some(&root))?;
+    push_path_check(
+        &mut checks,
+        "provider_profiles",
+        &provider_profiles_path,
+        false,
+        "provider profiles manifest present",
+    );
+    match provider_router::provider_plane_summary(Some(&root)) {
+        Ok(summary) => checks.push(Check {
+            level: "OK",
+            label: "provider_plane",
+            detail: format!(
+                "default_profile={} profiles={} capability_routes={} agent_routes={}",
+                summary.default_profile_name,
+                summary.profile_count,
+                summary.capability_route_count,
+                summary.agent_route_count
+            ),
+        }),
+        Err(error) => checks.push(Check {
+            level: "WARN",
+            label: "provider_plane",
+            detail: format!("provider plane unavailable: {}", error),
+        }),
+    }
     let delivery_queue = delivery_queue_path(&root, &config);
     let delivery_required = config.handoff_mode != "off";
     push_path_check(
@@ -705,8 +731,24 @@ pub fn status_human(root: &Path) -> LoomResult<String> {
         .join("capsules")
         .join(&config.org_id)
         .join("manifest.json");
+    let provider_summary = provider_router::provider_plane_summary(Some(&root)).ok();
+    let provider_block = provider_summary
+        .map(|summary| {
+            format!(
+                "provider_cfg: {}\nprovider_src: {}\ndefault_prof: {}\nprofile_cnt: {}\ncap_routes:  {}\nagent_routes: {}\n",
+                summary.profiles_path.display(),
+                summary.source,
+                summary.default_profile_name,
+                summary.profile_count,
+                summary.capability_route_count,
+                summary.agent_route_count,
+            )
+        })
+        .unwrap_or_else(|| {
+            "provider_cfg: (unavailable)\nprovider_src: (unavailable)\ndefault_prof: (unavailable)\nprofile_cnt: 0\ncap_routes:  0\nagent_routes: 0\n".to_string()
+        });
     Ok(format!(
-        "Meridian Loom // STATUS\n=======================\nmode:        {}\norg_id:      {}\nroot:        {}\nstate_dir:   {}\nrun_dir:     {}\nlog_dir:     {}\nartifact_dir:{}\nkernel_path: {}\ncapsule:     {}\nshadow:      {}\nqueue:       {}\nruntime:     experimental local queue supervisor + service shell\nexperimental_hooks: {}\n",
+        "Meridian Loom // STATUS\n=======================\nmode:        {}\norg_id:      {}\nroot:        {}\nstate_dir:   {}\nrun_dir:     {}\nlog_dir:     {}\nartifact_dir:{}\nkernel_path: {}\ncapsule:     {}\nshadow:      {}\nqueue:       {}\n{}runtime:     experimental local queue supervisor + service shell\nexperimental_hooks: {}\n",
         config.mode,
         config.org_id,
         root.display(),
@@ -718,12 +760,25 @@ pub fn status_human(root: &Path) -> LoomResult<String> {
         manifest.display(),
         root.join(&config.artifact_dir).join("shadow/latest.json").display(),
         delivery_queue.display(),
+        provider_block,
         EXPERIMENTAL_PRELIGHT_HOOKS.join(", ")
     ))
 }
 
 pub fn render_config_human(config: &Config, root: &Path) -> String {
     let delivery_queue = delivery_queue_path(root, config);
+    let provider_summary = provider_router::provider_plane_summary(Some(root)).ok();
+    let provider_block = provider_summary
+        .map(|summary| format!(
+            "provider_cfg: {}\nprovider_src: {}\ndefault_prof: {}\nprofile_cnt: {}\ncap_routes:  {}\nagent_routes:{}\n",
+            summary.profiles_path.display(),
+            summary.source,
+            summary.default_profile_name,
+            summary.profile_count,
+            summary.capability_route_count,
+            summary.agent_route_count,
+        ))
+        .unwrap_or_else(|| "provider_cfg: (unavailable)\nprovider_src: (unavailable)\ndefault_prof: (unavailable)\nprofile_cnt: 0\ncap_routes:  0\nagent_routes:0\n".to_string());
     format!(
         "Meridian Loom // CONFIG
 =======================
@@ -750,7 +805,7 @@ log_max_b:    {}
 log_max_f:    {}
 handoff:      {}
 delivery_q:   {} (resolved: {})
-boundary:     local-first config; hosted runtime remains future work
+{}boundary:     local-first config; hosted runtime remains future work
 ",
         root.display(),
         config.mode,
@@ -784,6 +839,7 @@ boundary:     local-first config; hosted runtime remains future work
         config.handoff_mode,
         config.delivery_queue,
         delivery_queue.display(),
+        provider_block,
     )
 }
 
