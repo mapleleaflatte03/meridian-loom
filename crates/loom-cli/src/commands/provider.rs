@@ -13,7 +13,7 @@ use loom_core::provider_auth_store::{
     render_provider_auth_store_json, provider_auth_store_overview,
 };
 use loom_core::provider_router::{
-    default_codex_auth_path_hint, provider_auth_status, provider_plane_summary,
+    configure_onboard_provider_routes, default_codex_auth_path_hint, provider_auth_status, provider_plane_summary,
     render_provider_auth_human, render_provider_auth_json, render_provider_plane_human,
     render_provider_plane_json, render_provider_route_human, render_provider_route_json,
     resolve_provider_route, shared_codex_auth_path_hint, ProviderRouteIntent,
@@ -358,6 +358,12 @@ fn persist_login_selection(root: &Path, source: &str, target_auth_path: &Path) -
     manifest.codex_auth_source = source.to_string();
     manifest.codex_auth_path = target_auth_path.display().to_string();
     write_onboard_manifest(root, &manifest)?;
+    configure_onboard_provider_routes(
+        root,
+        &manifest.manager_lane,
+        Some(&manifest.manager_model),
+        Some(&manifest.codex_auth_path),
+    )?;
     Ok(())
 }
 
