@@ -259,6 +259,7 @@ pub fn init_workspace(
     let workers_python = root.join("workers/python");
     let workers_typescript = root.join("workers/typescript");
     let workers_wasm = root.join("workers/wasm");
+    let delivery_queue = state_dir.join("delivery-queue");
 
     fs::create_dir_all(&capsule_dir).map_err(io_err)?;
     fs::create_dir_all(&shadow_dir).map_err(io_err)?;
@@ -271,6 +272,7 @@ pub fn init_workspace(
     fs::create_dir_all(&workers_python).map_err(io_err)?;
     fs::create_dir_all(&workers_typescript).map_err(io_err)?;
     fs::create_dir_all(&workers_wasm).map_err(io_err)?;
+    fs::create_dir_all(&delivery_queue).map_err(io_err)?;
 
     let kernel_path = kernel_path.unwrap_or_default().to_string();
     let config = Config {

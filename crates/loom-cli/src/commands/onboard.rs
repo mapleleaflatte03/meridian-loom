@@ -15,7 +15,8 @@ use loom_core::onboarding::{
     onboard_manifest_path, onboard_overview, write_onboard_manifest, OnboardManifest,
 };
 use loom_core::provider_router::{
-    provider_auth_status, provider_plane_summary, resolve_provider_route, ProviderRouteIntent,
+    configure_onboard_provider_routes, default_codex_auth_path_hint, provider_auth_status,
+    provider_plane_summary, resolve_provider_route, ProviderRouteIntent,
 };
 use serde_json::{json, Value};
 
@@ -37,8 +38,20 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
         && std::io::stdout().is_terminal();
 
     let had_existing_config = root.join("loom.toml").exists();
+    let had_existing_manifest = onboard_manifest_path(&root).exists();
+    let existing_manifest_action = if had_existing_manifest {
+        load_onboard_manifest(&root)
+            .ok()
+            .map(|manifest| manifest.last_action)
+    } else {
+        None
+    };
+    let is_fresh_runtime = had_existing_config
+        && existing_manifest_action.as_deref() == Some("initialized");
     let mut config_action = take_value(args, "--config-action").unwrap_or_else(|| {
-        if had_existing_config {
+        if is_fresh_runtime {
+            "setup".to_string()
+        } else if had_existing_config {
             "keep".to_string()
         } else {
             "init".to_string()
@@ -47,7 +60,7 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
     if had_existing_config && has_setup_overrides(args) && config_action == "keep" {
         config_action = "modify".to_string();
     }
-    if interactive && had_existing_config && !has_setup_overrides(args) {
+    if interactive && had_existing_config && had_existing_manifest && !is_fresh_runtime && !has_setup_overrides(args) {
         config_action = prompt_choice(
             "Existing Loom runtime detected. Choose action",
             &config_action,
@@ -61,7 +74,9 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
     }
 
     let config_status = if root.join("loom.toml").exists() {
-        if config_action == "modify" {
+        if !had_existing_config || is_fresh_runtime {
+            "initialized"
+        } else if config_action == "modify" {
             "modified"
         } else {
             "reused"
@@ -90,16 +105,57 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
 
     let _ = ensure_onboard_manifest(&root, &config)?;
     let mut manifest = load_onboard_manifest(&root)?;
+    let mut manager_lane = take_value(args, "--manager-lane")
+        .unwrap_or_else(|| current_manager_lane(&root).unwrap_or_else(|_| "frontier".to_string()));
+    let mut codex_auth_path = take_value(args, "--codex-auth-path");
+    let mut banner_rendered = false;
+
+    if interactive {
+        print_startup_banner();
+        banner_rendered = true;
+        print_human(
+            "Meridian Loom // SETUP
+=======================
+Choose your manager brain, edge bindings, and runtime defaults. Meridian will scaffold the governed runtime, but the end-user still owns the final configuration.
+
+",
+        );
+    }
 
     if interactive && config_action != "keep" {
+        print_setup_stage(
+            1,
+            5,
+            "Manager brain",
+            "Pick the lane for Leviathann before the rest of the runtime is scaffolded.",
+        );
+        manager_lane = prompt_choice(
+            "Manager brain lane",
+            &manager_lane,
+            &["frontier", "local"],
+        )?;
+        if manager_lane == "frontier" {
+            let hint = codex_auth_path.clone().unwrap_or_else(|| {
+                default_codex_auth_path_hint()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|_| "~/.codex/auth.json".to_string())
+            });
+            codex_auth_path = Some(prompt_text("Codex auth.json path", &hint)?);
+        } else {
+            codex_auth_path = None;
+        }
         apply_interactive_overrides(&mut manifest)?;
     }
     apply_cli_overrides(args, &mut manifest)?;
+    let provider_profiles_path =
+        configure_onboard_provider_routes(&root, &manager_lane, codex_auth_path.as_deref())?;
 
     if manifest.gateway_auth_mode == "none" && manifest.gateway_token_env.trim().is_empty() {
         manifest.gateway_token_env = config.service_token_env.clone();
     }
-    manifest.last_action = if had_existing_config {
+    manifest.last_action = if is_fresh_runtime {
+        "setup".to_string()
+    } else if had_existing_config {
         config_action.clone()
     } else {
         "init".to_string()
@@ -176,7 +232,9 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
                 "mode": config.mode,
                 "org_id": config.org_id,
                 "provider_profiles": provider_summary.profile_count,
+                "provider_profiles_path": provider_profiles_path.display().to_string(),
                 "agent_profiles": runtime_overview.profile_count,
+                "manager_lane": manager_lane,
                 "codex_auth_ready": codex_ready,
                 "codex_credential_path": codex_path,
                 "codex_detail": codex_detail,
@@ -248,7 +306,9 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
         .map(|(healthy, _)| if *healthy { "healthy" } else { "degraded" }.to_string())
         .unwrap_or_else(|| "skipped".to_string());
 
-    print_startup_banner();
+    if !banner_rendered {
+        print_startup_banner();
+    }
     print_human(&format!(
         "Meridian Loom // ONBOARD
 =========================
@@ -258,7 +318,9 @@ config_action:       {}
 mode:                {}
 org_id:              {}
 provider_profiles:   {}
+provider_cfg:        {}
 agent_profiles:      {}
+manager_lane:        {}
 codex_auth_ready:    {}
 codex_auth_path:     {}
 codex_detail:        {}
@@ -284,7 +346,9 @@ next_step:           loom doctor --root {} --format human
         config.mode,
         config.org_id,
         provider_summary.profile_count,
+        provider_profiles_path.display(),
         runtime_overview.profile_count,
+        manager_lane,
         if codex_ready { "yes" } else { "no" },
         codex_path.as_deref().unwrap_or("(none)"),
         codex_detail,
@@ -318,6 +382,8 @@ next_step:           loom doctor --root {} --format human
 
 fn has_setup_overrides(args: &[String]) -> bool {
     const FLAGS: &[&str] = &[
+        "--manager-lane",
+        "--codex-auth-path",
         "--gateway-port",
         "--gateway-bind",
         "--gateway-auth-mode",
@@ -400,6 +466,12 @@ fn apply_cli_overrides(args: &[String], manifest: &mut OnboardManifest) -> LoomR
 }
 
 fn apply_interactive_overrides(manifest: &mut OnboardManifest) -> LoomResult<()> {
+    print_setup_stage(
+        2,
+        5,
+        "Gateway edge",
+        "Shape the local web edge before Meridian exposes the service.",
+    );
     manifest.remote_mode = prompt_text("Remote mode", &manifest.remote_mode)?;
     manifest.gateway_bind = prompt_choice(
         "Gateway bind",
@@ -421,6 +493,12 @@ fn apply_interactive_overrides(manifest: &mut OnboardManifest) -> LoomResult<()>
         &manifest.gateway_tailscale_mode,
         &["off", "on"],
     )?;
+    print_setup_stage(
+        3,
+        5,
+        "Telegram edge",
+        "Configure delivery without borrowing someone else's bot state.",
+    );
     manifest.telegram_enabled = prompt_bool("Enable Telegram channel", manifest.telegram_enabled)?;
     if manifest.telegram_enabled {
         manifest.telegram_token_env = prompt_text("Telegram token env", &manifest.telegram_token_env)?;
@@ -428,6 +506,12 @@ fn apply_interactive_overrides(manifest: &mut OnboardManifest) -> LoomResult<()>
         manifest.telegram_group_policy = prompt_text("Telegram group policy", &manifest.telegram_group_policy)?;
         manifest.telegram_streaming = prompt_text("Telegram streaming", &manifest.telegram_streaming)?;
     }
+    print_setup_stage(
+        4,
+        5,
+        "Runtime daemon",
+        "Choose how Meridian stays alive after setup finishes.",
+    );
     manifest.session_dm_scope = prompt_text("Session DM scope", &manifest.session_dm_scope)?;
     manifest.daemon_enabled = prompt_bool("Enable supervisor daemon", manifest.daemon_enabled)?;
     manifest.daemon_manager = prompt_choice(
@@ -435,6 +519,12 @@ fn apply_interactive_overrides(manifest: &mut OnboardManifest) -> LoomResult<()>
         &manifest.daemon_manager,
         &["supervisor"],
     )?;
+    print_setup_stage(
+        5,
+        5,
+        "Skills and defaults",
+        "Finish by seeding the built-in skills Meridian expects on day one.",
+    );
     manifest.skills_node_manager = prompt_choice(
         "Skills node manager",
         &manifest.skills_node_manager,
@@ -451,6 +541,29 @@ fn apply_interactive_overrides(manifest: &mut OnboardManifest) -> LoomResult<()>
         .map(|entry| entry.to_string())
         .collect();
     Ok(())
+}
+
+fn current_manager_lane(root: &Path) -> LoomResult<String> {
+    let route = resolve_provider_route(
+        Some(root),
+        &ProviderRouteIntent::llm_inference("").with_agent_id("leviathann"),
+    )?;
+    if route.profile_name == "local_ollama" || route.profile_kind.label() == "local_ollama" {
+        Ok("local".to_string())
+    } else {
+        Ok("frontier".to_string())
+    }
+}
+
+fn print_setup_stage(step: usize, total: usize, title: &str, detail: &str) {
+    print_human(&format!(
+        "Stage {}/{} // {}
+----------------------
+{}
+
+",
+        step, total, title, detail
+    ));
 }
 
 fn prompt_text(label: &str, default: &str) -> LoomResult<String> {

@@ -263,7 +263,7 @@ Bootstrap\n\
 ---------\n\
   loom banner\n\
   loom version\n\
-  loom onboard [--root PATH] [--mode MODE] [--org-id ID] [--kernel-path PATH] [--config-action keep|modify|reset] [--gateway-port N] [--gateway-bind loopback|all] [--gateway-auth-mode token|none] [--gateway-token-env ENV] [--telegram-enabled yes|no] [--telegram-token-env ENV] [--telegram-dm-policy TEXT] [--telegram-group-policy TEXT] [--telegram-streaming TEXT] [--daemon-enabled yes|no] [--daemon-manager supervisor] [--start-daemon] [--skip-health-check] [--format human|json]\n\
+  loom onboard [--root PATH] [--mode MODE] [--org-id ID] [--kernel-path PATH] [--config-action setup|keep|modify|reset] [--manager-lane frontier|local] [--codex-auth-path PATH] [--gateway-port N] [--gateway-bind loopback|all] [--gateway-auth-mode token|none] [--gateway-token-env ENV] [--telegram-enabled yes|no] [--telegram-token-env ENV] [--telegram-dm-policy TEXT] [--telegram-group-policy TEXT] [--telegram-streaming TEXT] [--daemon-enabled yes|no] [--daemon-manager supervisor] [--start-daemon] [--skip-health-check] [--format human|json]\n\
   loom init --mode <embedded|shadow|standalone> [--kernel-path PATH] [--root PATH] [--org-id ID]\n\
   loom doctor [--root PATH] [--format json|human]\n\
   loom health [--root PATH] [--format json|human]\n\
@@ -363,21 +363,24 @@ Next\n\
 
 fn render_startup_banner(color: bool) -> String {
     let icon = [
-        r#"      /\/\"#,
-        r#"   .-/ /\ \-."#,
-        r#"  /__/_/\_\__\"#,
-        r#"  \  \ \/ /  /"#,
-        r#"   '.__\__/_."#,
+        r#"      /\      /\"#,
+        r#"     /  \    /  \"#,
+        r#"    / /\ \  / /\ \"#,
+        r#"   / /  \ \/ /  \ \"#,
+        r#"  /_/    \__/    \_\"#,
+        r#"  \ \    /  \    / / /"#,
+        r#"   \ \  / /\ \  / / /"#,
+        r#"    \_\/_/  \_\/_/_/"#,
     ]
     .join("\n");
     if color {
         format!(
-            "\x1b[1;92m{}\x1b[0m\n\x1b[1;96mMERIDIAN LOOM\x1b[0m\n\x1b[37mMeridian Loom v0.1.0 - A governed local runtime for bounded autonomous work.\x1b[0m\n\n",
+            "\x1b[1;92m{}\x1b[0m\n\x1b[1;96mMERIDIAN LOOM\x1b[0m\n\x1b[37mMeridian Loom v0.1.0 - A governed agent fabric for bounded autonomous work.\x1b[0m\n\n",
             icon,
         )
     } else {
         format!(
-            "{}\nMERIDIAN LOOM\nMeridian Loom v0.1.0 - A governed local runtime for bounded autonomous work.\n\n",
+            "{}\nMERIDIAN LOOM\nMeridian Loom v0.1.0 - A governed agent fabric for bounded autonomous work.\n\n",
             icon,
         )
     }
@@ -450,6 +453,7 @@ fn style_human_line(line: &str) -> String {
     }
     if line.starts_with("phase:")
         || line.starts_with("boundary:")
+        || line.starts_with("Stage ")
         || line == "Decision"
         || line == "Checks"
         || line == "Current state"

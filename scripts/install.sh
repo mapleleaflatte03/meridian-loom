@@ -22,6 +22,8 @@ RUSTUP_INIT_URL="https://sh.rustup.rs"
 
 SUDO=()
 APT_UPDATED=0
+RUNTIME_WAS_INITIALIZED=0
+ONBOARD_WAS_RUN=0
 
 ensure_admin_access() {
   local reason="${1:-administrative action}"
@@ -227,23 +229,32 @@ PY2
 print_banner() {
   local icon
   icon="$(cat <<'BANNER'
-      /\/\\
-   .-/ /\\ \\-. 
-  /__/_/\\_\\__\\
-  \\  \\ \/ /  /
-   '.__\\__/_.
+      /\      /\
+     /  \    /  \
+    / /\ \  / /\ \
+   / /  \ \/ /  \ \
+  /_/    \__/    \_\
+  \ \    /  \    / / /
+   \ \  / /\ \  / / /
+    \_\/_/  \_\/_/_/
 BANNER
 )"
   if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
-    printf '\033[1;92m%s\033[0m\n' "$icon"
-    printf '\033[1;96m%s\033[0m\n' 'MERIDIAN LOOM'
-    printf '\033[96m%s\033[0m\n' 'Constitutional Runtime v0.1.0.'
-    printf '\033[37m%s\033[0m\n\n' 'Autonomous intelligence inside a governed shell.'
+    printf '[1;92m%s[0m
+' "$icon"
+    printf '[1;96m%s[0m
+' 'MERIDIAN LOOM'
+    printf '[37m%s[0m
+
+' 'A governed agent fabric for bounded autonomous work.'
   else
-    printf '%s\n' "$icon"
-    printf '%s\n' 'MERIDIAN LOOM'
-    printf '%s\n' 'Constitutional Runtime v0.1.0.'
-    printf '%s\n\n' 'Autonomous intelligence inside a governed shell.'
+    printf '%s
+' "$icon"
+    printf '%s
+' 'MERIDIAN LOOM'
+    printf '%s
+
+' 'A governed agent fabric for bounded autonomous work.'
   fi
 }
 
@@ -312,6 +323,7 @@ ensure_runtime_root() {
     else
       run_privileged "$BINARY_PATH" init --mode embedded --root "$RUNTIME_ROOT"
     fi
+    RUNTIME_WAS_INITIALIZED=1
   else
     printf '==> Reusing existing runtime config at %s\n' "$RUNTIME_ROOT/loom.toml"
   fi
@@ -327,14 +339,44 @@ ensure_runtime_root() {
   seed_builtin_capabilities
 }
 
+run_onboard_if_interactive() {
+  if [[ "${LOOM_SKIP_ONBOARD:-}" == "1" ]]; then
+    return
+  fi
+  if [[ "$RUNTIME_WAS_INITIALIZED" -ne 1 && "${LOOM_RUN_ONBOARD:-}" != "1" ]]; then
+    return
+  fi
+  if [[ ! -e /dev/tty || ! -r /dev/tty || ! -w /dev/tty ]]; then
+    return
+  fi
+  if [[ ! -t 1 && ! -t 2 ]]; then
+    return
+  fi
+  printf '==> Launching Meridian setup wizard\n'
+  local onboard_args=(onboard --root "$RUNTIME_ROOT" --format human)
+  if [[ -n "$KERNEL_PATH" ]]; then
+    onboard_args+=(--kernel-path "$KERNEL_PATH")
+  fi
+  "$BINARY_PATH" "${onboard_args[@]}" </dev/tty >/dev/tty 2>/dev/tty
+  ONBOARD_WAS_RUN=1
+}
+
 print_summary() {
+  local next_step
+  if [[ "$ONBOARD_WAS_RUN" -eq 1 ]]; then
+    next_step="$BINARY_PATH doctor --root \"$RUNTIME_ROOT\" --format human"
+  elif [[ "$RUNTIME_WAS_INITIALIZED" -eq 1 ]]; then
+    next_step="$BINARY_PATH onboard --root \"$RUNTIME_ROOT\" --format human"
+  else
+    next_step="$BINARY_PATH doctor --root \"$RUNTIME_ROOT\" --format human"
+  fi
   cat <<SUMMARY
 ==> Installation complete
 binary:   $BINARY_PATH
 runtime:  $RUNTIME_ROOT
 config:   $RUNTIME_ROOT/loom.toml
 registry: $RUNTIME_ROOT/capabilities/registry.json
-next:     $BINARY_PATH doctor --root "$RUNTIME_ROOT" --format human
+next:     $next_step
 SUMMARY
 }
 
@@ -345,6 +387,7 @@ main() {
   build_release
   install_binary
   ensure_runtime_root
+  run_onboard_if_interactive
   print_summary
 }
 

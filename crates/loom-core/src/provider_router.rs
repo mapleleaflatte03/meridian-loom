@@ -35,6 +35,30 @@ const ENV_AUTH_PATH: &str = "LLM_AUTH_PATH";
 const ENV_LLM_BASE_URL: &str = "LLM_BASE_URL";
 const ENV_LLM_MODEL: &str = "LLM_MODEL";
 
+const FRONTIER_PROFILE_SPECS: &[(&str, &str)] = &[
+    (
+        "manager_frontier",
+        "seeded Codex OAuth route for manager reasoning",
+    ),
+    (
+        "research_frontier",
+        "seeded Codex OAuth route for research reasoning",
+    ),
+    (
+        "writer_general",
+        "seeded Codex OAuth route for structured writing",
+    ),
+    ("qa_frontier", "seeded Codex OAuth route for QA evaluation"),
+    (
+        "verifier_frontier",
+        "seeded Codex OAuth route for contradiction review",
+    ),
+    (
+        "executor_tooling",
+        "seeded Codex OAuth route for governed execution",
+    ),
+];
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProviderKind {
     LocalOllama,
@@ -257,6 +281,44 @@ pub fn ensure_provider_profiles_scaffold(root: &Path) -> LoomResult<PathBuf> {
         fs::write(&path, render_default_provider_profiles()).map_err(io_err)?;
     }
     Ok(path)
+}
+
+pub fn default_codex_auth_path_hint() -> LoomResult<PathBuf> {
+    resolve_codex_auth_path(None)
+}
+
+pub fn configure_onboard_provider_routes(
+    root: &Path,
+    manager_lane: &str,
+    codex_auth_path: Option<&str>,
+) -> LoomResult<PathBuf> {
+    ensure_provider_profiles_scaffold(root)?;
+    let mut profiles = load_provider_profiles(Some(root))?;
+    apply_frontier_profile_auth_path(&mut profiles, codex_auth_path);
+
+    let manager_policy = match manager_lane.trim().to_ascii_lowercase().as_str() {
+        "" | "frontier" | "codex" => ProviderRoutePolicy {
+            profile_name: Some("manager_frontier".to_string()),
+            default_model: Some(DEFAULT_CODEX_MODEL_ALIAS.to_string()),
+        },
+        "local" => ProviderRoutePolicy {
+            profile_name: Some(DEFAULT_LOCAL_PROFILE_NAME.to_string()),
+            default_model: Some(DEFAULT_MODEL_ALIAS.to_string()),
+        },
+        other => {
+            return Err(format!(
+                "unsupported manager lane '{}'; expected 'frontier' or 'local'",
+                other
+            ));
+        }
+    };
+
+    profiles
+        .routing
+        .agents
+        .insert("leviathann".to_string(), manager_policy);
+
+    persist_provider_profiles(root, &profiles)
 }
 
 pub fn provider_profiles_runtime_path(root: Option<&Path>) -> LoomResult<PathBuf> {
@@ -659,31 +721,31 @@ fn provider_profiles_path(root: &Path) -> PathBuf {
 }
 
 fn render_default_provider_profiles() -> String {
-    serde_json::to_string_pretty(&json!({
-        "default_profile": DEFAULT_LOCAL_PROFILE_NAME,
-        "profiles": [
-            {
-                "name": DEFAULT_LOCAL_PROFILE_NAME,
-                "kind": ProviderKind::LocalOllama.label(),
-                "base_url": DEFAULT_LOCAL_OLLAMA_ENDPOINT,
-                "model": DEFAULT_MODEL_ALIAS,
-                "auth": {
-                    "mode": "none"
+    let mut profiles = ProviderProfileSet {
+        default_profile_name: DEFAULT_LOCAL_PROFILE_NAME.to_string(),
+        profiles: vec![ProviderProfile {
+            name: DEFAULT_LOCAL_PROFILE_NAME.to_string(),
+            kind: ProviderKind::LocalOllama,
+            base_url: DEFAULT_LOCAL_OLLAMA_ENDPOINT.to_string(),
+            default_model: DEFAULT_MODEL_ALIAS.to_string(),
+            auth: ProviderAuthMode::None,
+            note: "seeded Meridian local inference route for the bounded LLM host call"
+                .to_string(),
+        }],
+        routing: ProviderRoutingTable {
+            capabilities: BTreeMap::from([(
+                "loom.llm.inference.v1".to_string(),
+                ProviderRoutePolicy {
+                    profile_name: Some(DEFAULT_LOCAL_PROFILE_NAME.to_string()),
+                    default_model: Some(DEFAULT_MODEL_ALIAS.to_string()),
                 },
-                "note": "seeded Meridian local inference route for the bounded LLM host call"
-            }
-        ],
-        "routing": {
-            "capabilities": {
-                "loom.llm.inference.v1": {
-                    "profile": DEFAULT_LOCAL_PROFILE_NAME,
-                    "default_model": DEFAULT_MODEL_ALIAS
-                }
-            },
-            "agents": {}
-        }
-    }))
-    .unwrap_or_else(|_| "{}".to_string())
+            )]),
+            agents: BTreeMap::new(),
+        },
+        source: "runtime_provider_file".to_string(),
+    };
+    ensure_frontier_profiles(&mut profiles);
+    render_provider_profiles(&profiles)
 }
 
 fn parse_provider_profiles_json(raw: &str) -> LoomResult<ProviderProfileSet> {
@@ -971,22 +1033,118 @@ fn build_frontier_profile(name: &str, note: &str) -> ProviderProfile {
 }
 
 fn augment_provider_profiles(_root: &Path, mut profiles: ProviderProfileSet) -> LoomResult<ProviderProfileSet> {
-    if read_codex_auth_material(None).is_ok() {
-        let frontier_profiles = [
-            ("manager_frontier", "seeded Codex OAuth route for manager reasoning"),
-            ("research_frontier", "seeded Codex OAuth route for research reasoning"),
-            ("writer_general", "seeded Codex OAuth route for structured writing"),
-            ("qa_frontier", "seeded Codex OAuth route for QA evaluation"),
-            ("verifier_frontier", "seeded Codex OAuth route for contradiction review"),
-            ("executor_tooling", "seeded Codex OAuth route for governed execution"),
-        ];
-        for (name, note) in frontier_profiles {
-            if !profiles.profiles.iter().any(|profile| profile.name == name) {
-                profiles.profiles.push(build_frontier_profile(name, note));
-            }
+    ensure_frontier_profiles(&mut profiles);
+    Ok(profiles)
+}
+
+fn ensure_frontier_profiles(profiles: &mut ProviderProfileSet) {
+    for (name, note) in FRONTIER_PROFILE_SPECS {
+        if !profiles.profiles.iter().any(|profile| profile.name == *name) {
+            profiles.profiles.push(build_frontier_profile(name, note));
         }
     }
-    Ok(profiles)
+}
+
+fn apply_frontier_profile_auth_path(
+    profiles: &mut ProviderProfileSet,
+    explicit_path: Option<&str>,
+) {
+    let path = explicit_path.and_then(trim_to_option).map(|value| value.to_string());
+    for profile in profiles.profiles.iter_mut() {
+        if matches!(profile.kind, ProviderKind::OpenAiCodex) {
+            profile.auth = ProviderAuthMode::CodexAuthJson { path: path.clone() };
+        }
+    }
+}
+
+fn persist_provider_profiles(root: &Path, profiles: &ProviderProfileSet) -> LoomResult<PathBuf> {
+    let path = provider_profiles_path(root);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(io_err)?;
+    }
+    fs::write(&path, render_provider_profiles(profiles)).map_err(io_err)?;
+    Ok(path)
+}
+
+fn render_provider_profiles(profiles: &ProviderProfileSet) -> String {
+    let rendered = json!({
+        "default_profile": profiles.default_profile_name,
+        "profiles": profiles
+            .profiles
+            .iter()
+            .map(render_provider_profile_json)
+            .collect::<Vec<_>>(),
+        "routing": {
+            "capabilities": profiles
+                .routing
+                .capabilities
+                .iter()
+                .map(|(name, policy)| (name.clone(), render_route_policy_json(policy)))
+                .collect::<serde_json::Map<String, Value>>(),
+            "agents": profiles
+                .routing
+                .agents
+                .iter()
+                .map(|(name, policy)| (name.clone(), render_route_policy_json(policy)))
+                .collect::<serde_json::Map<String, Value>>(),
+        }
+    });
+    let mut raw = serde_json::to_string_pretty(&rendered).unwrap_or_else(|_| "{}".to_string());
+    raw.push('\n');
+    raw
+}
+
+fn render_provider_profile_json(profile: &ProviderProfile) -> Value {
+    json!({
+        "name": profile.name,
+        "kind": profile.kind.label(),
+        "base_url": profile.base_url,
+        "model": profile.default_model,
+        "auth": render_provider_auth_json_value(&profile.auth),
+        "note": profile.note,
+    })
+}
+
+fn render_route_policy_json(policy: &ProviderRoutePolicy) -> Value {
+    let mut value = serde_json::Map::new();
+    if let Some(profile_name) = policy.profile_name.as_ref() {
+        value.insert("profile".to_string(), Value::String(profile_name.clone()));
+    }
+    if let Some(default_model) = policy.default_model.as_ref() {
+        value.insert(
+            "default_model".to_string(),
+            Value::String(default_model.clone()),
+        );
+    }
+    Value::Object(value)
+}
+
+fn render_provider_auth_json_value(auth: &ProviderAuthMode) -> Value {
+    match auth {
+        ProviderAuthMode::None => json!({ "mode": "none" }),
+        ProviderAuthMode::BearerEnv { env_var } => json!({
+            "mode": "bearer_env",
+            "env_var": env_var,
+        }),
+        ProviderAuthMode::StaticHeaderEnv {
+            header_name,
+            env_var,
+        } => json!({
+            "mode": "static_header_env",
+            "header_name": header_name,
+            "env_var": env_var,
+        }),
+        ProviderAuthMode::CodexAuthJson { path } => {
+            let mut value = serde_json::Map::from_iter([(
+                "mode".to_string(),
+                Value::String("codex_auth_json".to_string()),
+            )]);
+            if let Some(path) = path.as_ref() {
+                value.insert("path".to_string(), Value::String(path.clone()));
+            }
+            Value::Object(value)
+        }
+    }
 }
 
 fn resolve_codex_auth_path(explicit_path: Option<&str>) -> LoomResult<PathBuf> {
@@ -1128,8 +1286,12 @@ mod tests {
             std::env::remove_var("HOME");
         }
         assert_eq!(profiles.default_profile_name, DEFAULT_LOCAL_PROFILE_NAME);
-        assert_eq!(profiles.profiles.len(), 1);
+        assert_eq!(profiles.profiles.len(), 7);
         assert_eq!(profiles.profiles[0].kind, ProviderKind::LocalOllama);
+        assert!(profiles
+            .profiles
+            .iter()
+            .any(|profile| profile.name == "manager_frontier" && profile.kind == ProviderKind::OpenAiCodex));
         assert_eq!(profiles.routing.capabilities.len(), 1);
     }
 
