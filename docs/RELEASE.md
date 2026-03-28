@@ -59,4 +59,4 @@ Both run Loom in foreground mode so systemd owns the process lifecycle.
 ## Truth boundary
 
 A Loom release today is a production-oriented local runtime package. It is not
-a hosted runtime release and it is not an OpenClaw cutover artifact.
+a hosted runtime release and it is not a legacy-runtime cutover artifact.

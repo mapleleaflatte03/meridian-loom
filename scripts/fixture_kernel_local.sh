@@ -10,7 +10,7 @@ write_local_fixture_kernel() {
 {
   "runtimes": {
     "local_kernel": {"id": "local_kernel", "label": "Local Kernel Runtime"},
-    "meridian_loom": {
+    "loom_native": {
       "status": "experimental",
       "notes": "${note}",
       "contract_compliance": {
@@ -125,7 +125,7 @@ EOF
 # fixture package
 EOF
 
-  cat > "${kernel_root}/kernel/adapters/openclaw_compatible.py" <<'EOF'
+  cat > "${kernel_root}/kernel/adapters/legacy_v1_compatible.py" <<'EOF'
 from authority import check_authority
 from court import get_restrictions
 from treasury import check_budget

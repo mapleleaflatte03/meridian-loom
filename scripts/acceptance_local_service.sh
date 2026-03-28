@@ -53,7 +53,7 @@ cat > "${FIXTURE_KERNEL}/kernel/runtimes.json" <<'EOF'
 {
   "runtimes": {
     "local_kernel": {"id": "local_kernel", "label": "Local Kernel Runtime"},
-    "meridian_loom": {
+    "loom_native": {
       "status": "experimental",
       "notes": "acceptance fixture",
       "contract_compliance": {
@@ -166,7 +166,7 @@ cat > "${FIXTURE_KERNEL}/kernel/adapters/__init__.py" <<'EOF'
 # acceptance fixture package
 EOF
 
-cat > "${FIXTURE_KERNEL}/kernel/adapters/openclaw_compatible.py" <<'EOF'
+cat > "${FIXTURE_KERNEL}/kernel/adapters/legacy_v1_compatible.py" <<'EOF'
 from authority import check_authority
 from court import get_restrictions
 from treasury import check_budget

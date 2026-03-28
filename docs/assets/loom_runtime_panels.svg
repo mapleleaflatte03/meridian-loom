@@ -51,8 +51,8 @@
   <text x="824" y="160" class="title">artifacts/parity/latest.json</text>
   <text x="824" y="208" class="body">reference_gate        kernel adapter truth</text>
   <text x="824" y="240" class="body">loom_runtime_stream   runtime rehearsal truth</text>
-  <text x="824" y="272" class="body">openclaw_live_probe   founder-host snapshot</text>
+  <text x="824" y="272" class="body">legacy_live_probe   founder-host snapshot</text>
   <text x="824" y="320" class="warn">NOT PER-ACTION LIVE PARITY</text>
   <text x="824" y="352" class="body">Stronger than file-only compare.</text>
-  <text x="824" y="380" class="body">Still not OpenClaw replacement proof.</text>
+  <text x="824" y="380" class="body">Still not legacy-runtime replacement proof.</text>
 </svg>

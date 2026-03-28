@@ -156,7 +156,7 @@ Imported workspace-skill submit:
 ```bash
 loom capability import-workspace-skill \
   --root "$LOOM_ROOT" \
-  --skill-root /root/.openclaw/workspace/skills/malware-triage
+  --skill-root /root/.legacy-runtime/workspace/skills/malware-triage
 
 loom service submit \
   --root "$LOOM_ROOT" \
@@ -192,7 +192,7 @@ Operator-facing rehearsals for this service boundary:
 ./scripts/acceptance_capability_service.sh
 ./scripts/migration_tools/rehearse_claw_skill_service.sh
 ./scripts/migration_tools/rehearse_claw_skill_multi_import.sh
-./scripts/migration_tools/rehearse_openclaw_plugin_import.sh
+./scripts/migration_tools/rehearse_legacy_plugin_import.sh
 ./scripts/migration_tools/rehearse_server_replacement.sh
 ```
 
@@ -204,4 +204,4 @@ The replacement rehearsal now uses an imported clawfamily skill, not
 - job inspect, result inspection, logs
 - restart and resubmit through the same imported skill
 
-It does not prove live cutover or OpenClaw retirement.
+It does not prove live cutover or legacy-runtime retirement.

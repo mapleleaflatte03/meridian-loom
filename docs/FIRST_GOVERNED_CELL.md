@@ -79,7 +79,7 @@ cat > "${KERNEL_PATH}/kernel/runtimes.json" <<'EOF'
 {
   "runtimes": {
     "local_kernel": {"id": "local_kernel", "label": "Local Kernel Runtime"},
-    "meridian_loom": {
+    "loom_native": {
       "status": "experimental",
       "notes": "first governed cell tutorial",
       "contract_compliance": {

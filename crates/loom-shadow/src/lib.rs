@@ -9902,7 +9902,7 @@ mod tests {
         fs::create_dir_all(kernel_dir.join("adapters")).expect("kernel dirs");
         fs::write(
             kernel_dir.join("runtimes.json"),
-            "{\n  \"runtimes\": {\n    \"local_kernel\": {\"id\": \"local_kernel\", \"label\": \"Local Kernel Runtime\"},\n    \"meridian_loom\": {\"status\": \"experimental\", \"notes\": \"job fixture\", \"contract_compliance\": {\"agent_identity\": null, \"action_envelope\": null, \"cost_attribution\": null, \"approval_hook\": null, \"audit_emission\": null, \"sanction_controls\": null, \"budget_gate\": null}}\n  }\n}\n",
+            "{\n  \"runtimes\": {\n    \"local_kernel\": {\"id\": \"local_kernel\", \"label\": \"Local Kernel Runtime\"},\n    \"loom_native\": {\"status\": \"experimental\", \"notes\": \"job fixture\", \"contract_compliance\": {\"agent_identity\": null, \"action_envelope\": null, \"cost_attribution\": null, \"approval_hook\": null, \"audit_emission\": null, \"sanction_controls\": null, \"budget_gate\": null}}\n  }\n}\n",
         )
         .expect("write runtimes");
         fs::write(
@@ -9959,7 +9959,7 @@ mod tests {
         fs::create_dir_all(&kernel_dir).expect("kernel dir");
         fs::write(
             kernel_dir.join("runtimes.json"),
-            "{\n  \"runtimes\": {\n    \"local_kernel\": {\"id\": \"local_kernel\", \"label\": \"Local Kernel Runtime\"},\n    \"meridian_loom\": {\"status\": \"experimental\", \"notes\": \"test note\", \"contract_compliance\": {\"agent_identity\": null, \"action_envelope\": null, \"cost_attribution\": null, \"approval_hook\": null, \"audit_emission\": null, \"sanction_controls\": null, \"budget_gate\": null}}\n  }\n}\n",
+            "{\n  \"runtimes\": {\n    \"local_kernel\": {\"id\": \"local_kernel\", \"label\": \"Local Kernel Runtime\"},\n    \"loom_native\": {\"status\": \"experimental\", \"notes\": \"test note\", \"contract_compliance\": {\"agent_identity\": null, \"action_envelope\": null, \"cost_attribution\": null, \"approval_hook\": null, \"audit_emission\": null, \"sanction_controls\": null, \"budget_gate\": null}}\n  }\n}\n",
         )
         .expect("write runtimes");
         fs::write(
@@ -10116,7 +10116,7 @@ if __name__ == '__main__':
         fs::create_dir_all(kernel_dir.join("adapters")).expect("kernel dirs");
         fs::write(
             kernel_dir.join("runtimes.json"),
-            "{\n  \"runtimes\": {\n    \"local_kernel\": {\"id\": \"local_kernel\", \"label\": \"Local Kernel Runtime\"},\n    \"meridian_loom\": {\"status\": \"experimental\", \"notes\": \"watch fixture\", \"contract_compliance\": {\"agent_identity\": null, \"action_envelope\": null, \"cost_attribution\": null, \"approval_hook\": null, \"audit_emission\": null, \"sanction_controls\": null, \"budget_gate\": null}}\n  }\n}\n",
+            "{\n  \"runtimes\": {\n    \"local_kernel\": {\"id\": \"local_kernel\", \"label\": \"Local Kernel Runtime\"},\n    \"loom_native\": {\"status\": \"experimental\", \"notes\": \"watch fixture\", \"contract_compliance\": {\"agent_identity\": null, \"action_envelope\": null, \"cost_attribution\": null, \"approval_hook\": null, \"audit_emission\": null, \"sanction_controls\": null, \"budget_gate\": null}}\n  }\n}\n",
         )
         .expect("write runtimes");
         fs::write(
@@ -10190,7 +10190,7 @@ if __name__ == '__main__':
         fs::create_dir_all(kernel_dir.join("adapters")).expect("kernel dirs");
         fs::write(
             kernel_dir.join("runtimes.json"),
-            "{\n  \"runtimes\": {\n    \"local_kernel\": {\"id\": \"local_kernel\", \"label\": \"Local Kernel Runtime\"},\n    \"meridian_loom\": {\"status\": \"experimental\", \"notes\": \"status fixture\", \"contract_compliance\": {\"agent_identity\": null, \"action_envelope\": null, \"cost_attribution\": null, \"approval_hook\": null, \"audit_emission\": null, \"sanction_controls\": null, \"budget_gate\": null}}\n  }\n}\n",
+            "{\n  \"runtimes\": {\n    \"local_kernel\": {\"id\": \"local_kernel\", \"label\": \"Local Kernel Runtime\"},\n    \"loom_native\": {\"status\": \"experimental\", \"notes\": \"status fixture\", \"contract_compliance\": {\"agent_identity\": null, \"action_envelope\": null, \"cost_attribution\": null, \"approval_hook\": null, \"audit_emission\": null, \"sanction_controls\": null, \"budget_gate\": null}}\n  }\n}\n",
         )
         .expect("write runtimes");
         fs::write(
@@ -10256,7 +10256,7 @@ if __name__ == '__main__':
         fs::create_dir_all(kernel_dir.join("adapters")).expect("kernel dirs");
         fs::write(
             kernel_dir.join("runtimes.json"),
-            "{\n  \"runtimes\": {\n    \"local_kernel\": {\"id\": \"local_kernel\", \"label\": \"Local Kernel Runtime\"},\n    \"meridian_loom\": {\"status\": \"experimental\", \"notes\": \"daemon fixture\", \"contract_compliance\": {\"agent_identity\": null, \"action_envelope\": null, \"cost_attribution\": null, \"approval_hook\": null, \"audit_emission\": null, \"sanction_controls\": null, \"budget_gate\": null}}\n  }\n}\n",
+            "{\n  \"runtimes\": {\n    \"local_kernel\": {\"id\": \"local_kernel\", \"label\": \"Local Kernel Runtime\"},\n    \"loom_native\": {\"status\": \"experimental\", \"notes\": \"daemon fixture\", \"contract_compliance\": {\"agent_identity\": null, \"action_envelope\": null, \"cost_attribution\": null, \"approval_hook\": null, \"audit_emission\": null, \"sanction_controls\": null, \"budget_gate\": null}}\n  }\n}\n",
         )
         .expect("write runtimes");
         fs::write(
@@ -10327,7 +10327,7 @@ if __name__ == '__main__':
         fs::create_dir_all(kernel_dir.join("adapters")).expect("kernel dirs");
         fs::write(
             kernel_dir.join("runtimes.json"),
-            "{\n  \"runtimes\": {\n    \"local_kernel\": {\"id\": \"local_kernel\", \"label\": \"Local Kernel Runtime\"},\n    \"meridian_loom\": {\"status\": \"experimental\", \"notes\": \"service fixture\", \"contract_compliance\": {\"agent_identity\": null, \"action_envelope\": null, \"cost_attribution\": null, \"approval_hook\": null, \"audit_emission\": null, \"sanction_controls\": null, \"budget_gate\": null}}\n  }\n}\n",
+            "{\n  \"runtimes\": {\n    \"local_kernel\": {\"id\": \"local_kernel\", \"label\": \"Local Kernel Runtime\"},\n    \"loom_native\": {\"status\": \"experimental\", \"notes\": \"service fixture\", \"contract_compliance\": {\"agent_identity\": null, \"action_envelope\": null, \"cost_attribution\": null, \"approval_hook\": null, \"audit_emission\": null, \"sanction_controls\": null, \"budget_gate\": null}}\n  }\n}\n",
         )
         .expect("write runtimes");
         fs::write(
@@ -10420,7 +10420,7 @@ if __name__ == '__main__':
         fs::create_dir_all(kernel_dir.join("adapters")).expect("kernel dirs");
         fs::write(
             kernel_dir.join("runtimes.json"),
-            "{\n  \"runtimes\": {\n    \"local_kernel\": {\"id\": \"local_kernel\", \"label\": \"Local Kernel Runtime\"},\n    \"meridian_loom\": {\"status\": \"experimental\", \"notes\": \"file ingress fixture\", \"contract_compliance\": {\"agent_identity\": null, \"action_envelope\": null, \"cost_attribution\": null, \"approval_hook\": null, \"audit_emission\": null, \"sanction_controls\": null, \"budget_gate\": null}}\n  }\n}\n",
+            "{\n  \"runtimes\": {\n    \"local_kernel\": {\"id\": \"local_kernel\", \"label\": \"Local Kernel Runtime\"},\n    \"loom_native\": {\"status\": \"experimental\", \"notes\": \"file ingress fixture\", \"contract_compliance\": {\"agent_identity\": null, \"action_envelope\": null, \"cost_attribution\": null, \"approval_hook\": null, \"audit_emission\": null, \"sanction_controls\": null, \"budget_gate\": null}}\n  }\n}\n",
         )
         .expect("write runtimes");
         fs::write(
@@ -10515,7 +10515,7 @@ if __name__ == '__main__':
         fs::create_dir_all(kernel_dir.join("adapters")).expect("kernel dirs");
         fs::write(
             kernel_dir.join("runtimes.json"),
-            "{\n  \"runtimes\": {\n    \"local_kernel\": {\"id\": \"local_kernel\", \"label\": \"Local Kernel Runtime\"},\n    \"meridian_loom\": {\"status\": \"experimental\", \"notes\": \"capability file ingress fixture\", \"contract_compliance\": {\"agent_identity\": null, \"action_envelope\": null, \"cost_attribution\": null, \"approval_hook\": null, \"audit_emission\": null, \"sanction_controls\": null, \"budget_gate\": null}}\n  }\n}\n",
+            "{\n  \"runtimes\": {\n    \"local_kernel\": {\"id\": \"local_kernel\", \"label\": \"Local Kernel Runtime\"},\n    \"loom_native\": {\"status\": \"experimental\", \"notes\": \"capability file ingress fixture\", \"contract_compliance\": {\"agent_identity\": null, \"action_envelope\": null, \"cost_attribution\": null, \"approval_hook\": null, \"audit_emission\": null, \"sanction_controls\": null, \"budget_gate\": null}}\n  }\n}\n",
         )
         .expect("write runtimes");
         fs::write(
@@ -10606,7 +10606,7 @@ if __name__ == '__main__':
         fs::create_dir_all(kernel_dir.join("adapters")).expect("kernel dirs");
         fs::write(
             kernel_dir.join("runtimes.json"),
-            "{\n  \"runtimes\": {\n    \"local_kernel\": {\"id\": \"local_kernel\", \"label\": \"Local Kernel Runtime\"},\n    \"meridian_loom\": {\"status\": \"experimental\", \"notes\": \"commitment import fixture\", \"contract_compliance\": {\"agent_identity\": null, \"action_envelope\": null, \"cost_attribution\": null, \"approval_hook\": null, \"audit_emission\": null, \"sanction_controls\": null, \"budget_gate\": null}}\n  }\n}\n",
+            "{\n  \"runtimes\": {\n    \"local_kernel\": {\"id\": \"local_kernel\", \"label\": \"Local Kernel Runtime\"},\n    \"loom_native\": {\"status\": \"experimental\", \"notes\": \"commitment import fixture\", \"contract_compliance\": {\"agent_identity\": null, \"action_envelope\": null, \"cost_attribution\": null, \"approval_hook\": null, \"audit_emission\": null, \"sanction_controls\": null, \"budget_gate\": null}}\n  }\n}\n",
         )
         .expect("write runtimes");
         fs::write(
@@ -10660,7 +10660,7 @@ if __name__ == '__main__':
         fs::create_dir_all(kernel_dir.join("adapters")).expect("kernel dirs");
         fs::write(
             kernel_dir.join("runtimes.json"),
-            "{\n  \"runtimes\": {\n    \"local_kernel\": {\"id\": \"local_kernel\", \"label\": \"Local Kernel Runtime\"},\n    \"meridian_loom\": {\"status\": \"experimental\", \"notes\": \"service import fixture\", \"contract_compliance\": {\"agent_identity\": null, \"action_envelope\": null, \"cost_attribution\": null, \"approval_hook\": null, \"audit_emission\": null, \"sanction_controls\": null, \"budget_gate\": null}}\n  }\n}\n",
+            "{\n  \"runtimes\": {\n    \"local_kernel\": {\"id\": \"local_kernel\", \"label\": \"Local Kernel Runtime\"},\n    \"loom_native\": {\"status\": \"experimental\", \"notes\": \"service import fixture\", \"contract_compliance\": {\"agent_identity\": null, \"action_envelope\": null, \"cost_attribution\": null, \"approval_hook\": null, \"audit_emission\": null, \"sanction_controls\": null, \"budget_gate\": null}}\n  }\n}\n",
         )
         .expect("write runtimes");
         fs::write(
@@ -10856,7 +10856,7 @@ if __name__ == '__main__':
         let runtimes = serde_json::json!({
             "runtimes": {
                 "local_kernel": {"id": "local_kernel", "label": "Local Kernel Runtime"},
-                "meridian_loom": {
+                "loom_native": {
                     "status": "experimental",
                     "notes": note,
                     "contract_compliance": {

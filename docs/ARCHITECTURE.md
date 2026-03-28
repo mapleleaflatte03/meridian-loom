@@ -27,7 +27,7 @@ A runtime root is expected to hold:
 
 ## Compatibility notes
 
-Legacy OpenClaw-named identifiers remain only where they still serve backward compatibility for parsing, import, or migration surfaces. They do not define the current active runtime path.
+Legacy compatibility identifiers remain only where they still serve backward compatibility for parsing, import, or migration surfaces. They do not define the current active runtime path.
 
 ## Script layout
 

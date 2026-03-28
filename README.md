@@ -79,7 +79,7 @@ loom capability list --root "$HOME/.local/share/meridian-loom/runtime/default" -
 - Terminal execution, browser navigation, and heartbeat scheduling are real local primitives with bounded scope.
 - Omni-channel presence and persistent memory remain broader architecture surfaces beyond the current local proof line.
 - This repo does not claim hosted runtime replacement or broad production cutover.
-- Legacy OpenClaw-named compatibility surfaces remain only where they still serve migration or import compatibility.
+- Legacy compatibility surfaces remain only where they still serve migration or import compatibility.
 
 ## Operational Surface
 

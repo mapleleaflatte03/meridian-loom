@@ -1505,8 +1505,8 @@ pub fn contract_show(root: &Path, override_kernel_path: Option<&str>) -> LoomRes
     let registry_path = kernel_path.join("kernel/runtimes.json");
     let contents = fs::read_to_string(&registry_path).map_err(io_err)?;
     let start = contents
-        .find("\"meridian_loom\"")
-        .ok_or_else(|| format!("meridian_loom not found in {}", registry_path.display()))?;
+        .find("\"loom_native\"")
+        .ok_or_else(|| format!("loom_native not found in {}", registry_path.display()))?;
     let section = &contents[start..];
 
     let runtime_status = extract_json_string(section, "\"status\"")
@@ -3062,7 +3062,7 @@ mod tests {
         fs::write(
             kernel_dir.join("runtimes.json"),
             format!(
-                "{{\n  \"runtimes\": {{\n    \"local_kernel\": {{\"id\": \"local_kernel\", \"label\": \"Local Kernel Runtime\"}},\n    \"meridian_loom\": {{\"status\": \"planned\", \"notes\": \"test note\", \"contract_compliance\": {{\"agent_identity\": null, \"action_envelope\": null, \"cost_attribution\": null, \"approval_hook\": null, \"audit_emission\": null, \"sanction_controls\": null, \"budget_gate\": null}}}}\n  }}\n}}\n"
+                "{{\n  \"runtimes\": {{\n    \"local_kernel\": {{\"id\": \"local_kernel\", \"label\": \"Local Kernel Runtime\"}},\n    \"loom_native\": {{\"status\": \"planned\", \"notes\": \"test note\", \"contract_compliance\": {{\"agent_identity\": null, \"action_envelope\": null, \"cost_attribution\": null, \"approval_hook\": null, \"audit_emission\": null, \"sanction_controls\": null, \"budget_gate\": null}}}}\n  }}\n}}\n"
             ),
         )
         .expect("write runtimes");

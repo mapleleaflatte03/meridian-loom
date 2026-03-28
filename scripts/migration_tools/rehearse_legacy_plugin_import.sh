@@ -6,9 +6,9 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 source "${SCRIPT_DIR}/../fixture_kernel_local.sh"
 
 LOOM="${LOOM:-${REPO_ROOT}/target/debug/loom}"
-ROOT_DIR="${1:-/tmp/loom-openclaw-plugin-import}"
-FIXTURE_KERNEL="$(mktemp -d /tmp/loom-openclaw-plugin-kernel.XXXXXX)"
-PLUGIN_ROOT="$(mktemp -d /tmp/loom-openclaw-plugin-fixture.XXXXXX)"
+ROOT_DIR="${1:-/tmp/loom-legacy-plugin-import}"
+FIXTURE_KERNEL="$(mktemp -d /tmp/loom-legacy-plugin-kernel.XXXXXX)"
+PLUGIN_ROOT="$(mktemp -d /tmp/loom-legacy-plugin-fixture.XXXXXX)"
 PLUGIN_SKILL_ROOT="${PLUGIN_ROOT}/skills/alpha-scan"
 CAPABILITY_NAME="clawskill.acme-plugin.alpha-scan.v0"
 ORG_ID="${ORG_ID:-org_tutorial}"
@@ -18,24 +18,24 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "== Meridian Loom // OpenClaw Plugin Import Rehearsal =="
+echo "== Meridian Loom // Legacy Plugin Import Rehearsal =="
 echo "root:   ${ROOT_DIR}"
 echo "kernel: ${FIXTURE_KERNEL}"
 echo "plugin: ${PLUGIN_ROOT}"
 echo ""
 
 ensure_debug_loom_binary "${REPO_ROOT}"
-write_local_fixture_kernel "${FIXTURE_KERNEL}" "openclaw plugin import rehearsal"
+write_local_fixture_kernel "${FIXTURE_KERNEL}" "legacy plugin import rehearsal"
 
 rm -rf "${ROOT_DIR}"
 mkdir -p "${PLUGIN_SKILL_ROOT}"
 
-cat > "${PLUGIN_ROOT}/openclaw.plugin.json" <<'JSON'
+cat > "${PLUGIN_ROOT}/legacy.plugin.json" <<'JSON'
 {
   "id": "acme-plugin",
   "configSchema": {
     "type": "object",
-    "title": "OpenClaw plugin config"
+    "title": "Legacy plugin config"
   },
   "skills": "skills"
 }
@@ -62,8 +62,8 @@ echo "--- Step 1: Initialize workspace ---"
   --org-id "${ORG_ID}"
 echo ""
 
-echo "--- Step 2: Import OpenClaw plugin subset ---"
-"${LOOM}" capability import-openclaw-plugin-skill-subset \
+echo "--- Step 2: Import legacy plugin subset ---"
+"${LOOM}" capability import-legacy-plugin-skill-subset \
   --root "${ROOT_DIR}" \
   --plugin-root "${PLUGIN_ROOT}"
 echo ""

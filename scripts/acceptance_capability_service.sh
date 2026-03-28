@@ -31,7 +31,7 @@ cleanup() {
 trap cleanup EXIT
 
 export LOOM_SERVICE_TOKEN="${SERVICE_TOKEN}"
-export MERIDIAN_OPENCLAW_PROOF_SCRIPT="${FIXTURE_KERNEL}/kernel/missing_openclaw_runtime_proof.py"
+export MERIDIAN_LEGACY_V1_PROOF_SCRIPT="${FIXTURE_KERNEL}/kernel/missing_legacy_v1_runtime_proof.py"
 
 ensure_debug_loom_binary "${REPO_ROOT}"
 rm -rf "${ROOT_DIR}"

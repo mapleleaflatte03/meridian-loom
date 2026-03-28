@@ -87,7 +87,7 @@ The rehearsal verifies:
 17. `loom parity report` is now the stronger surface: it reads the runtime-side
     parity stream and the latest parity report produced by `loom action execute`.
 18. When available on the founder host, the parity stream also captures a real
-    OpenClaw proof snapshot via `openclaw_runtime_proof.py --json`.
+    legacy runtime proof snapshot via `legacy_runtime_proof.py --json`.
 19. The decision surface still unions a local sanction preview derived from the
     resolved identity snapshot with the read-only reference gate result.
 20. A fixture-backed rehearsal proves that `execute` / `remediation_only`
@@ -120,13 +120,13 @@ The rehearsal verifies:
 - It does not prove runtime-level contract compliance.
 - It does not upgrade registry compliance beyond 0/7.
 - It does not prove transport adapters exist.
-- It does not prove OpenClaw replacement.
-- It does not prove hosted per-action OpenClaw parity.
+- It does not prove legacy-runtime replacement.
+- It does not prove hosted per-action legacy-runtime parity.
 - It does not prove a hosted daemon supervisor or long-running scheduler.
 - It does not prove a hosted long-running scheduler or worker pool.
 - It does not prove a hosted runtime service or durable ingress transport.
 - It does not prove live commitment-outbox cutover from an independent host.
-- The live OpenClaw probe is a runtime health/proof snapshot, not a replayed
+- The live legacy-runtime probe is a runtime health/proof snapshot, not a replayed
   gate-by-gate execution stream.
 - The hosted kernel's global audit trail is still not owned by Loom.
 
@@ -168,7 +168,7 @@ The current founder-host rehearsal now exercises both the old and new surfaces:
   Loom's shadow log for offline inspection
 - `loom action execute` writes a runtime execution receipt, a runtime-side
   audit artifact, and a parity stream
-- `loom parity report` surfaces that parity stream plus a live OpenClaw proof
+- `loom parity report` surfaces that parity stream plus a live legacy-runtime proof
   snapshot when the founder-host proof script is available, and now gives a
   guided next-step message when no parity artifacts exist yet
 
@@ -192,7 +192,7 @@ That script proves the current local supervisor path:
 - the worker writes a result artifact under `state/runtime/jobs/<input_hash>/`
 - runtime audit emission uses the kernel-owned `audit.py log-runtime` path and
   lands in `kernel/runtime_audit/loom_runtime_events.jsonl`
-- parity artifacts include a per-action OpenClaw probe stream entry, even when
+- parity artifacts include a per-action legacy-runtime probe stream entry, even when
   the probe is unavailable in the synthetic fixture
 
 There is now a separate queue-backed supervisor rehearsal:
@@ -337,5 +337,5 @@ That script creates a synthetic kernel fixture where:
 
 This is intentionally a fixture-backed proof surface, not a claim about the
 founder host's current kernel state. The fixture rehearsal explicitly disables
-the founder-host OpenClaw probe so the transcript stays synthetic. The
+the founder-host legacy-runtime probe so the transcript stays synthetic. The
 transcript is not checked in.

@@ -95,12 +95,12 @@ loom capability scaffold \
   --worker-kind python
 ```
 
-Import a real workspace skill bundle from an OpenClaw-style skills tree:
+Import a real workspace skill bundle from an legacy-style skills tree:
 
 ```bash
 loom capability import-workspace-skill \
   --root "$LOOM_ROOT" \
-  --skill-root /root/.openclaw/workspace/skills/malware-triage
+  --skill-root /root/.legacy-runtime/workspace/skills/malware-triage
 ```
 
 That creates a Loom-native capability wrapper around the imported skill bundle,
@@ -217,7 +217,7 @@ Exercise the same capability path through the service boundary:
 ./scripts/acceptance_capability_service.sh
 ./scripts/migration_tools/rehearse_claw_skill_service.sh
 ./scripts/migration_tools/rehearse_claw_skill_multi_import.sh
-./scripts/migration_tools/rehearse_openclaw_plugin_import.sh
+./scripts/migration_tools/rehearse_legacy_plugin_import.sh
 ./scripts/migration_tools/rehearse_server_replacement.sh
 ./scripts/tests/rehearse_phase2_portability_corpus.sh
 ```
@@ -226,7 +226,7 @@ Exercise the same capability path through the service boundary:
 it imports `malware-triage`, verifies it, promotes it, submits it through Loom
 service, inspects the completed job, restarts Loom, submits the same imported
 skill again, then tails logs and stops cleanly. It proves the local server path
-is owned by Loom. It does not prove live OpenClaw cutover.
+is owned by Loom. It does not prove live legacy-runtime cutover.
 
 ## Restart and stop
 

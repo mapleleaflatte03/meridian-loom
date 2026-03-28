@@ -31,7 +31,7 @@ cat > "${KERNEL_PATH}/kernel/runtimes.json" <<'EOF'
 {
   "runtimes": {
     "local_kernel": {"id": "local_kernel", "label": "Local Kernel Runtime"},
-    "meridian_loom": {
+    "loom_native": {
       "status": "experimental",
       "notes": "capability forge rehearsal",
       "contract_compliance": {
@@ -145,7 +145,7 @@ cat > "${KERNEL_PATH}/kernel/adapters/__init__.py" <<'EOF'
 # fixture package
 EOF
 
-cat > "${KERNEL_PATH}/kernel/adapters/openclaw_compatible.py" <<'EOF'
+cat > "${KERNEL_PATH}/kernel/adapters/legacy_v1_compatible.py" <<'EOF'
 from authority import check_authority
 from court import get_restrictions
 from treasury import check_budget
@@ -171,7 +171,7 @@ def pre_action_check(org_id, envelope):
     return {'allowed': True, 'reason': 'ok', 'stage': 'ok', 'envelope': envelope, 'restrictions': session_gate['restrictions']}
 EOF
 
-export MERIDIAN_OPENCLAW_PROOF_SCRIPT="${KERNEL_PATH}/kernel/missing_openclaw_runtime_proof.py"
+export MERIDIAN_LEGACY_V1_PROOF_SCRIPT="${KERNEL_PATH}/kernel/missing_legacy_v1_runtime_proof.py"
 
 read_json_field() {
   python3 - <<'PY' "$1" "$2"

@@ -50,10 +50,10 @@ strict so the repo does not overclaim maturity.
 
 The first public publication must preserve these truths:
 
-- Loom is not a runtime yet
-- contract compliance remains 0/7 proven hooks
-- OpenClaw remains the live runtime today
-- this scaffold exists for CLI/setup/operator rehearsal, not runtime claims
+- Loom is the active Meridian runtime surface today
+- Loom contract truth should stay aligned with the kernel runtime registry and proof surfaces
+- legacy compatibility remains bounded and secondary
+- publication must not overclaim hosted or production-wide cutover
 
 ## Recommended local command
 
