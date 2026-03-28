@@ -641,7 +641,7 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                 false,
                 "provider auth store present",
             );
-            match provider_auth_store::provider_auth_store_overview(&root) {
+            match provider_auth_store::sync_provider_auth_store(&root) {
                 Ok(summary) => checks.push(Check {
                     level: if summary.ready_count > 0 { "OK" } else { "WARN" },
                     label: "provider_auth_runtime",

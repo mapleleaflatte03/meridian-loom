@@ -10,7 +10,7 @@ use loom_core::provider_auth_store::{
     mark_provider_auth_profile_used, render_provider_auth_profile_human,
     render_provider_auth_profile_json, render_provider_auth_profiles_human,
     render_provider_auth_profiles_json, render_provider_auth_store_human,
-    render_provider_auth_store_json, provider_auth_store_overview,
+    render_provider_auth_store_json, provider_auth_store_overview, sync_provider_auth_store,
 };
 use loom_core::provider_router::{
     configure_onboard_provider_routes, default_codex_auth_path_hint, provider_auth_status, provider_plane_summary,
@@ -163,13 +163,21 @@ fn handle_provider_login(args: &[String]) -> LoomResult<()> {
         sync_auth_material(&staged_auth_path, &target_auth_path)?;
     }
     persist_login_selection(&root, &source, &target_auth_path)?;
+    let _ = sync_provider_auth_store(&root)?;
+    let status = provider_auth_status(Some(&root), Some("manager_frontier"))?;
+    let auth_ready = target_auth_path.exists() && status.ready;
+    let detail = if status.ready {
+        login_detail(&source, device_auth, with_api_key)
+    } else {
+        format!("{}; {}", login_detail(&source, device_auth, with_api_key), status.detail)
+    };
     let summary = ProviderLoginSummary {
         source: source.clone(),
         codex_home: login_home.as_ref().map(|path| path.display().to_string()),
         staged_auth_path: Some(staged_auth_path.display().to_string()),
         configured_auth_path: target_auth_path.display().to_string(),
-        auth_ready: target_auth_path.exists(),
-        detail: login_detail(&source, device_auth, with_api_key),
+        auth_ready,
+        detail,
     };
     match format.as_str() {
         "human" => {
@@ -177,6 +185,9 @@ fn handle_provider_login(args: &[String]) -> LoomResult<()> {
             print_human(&render_provider_login_human(&summary));
         }
         _ => print!("{}", render_provider_login_json(&summary)),
+    }
+    if source == "loom" && !status.ready {
+        return Err(status.detail);
     }
     Ok(())
 }
@@ -568,6 +579,7 @@ fn provider_login_help_text() -> &'static str {
 ===================================
 Use a dedicated Loom account by default:
   loom provider login --source loom --device-auth
+  The dedicated Loom login must not reuse the shared Codex CLI account.
 
 Reuse the shared Codex CLI login:
   loom provider login --source cli

@@ -535,6 +535,13 @@ pub fn resolve_provider_route(root: Option<&Path>, intent: &ProviderRouteIntent)
                 profile_name, available
             )
         })?;
+    let auth_status = provider_auth_status(Some(&root), Some(&profile.name))?;
+    if !auth_status.ready {
+        return Err(format!(
+            "provider profile '{}' is not ready: {}",
+            profile.name, auth_status.detail
+        ));
+    }
     let endpoint_url = normalize_endpoint_url(&profile.kind, &profile.base_url)?;
     let model = if !intent.requested_model.trim().is_empty() {
         intent.requested_model.trim().to_string()
@@ -1242,6 +1249,7 @@ fn read_codex_auth_material(explicit_path: Option<&str>) -> LoomResult<CodexAuth
         .and_then(Value::as_str)
         .map(|raw| raw.trim().to_string())
         .filter(|raw| !raw.is_empty());
+    enforce_dedicated_loom_codex_identity(&auth_path, account_id.as_deref())?;
     Ok(CodexAuthMaterial {
         auth_path,
         access_token,
@@ -1249,6 +1257,54 @@ fn read_codex_auth_material(explicit_path: Option<&str>) -> LoomResult<CodexAuth
         account_id,
         last_refresh,
     })
+}
+
+fn enforce_dedicated_loom_codex_identity(
+    auth_path: &Path,
+    account_id: Option<&str>,
+) -> LoomResult<()> {
+    if !is_loom_managed_codex_auth_path(auth_path) {
+        return Ok(());
+    }
+    let shared_path = resolve_codex_auth_path(None)?;
+    if auth_path == shared_path {
+        return Err(format!(
+            "Loom-managed Codex auth at {} resolves to the shared CLI auth path {}; use a dedicated Loom login or switch the provider source to cli if shared auth is intentional",
+            auth_path.display(),
+            shared_path.display()
+        ));
+    }
+    let Some(configured_account_id) = account_id.and_then(trim_to_option) else {
+        return Ok(());
+    };
+    let Some(shared_account_id) = read_codex_account_id_at_path(&shared_path) else {
+        return Ok(());
+    };
+    if configured_account_id == shared_account_id {
+        return Err(format!(
+            "Loom-managed Codex auth at {} is using the shared CLI account {}; sign in with a dedicated Loom account or switch the provider source to cli if shared auth is intentional",
+            auth_path.display(),
+            configured_account_id
+        ));
+    }
+    Ok(())
+}
+
+fn is_loom_managed_codex_auth_path(path: &Path) -> bool {
+    let normalized = path.to_string_lossy().replace('\\', "/");
+    normalized.ends_with("/.meridian/auth/codex/auth.json")
+        || normalized == ".meridian/auth/codex/auth.json"
+}
+
+fn read_codex_account_id_at_path(path: &Path) -> Option<String> {
+    let raw = fs::read_to_string(path).ok()?;
+    let value: Value = serde_json::from_str(&raw).ok()?;
+    value
+        .pointer("/tokens/account_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|raw| !raw.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn normalize_path(current: &str, required_suffix: &str) -> String {
@@ -1308,6 +1364,7 @@ fn json_option(value: Option<&str>) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Mutex, MutexGuard, OnceLock};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
@@ -1323,11 +1380,17 @@ mod tests {
         path
     }
 
+    fn home_env_guard() -> MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(())).lock().expect("lock HOME env")
+    }
+
     #[test]
     fn scaffold_writes_local_ollama_default_profile() {
         let root = temp_path("loom-provider-scaffold");
         let fake_home = root.join("fake-home");
         fs::create_dir_all(&fake_home).expect("create fake home");
+        let _home_guard = home_env_guard();
         let previous_home = std::env::var("HOME").ok();
         std::env::set_var("HOME", &fake_home);
         let path = ensure_provider_profiles_scaffold(&root).expect("scaffold provider profiles");
@@ -1503,6 +1566,7 @@ mod tests {
             .expect("encode auth json"),
         )
         .expect("write auth json");
+        let _home_guard = home_env_guard();
         let previous_home = std::env::var("HOME").ok();
         std::env::set_var("HOME", &fake_home);
         let path = root.join(DEFAULT_PROVIDER_PROFILES_PATH);
@@ -1560,6 +1624,7 @@ mod tests {
             .expect("encode auth json"),
         )
         .expect("write auth json");
+        let _home_guard = home_env_guard();
         let previous_home = std::env::var("HOME").ok();
         std::env::set_var("HOME", &fake_home);
         agent_runtime::ensure_agent_runtime_scaffold(&root).expect("scaffold agent runtime");
@@ -1586,6 +1651,25 @@ mod tests {
     #[test]
     fn configure_onboard_routes_prefers_dedicated_loom_auth_and_selected_model() {
         let root = temp_path("loom-provider-onboard-frontier");
+        let fake_home = root.join("fake-home");
+        fs::create_dir_all(fake_home.join(".meridian/auth/codex")).expect("create loom auth dir");
+        fs::write(
+            fake_home.join(".meridian/auth/codex/auth.json"),
+            serde_json::to_string_pretty(&json!({
+                "auth_mode": "chatgpt",
+                "last_refresh": "2026-03-28T00:00:00Z",
+                "tokens": {
+                    "access_token": "access-token",
+                    "refresh_token": "refresh-token",
+                    "account_id": "acct_loom"
+                }
+            }))
+            .expect("encode auth json"),
+        )
+        .expect("write auth json");
+        let _home_guard = home_env_guard();
+        let previous_home = std::env::var("HOME").ok();
+        std::env::set_var("HOME", &fake_home);
         ensure_provider_profiles_scaffold(&root).expect("scaffold provider profiles");
         let path = configure_onboard_provider_routes(&root, "frontier", Some("gpt-5.3-codex"), None)
             .expect("configure routes");
@@ -1608,7 +1692,70 @@ mod tests {
             &ProviderRouteIntent::llm_inference("").with_agent_id("leviathann"),
         )
         .expect("resolve provider route");
+        if let Some(home) = previous_home {
+            std::env::set_var("HOME", home);
+        } else {
+            std::env::remove_var("HOME");
+        }
         assert_eq!(route.model, "gpt-5.3-codex");
+    }
+
+    #[test]
+    fn auth_status_blocks_loom_managed_auth_when_it_matches_shared_cli_account() {
+        let root = temp_path("loom-provider-auth-dedicated-required");
+        let fake_home = root.join("fake-home");
+        fs::create_dir_all(fake_home.join(".codex")).expect("create shared codex dir");
+        fs::create_dir_all(fake_home.join(".meridian/auth/codex")).expect("create loom codex dir");
+        let auth_payload = serde_json::to_string_pretty(&json!({
+            "auth_mode": "chatgpt",
+            "last_refresh": "2026-03-28T00:00:00Z",
+            "tokens": {
+                "access_token": "access-token",
+                "refresh_token": "refresh-token",
+                "account_id": "acct_shared"
+            }
+        }))
+        .expect("encode auth json");
+        fs::write(fake_home.join(".codex/auth.json"), &auth_payload).expect("write shared auth json");
+        fs::write(fake_home.join(".meridian/auth/codex/auth.json"), &auth_payload).expect("write loom auth json");
+        let _home_guard = home_env_guard();
+        let previous_home = std::env::var("HOME").ok();
+        std::env::set_var("HOME", &fake_home);
+        let path = root.join(DEFAULT_PROVIDER_PROFILES_PATH);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create provider dir");
+        }
+        fs::write(
+            &path,
+            serde_json::to_string_pretty(&json!({
+                "default_profile": "manager_frontier",
+                "profiles": [
+                    {
+                        "name": "manager_frontier",
+                        "kind": "openai_codex",
+                        "base_url": DEFAULT_CODEX_BASE_URL,
+                        "model": DEFAULT_CODEX_MODEL_ALIAS,
+                        "auth": { "mode": "codex_auth_json", "path": ".meridian/auth/codex/auth.json" }
+                    }
+                ]
+            }))
+            .expect("encode provider json"),
+        )
+        .expect("write provider profiles");
+        let status = provider_auth_status(Some(&root), Some("manager_frontier")).expect("provider auth status");
+        let route_error = resolve_provider_route(
+            Some(&root),
+            &ProviderRouteIntent::llm_inference("").with_agent_id("leviathann"),
+        )
+        .expect_err("route should be blocked");
+        if let Some(home) = previous_home {
+            std::env::set_var("HOME", home);
+        } else {
+            std::env::remove_var("HOME");
+        }
+        assert!(!status.ready);
+        assert!(status.detail.contains("shared CLI account"));
+        assert!(route_error.contains("provider profile 'manager_frontier' is not ready"));
     }
 
     #[test]
