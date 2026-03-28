@@ -574,6 +574,25 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             detail: format!("provider plane unavailable: {}", error),
         }),
     }
+
+    match provider_router::provider_auth_status(Some(&root), None) {
+        Ok(status) => checks.push(Check {
+            level: if status.ready { "OK" } else { "WARN" },
+            label: "provider_auth",
+            detail: format!(
+                "profile={} mode={} ready={} detail={}",
+                status.profile_name,
+                status.auth_mode,
+                status.ready,
+                status.detail
+            ),
+        }),
+        Err(error) => checks.push(Check {
+            level: "WARN",
+            label: "provider_auth",
+            detail: format!("provider auth unavailable: {}", error),
+        }),
+    }
     let delivery_queue = delivery_queue_path(&root, &config);
     let delivery_required = config.handoff_mode != "off";
     push_path_check(

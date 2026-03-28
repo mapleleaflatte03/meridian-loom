@@ -57,6 +57,17 @@ pub enum ProviderAuthMode {
     StaticHeaderEnv { header_name: String, env_var: String },
 }
 
+
+impl ProviderAuthMode {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::BearerEnv { .. } => "bearer_env",
+            Self::StaticHeaderEnv { .. } => "static_header_env",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProviderProfile {
     pub name: String,
@@ -190,6 +201,19 @@ pub struct ProviderPlaneSummary {
     pub agent_route_count: usize,
 }
 
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProviderAuthStatus {
+    pub profile_name: String,
+    pub profile_kind: ProviderKind,
+    pub auth_mode: String,
+    pub env_var: Option<String>,
+    pub header_name: Option<String>,
+    pub source: String,
+    pub ready: bool,
+    pub detail: String,
+}
+
 pub fn ensure_provider_profiles_scaffold(root: &Path) -> LoomResult<PathBuf> {
     let path = provider_profiles_path(root);
     if let Some(parent) = path.parent() {
@@ -216,6 +240,74 @@ pub fn provider_plane_summary(root: Option<&Path>) -> LoomResult<ProviderPlaneSu
         profile_count: profiles.profiles.len(),
         capability_route_count: profiles.routing.capabilities.len(),
         agent_route_count: profiles.routing.agents.len(),
+    })
+}
+
+
+pub fn provider_auth_status(root: Option<&Path>, profile_name: Option<&str>) -> LoomResult<ProviderAuthStatus> {
+    let profiles = load_provider_profiles(root)?;
+    let selected_profile_name = profile_name
+        .and_then(trim_to_option)
+        .unwrap_or_else(|| profiles.default_profile_name.clone());
+    let profile = profiles
+        .profiles
+        .iter()
+        .find(|candidate| candidate.name == selected_profile_name)
+        .ok_or_else(|| {
+            let available = profiles
+                .profiles
+                .iter()
+                .map(|profile| profile.name.clone())
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "provider profile '{}' was not found (available: {})",
+                selected_profile_name, available
+            )
+        })?;
+    let (env_var, header_name, ready, detail) = match &profile.auth {
+        ProviderAuthMode::None => (
+            None,
+            None,
+            true,
+            "profile does not require external credentials".to_string(),
+        ),
+        ProviderAuthMode::BearerEnv { env_var } => {
+            let ready = env_trimmed(env_var).is_some();
+            (
+                Some(env_var.clone()),
+                Some("authorization".to_string()),
+                ready,
+                if ready {
+                    format!("bearer token env {} is present", env_var)
+                } else {
+                    format!("bearer token env {} is missing", env_var)
+                },
+            )
+        }
+        ProviderAuthMode::StaticHeaderEnv { header_name, env_var } => {
+            let ready = env_trimmed(env_var).is_some();
+            (
+                Some(env_var.clone()),
+                Some(header_name.clone()),
+                ready,
+                if ready {
+                    format!("header env {} is present for {}", env_var, header_name)
+                } else {
+                    format!("header env {} is missing for {}", env_var, header_name)
+                },
+            )
+        }
+    };
+    Ok(ProviderAuthStatus {
+        profile_name: profile.name.clone(),
+        profile_kind: profile.kind.clone(),
+        auth_mode: profile.auth.label().to_string(),
+        env_var,
+        header_name,
+        source: profiles.source,
+        ready,
+        detail,
     })
 }
 
@@ -349,10 +441,57 @@ pub fn render_provider_plane_json(summary: &ProviderPlaneSummary) -> String {
     )
 }
 
+pub fn render_provider_auth_human(status: &ProviderAuthStatus) -> String {
+    format!(
+        "profile:            {} ({})
+auth_mode:          {}
+header_name:        {}
+env_var:            {}
+ready:              {}
+source:             {}
+detail:             {}
+",
+        status.profile_name,
+        status.profile_kind.label(),
+        status.auth_mode,
+        status.header_name.as_deref().unwrap_or("(none)"),
+        status.env_var.as_deref().unwrap_or("(none)"),
+        if status.ready { "yes" } else { "no" },
+        status.source,
+        status.detail,
+    )
+}
+
+pub fn render_provider_auth_json(status: &ProviderAuthStatus) -> String {
+    format!(
+        "{{
+  \"profile\": {},
+  \"profile_kind\": {},
+  \"auth_mode\": {},
+  \"header_name\": {},
+  \"env_var\": {},
+  \"ready\": {},
+  \"source\": {},
+  \"detail\": {}
+}}
+",
+        json_string(&status.profile_name),
+        json_string(status.profile_kind.label()),
+        json_string(&status.auth_mode),
+        json_option(status.header_name.as_deref()),
+        json_option(status.env_var.as_deref()),
+        if status.ready { "true" } else { "false" },
+        json_string(&status.source),
+        json_string(&status.detail),
+    )
+}
+
+
 pub fn render_provider_route_human(route: &ResolvedProviderRoute) -> String {
     format!(
         "capability:         {}
 profile:            {} ({})
+auth_mode:          {}
 endpoint:           {}
 model:              {}
 matched_rule:       {}
@@ -362,6 +501,7 @@ note:               {}
         route.capability_name,
         route.profile_name,
         route.profile_kind.label(),
+        route.auth.label(),
         route.endpoint_url,
         route.model,
         route.matched_rule,
@@ -372,10 +512,11 @@ note:               {}
 
 pub fn render_provider_route_json(route: &ResolvedProviderRoute) -> String {
     format!(
-        "{{\n  \"capability\": {},\n  \"profile\": {},\n  \"profile_kind\": {},\n  \"endpoint\": {},\n  \"model\": {},\n  \"matched_rule\": {},\n  \"source\": {},\n  \"note\": {},\n  \"agent_id\": {},\n  \"org_id\": {}\n}}\n",
+        "{{\n  \"capability\": {},\n  \"profile\": {},\n  \"profile_kind\": {},\n  \"auth_mode\": {},\n  \"endpoint\": {},\n  \"model\": {},\n  \"matched_rule\": {},\n  \"source\": {},\n  \"note\": {},\n  \"agent_id\": {},\n  \"org_id\": {}\n}}\n",
         json_string(&route.capability_name),
         json_string(&route.profile_name),
         json_string(route.profile_kind.label()),
+        json_string(route.auth.label()),
         json_string(route.endpoint_url.as_str()),
         json_string(&route.model),
         json_string(&route.matched_rule),
@@ -910,4 +1051,52 @@ mod tests {
         assert_eq!(route.agent_id.as_deref(), Some("agent_atlas"));
         assert_eq!(route.org_id.as_deref(), Some("org_demo"));
     }
+
+
+    #[test]
+    fn auth_status_reports_local_profile_ready_without_env() {
+        let root = temp_path("loom-provider-auth-local");
+        ensure_provider_profiles_scaffold(&root).expect("scaffold provider profiles");
+        let status = provider_auth_status(Some(&root), None).expect("provider auth status");
+        assert_eq!(status.profile_name, DEFAULT_LOCAL_PROFILE_NAME);
+        assert!(status.ready);
+        assert_eq!(status.auth_mode, "none");
+    }
+
+    #[test]
+    fn auth_status_reports_missing_bearer_env() {
+        let root = temp_path("loom-provider-auth-bearer");
+        let env_var = "MERIDIAN_PROVIDER_TEST_TOKEN";
+        std::env::remove_var(env_var);
+        let path = root.join(DEFAULT_PROVIDER_PROFILES_PATH);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create provider profiles dir");
+        }
+        fs::write(
+            &path,
+            serde_json::to_string_pretty(&json!({
+                "default_profile": "remote",
+                "profiles": [
+                    {
+                        "name": "remote",
+                        "kind": "openai_compatible",
+                        "base_url": "https://api.example.test/v1/chat/completions",
+                        "model": "gpt-test",
+                        "auth": {
+                            "mode": "bearer_env",
+                            "env_var": env_var
+                        }
+                    }
+                ]
+            }))
+            .expect("render provider json"),
+        )
+        .expect("write provider profiles");
+        let status = provider_auth_status(Some(&root), Some("remote")).expect("provider auth status");
+        assert_eq!(status.profile_name, "remote");
+        assert!(!status.ready);
+        assert_eq!(status.env_var.as_deref(), Some(env_var));
+        assert_eq!(status.auth_mode, "bearer_env");
+    }
+
 }

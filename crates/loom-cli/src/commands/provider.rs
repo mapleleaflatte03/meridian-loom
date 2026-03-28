@@ -2,7 +2,8 @@ use std::io::IsTerminal;
 
 use crate::*;
 use loom_core::provider_router::{
-    provider_plane_summary, render_provider_plane_human, render_provider_plane_json,
+    provider_auth_status, provider_plane_summary, render_provider_auth_human,
+    render_provider_auth_json, render_provider_plane_human, render_provider_plane_json,
     render_provider_route_human, render_provider_route_json, resolve_provider_route,
     ProviderRouteIntent,
 };
@@ -11,7 +12,8 @@ pub(crate) fn handle_provider(args: &[String]) -> LoomResult<()> {
     match args.first().map(String::as_str) {
         Some("status") => handle_provider_status(&args[1..]),
         Some("route") => handle_provider_route(&args[1..]),
-        _ => Err("provider supports 'status' and 'route'".to_string()),
+        Some("auth") => handle_provider_auth(&args[1..]),
+        _ => Err("provider supports 'status', 'route', and 'auth'".to_string()),
     }
 }
 
@@ -56,6 +58,28 @@ fn handle_provider_route(args: &[String]) -> LoomResult<()> {
     } else {
         print_startup_banner();
         print_human(&render_provider_route_human(&route));
+    }
+    Ok(())
+}
+
+
+fn handle_provider_auth(args: &[String]) -> LoomResult<()> {
+    let root = root_from(take_value(args, "--root").as_deref())?;
+    let format = take_value(args, "--format").unwrap_or_else(|| {
+        if std::io::stdout().is_terminal() {
+            "human".to_string()
+        } else {
+            "json".to_string()
+        }
+    });
+    let profile = take_value(args, "--profile");
+    let status = provider_auth_status(Some(&root), profile.as_deref())?;
+    match format.as_str() {
+        "human" => {
+            print_startup_banner();
+            print_human(&render_provider_auth_human(&status));
+        }
+        _ => print!("{}", render_provider_auth_json(&status)),
     }
     Ok(())
 }

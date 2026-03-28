@@ -268,6 +268,7 @@ Bootstrap\n\
   loom config show [--root PATH]\n\
   loom provider status [--root PATH] [--format human|json]\n\
   loom provider route [--root PATH] [--capability NAME] [--model NAME] [--agent-id ID] [--org-id ORG] [--profile NAME] [--format human|json]\n\
+  loom provider auth [--root PATH] [--profile NAME] [--format human|json]\n\
 \n\
 Governance surfaces\n\
 -------------------\n\
