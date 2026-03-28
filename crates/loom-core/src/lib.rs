@@ -12,6 +12,7 @@ pub mod capability_shims;
 pub mod capabilities;
 pub mod onboarding;
 pub mod output_guard;
+pub mod provider_auth_store;
 pub mod provider_router;
 pub mod recurring;
 pub mod schedules;
@@ -306,6 +307,7 @@ pub fn init_workspace(
     recurring::ensure_heartbeat_runtime_scaffold(&root)?;
     schedules::ensure_schedule_runtime_scaffold(&root)?;
     provider_router::ensure_provider_profiles_scaffold(&root)?;
+    provider_auth_store::ensure_provider_auth_store_scaffold(&root)?;
     onboarding::ensure_onboard_manifest(&root, &config)?;
     channels::ensure_channel_runtime_scaffold(&root)?;
 
@@ -615,6 +617,40 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             level: "WARN",
             label: "provider_auth",
             detail: format!("provider auth unavailable: {}", error),
+        }),
+    }
+    match provider_auth_store::ensure_provider_auth_store_scaffold(&root) {
+        Ok(store_path) => {
+            push_path_check(
+                &mut checks,
+                "provider_auth_store",
+                &store_path,
+                false,
+                "provider auth store present",
+            );
+            match provider_auth_store::provider_auth_store_overview(&root) {
+                Ok(summary) => checks.push(Check {
+                    level: if summary.ready_count > 0 { "OK" } else { "WARN" },
+                    label: "provider_auth_runtime",
+                    detail: format!(
+                        "profiles={} ready={} last_good={} usage_stats={}",
+                        summary.profile_count,
+                        summary.ready_count,
+                        summary.last_good_count,
+                        summary.usage_stats_count
+                    ),
+                }),
+                Err(error) => checks.push(Check {
+                    level: "WARN",
+                    label: "provider_auth_runtime",
+                    detail: format!("provider auth store unavailable: {}", error),
+                }),
+            }
+        }
+        Err(error) => checks.push(Check {
+            level: "WARN",
+            label: "provider_auth_store",
+            detail: format!("provider auth store unavailable: {}", error),
         }),
     }
     match onboarding::ensure_onboard_manifest(&root, &config) {

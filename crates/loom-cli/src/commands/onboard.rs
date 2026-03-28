@@ -15,6 +15,7 @@ use loom_core::onboarding::{
     derive_service_http_address, ensure_onboard_manifest, load_onboard_manifest,
     onboard_manifest_path, onboard_overview, write_onboard_manifest, OnboardManifest,
 };
+use loom_core::provider_auth_store::{provider_auth_store_overview, sync_provider_auth_store};
 use loom_core::provider_router::{
     configure_onboard_provider_routes, default_codex_auth_path_hint, provider_auth_status,
     provider_plane_summary, resolve_provider_route, ProviderRouteIntent,
@@ -150,6 +151,7 @@ Choose your manager brain, edge bindings, and runtime defaults. Meridian will sc
     apply_cli_overrides(args, &mut manifest)?;
     let provider_profiles_path =
         configure_onboard_provider_routes(&root, &manager_lane, codex_auth_path.as_deref())?;
+    let provider_auth_sync = sync_provider_auth_store(&root)?;
 
     if manifest.gateway_auth_mode == "none" && manifest.gateway_token_env.trim().is_empty() {
         manifest.gateway_token_env = config.service_token_env.clone();
@@ -178,6 +180,7 @@ Choose your manager brain, edge bindings, and runtime defaults. Meridian will sc
     let schedule_runtime = schedule_overview(&root, current_unix_ms())?;
 
     let provider_summary = provider_plane_summary(Some(&root))?;
+    let provider_auth_summary = provider_auth_store_overview(&root)?;
     let runtime_overview = agent_runtime_overview(&root)?;
     let codex_status = provider_auth_status(Some(&root), Some("manager_frontier")).ok();
     let manager_route = resolve_provider_route(
@@ -236,6 +239,14 @@ Choose your manager brain, edge bindings, and runtime defaults. Meridian will sc
                 "org_id": config.org_id,
                 "provider_profiles": provider_summary.profile_count,
                 "provider_profiles_path": provider_profiles_path.display().to_string(),
+                "provider_auth_runtime": {
+                    "profile_count": provider_auth_summary.profile_count,
+                    "ready_count": provider_auth_summary.ready_count,
+                    "last_good_count": provider_auth_summary.last_good_count,
+                    "usage_stats_count": provider_auth_summary.usage_stats_count,
+                    "profiles": provider_auth_summary.profile_names.clone(),
+                    "sync_ready_count": provider_auth_sync.ready_count,
+                },
                 "agent_profiles": runtime_overview.profile_count,
                 "manager_lane": manager_lane,
                 "codex_auth_ready": codex_ready,
@@ -329,6 +340,7 @@ mode:                {}
 org_id:              {}
 provider_profiles:   {}
 provider_cfg:        {}
+provider_auth:       profiles={} ready={} last_good={} usage_stats={}
 agent_profiles:      {}
 manager_lane:        {}
 codex_auth_ready:    {}
@@ -359,6 +371,10 @@ next_step:           loom doctor --root {} --format human
         config.org_id,
         provider_summary.profile_count,
         provider_profiles_path.display(),
+        provider_auth_summary.profile_count,
+        provider_auth_summary.ready_count,
+        provider_auth_summary.last_good_count,
+        provider_auth_summary.usage_stats_count,
         runtime_overview.profile_count,
         manager_lane,
         if codex_ready { "yes" } else { "no" },
