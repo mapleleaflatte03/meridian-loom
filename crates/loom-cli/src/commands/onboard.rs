@@ -1,7 +1,7 @@
 use std::env;
 use std::fs;
 use std::io::{self, IsTerminal, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -21,8 +21,9 @@ use loom_core::onboarding::{
 };
 use loom_core::provider_auth_store::{provider_auth_store_overview, sync_provider_auth_store};
 use loom_core::provider_router::{
-    configure_onboard_provider_routes, default_codex_auth_path_hint, provider_auth_status,
-    provider_plane_summary, resolve_provider_route, ProviderRouteIntent,
+    configure_onboard_provider_routes, default_codex_auth_path_hint, load_provider_profiles,
+    provider_auth_status, provider_plane_summary, resolve_provider_route,
+    shared_codex_auth_path_hint, ProviderAuthMode, ProviderRouteIntent,
 };
 use serde_json::{json, Value};
 
@@ -112,9 +113,28 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
 
     let _ = ensure_onboard_manifest(&root, &config)?;
     let mut manifest = load_onboard_manifest(&root)?;
+    let current_brain = current_manager_brain(&root, &manifest);
+    let explicit_manager_model = take_value(args, "--manager-model");
+    let explicit_codex_auth_source = take_value(args, "--codex-auth-source");
+    let explicit_codex_auth_path = take_value(args, "--codex-auth-path");
     let mut manager_lane = take_value(args, "--manager-lane")
-        .unwrap_or_else(|| current_manager_lane(&root).unwrap_or_else(|_| "frontier".to_string()));
-    let mut codex_auth_path = take_value(args, "--codex-auth-path");
+        .unwrap_or_else(|| current_brain.lane.clone());
+    let mut manager_model = explicit_manager_model
+        .clone()
+        .unwrap_or_else(|| current_brain.model.clone());
+    let mut codex_auth_source = explicit_codex_auth_source
+        .clone()
+        .unwrap_or_else(|| current_brain.codex_auth_source.clone());
+    let mut codex_auth_path = if explicit_codex_auth_path.is_some() {
+        explicit_codex_auth_path.clone()
+    } else if explicit_codex_auth_source.is_some() {
+        None
+    } else {
+        current_brain.codex_auth_path.clone()
+    };
+    if explicit_codex_auth_path.is_some() && explicit_codex_auth_source.is_none() {
+        codex_auth_source = "path".to_string();
+    }
     let mut banner_rendered = false;
 
     if interactive {
@@ -149,28 +169,51 @@ hint:                {}\n\n",
             1,
             5,
             "Manager brain",
-            "Pick the lane for Leviathann before the rest of the runtime is scaffolded.",
+            "Pick the lane, model, and account Meridian should use for Leviathann.",
         );
         manager_lane = prompt_choice(
             "Manager brain lane",
             &manager_lane,
             &["frontier", "local"],
         )?;
+        manager_model = prompt_text("Manager model", &manager_model)?;
         if manager_lane == "frontier" {
-            let hint = codex_auth_path.clone().unwrap_or_else(|| {
-                default_codex_auth_path_hint()
-                    .map(|path| path.display().to_string())
-                    .unwrap_or_else(|_| "~/.codex/auth.json".to_string())
-            });
-            codex_auth_path = Some(prompt_text("Codex auth.json path", &hint)?);
+            codex_auth_source = prompt_choice(
+                "Codex auth source",
+                &codex_auth_source,
+                &["loom", "cli", "path"],
+            )?;
+            codex_auth_path = match codex_auth_source.as_str() {
+                "loom" => None,
+                "cli" => None,
+                _ => {
+                    let hint = codex_auth_path.clone().unwrap_or_else(|| {
+                        default_codex_auth_path_hint()
+                            .map(|path| path.display().to_string())
+                            .unwrap_or_else(|_| "~/.meridian/auth/codex/auth.json".to_string())
+                    });
+                    Some(prompt_text("Custom Codex auth.json path", &hint)?)
+                }
+            };
         } else {
+            codex_auth_source = "none".to_string();
             codex_auth_path = None;
         }
         apply_interactive_overrides(&mut manifest)?;
     }
     apply_cli_overrides(args, &mut manifest)?;
-    let provider_profiles_path =
-        configure_onboard_provider_routes(&root, &manager_lane, codex_auth_path.as_deref())?;
+    let (codex_auth_source, codex_auth_path) =
+        normalize_codex_auth_selection(&manager_lane, &codex_auth_source, codex_auth_path)?;
+    manifest.manager_lane = manager_lane.clone();
+    manifest.manager_model = manager_model.clone();
+    manifest.codex_auth_source = codex_auth_source.clone();
+    manifest.codex_auth_path = codex_auth_path.clone().unwrap_or_default();
+    let provider_profiles_path = configure_onboard_provider_routes(
+        &root,
+        &manager_lane,
+        Some(&manager_model),
+        codex_auth_path.as_deref(),
+    )?;
     let provider_auth_sync = sync_provider_auth_store(&root)?;
 
     if manifest.gateway_auth_mode == "none" && manifest.gateway_token_env.trim().is_empty() {
@@ -274,11 +317,15 @@ hint:                {}\n\n",
                 },
                 "agent_profiles": runtime_overview.profile_count,
                 "manager_lane": manager_lane,
+                "manager_model_config": manager_model,
+                "codex_auth_source": manifest.codex_auth_source,
+                "configured_codex_auth_path": if manifest.codex_auth_path.trim().is_empty() { None } else { Some(manifest.codex_auth_path.clone()) },
                 "codex_auth_ready": codex_ready,
                 "codex_credential_path": codex_path,
                 "codex_detail": codex_detail,
                 "manifest_path": manifest_path.display().to_string(),
                 "onboard": {
+                    "brain": overview.brain_summary,
                     "gateway": overview.gateway_summary,
                     "telegram": overview.telegram_summary,
                     "daemon": overview.daemon_summary,
@@ -394,7 +441,11 @@ provider_profiles:   {}
 provider_cfg:        {}
 provider_auth:       profiles={} ready={} last_good={} usage_stats={}
 agent_profiles:      {}
+brain:               {}
 manager_lane:        {}
+manager_model_cfg:   {}
+codex_auth_source:   {}
+configured_auth:     {}
 codex_auth_ready:    {}
 codex_auth_path:     {}
 codex_detail:        {}
@@ -432,7 +483,11 @@ next_step:           loom doctor --root {} --format human
         provider_auth_summary.last_good_count,
         provider_auth_summary.usage_stats_count,
         runtime_overview.profile_count,
+        overview.brain_summary,
         manager_lane,
+        manager_model,
+        manifest.codex_auth_source,
+        if manifest.codex_auth_path.trim().is_empty() { "(none)" } else { manifest.codex_auth_path.as_str() },
         if codex_ready { "yes" } else { "no" },
         codex_path.as_deref().unwrap_or("(none)"),
         codex_detail,
@@ -499,6 +554,8 @@ fn setup_state_label(state: &SetupState) -> &'static str {
 fn has_setup_overrides(args: &[String]) -> bool {
     const FLAGS: &[&str] = &[
         "--manager-lane",
+        "--manager-model",
+        "--codex-auth-source",
         "--codex-auth-path",
         "--gateway-port",
         "--gateway-bind",
@@ -682,15 +739,185 @@ fn apply_interactive_overrides(manifest: &mut OnboardManifest) -> LoomResult<()>
     Ok(())
 }
 
-fn current_manager_lane(root: &Path) -> LoomResult<String> {
+#[derive(Clone, Debug)]
+struct ManagerBrainSelection {
+    lane: String,
+    model: String,
+    codex_auth_source: String,
+    codex_auth_path: Option<String>,
+}
+
+fn current_manager_brain(root: &Path, manifest: &OnboardManifest) -> ManagerBrainSelection {
     let route = resolve_provider_route(
         Some(root),
         &ProviderRouteIntent::llm_inference("").with_agent_id("leviathann"),
-    )?;
-    if route.profile_name == "local_ollama" || route.profile_kind.label() == "local_ollama" {
-        Ok("local".to_string())
+    )
+    .ok();
+    let lane = route
+        .as_ref()
+        .map(|resolved| {
+            if resolved.profile_name == "local_ollama" || resolved.profile_kind.label() == "local_ollama" {
+                "local".to_string()
+            } else {
+                "frontier".to_string()
+            }
+        })
+        .unwrap_or_else(|| default_manager_lane(manifest));
+    let model = route
+        .as_ref()
+        .map(|resolved| resolved.model.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| default_manager_model(&lane, manifest));
+    let (codex_auth_source, codex_auth_path) = current_codex_auth_selection(root)
+        .unwrap_or_else(|_| manifest_codex_auth_selection(manifest, &lane));
+    ManagerBrainSelection {
+        lane,
+        model,
+        codex_auth_source,
+        codex_auth_path,
+    }
+}
+
+fn default_manager_lane(manifest: &OnboardManifest) -> String {
+    let lane = manifest.manager_lane.trim();
+    if lane.is_empty() {
+        "frontier".to_string()
     } else {
-        Ok("frontier".to_string())
+        lane.to_string()
+    }
+}
+
+fn default_manager_model(lane: &str, manifest: &OnboardManifest) -> String {
+    let model = manifest.manager_model.trim();
+    if !model.is_empty() {
+        return model.to_string();
+    }
+    if lane.eq_ignore_ascii_case("local") {
+        "gpt-3.5-turbo".to_string()
+    } else {
+        "gpt-5.4".to_string()
+    }
+}
+
+fn manifest_codex_auth_selection(
+    manifest: &OnboardManifest,
+    lane: &str,
+) -> (String, Option<String>) {
+    if lane.eq_ignore_ascii_case("local") {
+        return ("none".to_string(), None);
+    }
+    let source = match manifest.codex_auth_source.trim() {
+        "" => "loom".to_string(),
+        value => value.to_string(),
+    };
+    let path = trimmed_string_option(&manifest.codex_auth_path);
+    (source, path)
+}
+
+fn current_codex_auth_selection(root: &Path) -> LoomResult<(String, Option<String>)> {
+    let profiles = load_provider_profiles(Some(root))?;
+    let profile = profiles
+        .profiles
+        .iter()
+        .find(|candidate| candidate.name == "manager_frontier")
+        .ok_or_else(|| "manager_frontier provider profile was not found".to_string())?;
+    match &profile.auth {
+        ProviderAuthMode::CodexAuthJson { path } => {
+            let loom_path = default_codex_auth_path_hint()?.display().to_string();
+            let cli_path = shared_codex_auth_path_hint()?.display().to_string();
+            match path.as_deref() {
+                None => Ok(("cli".to_string(), Some(cli_path))),
+                Some(raw) if auth_paths_match(raw, &loom_path) => {
+                    Ok(("loom".to_string(), Some(loom_path)))
+                }
+                Some(raw) if auth_paths_match(raw, &cli_path) => {
+                    Ok(("cli".to_string(), Some(cli_path)))
+                }
+                Some(raw) => Ok(("path".to_string(), Some(raw.trim().to_string()))),
+            }
+        }
+        _ => Ok(("none".to_string(), None)),
+    }
+}
+
+fn normalize_codex_auth_selection(
+    manager_lane: &str,
+    codex_auth_source: &str,
+    codex_auth_path: Option<String>,
+) -> LoomResult<(String, Option<String>)> {
+    if manager_lane.eq_ignore_ascii_case("local") {
+        return Ok(("none".to_string(), None));
+    }
+    let source = if codex_auth_source.trim().is_empty() {
+        "loom".to_string()
+    } else {
+        codex_auth_source.trim().to_ascii_lowercase()
+    };
+    let explicit_path = codex_auth_path.and_then(|value| trimmed_string_option(&value));
+    match source.as_str() {
+        "loom" => {
+            let expected = default_codex_auth_path_hint()?.display().to_string();
+            if let Some(raw) = explicit_path.as_deref() {
+                if !auth_paths_match(raw, &expected) {
+                    return Err(
+                        "--codex-auth-source loom cannot be combined with a different --codex-auth-path; use --codex-auth-source path for a custom Loom account file"
+                            .to_string(),
+                    );
+                }
+            }
+            Ok(("loom".to_string(), Some(expected)))
+        }
+        "cli" | "shared" => {
+            let expected = shared_codex_auth_path_hint()?.display().to_string();
+            if let Some(raw) = explicit_path.as_deref() {
+                if !auth_paths_match(raw, &expected) {
+                    return Err(
+                        "--codex-auth-source cli cannot be combined with a different --codex-auth-path; use --codex-auth-source path for a custom shared auth file"
+                            .to_string(),
+                    );
+                }
+            }
+            Ok(("cli".to_string(), Some(expected)))
+        }
+        "path" => Ok((
+            "path".to_string(),
+            Some(explicit_path.ok_or_else(|| {
+                "--codex-auth-source path requires --codex-auth-path PATH".to_string()
+            })?),
+        )),
+        other => Err(format!(
+            "unsupported Codex auth source '{}'; expected 'loom', 'cli', or 'path'",
+            other
+        )),
+    }
+}
+
+fn auth_paths_match(raw: &str, expected: &str) -> bool {
+    let normalized_expected = expected.trim();
+    expand_auth_path(raw)
+        .map(|path| path.display().to_string())
+        .map(|path| path == normalized_expected)
+        .unwrap_or_else(|| raw.trim() == normalized_expected)
+}
+
+fn expand_auth_path(raw: &str) -> Option<PathBuf> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let path = PathBuf::from(trimmed);
+    if path.is_absolute() {
+        return Some(path);
+    }
+    env::var("HOME").ok().map(|home| PathBuf::from(home).join(path))
+}
+
+fn trimmed_string_option(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
     }
 }
 

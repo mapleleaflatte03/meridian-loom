@@ -20,7 +20,8 @@ const DEFAULT_OPENAI_PROFILE_NAME: &str = "openai_default";
 const DEFAULT_CUSTOM_PROFILE_NAME: &str = "custom_endpoint";
 const DEFAULT_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api";
 const DEFAULT_CODEX_MODEL_ALIAS: &str = "gpt-5.4";
-const DEFAULT_CODEX_AUTH_PATH: &str = ".codex/auth.json";
+const DEFAULT_SHARED_CODEX_AUTH_PATH: &str = ".codex/auth.json";
+const DEFAULT_LOOM_CODEX_AUTH_PATH: &str = ".meridian/auth/codex/auth.json";
 const DEFAULT_LOCAL_OLLAMA_ENDPOINT: &str = "http://127.0.0.1:11434/v1/chat/completions";
 const DEFAULT_OPENAI_ENDPOINT: &str = "https://api.openai.com/v1/chat/completions";
 const DEFAULT_MODEL_ALIAS: &str = "gpt-3.5-turbo";
@@ -284,26 +285,56 @@ pub fn ensure_provider_profiles_scaffold(root: &Path) -> LoomResult<PathBuf> {
 }
 
 pub fn default_codex_auth_path_hint() -> LoomResult<PathBuf> {
+    resolve_loom_codex_auth_path(None)
+}
+
+pub fn shared_codex_auth_path_hint() -> LoomResult<PathBuf> {
     resolve_codex_auth_path(None)
 }
 
 pub fn configure_onboard_provider_routes(
     root: &Path,
     manager_lane: &str,
+    manager_model: Option<&str>,
     codex_auth_path: Option<&str>,
 ) -> LoomResult<PathBuf> {
     ensure_provider_profiles_scaffold(root)?;
     let mut profiles = load_provider_profiles(Some(root))?;
-    apply_frontier_profile_auth_path(&mut profiles, codex_auth_path);
+    let resolved_manager_model = manager_model.and_then(trim_to_option)
+        .unwrap_or_else(|| match manager_lane.trim().to_ascii_lowercase().as_str() {
+            "local" => DEFAULT_MODEL_ALIAS.to_string(),
+            _ => DEFAULT_CODEX_MODEL_ALIAS.to_string(),
+        });
+    let resolved_frontier_auth_path = if matches!(
+        manager_lane.trim().to_ascii_lowercase().as_str(),
+        "" | "frontier" | "codex"
+    ) {
+        Some(
+            codex_auth_path
+                .and_then(trim_to_option)
+                .unwrap_or_else(|| {
+                    default_codex_auth_path_hint()
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_else(|_| DEFAULT_LOOM_CODEX_AUTH_PATH.to_string())
+                }),
+        )
+    } else {
+        codex_auth_path.and_then(trim_to_option)
+    };
+    apply_frontier_profile_defaults(
+        &mut profiles,
+        resolved_frontier_auth_path.as_deref(),
+        Some(&resolved_manager_model),
+    );
 
     let manager_policy = match manager_lane.trim().to_ascii_lowercase().as_str() {
         "" | "frontier" | "codex" => ProviderRoutePolicy {
             profile_name: Some("manager_frontier".to_string()),
-            default_model: Some(DEFAULT_CODEX_MODEL_ALIAS.to_string()),
+            default_model: Some(resolved_manager_model.clone()),
         },
         "local" => ProviderRoutePolicy {
             profile_name: Some(DEFAULT_LOCAL_PROFILE_NAME.to_string()),
-            default_model: Some(DEFAULT_MODEL_ALIAS.to_string()),
+            default_model: Some(resolved_manager_model.clone()),
         },
         other => {
             return Err(format!(
@@ -1045,14 +1076,21 @@ fn ensure_frontier_profiles(profiles: &mut ProviderProfileSet) {
     }
 }
 
-fn apply_frontier_profile_auth_path(
+fn apply_frontier_profile_defaults(
     profiles: &mut ProviderProfileSet,
     explicit_path: Option<&str>,
+    explicit_model: Option<&str>,
 ) {
     let path = explicit_path.and_then(trim_to_option).map(|value| value.to_string());
+    let model = explicit_model
+        .and_then(trim_to_option)
+        .map(|value| value.to_string());
     for profile in profiles.profiles.iter_mut() {
         if matches!(profile.kind, ProviderKind::OpenAiCodex) {
             profile.auth = ProviderAuthMode::CodexAuthJson { path: path.clone() };
+            if let Some(model) = model.as_ref() {
+                profile.default_model = model.clone();
+            }
         }
     }
 }
@@ -1154,7 +1192,22 @@ fn resolve_codex_auth_path(explicit_path: Option<&str>) -> LoomResult<PathBuf> {
         .map(str::trim)
         .filter(|raw| !raw.is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_CODEX_AUTH_PATH));
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_SHARED_CODEX_AUTH_PATH));
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        Ok(PathBuf::from(home).join(path))
+    }
+}
+
+fn resolve_loom_codex_auth_path(explicit_path: Option<&str>) -> LoomResult<PathBuf> {
+    let home = std::env::var("HOME")
+        .map_err(|_| "HOME is not set and Loom Codex auth.json could not be resolved".to_string())?;
+    let path = explicit_path
+        .map(str::trim)
+        .filter(|raw| !raw.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_LOOM_CODEX_AUTH_PATH));
     if path.is_absolute() {
         Ok(path)
     } else {
@@ -1528,6 +1581,34 @@ mod tests {
         assert_eq!(route.model, DEFAULT_CODEX_MODEL_ALIAS);
         assert_eq!(route.endpoint_url.as_str(), "https://chatgpt.com/backend-api/responses");
         assert_eq!(route.matched_rule, "agent_runtime:leviathann");
+    }
+
+    #[test]
+    fn configure_onboard_routes_prefers_dedicated_loom_auth_and_selected_model() {
+        let root = temp_path("loom-provider-onboard-frontier");
+        ensure_provider_profiles_scaffold(&root).expect("scaffold provider profiles");
+        let path = configure_onboard_provider_routes(&root, "frontier", Some("gpt-4.1"), None)
+            .expect("configure routes");
+        assert!(path.exists());
+        let profiles = load_provider_profiles(Some(&root)).expect("load provider profiles");
+        let manager = profiles
+            .profiles
+            .iter()
+            .find(|profile| profile.name == "manager_frontier")
+            .expect("manager frontier profile");
+        match &manager.auth {
+            ProviderAuthMode::CodexAuthJson { path } => {
+                assert!(path.as_deref().unwrap_or("").ends_with(".meridian/auth/codex/auth.json"));
+            }
+            other => panic!("unexpected auth mode: {:?}", other),
+        }
+        assert_eq!(manager.default_model, "gpt-4.1");
+        let route = resolve_provider_route(
+            Some(&root),
+            &ProviderRouteIntent::llm_inference("").with_agent_id("leviathann"),
+        )
+        .expect("resolve provider route");
+        assert_eq!(route.model, "gpt-4.1");
     }
 
     #[test]

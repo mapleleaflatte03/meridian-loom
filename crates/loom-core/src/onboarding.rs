@@ -19,6 +19,10 @@ const DEFAULT_DAEMON_STATE: &str = "configured";
 const DEFAULT_SKILLS_NODE_MANAGER: &str = "npm";
 const DEFAULT_REMOTE_MODE: &str = "local";
 const DEFAULT_WIZARD_VERSION: &str = "meridian-onboard-v1";
+const DEFAULT_MANAGER_LANE: &str = "frontier";
+const DEFAULT_FRONTIER_MANAGER_MODEL: &str = "gpt-5.4";
+const DEFAULT_CODEX_AUTH_SOURCE: &str = "loom";
+const DEFAULT_LOOM_CODEX_AUTH_PATH: &str = ".meridian/auth/codex/auth.json";
 const DEFAULT_SKILL_ENTRIES: [&str; 4] = [
     "browser",
     "telegram_bridge",
@@ -39,6 +43,10 @@ pub struct OnboardManifest {
     pub last_run_at: u64,
     pub last_run_mode: String,
     pub remote_mode: String,
+    pub manager_lane: String,
+    pub manager_model: String,
+    pub codex_auth_source: String,
+    pub codex_auth_path: String,
     pub gateway_port: u16,
     pub gateway_bind: String,
     pub gateway_auth_mode: String,
@@ -65,6 +73,7 @@ pub struct OnboardOverview {
     pub manifest_path: PathBuf,
     pub wizard_version: String,
     pub last_action: String,
+    pub brain_summary: String,
     pub gateway_summary: String,
     pub telegram_summary: String,
     pub daemon_summary: String,
@@ -109,6 +118,17 @@ pub fn onboard_overview(root: &Path) -> LoomResult<OnboardOverview> {
         manifest_path: onboard_manifest_path(root),
         wizard_version: manifest.wizard_version.clone(),
         last_action: manifest.last_action.clone(),
+        brain_summary: format!(
+            "lane={} model={} codex_auth={} path={}",
+            manifest.manager_lane,
+            manifest.manager_model,
+            manifest.codex_auth_source,
+            if manifest.codex_auth_path.trim().is_empty() {
+                "(none)".to_string()
+            } else {
+                manifest.codex_auth_path.clone()
+            }
+        ),
         gateway_summary: format!(
             "{}:{} auth={} tailscale={}",
             bind_host_for(&manifest.gateway_bind),
@@ -211,11 +231,11 @@ pub fn onboard_path_hint(state: &SetupState) -> String {
             "No workspace found. Run: loom init --root <path>".to_string()
         }
         SetupState::FreshNoAuth { .. } => {
-            "No provider credentials configured.\n  Option 1 (local):    install Ollama and configure local_ollama profile\n  Option 2 (frontier): set your API key env and run loom onboard --manager-lane frontier".to_string()
+            "No provider credentials configured.\n  Option 1 (local):    install Ollama and run loom onboard --manager-lane local\n  Option 2 (frontier): sign in a dedicated Loom account and run loom onboard --manager-lane frontier --codex-auth-source loom\n  Convenience:        reuse an existing Codex CLI login with --codex-auth-source cli".to_string()
         }
         SetupState::LocalOnly { ollama_available, .. } => {
             if *ollama_available {
-                "Local Ollama provider is ready. To add a frontier provider run loom onboard --manager-lane frontier.".to_string()
+                "Local Ollama provider is ready. To add a frontier provider run loom onboard --manager-lane frontier --codex-auth-source loom or --codex-auth-source cli.".to_string()
             } else {
                 "Local Ollama profile found but credentials not detected. Start Ollama and ensure the endpoint is reachable.".to_string()
             }
@@ -253,6 +273,10 @@ impl OnboardManifest {
             last_run_at: unix_now(),
             last_run_mode: config.mode.clone(),
             remote_mode: DEFAULT_REMOTE_MODE.to_string(),
+            manager_lane: DEFAULT_MANAGER_LANE.to_string(),
+            manager_model: DEFAULT_FRONTIER_MANAGER_MODEL.to_string(),
+            codex_auth_source: DEFAULT_CODEX_AUTH_SOURCE.to_string(),
+            codex_auth_path: default_loom_codex_auth_path_string(),
             gateway_port,
             gateway_bind,
             gateway_auth_mode: DEFAULT_GATEWAY_AUTH_MODE.to_string(),
@@ -283,6 +307,14 @@ impl OnboardManifest {
                 "lastRunAt": self.last_run_at,
                 "lastRunMode": self.last_run_mode,
                 "remoteMode": self.remote_mode
+            },
+            "brain": {
+                "managerLane": self.manager_lane,
+                "managerModel": self.manager_model,
+                "codexAuth": {
+                    "source": self.codex_auth_source,
+                    "path": self.codex_auth_path
+                }
             },
             "gateway": {
                 "port": self.gateway_port,
@@ -339,6 +371,10 @@ fn parse_onboard_manifest(raw: &str) -> LoomResult<OnboardManifest> {
         .get("wizard")
         .and_then(Value::as_object)
         .ok_or_else(|| "onboard manifest missing wizard object".to_string())?;
+    let brain = value.get("brain").and_then(Value::as_object);
+    let brain_codex_auth = brain
+        .and_then(|section| section.get("codexAuth"))
+        .and_then(Value::as_object);
     let gateway = value
         .get("gateway")
         .and_then(Value::as_object)
@@ -404,6 +440,13 @@ fn parse_onboard_manifest(raw: &str) -> LoomResult<OnboardManifest> {
         last_run_at: wizard.get("lastRunAt").and_then(Value::as_u64).unwrap_or_else(unix_now),
         last_run_mode: value_string(wizard.get("lastRunMode"), "embedded"),
         remote_mode: value_string(wizard.get("remoteMode"), DEFAULT_REMOTE_MODE),
+        manager_lane: value_string(brain.and_then(|section| section.get("managerLane")), DEFAULT_MANAGER_LANE),
+        manager_model: value_string(brain.and_then(|section| section.get("managerModel")), DEFAULT_FRONTIER_MANAGER_MODEL),
+        codex_auth_source: value_string(brain_codex_auth.and_then(|section| section.get("source")), DEFAULT_CODEX_AUTH_SOURCE),
+        codex_auth_path: value_string(
+            brain_codex_auth.and_then(|section| section.get("path")),
+            DEFAULT_LOOM_CODEX_AUTH_PATH,
+        ),
         gateway_port: gateway.get("port").and_then(Value::as_u64).unwrap_or(18910) as u16,
         gateway_bind: value_string(gateway.get("bind"), DEFAULT_GATEWAY_BIND),
         gateway_auth_mode: value_string(gateway_auth.get("mode"), DEFAULT_GATEWAY_AUTH_MODE),
@@ -468,6 +511,13 @@ fn value_string(value: Option<&Value>, default: &str) -> String {
         .to_string()
 }
 
+fn default_loom_codex_auth_path_string() -> String {
+    crate::provider_router::default_codex_auth_path_hint()
+        .ok()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| DEFAULT_LOOM_CODEX_AUTH_PATH.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -484,6 +534,10 @@ mod tests {
         assert_eq!(manifest.gateway_auth_mode, "token");
         assert_eq!(manifest.gateway_bind, "loopback");
         assert_eq!(manifest.gateway_port, 18910);
+        assert_eq!(manifest.manager_lane, "frontier");
+        assert_eq!(manifest.manager_model, "gpt-5.4");
+        assert_eq!(manifest.codex_auth_source, "loom");
+        assert!(manifest.codex_auth_path.ends_with(".meridian/auth/codex/auth.json"));
         assert!(!manifest.telegram_enabled);
         assert_eq!(manifest.gateway_token_env, read_config(&root).expect("config").service_token_env);
     }

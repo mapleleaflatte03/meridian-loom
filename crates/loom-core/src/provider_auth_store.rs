@@ -593,7 +593,7 @@ mod tests {
         let root = temp_path("loom-provider-auth-store");
         init_workspace(&root, "embedded", Some("/tmp/meridian-kernel"), "org_demo")
             .expect("init workspace");
-        configure_onboard_provider_routes(&root, "frontier", Some("/tmp/does-not-exist/auth.json"))
+        configure_onboard_provider_routes(&root, "frontier", Some("gpt-5.4"), Some("/tmp/does-not-exist/auth.json"))
             .expect("configure routes");
 
         let overview = sync_provider_auth_store(&root).expect("sync auth store");

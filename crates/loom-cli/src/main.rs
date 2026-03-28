@@ -269,7 +269,7 @@ Bootstrap\n\
 ---------\n\
   loom banner\n\
   loom version\n\
-  loom onboard [--root PATH] [--mode MODE] [--org-id ID] [--kernel-path PATH] [--config-action setup|keep|modify|reset] [--manager-lane frontier|local] [--codex-auth-path PATH] [--gateway-port N] [--gateway-bind loopback|all] [--gateway-auth-mode token|none] [--gateway-token-env ENV] [--telegram-enabled yes|no] [--telegram-token-env ENV] [--telegram-dm-policy TEXT] [--telegram-group-policy TEXT] [--telegram-streaming TEXT] [--daemon-enabled yes|no] [--daemon-manager supervisor] [--recurring-install-defaults yes|no] [--recurring-entry ID]... [--start-daemon] [--skip-health-check] [--format human|json]\n\
+  loom onboard [--root PATH] [--mode MODE] [--org-id ID] [--kernel-path PATH] [--config-action setup|keep|modify|reset] [--manager-lane frontier|local] [--manager-model NAME] [--codex-auth-source loom|cli|path] [--codex-auth-path PATH] [--gateway-port N] [--gateway-bind loopback|all] [--gateway-auth-mode token|none] [--gateway-token-env ENV] [--telegram-enabled yes|no] [--telegram-token-env ENV] [--telegram-dm-policy TEXT] [--telegram-group-policy TEXT] [--telegram-streaming TEXT] [--daemon-enabled yes|no] [--daemon-manager supervisor] [--recurring-install-defaults yes|no] [--recurring-entry ID]... [--start-daemon] [--skip-health-check] [--format human|json]\n\
   loom init --mode <embedded|shadow|standalone> [--kernel-path PATH] [--root PATH] [--org-id ID]\n\
   loom doctor [--root PATH] [--format json|human]\n\
   loom health [--root PATH] [--format json|human]\n\
