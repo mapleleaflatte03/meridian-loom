@@ -104,6 +104,7 @@ fn run() -> LoomResult<()> {
         "capsule" => commands::runtime::handle_capsule(&args[1..]),
         "capability" => commands::capability::handle_capability(&args[1..]),
         "job" => commands::job::handle_job(&args[1..]),
+        "output" => commands::output::handle_output(&args[1..]),
         "queue" => commands::queue::handle_queue(&args[1..]),
         "agent" => commands::runtime::handle_agent(&args[1..]),
         "envelope" => commands::runtime::handle_envelope(&args[1..]),
@@ -277,6 +278,7 @@ Bootstrap\n\
   loom heartbeat pause --heartbeat-id ID [--root PATH] [--format human|json]\n\
   loom heartbeat cancel --heartbeat-id ID [--root PATH] [--format human|json]\n\
   loom heartbeat run-due [--root PATH] [--now-unix-ms MS] [--limit N] [--format human|json]\n\
+  loom output inspect [--text TEXT|--file PATH] [--allow-receipt-hashes] [--allow-operator-diagnostics] [--format human|json]\n\
 \n\
 Governance surfaces\n\
 -------------------\n\

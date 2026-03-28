@@ -8,6 +8,7 @@ pub mod advanced_primitives;
 pub mod agent_runtime;
 pub mod capability_shims;
 pub mod capabilities;
+pub mod output_guard;
 pub mod provider_router;
 pub mod recurring;
 pub mod wasm_host;
