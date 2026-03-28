@@ -11,6 +11,7 @@ use loom_core::bindings::sync_binding_registry;
 use loom_core::channels::sync_channel_registry;
 use loom_core::gateway_runtime::sync_gateway_runtime;
 use loom_core::skills::sync_skill_registry;
+use loom_core::service_runtime::sync_service_runtime;
 use loom_core::schedules::{schedule_overview, sync_schedule_registry};
 use loom_core::onboarding::{
     derive_service_http_address, ensure_onboard_manifest, load_onboard_manifest,
@@ -176,6 +177,7 @@ Choose your manager brain, edge bindings, and runtime defaults. Meridian will sc
     let manifest_path = write_onboard_manifest(&root, &manifest)?;
     let channel_summary = sync_channel_registry(&root)?;
     let gateway_runtime = sync_gateway_runtime(&root)?;
+    let service_runtime = sync_service_runtime(&root)?;
     let binding_summary = sync_binding_registry(&root)?;
     let skill_summary = sync_skill_registry(&root)?;
     let schedule_sync = sync_schedule_registry(&root)?;
@@ -277,6 +279,15 @@ Choose your manager brain, edge bindings, and runtime defaults. Meridian will sc
                         "enabled_channel_count": gateway_runtime.enabled_channel_count,
                         "channel_ids": gateway_runtime.channel_ids.clone(),
                     },
+                    "service_runtime": {
+                        "service_health": service_runtime.service_health.clone(),
+                        "service_http_address": service_runtime.service_http_address.clone(),
+                        "service_pending_jobs": service_runtime.service_pending_jobs,
+                        "service_processed_jobs": service_runtime.service_processed_jobs,
+                        "supervisor_health": service_runtime.supervisor_health.clone(),
+                        "supervisor_pending_jobs": service_runtime.supervisor_pending_jobs,
+                        "supervisor_processed_jobs": service_runtime.supervisor_processed_jobs,
+                    },
                     "bindings_runtime": {
                         "total_count": binding_summary.total_count,
                         "enabled_count": binding_summary.enabled_count,
@@ -362,6 +373,7 @@ gateway:             {}
 telegram:            {}
 channels:            total={} enabled={} ids={}
 gateway_runtime:     endpoint={} auth={} remote={} daemon={} channels={}/{}
+service_runtime:     service={} jobs={}/{} supervisor={} jobs={}/{}
 bindings_runtime:    total={} enabled={} ids={}
 skills:              {}
 recurring:           {}
@@ -404,6 +416,12 @@ next_step:           loom doctor --root {} --format human
         gateway_runtime.daemon_summary,
         gateway_runtime.enabled_channel_count,
         gateway_runtime.total_channel_count,
+        service_runtime.service_health,
+        service_runtime.service_pending_jobs,
+        service_runtime.service_processed_jobs,
+        service_runtime.supervisor_health,
+        service_runtime.supervisor_pending_jobs,
+        service_runtime.supervisor_processed_jobs,
         binding_summary.total_count,
         binding_summary.enabled_count,
         if binding_summary.binding_ids.is_empty() { "(none)".to_string() } else { binding_summary.binding_ids.join(",") },

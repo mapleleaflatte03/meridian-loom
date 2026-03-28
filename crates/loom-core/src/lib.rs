@@ -18,6 +18,7 @@ pub mod provider_auth_store;
 pub mod provider_router;
 pub mod recurring;
 pub mod schedules;
+pub mod service_runtime;
 pub mod skills;
 pub mod wasm_host;
 pub mod wasm_limits;
@@ -316,6 +317,7 @@ pub fn init_workspace(
     gateway_runtime::ensure_gateway_runtime_scaffold(&root)?;
 
     fs::write(&config_path, render_config(&config)).map_err(io_err)?;
+    service_runtime::ensure_service_runtime_scaffold(&root)?;
     bindings::ensure_binding_runtime_scaffold(&root)?;
     skills::ensure_skill_runtime_scaffold(&root)?;
     fs::write(
@@ -692,6 +694,42 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             level: "WARN",
             label: "gateway_registry",
             detail: format!("gateway runtime unavailable: {}", error),
+        }),
+    }
+    match service_runtime::ensure_service_runtime_scaffold(&root) {
+        Ok(service_registry) => {
+            push_path_check(
+                &mut checks,
+                "service_runtime_registry",
+                &service_registry,
+                false,
+                "service runtime registry present",
+            );
+            match service_runtime::sync_service_runtime(&root) {
+                Ok(summary) => checks.push(Check {
+                    level: if summary.service_health.starts_with("crashed") || summary.supervisor_health.starts_with("crashed") { "WARN" } else { "OK" },
+                    label: "service_runtime",
+                    detail: format!(
+                        "service={} pending={} processed={} supervisor={} pending={} processed={}",
+                        summary.service_health,
+                        summary.service_pending_jobs,
+                        summary.service_processed_jobs,
+                        summary.supervisor_health,
+                        summary.supervisor_pending_jobs,
+                        summary.supervisor_processed_jobs,
+                    ),
+                }),
+                Err(error) => checks.push(Check {
+                    level: "WARN",
+                    label: "service_runtime",
+                    detail: format!("service runtime unavailable: {}", error),
+                }),
+            }
+        }
+        Err(error) => checks.push(Check {
+            level: "WARN",
+            label: "service_runtime_registry",
+            detail: format!("service runtime unavailable: {}", error),
         }),
     }
     match onboarding::ensure_onboard_manifest(&root, &config) {
