@@ -26,6 +26,7 @@ pub mod session_policy;
 pub mod session_provenance;
 pub mod skill_lifecycle;
 pub mod skills;
+pub mod transport_contract;
 pub mod wasm_host;
 pub mod wasm_limits;
 pub mod wasm_profiles;
