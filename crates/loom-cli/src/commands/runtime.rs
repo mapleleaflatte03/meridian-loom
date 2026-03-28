@@ -54,6 +54,31 @@ pub(crate) fn handle_doctor(args: &[String]) -> LoomResult<()> {
 }
 
 
+pub(crate) fn handle_runtime_info(args: &[String]) -> LoomResult<()> {
+    let root = root_from(take_value(args, "--root").as_deref())?;
+    let config = read_config(&root)?;
+    let binary_path = std::env::current_exe()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| "(unknown)".to_string());
+    let info = serde_json::json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "binary_path": binary_path,
+        "runtime_root": root.display().to_string(),
+        "mode": config.mode,
+        "org_id": config.org_id,
+        "service_http_address": config.service_http_address,
+        "service_token_env": config.service_token_env,
+        "python_path": config.python_path,
+        "kernel_path": config.kernel_path,
+        "state_dir": root.join(&config.state_dir).display().to_string(),
+        "log_dir": root.join(&config.log_dir).display().to_string(),
+    });
+    print!("{}", serde_json::to_string_pretty(&info).map_err(|e| e.to_string())?);
+    println!();
+    Ok(())
+}
+
+
 pub(crate) fn handle_health(args: &[String]) -> LoomResult<()> {
     let root = root_from(take_value(args, "--root").as_deref())?;
     let format = take_value(args, "--format").unwrap_or_else(|| "json".to_string());

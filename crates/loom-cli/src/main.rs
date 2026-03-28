@@ -119,6 +119,7 @@ fn run() -> LoomResult<()> {
         "action" => commands::action::handle_action(&args[1..]),
         "supervisor" => commands::supervisor::handle_supervisor(&args[1..]),
         "service" => commands::service::handle_service(&args[1..]),
+        "runtime-info" => commands::runtime::handle_runtime_info(&args[1..]),
         "shadow" => commands::runtime::handle_shadow(&args[1..]),
         "parity" => commands::runtime::handle_parity(&args[1..]),
         "wasm" => commands::wasm::handle_wasm(&args[1..]),
