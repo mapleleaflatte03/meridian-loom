@@ -151,6 +151,88 @@ pub fn onboard_overview(root: &Path) -> LoomResult<OnboardOverview> {
     })
 }
 
+/// Describes the user's setup state for user-first onboarding paths.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SetupState {
+    /// No loom.toml yet — completely fresh workspace.
+    FreshWorkspace,
+    /// Workspace initialized but no provider credentials detected.
+    FreshNoAuth { provider_count: usize },
+    /// Credentials are local-only (Ollama), no frontier auth.
+    LocalOnly { ollama_available: bool, agent_count: usize },
+    /// At least one frontier provider credential found.
+    FrontierAvailable { profiles: Vec<String>, agent_count: usize },
+    /// Workspace is fully configured with agents, providers, and credentials.
+    FullyConfigured { agent_count: usize, provider_count: usize },
+}
+
+/// Detect the current setup state to guide the user-first onboarding path.
+pub fn detect_setup_state(root: &Path) -> SetupState {
+    if !root.join("loom.toml").exists() {
+        return SetupState::FreshWorkspace;
+    }
+    let profiles = match crate::provider_router::load_provider_profiles(Some(root)) {
+        Ok(ps) => ps,
+        Err(_) => return SetupState::FreshNoAuth { provider_count: 0 },
+    };
+    let agent_count = crate::agent_runtime::agent_runtime_overview(root).map(|o| o.profile_count).unwrap_or(0);
+    let provider_count = profiles.profiles.len();
+    if provider_count == 0 {
+        return SetupState::FreshNoAuth { provider_count: 0 };
+    }
+    let has_frontier = profiles.profiles.iter().any(|p| {
+        let label = p.kind.label();
+        label != "local_ollama" && label != "unknown"
+    });
+    let has_ollama = profiles.profiles.iter().any(|p| p.kind.label() == "local_ollama");
+    if !has_frontier {
+        let ollama_available = has_ollama && crate::provider_router::provider_auth_status(Some(root), Some("local_ollama"))
+            .map(|s| s.ready)
+            .unwrap_or(false);
+        return SetupState::LocalOnly { ollama_available, agent_count };
+    }
+    let ready_profiles: Vec<String> = profiles.profiles.iter()
+        .filter(|p| {
+            let label = p.kind.label();
+            label != "local_ollama" && label != "unknown"
+        })
+        .map(|p| p.name.clone())
+        .collect();
+    if ready_profiles.is_empty() || agent_count == 0 {
+        return SetupState::FrontierAvailable { profiles: ready_profiles, agent_count };
+    }
+    SetupState::FullyConfigured { agent_count, provider_count }
+}
+
+/// Returns a human-readable action hint appropriate for the given setup state.
+pub fn onboard_path_hint(state: &SetupState) -> String {
+    match state {
+        SetupState::FreshWorkspace => {
+            "No workspace found. Run: loom init --root <path>".to_string()
+        }
+        SetupState::FreshNoAuth { .. } => {
+            "No provider credentials configured.\n  Option 1 (local):    install Ollama and configure local_ollama profile\n  Option 2 (frontier): set your API key env and run loom onboard --manager-lane frontier".to_string()
+        }
+        SetupState::LocalOnly { ollama_available, .. } => {
+            if *ollama_available {
+                "Local Ollama provider is ready. To add a frontier provider run loom onboard --manager-lane frontier.".to_string()
+            } else {
+                "Local Ollama profile found but credentials not detected. Start Ollama and ensure the endpoint is reachable.".to_string()
+            }
+        }
+        SetupState::FrontierAvailable { profiles, agent_count } => {
+            if *agent_count == 0 {
+                format!("Frontier provider ready (profiles: {}). No agents configured yet — run loom agent to add one.", profiles.join(", "))
+            } else {
+                format!("Frontier provider ready (profiles: {}). Run loom doctor to verify the full stack.", profiles.join(", "))
+            }
+        }
+        SetupState::FullyConfigured { agent_count, provider_count } => {
+            format!("Runtime fully configured: {} agent(s), {} provider(s). Run loom doctor to inspect health.", agent_count, provider_count)
+        }
+    }
+}
+
 pub fn bind_host_for(bind: &str) -> &'static str {
     match bind.trim().to_ascii_lowercase().as_str() {
         "all" | "any" | "public" => "0.0.0.0",

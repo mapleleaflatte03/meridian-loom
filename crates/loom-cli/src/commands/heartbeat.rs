@@ -8,6 +8,9 @@ use loom_core::recurring::{
     render_heartbeat_run_summary_human, render_heartbeat_run_summary_json,
     run_due_heartbeats, schedule_heartbeat, HeartbeatDeliveryTarget, HeartbeatRecord, HeartbeatScheduleRequest,
 };
+use loom_core::recurring_executor::{
+    dispatch_heartbeat_run, render_recurring_run_human, render_recurring_run_json,
+};
 
 pub(crate) fn handle_heartbeat(args: &[String]) -> LoomResult<()> {
     match args.first().map(String::as_str) {
@@ -18,7 +21,8 @@ pub(crate) fn handle_heartbeat(args: &[String]) -> LoomResult<()> {
         Some("pause") => handle_heartbeat_pause(&args[1..]),
         Some("cancel") => handle_heartbeat_cancel(&args[1..]),
         Some("run-due") => handle_heartbeat_run_due(&args[1..]),
-        _ => Err("heartbeat supports 'status', 'list', 'show', 'schedule', 'pause', 'cancel', and 'run-due'".to_string()),
+        Some("run") => handle_heartbeat_run(&args[1..]),
+        _ => Err("heartbeat supports 'status', 'list', 'show', 'schedule', 'pause', 'cancel', 'run-due', and 'run'".to_string()),
     }
 }
 
@@ -239,6 +243,28 @@ fn heartbeat_record_json(record: &HeartbeatRecord) -> serde_json::Value {
         "last_fire_at_unix_ms": record.last_fire_at_unix_ms,
         "next_fire_at_unix_ms": record.next_fire_at_unix_ms,
     })
+}
+
+fn handle_heartbeat_run(args: &[String]) -> LoomResult<()> {
+    let root = root_from(take_value(args, "--root").as_deref())?;
+    let heartbeat_id = required_flag(args, "--heartbeat-id")?;
+    let format = take_value(args, "--format").unwrap_or_else(|| {
+        if std::io::stdout().is_terminal() {
+            "human".to_string()
+        } else {
+            "json".to_string()
+        }
+    });
+    let record = heartbeat_summary(&root, &heartbeat_id)?;
+    let run = dispatch_heartbeat_run(&root, &record)?;
+    match format.as_str() {
+        "human" => {
+            print_startup_banner();
+            print_human(&render_recurring_run_human(&run));
+        }
+        _ => print!("{}", render_recurring_run_json(&run)),
+    }
+    Ok(())
 }
 
 fn now_unix_ms() -> u64 {

@@ -15,8 +15,9 @@ use loom_core::service_runtime::sync_service_runtime;
 use loom_core::service_ingress_runtime::sync_service_ingress_runtime;
 use loom_core::schedules::{schedule_overview, sync_schedule_registry};
 use loom_core::onboarding::{
-    derive_service_http_address, ensure_onboard_manifest, load_onboard_manifest,
-    onboard_manifest_path, onboard_overview, write_onboard_manifest, OnboardManifest,
+    derive_service_http_address, detect_setup_state, ensure_onboard_manifest, load_onboard_manifest,
+    onboard_manifest_path, onboard_overview, onboard_path_hint, write_onboard_manifest,
+    OnboardManifest, SetupState,
 };
 use loom_core::provider_auth_store::{provider_auth_store_overview, sync_provider_auth_store};
 use loom_core::provider_router::{
@@ -42,6 +43,7 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
         && std::io::stdin().is_terminal()
         && std::io::stdout().is_terminal();
 
+    let setup_state = detect_setup_state(&root);
     let had_existing_config = root.join("loom.toml").exists();
     let had_existing_manifest = onboard_manifest_path(&root).exists();
     let existing_manifest_action = if had_existing_manifest {
@@ -118,13 +120,28 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
     if interactive {
         print_startup_banner();
         banner_rendered = true;
-        print_human(
+        print_human(&format!(
             "Meridian Loom // SETUP
 =======================
 Choose your manager brain, edge bindings, and runtime defaults. Meridian will scaffold the governed runtime, but the end-user still owns the final configuration.
 
+setup_state:         {}
+hint:                {}
+
 ",
-        );
+            setup_state_label(&setup_state),
+            onboard_path_hint(&setup_state),
+        ));
+    } else if format == "human" {
+        print_startup_banner();
+        banner_rendered = true;
+        print_human(&format!(
+            "Meridian Loom // SETUP (non-interactive)\n\
+setup_state:         {}\n\
+hint:                {}\n\n",
+            setup_state_label(&setup_state),
+            onboard_path_hint(&setup_state),
+        ));
     }
 
     if interactive && config_action != "keep" {
@@ -239,6 +256,8 @@ Choose your manager brain, edge bindings, and runtime defaults. Meridian will sc
             "{}",
             serde_json::to_string_pretty(&json!({
                 "root": root.display().to_string(),
+                "setup_state": setup_state_label(&setup_state),
+                "setup_hint": onboard_path_hint(&setup_state),
                 "config_status": config_status,
                 "config_action": config_action,
                 "mode": config.mode,
@@ -333,23 +352,23 @@ Choose your manager brain, edge bindings, and runtime defaults. Meridian will sc
     let manager_profile = manager_route
         .as_ref()
         .map(|route| format!("{} ({})", route.profile_name, route.profile_kind.label()))
-        .unwrap_or_else(|| "(unresolved)".to_string());
+        .unwrap_or_else(|| "not connected — action required".to_string());
     let manager_endpoint = manager_route
         .as_ref()
         .map(|route| route.endpoint_url.to_string())
-        .unwrap_or_else(|| "(unresolved)".to_string());
+        .unwrap_or_else(|| "(pending provider setup)".to_string());
     let manager_model = manager_route
         .as_ref()
         .map(|route| route.model.clone())
-        .unwrap_or_else(|| "(unresolved)".to_string());
+        .unwrap_or_else(|| "(pending provider setup)".to_string());
     let pulse_profile = pulse_route
         .as_ref()
         .map(|route| format!("{} ({})", route.profile_name, route.profile_kind.label()))
-        .unwrap_or_else(|| "(unresolved)".to_string());
+        .unwrap_or_else(|| "not connected — action required".to_string());
     let pulse_model = pulse_route
         .as_ref()
         .map(|route| route.model.clone())
-        .unwrap_or_else(|| "(unresolved)".to_string());
+        .unwrap_or_else(|| "(pending provider setup)".to_string());
     let daemon_summary = daemon_snapshot
         .as_ref()
         .map(render_daemon_summary)
@@ -366,6 +385,7 @@ Choose your manager brain, edge bindings, and runtime defaults. Meridian will sc
         "Meridian Loom // ONBOARD
 =========================
 root:                {}
+setup_state:         {}
 config_status:       {}
 config_action:       {}
 mode:                {}
@@ -400,6 +420,7 @@ manifest:            {}
 next_step:           loom doctor --root {} --format human
 ",
         root.display(),
+        setup_state_label(&setup_state),
         config_status,
         config_action,
         config.mode,
@@ -463,6 +484,16 @@ next_step:           loom doctor --root {} --format human
     ));
 
     Ok(())
+}
+
+fn setup_state_label(state: &SetupState) -> &'static str {
+    match state {
+        SetupState::FreshWorkspace => "fresh_workspace",
+        SetupState::FreshNoAuth { .. } => "fresh_no_auth",
+        SetupState::LocalOnly { .. } => "local_only",
+        SetupState::FrontierAvailable { .. } => "frontier_available",
+        SetupState::FullyConfigured { .. } => "fully_configured",
+    }
 }
 
 fn has_setup_overrides(args: &[String]) -> bool {

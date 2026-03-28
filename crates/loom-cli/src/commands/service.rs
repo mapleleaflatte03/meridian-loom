@@ -241,6 +241,7 @@ pub(crate) fn handle_service(args: &[String]) -> LoomResult<()> {
             }
             Ok(())
         }
+        Some("pipeline") => handle_service_pipeline(&args[1..]),
         Some("import-commitments") => {
             let root = root_from(take_value(args, "--root").as_deref())?;
             let kernel_path = take_value(args, "--kernel-path");
@@ -260,8 +261,32 @@ pub(crate) fn handle_service(args: &[String]) -> LoomResult<()> {
             }
             Ok(())
         }
-        _ => Err("service supports 'start', 'loop', 'status', 'submit', 'import-commitments', and 'stop'".to_string()),
+        _ => Err("service supports 'start', 'loop', 'status', 'submit', 'pipeline', 'import-commitments', and 'stop'".to_string()),
     }
+}
+
+
+fn handle_service_pipeline(args: &[String]) -> LoomResult<()> {
+    let root = root_from(take_value(args, "--root").as_deref())?;
+    let format = take_value(args, "--format").unwrap_or_else(|| {
+        if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+            "human".to_string()
+        } else {
+            "json".to_string()
+        }
+    });
+    let limit = take_value(args, "--limit")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(20);
+    let runs = loom_core::pipeline::list_pipeline_runs(&root, limit)?;
+    match format.as_str() {
+        "human" => {
+            print_startup_banner();
+            print_human(&loom_core::pipeline::render_pipeline_runs_list_human(&runs));
+        }
+        _ => print!("{}", loom_core::pipeline::render_pipeline_runs_list_json(&runs)),
+    }
+    Ok(())
 }
 
 

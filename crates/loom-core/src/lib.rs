@@ -14,12 +14,17 @@ pub mod context_engine;
 pub mod gateway_runtime;
 pub mod onboarding;
 pub mod output_guard;
+pub mod pipeline;
 pub mod provider_auth_store;
 pub mod provider_router;
 pub mod recurring;
+pub mod recurring_executor;
 pub mod schedules;
 pub mod service_ingress_runtime;
 pub mod service_runtime;
+pub mod session_policy;
+pub mod session_provenance;
+pub mod skill_lifecycle;
 pub mod skills;
 pub mod wasm_host;
 pub mod wasm_limits;
@@ -1080,6 +1085,149 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             level: "WARN",
             label: "skill_registry",
             detail: format!("skill runtime scaffold unavailable: {}", error),
+        }),
+    }
+    match session_provenance::ensure_session_provenance_scaffold(&root) {
+        Ok(prov_registry) => {
+            push_path_check(
+                &mut checks,
+                "session_provenance_registry",
+                &prov_registry,
+                false,
+                "session provenance registry present",
+            );
+            match session_provenance::session_provenance_overview(&root) {
+                Ok(overview) => checks.push(Check {
+                    level: "OK",
+                    label: "session_provenance",
+                    detail: format!(
+                        "total={} sessions={}",
+                        overview.total_count,
+                        if overview.session_keys.is_empty() {
+                            "(none)".to_string()
+                        } else {
+                            overview.session_keys.join(",")
+                        }
+                    ),
+                }),
+                Err(error) => checks.push(Check {
+                    level: "WARN",
+                    label: "session_provenance",
+                    detail: format!("session provenance unavailable: {}", error),
+                }),
+            }
+        }
+        Err(error) => checks.push(Check {
+            level: "WARN",
+            label: "session_provenance_registry",
+            detail: format!("session provenance scaffold unavailable: {}", error),
+        }),
+    }
+    match skill_lifecycle::ensure_skill_lifecycle_scaffold(&root) {
+        Ok(installs_dir) => {
+            push_path_check(
+                &mut checks,
+                "skill_installs_dir",
+                &installs_dir,
+                false,
+                "skill installs directory present",
+            );
+            match skill_lifecycle::list_skill_installs(&root) {
+                Ok(installs) => {
+                    let enabled = installs.iter().filter(|r| r.enabled).count();
+                    let locked = installs.iter().filter(|r| r.locked).count();
+                    checks.push(Check {
+                        level: "OK",
+                        label: "skill_lifecycle",
+                        detail: format!(
+                            "installed={} enabled={} locked={}",
+                            installs.len(),
+                            enabled,
+                            locked
+                        ),
+                    });
+                }
+                Err(error) => checks.push(Check {
+                    level: "WARN",
+                    label: "skill_lifecycle",
+                    detail: format!("skill installs unavailable: {}", error),
+                }),
+            }
+        }
+        Err(error) => checks.push(Check {
+            level: "WARN",
+            label: "skill_installs_dir",
+            detail: format!("skill lifecycle scaffold unavailable: {}", error),
+        }),
+    }
+    match recurring_executor::ensure_recurring_executor_scaffold(&root) {
+        Ok(runs_dir) => {
+            push_path_check(
+                &mut checks,
+                "recurring_runs_dir",
+                &runs_dir,
+                false,
+                "recurring runs directory present",
+            );
+            match recurring_executor::list_recurring_runs(&root, 50, None) {
+                Ok(runs) => {
+                    let completed = runs.iter().filter(|r| r.status == "completed").count();
+                    let failed = runs.iter().filter(|r| r.status == "failed").count();
+                    checks.push(Check {
+                        level: "OK",
+                        label: "recurring_executor",
+                        detail: format!(
+                            "runs={} completed={} failed={}",
+                            runs.len(),
+                            completed,
+                            failed
+                        ),
+                    });
+                }
+                Err(error) => checks.push(Check {
+                    level: "WARN",
+                    label: "recurring_executor",
+                    detail: format!("recurring runs unavailable: {}", error),
+                }),
+            }
+        }
+        Err(error) => checks.push(Check {
+            level: "WARN",
+            label: "recurring_runs_dir",
+            detail: format!("recurring executor scaffold unavailable: {}", error),
+        }),
+    }
+    match pipeline::ensure_pipeline_scaffold(&root) {
+        Ok(runs_dir) => {
+            push_path_check(
+                &mut checks,
+                "pipeline_runs_dir",
+                &runs_dir,
+                false,
+                "pipeline runs directory present",
+            );
+            match pipeline::pipeline_overview(&root) {
+                Ok(overview) => checks.push(Check {
+                    level: "OK",
+                    label: "pipeline",
+                    detail: format!(
+                        "total={} completed={} failed={}",
+                        overview.total_count,
+                        overview.completed_count,
+                        overview.failed_count
+                    ),
+                }),
+                Err(error) => checks.push(Check {
+                    level: "WARN",
+                    label: "pipeline",
+                    detail: format!("pipeline overview unavailable: {}", error),
+                }),
+            }
+        }
+        Err(error) => checks.push(Check {
+            level: "WARN",
+            label: "pipeline_runs_dir",
+            detail: format!("pipeline scaffold unavailable: {}", error),
         }),
     }
     let delivery_queue = delivery_queue_path(&root, &config);

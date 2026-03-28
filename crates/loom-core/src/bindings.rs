@@ -6,6 +6,7 @@ use serde_json::{json, Value};
 use crate::agent_runtime::load_agent_runtime_registry;
 use crate::channels::load_channels;
 use crate::onboarding::load_onboard_manifest;
+use crate::session_provenance::open_session_provenance;
 use crate::io_err;
 
 pub type LoomResult<T> = Result<T, String>;
@@ -157,16 +158,26 @@ pub fn resolve_binding(
         ),
         _ => format!("{}:{}", channel_id, peer_id),
     };
-    Ok(BindingResolution {
-        binding_id: record.binding_id,
+    let resolution = BindingResolution {
+        binding_id: record.binding_id.clone(),
         channel_id: channel_id.to_string(),
         peer_id: peer_id.to_string(),
         thread_id: normalized_thread,
-        agent_id,
+        agent_id: agent_id.clone(),
         session_scope: record.session_scope,
-        session_key,
+        session_key: session_key.clone(),
         route_kind: record.route_kind,
-    })
+    };
+    // Open (or refresh) session provenance — best effort, do not fail the binding resolution
+    let _ = open_session_provenance(
+        root,
+        &session_key,
+        channel_id,
+        peer_id,
+        &agent_id,
+        &record.binding_id,
+    );
+    Ok(resolution)
 }
 
 pub fn render_binding_overview_human(summary: &BindingRuntimeOverview) -> String {

@@ -71,6 +71,12 @@ pub fn sync_skill_registry(root: &Path) -> LoomResult<SkillSyncResult> {
     let mut records = skill_records_from_manifest(&manifest);
     let imported_records = imported_skill_records(root)?;
     records.extend(imported_records);
+    let lifecycle_records = lifecycle_install_records(root);
+    for rec in lifecycle_records {
+        if !records.iter().any(|r| r.skill_id == rec.skill_id) {
+            records.push(rec);
+        }
+    }
     records.sort_by(|left, right| left.skill_id.cmp(&right.skill_id));
     records.dedup_by(|left, right| left.skill_id == right.skill_id);
     persist_skill_registry(root, &records)?;
@@ -330,6 +336,48 @@ fn imported_skill_records(root: &Path) -> LoomResult<Vec<SkillRecord>> {
         });
     }
     Ok(records)
+}
+
+fn lifecycle_install_records(root: &Path) -> Vec<SkillRecord> {
+    let installs_dir = root.join(DEFAULT_SKILL_INSTALLS_DIR);
+    let entries = match fs::read_dir(&installs_dir) {
+        Ok(entries) => entries,
+        Err(_) => return Vec::new(),
+    };
+    let mut records = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let raw = match fs::read_to_string(&path) {
+            Ok(raw) => raw,
+            Err(_) => continue,
+        };
+        let value: Value = match serde_json::from_str(&raw) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let skill_id = match value.get("skill_id").and_then(Value::as_str) {
+            Some(id) if !id.is_empty() => id.to_string(),
+            _ => continue,
+        };
+        let enabled = value.get("enabled").and_then(Value::as_bool).unwrap_or(true);
+        let source_ref = value.get("source_path").and_then(Value::as_str).unwrap_or("").to_string();
+        let note = value.get("description").and_then(Value::as_str).unwrap_or("lifecycle install").to_string();
+        records.push(SkillRecord {
+            skill_id,
+            kind: "lifecycle_install".to_string(),
+            enabled,
+            install_state: "installed".to_string(),
+            node_manager: "runtime".to_string(),
+            source_kind: "lifecycle".to_string(),
+            source_ref,
+            runtime_refs: Vec::new(),
+            note,
+        });
+    }
+    records
 }
 
 fn parse_skill_registry(raw: &str) -> LoomResult<Vec<SkillRecord>> {

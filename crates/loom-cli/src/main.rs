@@ -122,6 +122,8 @@ fn run() -> LoomResult<()> {
         "shadow" => commands::runtime::handle_shadow(&args[1..]),
         "parity" => commands::runtime::handle_parity(&args[1..]),
         "wasm" => commands::wasm::handle_wasm(&args[1..]),
+        "session" => commands::session::handle_session(&args[1..]),
+        "recurring" => commands::recurring::handle_recurring(&args[1..]),
         "-h" | "--help" | "help" => {
             print_help();
             Ok(())

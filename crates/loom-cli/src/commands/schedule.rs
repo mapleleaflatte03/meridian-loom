@@ -1,6 +1,9 @@
 use std::io::IsTerminal;
 
 use crate::*;
+use loom_core::recurring_executor::{
+    dispatch_schedule_run, render_recurring_run_human, render_recurring_run_json,
+};
 use loom_core::schedules::{
     add_schedule, cancel_schedule, load_schedules, pause_schedule, render_schedule_overview_human,
     render_schedule_overview_json, render_schedule_record_human, render_schedule_record_json,
@@ -17,7 +20,8 @@ pub(crate) fn handle_schedule(args: &[String]) -> LoomResult<()> {
         Some("pause") => handle_schedule_pause(&args[1..]),
         Some("cancel") => handle_schedule_cancel(&args[1..]),
         Some("run-due") => handle_schedule_run_due(&args[1..]),
-        _ => Err("schedule supports 'status', 'list', 'show', 'add', 'pause', 'cancel', and 'run-due'".to_string()),
+        Some("run") => handle_schedule_run(&args[1..]),
+        _ => Err("schedule supports 'status', 'list', 'show', 'add', 'pause', 'cancel', 'run-due', and 'run'".to_string()),
     }
 }
 
@@ -214,6 +218,28 @@ fn render_schedule_list_json(records: &[ScheduledJobRecord]) -> String {
     )
     .unwrap_or_else(|_| "[]".to_string());
     rendered + "\n"
+}
+
+fn handle_schedule_run(args: &[String]) -> LoomResult<()> {
+    let root = root_from(take_value(args, "--root").as_deref())?;
+    let job_id = required_flag(args, "--job-id")?;
+    let format = take_value(args, "--format").unwrap_or_else(|| {
+        if std::io::stdout().is_terminal() {
+            "human".to_string()
+        } else {
+            "json".to_string()
+        }
+    });
+    let record = schedule_summary(&root, &job_id)?;
+    let run = dispatch_schedule_run(&root, &record)?;
+    match format.as_str() {
+        "human" => {
+            print_startup_banner();
+            print_human(&render_recurring_run_human(&run));
+        }
+        _ => print!("{}", render_recurring_run_json(&run)),
+    }
+    Ok(())
 }
 
 fn now_unix_ms() -> u64 {
