@@ -282,6 +282,7 @@ Bootstrap\n\
   loom provider status [--root PATH] [--format human|json]\n\
   loom provider route [--root PATH] [--capability NAME] [--model NAME] [--agent-id ID] [--org-id ORG] [--profile NAME] [--format human|json]\n\
   loom provider auth [--root PATH] [--profile NAME] [--format human|json]\n\
+  loom provider login [--root PATH] [--source loom|cli|path] [--auth-path PATH] [--device-auth|--with-api-key] [--format human|json]\n\
   loom provider profiles [--root PATH] [--profile NAME] [--format human|json]\n\
   loom provider mark-used --profile NAME [--root PATH] [--format human|json]\n\
   loom provider mark-failure --profile NAME [--reason TEXT] [--cooldown-ms N] [--root PATH] [--format human|json]\n\

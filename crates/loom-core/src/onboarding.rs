@@ -235,7 +235,7 @@ pub fn onboard_path_hint(state: &SetupState) -> String {
         }
         SetupState::LocalOnly { ollama_available, .. } => {
             if *ollama_available {
-                "Local Ollama provider is ready. To add a frontier provider run loom onboard --manager-lane frontier --codex-auth-source loom or --codex-auth-source cli.".to_string()
+                "Local Ollama provider is ready. To add a frontier provider run loom provider login --source loom --device-auth, then loom onboard --manager-lane frontier --codex-auth-source loom, or reuse the shared CLI login with --codex-auth-source cli.".to_string()
             } else {
                 "Local Ollama profile found but credentials not detected. Start Ollama and ensure the endpoint is reachable.".to_string()
             }
