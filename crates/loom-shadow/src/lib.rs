@@ -1,6 +1,7 @@
 use loom_core::{
     build_action_envelope, build_action_envelope_with_options, enforce_sanction_controls, envelope_input_hash,
     ensure_runtime_worker_scaffold, evaluate_reference_gates, kernel_path_for,
+    pipeline::record_pipeline_from_ingress,
     preview_local_sanction_controls, read_config, resolve_agent_identity, runtime_worker_entry,
     capabilities::{resolve_capability_for_request, render_capability_json, render_capability_readiness_human, render_capability_readiness_json, CapabilityDescriptor},
     wasm_host::{
@@ -4054,6 +4055,17 @@ fn handle_runtime_service_request(
                     json_string(ingress_target),
                 ),
             )?;
+            // Record pipeline entry from live ingress path
+            let _ = record_pipeline_from_ingress(
+                root,
+                &request_id,
+                ingress_target,
+                transport,
+                &agent_id,
+                &org_id,
+                capability_name.as_deref().unwrap_or(""),
+                &enqueue.input_hash,
+            );
             let payload = format!(
                 "{{\"status\":\"accepted\",\"transport\":{},\"service_target\":{},\"request_id\":{},\"accepted_at\":{},\"job_id\":{},\"policy_class\":{},\"queue_path\":{},\"ingress_request_path\":{},\"ingress_receipt_path\":{},\"note\":\"service ingress accepted and queued action\"}}\n",
                 json_string(transport),

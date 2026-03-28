@@ -1,6 +1,5 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
@@ -78,9 +77,9 @@ pub fn execute_pipeline_step(
     let now = timestamp_now();
 
     // Step 1: Resolve binding from ingress metadata
-    let channel_id = ingress.ingress_target.trim().to_string();
+    // Normalize transport targets to Loom-native channel edges
+    let channel_id = normalize_ingress_channel(&ingress.ingress_target, &ingress.transport);
     let peer_id = infer_peer_from_ingress(ingress);
-    let channel_id = if channel_id.is_empty() { "web_api".to_string() } else { channel_id };
 
     let (binding_id, agent_id, session_key) = match resolve_binding(root, &channel_id, &peer_id, None, None) {
         Ok(resolution) => (resolution.binding_id, resolution.agent_id, resolution.session_key),
@@ -125,8 +124,11 @@ pub fn execute_pipeline_step(
     };
     let mut intent = ProviderRouteIntent::for_capability(&capability, "");
     intent.agent_id = Some(agent_id.clone());
-    if let Some(profile) = override_profile {
-        intent.preferred_profile_name = Some(profile);
+    if let Some(ref profile) = override_profile {
+        intent.preferred_profile_name = Some(profile.clone());
+    }
+    if let Some(ref model) = override_model {
+        intent.requested_model = model.clone();
     }
     let (provider_profile, model) = match resolve_provider_route(Some(root), &intent) {
         Ok(route) => (route.profile_name, route.model),
@@ -222,6 +224,110 @@ pub fn execute_pipeline_step(
     run.status = "completed".to_string();
     run.completed_at = Some(timestamp_now());
     persist_pipeline_run(root, &run)?;
+    Ok(run)
+}
+
+/// Record a pipeline entry from the live service ingress path.
+/// Called after the service runtime accepts a request and queues a job.
+/// Records truth about what is known at acceptance time — does not claim completion.
+pub fn record_pipeline_from_ingress(
+    root: &Path,
+    request_id: &str,
+    ingress_target: &str,
+    transport: &str,
+    agent_id: &str,
+    org_id: &str,
+    capability_name: &str,
+    job_id: &str,
+) -> LoomResult<PipelineRunRecord> {
+    ensure_pipeline_scaffold(root)?;
+    let pipeline_id = format!("pipeline-{}", unique_token());
+    let now = timestamp_now();
+
+    let channel_id = normalize_ingress_channel(ingress_target, transport);
+    let peer_id = if !org_id.is_empty() {
+        org_id.to_string()
+    } else if !agent_id.is_empty() {
+        format!("agent:{}", agent_id)
+    } else {
+        "unknown".to_string()
+    };
+
+    // Best-effort binding resolution for session provenance
+    let (binding_id, resolved_agent, session_key) =
+        match resolve_binding(root, &channel_id, &peer_id, None, None) {
+            Ok(r) => (r.binding_id, r.agent_id, r.session_key),
+            Err(_) => (String::new(), agent_id.to_string(), format!("{}:{}", channel_id, peer_id)),
+        };
+
+    // Apply session overrides
+    let (override_profile, override_model, override_source) =
+        apply_session_overrides(root, &session_key).unwrap_or((None, None, "default".to_string()));
+    let override_applied = override_profile.is_some() || override_model.is_some();
+
+    // Resolve provider route with overrides
+    let cap = if capability_name.is_empty() { "loom.llm.inference.v1" } else { capability_name };
+    let mut intent = ProviderRouteIntent::for_capability(cap, "");
+    intent.agent_id = Some(resolved_agent.clone());
+    if let Some(ref profile) = override_profile {
+        intent.preferred_profile_name = Some(profile.clone());
+    }
+    if let Some(ref model) = override_model {
+        intent.requested_model = model.clone();
+    }
+    let (provider_profile, model) = match resolve_provider_route(Some(root), &intent) {
+        Ok(route) => (route.profile_name, route.model),
+        Err(_) => (String::new(), String::new()),
+    };
+
+    // Update session provenance with route info
+    let _ = crate::session_provenance::update_session_provenance_route(
+        root,
+        &session_key,
+        &provider_profile,
+        &model,
+        &override_source,
+    );
+
+    // Get send policy
+    let send_policy = get_session_send_policy(root, &session_key)
+        .ok()
+        .flatten()
+        .map(|p| p.mode)
+        .unwrap_or_else(|| "deliver".to_string());
+
+    // Update session provenance with job linkage
+    let _ = update_session_provenance_job(
+        root,
+        &session_key,
+        if job_id.is_empty() { None } else { Some(job_id) },
+        None,
+        Some(request_id),
+    );
+
+    let run = PipelineRunRecord {
+        pipeline_id: pipeline_id.clone(),
+        ingress_request_id: request_id.to_string(),
+        channel_id,
+        peer_id,
+        session_key,
+        binding_id,
+        agent_id: resolved_agent,
+        provider_profile,
+        model,
+        job_id: if job_id.is_empty() { None } else { Some(job_id.to_string()) },
+        delivery_id: None,
+        status: "accepted".to_string(),
+        started_at: now,
+        completed_at: None,
+        override_applied,
+        send_policy,
+        output_guard_class: None,
+        last_error: None,
+    };
+
+    persist_pipeline_run(root, &run)?;
+    index_pipeline_run(root, request_id, &pipeline_id)?;
     Ok(run)
 }
 
@@ -389,32 +495,57 @@ fn index_pipeline_run(root: &Path, ingress_id: &str, pipeline_id: &str) -> LoomR
 }
 
 fn attempt_pipeline_dispatch(
-    root: &Path,
+    _root: &Path,
     ingress: &ServiceIngressRecord,
     _agent_id: &str,
     _provider_profile: &str,
     _model: &str,
 ) -> Option<String> {
-    // Check if service socket exists
-    let sock = root.join("run/service/runtime.sock");
-    if !sock.exists() {
-        return None;
+    // The pipeline records truth about dispatch state.
+    // Actual job execution happens in the service supervisor loop (loom-shadow).
+    // If the ingress request has been accepted and has a job_id, the job is queued.
+    // We do not invoke a subprocess from here — that would create recursive dispatch.
+    if !ingress.job_id.is_empty() {
+        // Job was queued by the service runtime — report that truthfully
+        Some(format!("job queued: {}", ingress.job_id))
+    } else if !ingress.payload_json.is_empty() {
+        // Payload present but no job_id yet — request accepted but not yet queued
+        Some(format!("request accepted: {}", ingress.request_id))
+    } else {
+        None
     }
-    // Try to invoke via loom service submit
-    let exe = std::env::current_exe().ok()?;
-    let output = Command::new(&exe)
-        .args([
-            "--root",
-            &root.to_string_lossy(),
-            "service",
-            "submit",
-            "--body",
-            &ingress.payload_json,
-        ])
-        .output()
-        .ok()?;
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    if stdout.trim().is_empty() { None } else { Some(stdout) }
+}
+
+/// Normalize a transport-level ingress target to a Loom-native channel edge.
+/// Service/HTTP/socket/file ingress maps to `web_api`.
+/// Telegram-related targets map to `telegram`.
+/// Recognized channel IDs pass through unchanged.
+fn normalize_ingress_channel(ingress_target: &str, transport: &str) -> String {
+    let target = ingress_target.trim();
+    let transport_lower = transport.trim().to_ascii_lowercase();
+
+    // Recognized Loom channel IDs pass through unchanged
+    if matches!(target, "web_api" | "telegram" | "discord" | "slack" | "email" | "matrix") {
+        return target.to_string();
+    }
+
+    // Telegram transport or target heuristic
+    if target.contains("telegram") || transport_lower.contains("telegram") {
+        return "telegram".to_string();
+    }
+
+    // Transport-level targets (socket paths, HTTP addresses, file paths) -> web_api
+    if target.contains('/') || target.contains(':') || target.contains(".sock")
+        || target.is_empty()
+        || transport_lower == "socket"
+        || transport_lower == "http"
+        || transport_lower == "file_ingress"
+    {
+        return "web_api".to_string();
+    }
+
+    // Unknown target — default to web_api
+    "web_api".to_string()
 }
 
 fn infer_peer_from_ingress(ingress: &ServiceIngressRecord) -> String {
