@@ -8466,7 +8466,7 @@ fn build_builtin_llm_inference_guest(
         },
         model: {
             let model = value_string(payload.get("model"));
-            if model.is_empty() { "gpt-3.5-turbo".to_string() } else { model }
+            if model.is_empty() { "qwen2.5:7b".to_string() } else { model }
         },
         system_prompt: value_string(payload.get("system_prompt")),
         user_prompt,

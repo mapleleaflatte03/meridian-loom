@@ -24,7 +24,7 @@ const DEFAULT_SHARED_CODEX_AUTH_PATH: &str = ".codex/auth.json";
 const DEFAULT_LOOM_CODEX_AUTH_PATH: &str = ".meridian/auth/codex/auth.json";
 const DEFAULT_LOCAL_OLLAMA_ENDPOINT: &str = "http://127.0.0.1:11434/v1/chat/completions";
 const DEFAULT_OPENAI_ENDPOINT: &str = "https://api.openai.com/v1/chat/completions";
-const DEFAULT_MODEL_ALIAS: &str = "gpt-3.5-turbo";
+const DEFAULT_MODEL_ALIAS: &str = "qwen2.5:7b";
 const DEFAULT_BEARER_ENV: &str = "OPENAI_API_KEY";
 const ENV_PROVIDER_PROFILE: &str = "LLM_PROVIDER_PROFILE";
 const ENV_PROVIDER_PROFILES_PATH: &str = "LLM_PROVIDER_PROFILES_PATH";
@@ -1368,7 +1368,7 @@ mod tests {
       "name": "openai",
       "kind": "openai_compatible",
       "base_url": "https://api.openai.com/v1/chat/completions",
-      "model": "gpt-4.1-mini",
+      "model": "gpt-5.4",
       "auth": {
         "mode": "bearer_env",
         "env_var": "OPENAI_API_KEY"
@@ -1377,7 +1377,7 @@ mod tests {
   ],
   "routing": {
     "capabilities": {
-      "loom.llm.inference.v1": { "profile": "openai", "default_model": "gpt-4.1-mini" }
+      "loom.llm.inference.v1": { "profile": "openai", "default_model": "gpt-5.4" }
     },
     "agents": {
       "agent_atlas": "custom"
@@ -1587,7 +1587,7 @@ mod tests {
     fn configure_onboard_routes_prefers_dedicated_loom_auth_and_selected_model() {
         let root = temp_path("loom-provider-onboard-frontier");
         ensure_provider_profiles_scaffold(&root).expect("scaffold provider profiles");
-        let path = configure_onboard_provider_routes(&root, "frontier", Some("gpt-4.1"), None)
+        let path = configure_onboard_provider_routes(&root, "frontier", Some("gpt-5.3-codex"), None)
             .expect("configure routes");
         assert!(path.exists());
         let profiles = load_provider_profiles(Some(&root)).expect("load provider profiles");
@@ -1602,13 +1602,13 @@ mod tests {
             }
             other => panic!("unexpected auth mode: {:?}", other),
         }
-        assert_eq!(manager.default_model, "gpt-4.1");
+        assert_eq!(manager.default_model, "gpt-5.3-codex");
         let route = resolve_provider_route(
             Some(&root),
             &ProviderRouteIntent::llm_inference("").with_agent_id("leviathann"),
         )
         .expect("resolve provider route");
-        assert_eq!(route.model, "gpt-4.1");
+        assert_eq!(route.model, "gpt-5.3-codex");
     }
 
     #[test]

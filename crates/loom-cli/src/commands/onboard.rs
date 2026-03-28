@@ -793,7 +793,7 @@ fn default_manager_model(lane: &str, manifest: &OnboardManifest) -> String {
         return model.to_string();
     }
     if lane.eq_ignore_ascii_case("local") {
-        "gpt-3.5-turbo".to_string()
+        "qwen2.5:7b".to_string()
     } else {
         "gpt-5.4".to_string()
     }

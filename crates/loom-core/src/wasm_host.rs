@@ -372,7 +372,7 @@ impl Default for WasmLlmInferenceRequest {
         Self {
             security: WasmHostSecurityContext::default(),
             provider_profile: String::new(),
-            model: "gpt-3.5-turbo".to_string(),
+            model: "qwen2.5:7b".to_string(),
             system_prompt: String::new(),
             user_prompt: String::new(),
             max_tokens: Some(256),
@@ -767,7 +767,7 @@ pub(crate) fn parse_wasm_llm_inference_request(raw: &str) -> Result<WasmLlmInfer
     Ok(WasmLlmInferenceRequest {
         security: parse_security_context(value.get("security")),
         provider_profile: value_string_or(value.get("provider_profile"), ""),
-        model: value_string_or(value.get("model"), "gpt-3.5-turbo"),
+        model: value_string_or(value.get("model"), "qwen2.5:7b"),
         system_prompt: value_string(value.get("system_prompt")),
         user_prompt: value_string(value.get("user_prompt")),
         max_tokens: value.get("max_tokens").and_then(Value::as_u64).map(|value| value as u32),

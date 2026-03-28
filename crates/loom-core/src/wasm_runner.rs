@@ -953,7 +953,7 @@ fn dispatch_llm_inference(
         .with_org_id(&request.security.org_id)
         .with_preferred_profile_name(&request.provider_profile);
     let requested_model = if route_intent.requested_model.is_empty() {
-        "gpt-3.5-turbo".to_string()
+        "qwen2.5:7b".to_string()
     } else {
         route_intent.requested_model.clone()
     };
