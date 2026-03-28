@@ -1330,7 +1330,18 @@ fn truncate_lossy_utf8(bytes: &[u8], max_bytes: usize) -> (String, bool) {
 
 
 fn runtime_workspace_root() -> PathBuf {
-    PathBuf::from("/home/ubuntu/.local/share/meridian-loom/runtime/default/workspace")
+    #[cfg(test)]
+    {
+        std::env::temp_dir().join("meridian-loom-workspace-test")
+    }
+    #[cfg(not(test))]
+    {
+        if let Ok(home) = std::env::var("HOME") {
+            PathBuf::from(home).join(".local/share/meridian-loom/runtime/default/workspace")
+        } else {
+            PathBuf::from("/home/ubuntu/.local/share/meridian-loom/runtime/default/workspace")
+        }
+    }
 }
 
 fn normalize_guest_requested_path(raw: &str) -> Result<PathBuf, String> {
