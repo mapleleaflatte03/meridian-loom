@@ -65,6 +65,10 @@ GLOBAL OPTIONS:
 }
 
 fn handle_skill_status(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_skill_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let format = take_value(args, "--format").unwrap_or_else(|| {
         if std::io::stdout().is_terminal() {
@@ -85,6 +89,10 @@ fn handle_skill_status(args: &[String]) -> LoomResult<()> {
 }
 
 fn handle_skill_sync(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_skill_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let format = take_value(args, "--format").unwrap_or_else(|| {
         if std::io::stdout().is_terminal() {
@@ -105,6 +113,10 @@ fn handle_skill_sync(args: &[String]) -> LoomResult<()> {
 }
 
 fn handle_skill_list(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_skill_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let format = take_value(args, "--format").unwrap_or_else(|| {
         if std::io::stdout().is_terminal() {
@@ -125,6 +137,10 @@ fn handle_skill_list(args: &[String]) -> LoomResult<()> {
 }
 
 fn handle_skill_show(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_skill_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let skill_id = required_flag(args, "--skill-id")?;
     let format = take_value(args, "--format").unwrap_or_else(|| {
@@ -146,6 +162,10 @@ fn handle_skill_show(args: &[String]) -> LoomResult<()> {
 }
 
 fn handle_skill_install(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_skill_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let skill_root_str = required_flag(args, "--skill-root")?;
     let skill_id_override = take_value(args, "--skill-id");
@@ -166,6 +186,10 @@ fn handle_skill_install(args: &[String]) -> LoomResult<()> {
 }
 
 fn handle_skill_remove(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_skill_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let skill_id = required_flag(args, "--skill-id")?;
     let force = has_flag(args, "--force");
@@ -182,6 +206,10 @@ fn handle_skill_remove(args: &[String]) -> LoomResult<()> {
 }
 
 fn handle_skill_enable(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_skill_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let skill_id = required_flag(args, "--skill-id")?;
     let format = format_flag(args);
@@ -197,6 +225,10 @@ fn handle_skill_enable(args: &[String]) -> LoomResult<()> {
 }
 
 fn handle_skill_disable(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_skill_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let skill_id = required_flag(args, "--skill-id")?;
     let format = format_flag(args);
@@ -212,6 +244,10 @@ fn handle_skill_disable(args: &[String]) -> LoomResult<()> {
 }
 
 fn handle_skill_update(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_skill_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let skill_id = required_flag(args, "--skill-id")?;
     let display_name = take_value(args, "--name");
@@ -236,6 +272,10 @@ fn handle_skill_update(args: &[String]) -> LoomResult<()> {
 }
 
 fn handle_skill_locks(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_skill_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let format = format_flag(args);
     let locks = list_skill_locks(&root)?;
@@ -254,6 +294,10 @@ fn handle_skill_locks(args: &[String]) -> LoomResult<()> {
 }
 
 fn handle_skill_installs(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_skill_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let format = format_flag(args);
     let installs = list_skill_installs(&root)?;

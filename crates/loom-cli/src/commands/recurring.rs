@@ -37,6 +37,10 @@ GLOBAL OPTIONS:
 }
 
 fn handle_recurring_runs(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_recurring_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let format = format_flag(args);
     let limit = take_value(args, "--limit")
@@ -55,6 +59,10 @@ fn handle_recurring_runs(args: &[String]) -> LoomResult<()> {
 }
 
 fn handle_recurring_show(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_recurring_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let run_id = required_flag(args, "--run-id")?;
     let format = format_flag(args);

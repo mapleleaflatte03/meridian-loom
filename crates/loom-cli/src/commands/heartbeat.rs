@@ -58,6 +58,10 @@ GLOBAL OPTIONS:
 }
 
 fn handle_heartbeat_status(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_heartbeat_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let format = take_value(args, "--format").unwrap_or_else(|| {
         if std::io::stdout().is_terminal() {
@@ -81,6 +85,10 @@ fn handle_heartbeat_status(args: &[String]) -> LoomResult<()> {
 }
 
 fn handle_heartbeat_list(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_heartbeat_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let format = take_value(args, "--format").unwrap_or_else(|| {
         if std::io::stdout().is_terminal() {
@@ -101,6 +109,10 @@ fn handle_heartbeat_list(args: &[String]) -> LoomResult<()> {
 }
 
 fn handle_heartbeat_show(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_heartbeat_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let heartbeat_id = required_flag(args, "--heartbeat-id")?;
     let format = take_value(args, "--format").unwrap_or_else(|| {
@@ -122,6 +134,10 @@ fn handle_heartbeat_show(args: &[String]) -> LoomResult<()> {
 }
 
 fn handle_heartbeat_schedule(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_heartbeat_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let agent_id = required_flag(args, "--agent-id")?;
     let capability_name = required_flag(args, "--capability")?;
@@ -169,6 +185,10 @@ fn handle_heartbeat_schedule(args: &[String]) -> LoomResult<()> {
 }
 
 fn handle_heartbeat_pause(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_heartbeat_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let heartbeat_id = required_flag(args, "--heartbeat-id")?;
     let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
@@ -183,6 +203,10 @@ fn handle_heartbeat_pause(args: &[String]) -> LoomResult<()> {
 }
 
 fn handle_heartbeat_cancel(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_heartbeat_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let heartbeat_id = required_flag(args, "--heartbeat-id")?;
     let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
@@ -197,6 +221,10 @@ fn handle_heartbeat_cancel(args: &[String]) -> LoomResult<()> {
 }
 
 fn handle_heartbeat_run_due(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_heartbeat_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let format = take_value(args, "--format").unwrap_or_else(|| {
         if std::io::stdout().is_terminal() {
@@ -277,6 +305,10 @@ fn heartbeat_record_json(record: &HeartbeatRecord) -> serde_json::Value {
 }
 
 fn handle_heartbeat_run(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_heartbeat_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let heartbeat_id = required_flag(args, "--heartbeat-id")?;
     let format = take_value(args, "--format").unwrap_or_else(|| {

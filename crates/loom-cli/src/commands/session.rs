@@ -66,6 +66,10 @@ GLOBAL OPTIONS:
 }
 
 fn handle_session_status(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_session_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let format = format_flag(args);
     let overview = session_provenance_overview(&root)?;
@@ -80,6 +84,10 @@ fn handle_session_status(args: &[String]) -> LoomResult<()> {
 }
 
 fn handle_session_list(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_session_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let format = format_flag(args);
     let limit = take_value(args, "--limit")
@@ -97,6 +105,10 @@ fn handle_session_list(args: &[String]) -> LoomResult<()> {
 }
 
 fn handle_session_show(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_session_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let session_key = required_flag(args, "--session-key")?;
     let format = format_flag(args);
@@ -131,6 +143,10 @@ fn handle_session_show(args: &[String]) -> LoomResult<()> {
 }
 
 fn handle_session_override(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_session_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let session_key = required_flag(args, "--session-key")?;
     let provider_profile = take_value(args, "--provider-profile");
@@ -159,6 +175,10 @@ fn handle_session_override(args: &[String]) -> LoomResult<()> {
 }
 
 fn handle_session_clear_override(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_session_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let session_key = required_flag(args, "--session-key")?;
     clear_session_override(&root, &session_key)?;
@@ -175,6 +195,10 @@ fn handle_session_clear_override(args: &[String]) -> LoomResult<()> {
 }
 
 fn handle_session_send_policy(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_session_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let session_key = required_flag(args, "--session-key")?;
     let mode = required_flag(args, "--mode")?;
@@ -197,6 +221,10 @@ fn handle_session_send_policy(args: &[String]) -> LoomResult<()> {
 }
 
 fn handle_session_overrides_list(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_session_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let format = format_flag(args);
     let records = list_session_overrides(&root)?;
@@ -215,6 +243,10 @@ fn handle_session_overrides_list(args: &[String]) -> LoomResult<()> {
 }
 
 fn handle_session_policies_list(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_session_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let format = format_flag(args);
     let records = list_session_send_policies(&root)?;

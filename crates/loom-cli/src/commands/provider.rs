@@ -29,6 +29,15 @@ struct ProviderLoginSummary {
     detail: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CodexIdentityRelation {
+    configured_auth_path: String,
+    configured_account_id: Option<String>,
+    shared_cli_auth_path: String,
+    shared_cli_account_id: Option<String>,
+    relation: String,
+}
+
 pub(crate) fn handle_provider(args: &[String]) -> LoomResult<()> {
     match args.first().map(String::as_str) {
         None | Some("help") | Some("-h") | Some("--help") => {
@@ -101,12 +110,23 @@ fn handle_provider_auth(args: &[String]) -> LoomResult<()> {
     let format = output_format(args);
     let profile = take_value(args, "--profile");
     let status = provider_auth_status(Some(&root), profile.as_deref())?;
+    let codex_relation = codex_identity_relation(&status);
     match format.as_str() {
         "human" => {
             print_startup_banner();
-            print_human(&render_provider_auth_human(&status));
+            let mut rendered = render_provider_auth_human(&status);
+            if let Some(relation) = codex_relation.as_ref() {
+                rendered.push_str(&render_codex_identity_relation_human(relation));
+            }
+            print_human(&rendered);
         }
-        _ => print!("{}", render_provider_auth_json(&status)),
+        _ => {
+            if let Some(relation) = codex_relation.as_ref() {
+                print!("{}", render_provider_auth_with_relation_json(&status, relation));
+            } else {
+                print!("{}", render_provider_auth_json(&status));
+            }
+        }
     }
     Ok(())
 }
@@ -159,6 +179,104 @@ fn handle_provider_login(args: &[String]) -> LoomResult<()> {
         _ => print!("{}", render_provider_login_json(&summary)),
     }
     Ok(())
+}
+
+fn codex_identity_relation(status: &loom_core::provider_router::ProviderAuthStatus) -> Option<CodexIdentityRelation> {
+    if status.auth_mode != "codex_auth_json" {
+        return None;
+    }
+    let configured_path = status.credential_path.as_ref()?;
+    let configured_auth_path = PathBuf::from(configured_path);
+    let configured_account_id = read_codex_account_id(&configured_auth_path);
+    let shared_cli_auth_path = shared_codex_auth_path_hint()
+        .ok()
+        .unwrap_or_else(|| PathBuf::from("~/.codex/auth.json"));
+    let shared_cli_account_id = read_codex_account_id(&shared_cli_auth_path);
+    let relation = if configured_auth_path == shared_cli_auth_path {
+        "shared_cli_path".to_string()
+    } else if configured_account_id.is_some()
+        && shared_cli_account_id.is_some()
+        && configured_account_id == shared_cli_account_id
+    {
+        "same_account_as_cli".to_string()
+    } else if configured_account_id.is_some() && shared_cli_account_id.is_some() {
+        "dedicated_account".to_string()
+    } else if shared_cli_account_id.is_none() {
+        "cli_auth_unavailable".to_string()
+    } else {
+        "unknown".to_string()
+    };
+    Some(CodexIdentityRelation {
+        configured_auth_path: configured_auth_path.display().to_string(),
+        configured_account_id,
+        shared_cli_auth_path: shared_cli_auth_path.display().to_string(),
+        shared_cli_account_id,
+        relation,
+    })
+}
+
+fn read_codex_account_id(path: &Path) -> Option<String> {
+    let raw = fs::read_to_string(path).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    value
+        .pointer("/tokens/account_id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn render_codex_identity_relation_human(relation: &CodexIdentityRelation) -> String {
+    format!(
+        "identity_scope:      {}\nconfigured_account:  {}\nshared_cli_account:  {}\nshared_cli_auth:     {}\n",
+        relation.relation,
+        relation
+            .configured_account_id
+            .as_deref()
+            .unwrap_or("(unknown)"),
+        relation
+            .shared_cli_account_id
+            .as_deref()
+            .unwrap_or("(unknown)"),
+        relation.shared_cli_auth_path,
+    )
+}
+
+fn render_provider_auth_with_relation_json(
+    status: &loom_core::provider_router::ProviderAuthStatus,
+    relation: &CodexIdentityRelation,
+) -> String {
+    let mut value = serde_json::from_str::<serde_json::Value>(&render_provider_auth_json(status)).unwrap_or_default();
+    if let Some(object) = value.as_object_mut() {
+        object.insert(
+            "identity_scope".to_string(),
+            serde_json::Value::String(relation.relation.clone()),
+        );
+        object.insert(
+            "configured_account_id".to_string(),
+            relation
+                .configured_account_id
+                .as_ref()
+                .map(|value| serde_json::Value::String(value.clone()))
+                .unwrap_or(serde_json::Value::Null),
+        );
+        object.insert(
+            "shared_cli_account_id".to_string(),
+            relation
+                .shared_cli_account_id
+                .as_ref()
+                .map(|value| serde_json::Value::String(value.clone()))
+                .unwrap_or(serde_json::Value::Null),
+        );
+        object.insert(
+            "shared_cli_auth_path".to_string(),
+            serde_json::Value::String(relation.shared_cli_auth_path.clone()),
+        );
+    }
+    format!(
+        "{}\n",
+        serde_json::to_string_pretty(&value).unwrap_or_else(|_| "{}".to_string())
+    )
 }
 
 fn handle_provider_profiles(args: &[String]) -> LoomResult<()> {

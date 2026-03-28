@@ -59,6 +59,10 @@ GLOBAL OPTIONS:
 }
 
 fn handle_schedule_status(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_schedule_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let format = take_value(args, "--format").unwrap_or_else(|| {
         if std::io::stdout().is_terminal() {
@@ -82,6 +86,10 @@ fn handle_schedule_status(args: &[String]) -> LoomResult<()> {
 }
 
 fn handle_schedule_list(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_schedule_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let format = take_value(args, "--format").unwrap_or_else(|| {
         if std::io::stdout().is_terminal() {
@@ -102,6 +110,10 @@ fn handle_schedule_list(args: &[String]) -> LoomResult<()> {
 }
 
 fn handle_schedule_show(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_schedule_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let job_id = required_flag(args, "--job-id")?;
     let format = take_value(args, "--format").unwrap_or_else(|| {
@@ -123,6 +135,10 @@ fn handle_schedule_show(args: &[String]) -> LoomResult<()> {
 }
 
 fn handle_schedule_add(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_schedule_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let request = ScheduleRequest {
         job_id: take_value(args, "--job-id"),
@@ -160,6 +176,10 @@ fn handle_schedule_add(args: &[String]) -> LoomResult<()> {
 }
 
 fn handle_schedule_pause(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_schedule_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let job_id = required_flag(args, "--job-id")?;
     let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
@@ -174,6 +194,10 @@ fn handle_schedule_pause(args: &[String]) -> LoomResult<()> {
 }
 
 fn handle_schedule_cancel(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_schedule_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let job_id = required_flag(args, "--job-id")?;
     let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
@@ -188,6 +212,10 @@ fn handle_schedule_cancel(args: &[String]) -> LoomResult<()> {
 }
 
 fn handle_schedule_run_due(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_schedule_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let format = take_value(args, "--format").unwrap_or_else(|| {
         if std::io::stdout().is_terminal() {
@@ -254,6 +282,10 @@ fn render_schedule_list_json(records: &[ScheduledJobRecord]) -> String {
 }
 
 fn handle_schedule_run(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_schedule_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let job_id = required_flag(args, "--job-id")?;
     let format = take_value(args, "--format").unwrap_or_else(|| {
