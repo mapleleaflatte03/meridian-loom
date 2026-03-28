@@ -595,28 +595,46 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             detail: format!("provider auth unavailable: {}", error),
         }),
     }
-    let agent_runtime_registry = agent_runtime::agent_runtime_registry_path(&root);
-    push_path_check(
-        &mut checks,
-        "agent_runtime_registry",
-        &agent_runtime_registry,
-        true,
-        "agent runtime registry present",
-    );
-    match agent_runtime::agent_runtime_overview(&root) {
-        Ok(overview) => checks.push(Check {
-            level: "OK",
-            label: "agent_runtime",
-            detail: format!(
-                "profiles={} agents={}",
-                overview.profile_count,
-                overview.agent_ids.join(",")
-            ),
-        }),
+    match agent_runtime::ensure_agent_runtime_scaffold(&root) {
+        Ok(agent_runtime_registry) => {
+            push_path_check(
+                &mut checks,
+                "agent_runtime_registry",
+                &agent_runtime_registry,
+                true,
+                "agent runtime registry present",
+            );
+            match agent_runtime::agent_runtime_overview(&root) {
+                Ok(overview) => checks.push(Check {
+                    level: if overview.memory_ready_count == overview.profile_count
+                        && overview.session_ready_count == overview.profile_count
+                    {
+                        "OK"
+                    } else {
+                        "WARN"
+                    },
+                    label: "agent_runtime",
+                    detail: format!(
+                        "profiles={} agents={} memory_ready={}/{} session_ready={}/{}",
+                        overview.profile_count,
+                        overview.agent_ids.join(","),
+                        overview.memory_ready_count,
+                        overview.profile_count,
+                        overview.session_ready_count,
+                        overview.profile_count
+                    ),
+                }),
+                Err(error) => checks.push(Check {
+                    level: "WARN",
+                    label: "agent_runtime",
+                    detail: format!("agent runtime unavailable: {}", error),
+                }),
+            }
+        }
         Err(error) => checks.push(Check {
             level: "WARN",
-            label: "agent_runtime",
-            detail: format!("agent runtime unavailable: {}", error),
+            label: "agent_runtime_registry",
+            detail: format!("agent runtime scaffold unavailable: {}", error),
         }),
     }
     let delivery_queue = delivery_queue_path(&root, &config);

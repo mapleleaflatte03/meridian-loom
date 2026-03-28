@@ -1,7 +1,13 @@
+use std::collections::BTreeMap;
 use std::io::IsTerminal;
 
 use crate::*;
-use loom_core::agent_runtime::{agent_runtime_summary, render_agent_runtime_human, render_agent_runtime_json};
+use loom_core::agent_runtime::{
+    agent_memory_summary, agent_runtime_summary, agent_session_summary, commit_agent_session,
+    open_agent_session, render_agent_memory_human, render_agent_memory_json,
+    render_agent_runtime_human, render_agent_runtime_json, render_agent_session_human,
+    render_agent_session_json, write_agent_memory_snapshot,
+};
 
 pub(crate) fn handle_init(args: &[String]) -> LoomResult<()> {
     let mode = take_value(args, "--mode").unwrap_or_else(|| "standalone".to_string());
@@ -162,7 +168,62 @@ pub(crate) fn handle_agent(args: &[String]) -> LoomResult<()> {
             }
             Ok(())
         }
-        _ => Err("agent supports 'resolve' and 'runtime'".to_string()),
+        Some("session") => {
+            let root = root_from(take_value(args, "--root").as_deref())?;
+            let agent_id = required_flag(args, "--agent-id")?;
+            let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+            let task_kind = take_value(args, "--task-kind");
+            let status = take_value(args, "--status");
+            let summary_text = take_value(args, "--summary");
+            let summary = if has_flag(args, "--new") {
+                open_agent_session(&root, &agent_id, task_kind.as_deref())?
+            } else if status.is_some() || summary_text.is_some() || task_kind.is_some() {
+                commit_agent_session(
+                    &root,
+                    &agent_id,
+                    status.as_deref(),
+                    summary_text.as_deref(),
+                    task_kind.as_deref(),
+                )?
+            } else {
+                agent_session_summary(&root, &agent_id)?
+            };
+            if format == "json" {
+                print!("{}", render_agent_session_json(&summary));
+            } else {
+                print_human(&render_agent_session_human(&summary));
+            }
+            Ok(())
+        }
+        Some("memory") => {
+            let root = root_from(take_value(args, "--root").as_deref())?;
+            let agent_id = required_flag(args, "--agent-id")?;
+            let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+            let mut updates = BTreeMap::new();
+            for entry in take_values(args, "--set") {
+                let Some((key, value)) = entry.split_once('=') else {
+                    return Err(format!("invalid --set '{}': expected key=value", entry));
+                };
+                let key = key.trim();
+                let value = value.trim();
+                if key.is_empty() || value.is_empty() {
+                    return Err(format!("invalid --set '{}': expected key=value", entry));
+                }
+                updates.insert(key.to_string(), value.to_string());
+            }
+            let summary = if updates.is_empty() {
+                agent_memory_summary(&root, &agent_id)?
+            } else {
+                write_agent_memory_snapshot(&root, &agent_id, &updates)?
+            };
+            if format == "json" {
+                print!("{}", render_agent_memory_json(&summary));
+            } else {
+                print_human(&render_agent_memory_human(&summary));
+            }
+            Ok(())
+        }
+        _ => Err("agent supports 'resolve', 'runtime', 'session', and 'memory'".to_string()),
     }
 }
 
