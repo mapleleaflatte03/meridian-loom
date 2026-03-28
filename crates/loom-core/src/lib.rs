@@ -942,7 +942,7 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                     .as_millis() as u64,
             ) {
                 Ok(overview) => checks.push(Check {
-                    level: if overview.enabled_count > 0 { "OK" } else { "WARN" },
+                    level: if overview.enabled_count > 0 || overview.total_count == 0 { "OK" } else { "WARN" },
                     label: "schedule_runtime",
                     detail: format!(
                         "total={} enabled={} due={} runs_path={} schedules={}",
@@ -981,7 +981,7 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             );
             match channels::channel_overview(&root) {
                 Ok(overview) => checks.push(Check {
-                    level: if overview.enabled_count > 0 { "OK" } else { "WARN" },
+                    level: if overview.enabled_count > 0 || overview.total_count == 0 { "OK" } else { "WARN" },
                     label: "channel_runtime",
                     detail: format!(
                         "total={} enabled={} ingress={} delivery_path={} inbox_path={} channels={}",
@@ -1021,7 +1021,7 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             );
             match bindings::binding_overview(&root) {
                 Ok(overview) => checks.push(Check {
-                    level: if overview.enabled_count > 0 { "OK" } else { "WARN" },
+                    level: if overview.enabled_count > 0 || overview.total_count == 0 { "OK" } else { "WARN" },
                     label: "binding_runtime",
                     detail: format!(
                         "total={} enabled={} bindings={}",
@@ -1058,7 +1058,7 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             );
             match skills::skill_overview(&root) {
                 Ok(overview) => checks.push(Check {
-                    level: if overview.enabled_count > 0 { "OK" } else { "WARN" },
+                    level: if overview.enabled_count > 0 || overview.total_count == 0 { "OK" } else { "WARN" },
                     label: "skill_runtime",
                     detail: format!(
                         "total={} enabled={} defaults={} imported={} installs_path={} skills={}",
@@ -2267,14 +2267,13 @@ module = None
 for module_name, module_path in (
     ("adapters.meridian_compatible", os.path.join(kernel_dir, "adapters", "meridian_compatible.py")),
     ("adapters.legacy_v1_compatible", os.path.join(kernel_dir, "adapters", "legacy_v1_compatible.py")),
-    ("adapters.openclaw_compatible", os.path.join(kernel_dir, "adapters", "openclaw_compatible.py")),
 ):
     if os.path.exists(module_path):
         module = importlib.import_module(module_name)
         break
 if module is None:
     raise FileNotFoundError(
-        "no reference adapter found in kernel/adapters (tried meridian_compatible.py, legacy_v1_compatible.py, openclaw_compatible.py)"
+        "no reference adapter found in kernel/adapters (tried meridian_compatible.py, legacy_v1_compatible.py)"
     )
 print(json.dumps(module.pre_action_check(org_id, envelope)))
 "#;
