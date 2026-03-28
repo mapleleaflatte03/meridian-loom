@@ -554,6 +554,8 @@ pub fn resolve_provider_route(root: Option<&Path>, intent: &ProviderRouteIntent)
     let endpoint_url = normalize_endpoint_url(&profile.kind, &profile.base_url)?;
     let model = if !intent.requested_model.trim().is_empty() {
         intent.requested_model.trim().to_string()
+    } else if explicit_profile.is_some() {
+        profile.default_model.clone()
     } else if let Some(policy) = agent_policy {
         policy
             .default_model
@@ -1581,6 +1583,66 @@ mod tests {
         assert_eq!(route.model, "custom-alias");
         assert_eq!(route.endpoint_url.as_str(), DEFAULT_LOCAL_OLLAMA_ENDPOINT);
         assert_eq!(route.matched_rule, "capability:loom.llm.inference.v1");
+    }
+
+    #[test]
+    fn explicit_profile_uses_profile_default_model_even_when_capability_has_default_model() {
+        let root = temp_path("loom-provider-explicit-profile-model");
+        let auth_path = root.join("codex-auth.json");
+        fs::write(
+            &auth_path,
+            serde_json::to_string_pretty(&json!({
+                "auth_mode": "chatgpt",
+                "last_refresh": "2026-03-28T00:00:00Z",
+                "tokens": {
+                    "access_token": "access-token",
+                    "refresh_token": "refresh-token",
+                    "account_id": "acct_test"
+                }
+            }))
+            .expect("encode auth json"),
+        )
+        .expect("write auth json");
+        let path = ensure_provider_profiles_scaffold(&root).expect("scaffold provider profiles");
+        fs::write(
+            &path,
+            serde_json::to_string_pretty(&json!({
+                "default_profile": "local_ollama",
+                "profiles": [
+                    {
+                        "name": "local_ollama",
+                        "kind": "local_ollama",
+                        "base_url": DEFAULT_LOCAL_OLLAMA_ENDPOINT,
+                        "model": DEFAULT_MODEL_ALIAS,
+                        "auth": { "mode": "none" }
+                    },
+                    {
+                        "name": "manager_frontier",
+                        "kind": "openai_codex",
+                        "base_url": DEFAULT_CODEX_BASE_URL,
+                        "model": "gpt-5.4",
+                        "auth": { "mode": "codex_auth_json", "path": auth_path.display().to_string() }
+                    }
+                ],
+                "routing": {
+                    "capabilities": {
+                        "loom.llm.inference.v1": { "profile": "local_ollama", "default_model": "qwen2.5:7b" }
+                    },
+                    "agents": {}
+                }
+            }))
+            .expect("encode provider routing"),
+        )
+        .expect("write provider profiles");
+        let route = resolve_provider_route(
+            Some(&root),
+            &ProviderRouteIntent::for_capability("loom.llm.inference.v1", "")
+                .with_preferred_profile_name("manager_frontier"),
+        )
+        .expect("resolve provider route");
+        assert_eq!(route.profile_name, "manager_frontier");
+        assert_eq!(route.model, "gpt-5.4");
+        assert_eq!(route.matched_rule, "explicit_profile");
     }
 
     #[test]
