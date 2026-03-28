@@ -247,6 +247,15 @@ struct CodexAuthMaterial {
     refresh_token: Option<String>,
     account_id: Option<String>,
     last_refresh: Option<String>,
+    identity: CodexIdentityFingerprint,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct CodexIdentityFingerprint {
+    pub account_id: Option<String>,
+    pub subject_id: Option<String>,
+    pub email: Option<String>,
+    pub name: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -435,8 +444,8 @@ pub fn provider_auth_status(root: Option<&Path>, profile_name: Option<&str>) -> 
                 Some(material.auth_path.display().to_string()),
                 true,
                 format!(
-                    "Codex OAuth auth.json is ready (account_id={}, refresh_token={})",
-                    material.account_id.as_deref().unwrap_or("unknown"),
+                    "Codex OAuth auth.json is ready (identity={}, refresh_token={})",
+                    describe_codex_identity(&material.identity),
                     if material.refresh_token.as_deref().unwrap_or("").is_empty() {
                         "missing"
                     } else {
@@ -1239,29 +1248,27 @@ fn read_codex_auth_material(explicit_path: Option<&str>) -> LoomResult<CodexAuth
         .and_then(Value::as_str)
         .map(|raw| raw.trim().to_string())
         .filter(|raw| !raw.is_empty());
-    let account_id = value
-        .pointer("/tokens/account_id")
-        .and_then(Value::as_str)
-        .map(|raw| raw.trim().to_string())
-        .filter(|raw| !raw.is_empty());
+    let identity = codex_identity_from_value(&value);
+    let account_id = identity.account_id.clone();
     let last_refresh = value
         .get("last_refresh")
         .and_then(Value::as_str)
         .map(|raw| raw.trim().to_string())
         .filter(|raw| !raw.is_empty());
-    enforce_dedicated_loom_codex_identity(&auth_path, account_id.as_deref())?;
+    enforce_dedicated_loom_codex_identity(&auth_path, &identity)?;
     Ok(CodexAuthMaterial {
         auth_path,
         access_token,
         refresh_token,
         account_id,
         last_refresh,
+        identity,
     })
 }
 
 fn enforce_dedicated_loom_codex_identity(
     auth_path: &Path,
-    account_id: Option<&str>,
+    identity: &CodexIdentityFingerprint,
 ) -> LoomResult<()> {
     if !is_loom_managed_codex_auth_path(auth_path) {
         return Ok(());
@@ -1274,17 +1281,14 @@ fn enforce_dedicated_loom_codex_identity(
             shared_path.display()
         ));
     }
-    let Some(configured_account_id) = account_id.and_then(trim_to_option) else {
+    let Some(shared_identity) = read_codex_identity_fingerprint(&shared_path) else {
         return Ok(());
     };
-    let Some(shared_account_id) = read_codex_account_id_at_path(&shared_path) else {
-        return Ok(());
-    };
-    if configured_account_id == shared_account_id {
+    if codex_principal_matches(identity, &shared_identity) {
         return Err(format!(
-            "Loom-managed Codex auth at {} is using the shared CLI account {}; sign in with a dedicated Loom account or switch the provider source to cli if shared auth is intentional",
+            "Loom-managed Codex auth at {} is using the shared CLI identity {}; sign in with a dedicated Loom account or switch the provider source to cli if shared auth is intentional",
             auth_path.display(),
-            configured_account_id
+            describe_codex_identity(&shared_identity)
         ));
     }
     Ok(())
@@ -1296,15 +1300,113 @@ fn is_loom_managed_codex_auth_path(path: &Path) -> bool {
         || normalized == ".meridian/auth/codex/auth.json"
 }
 
-fn read_codex_account_id_at_path(path: &Path) -> Option<String> {
+pub fn read_codex_identity_fingerprint(path: &Path) -> Option<CodexIdentityFingerprint> {
     let raw = fs::read_to_string(path).ok()?;
     let value: Value = serde_json::from_str(&raw).ok()?;
-    value
+    Some(codex_identity_from_value(&value))
+}
+
+fn codex_identity_from_value(value: &Value) -> CodexIdentityFingerprint {
+    let account_id = value
         .pointer("/tokens/account_id")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|raw| !raw.is_empty())
-        .map(ToOwned::to_owned)
+        .map(ToOwned::to_owned);
+    let id_token = value
+        .pointer("/tokens/id_token")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|raw| !raw.is_empty());
+    let claims = id_token
+        .and_then(decode_jwt_payload_json)
+        .unwrap_or(Value::Null);
+    let subject_id = claims
+        .get("sub")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|raw| !raw.is_empty())
+        .map(ToOwned::to_owned);
+    let email = claims
+        .get("email")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|raw| !raw.is_empty())
+        .map(ToOwned::to_owned);
+    let name = claims
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|raw| !raw.is_empty())
+        .map(ToOwned::to_owned);
+    CodexIdentityFingerprint { account_id, subject_id, email, name }
+}
+
+fn decode_jwt_payload_json(token: &str) -> Option<Value> {
+    let mut parts = token.split('.');
+    let _header = parts.next()?;
+    let payload = parts.next()?;
+    let decoded = decode_base64_url(payload)?;
+    serde_json::from_slice(&decoded).ok()
+}
+
+fn decode_base64_url(raw: &str) -> Option<Vec<u8>> {
+    let mut bits: u32 = 0;
+    let mut bit_count: u8 = 0;
+    let mut out = Vec::with_capacity(raw.len() * 3 / 4);
+    for ch in raw.bytes() {
+        let value = match ch {
+            b'A'..=b'Z' => ch - b'A',
+            b'a'..=b'z' => ch - b'a' + 26,
+            b'0'..=b'9' => ch - b'0' + 52,
+            b'-' => 62,
+            b'_' => 63,
+            b'=' => continue,
+            _ => return None,
+        } as u32;
+        bits = (bits << 6) | value;
+        bit_count += 6;
+        while bit_count >= 8 {
+            bit_count -= 8;
+            out.push(((bits >> bit_count) & 0xFF) as u8);
+            if bit_count > 0 {
+                bits &= (1u32 << bit_count) - 1;
+            } else {
+                bits = 0;
+            }
+        }
+    }
+    Some(out)
+}
+
+fn codex_principal_matches(left: &CodexIdentityFingerprint, right: &CodexIdentityFingerprint) -> bool {
+    if let (Some(left), Some(right)) = (left.subject_id.as_deref(), right.subject_id.as_deref()) {
+        return left == right;
+    }
+    if let (Some(left), Some(right)) = (left.email.as_deref(), right.email.as_deref()) {
+        return left.eq_ignore_ascii_case(right);
+    }
+    if let (Some(left), Some(right)) = (left.account_id.as_deref(), right.account_id.as_deref()) {
+        return left == right;
+    }
+    false
+}
+
+fn describe_codex_identity(identity: &CodexIdentityFingerprint) -> String {
+    match (
+        identity.name.as_deref().filter(|value| !value.is_empty()),
+        identity.email.as_deref().filter(|value| !value.is_empty()),
+        identity.subject_id.as_deref().filter(|value| !value.is_empty()),
+        identity.account_id.as_deref().filter(|value| !value.is_empty()),
+    ) {
+        (Some(name), Some(email), _, _) => format!("{} <{}>", name, email),
+        (Some(name), None, Some(subject), _) => format!("{} [{}]", name, subject),
+        (Some(name), None, None, Some(account_id)) => format!("{} [{}]", name, account_id),
+        (None, Some(email), _, _) => email.to_string(),
+        (None, None, Some(subject), _) => subject.to_string(),
+        (None, None, None, Some(account_id)) => account_id.to_string(),
+        _ => "unknown".to_string(),
+    }
 }
 
 fn normalize_path(current: &str, required_suffix: &str) -> String {
@@ -1754,8 +1856,77 @@ mod tests {
             std::env::remove_var("HOME");
         }
         assert!(!status.ready);
-        assert!(status.detail.contains("shared CLI account"));
+        assert!(status.detail.contains("shared CLI identity"));
         assert!(route_error.contains("provider profile 'manager_frontier' is not ready"));
+    }
+
+    #[test]
+    fn auth_status_allows_dedicated_identity_when_account_id_matches_shared_cli_account() {
+        let root = temp_path("loom-provider-auth-dedicated-identity");
+        let fake_home = root.join("fake-home");
+        fs::create_dir_all(fake_home.join(".codex")).expect("create shared codex dir");
+        fs::create_dir_all(fake_home.join(".meridian/auth/codex")).expect("create loom codex dir");
+        let shared_payload = serde_json::to_string_pretty(&json!({
+            "auth_mode": "chatgpt",
+            "last_refresh": "2026-03-28T00:00:00Z",
+            "tokens": {
+                "access_token": "access-token",
+                "refresh_token": "refresh-token",
+                "account_id": "acct_shared",
+                "id_token": "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiJ1c2VyX3NoYXJlZCIsImVtYWlsIjoic2hhcmVkQGV4YW1wbGUuY29tIiwibmFtZSI6IlNoYXJlZCBVc2VyIn0.signature"
+            }
+        }))
+        .expect("encode shared auth json");
+        let loom_payload = serde_json::to_string_pretty(&json!({
+            "auth_mode": "chatgpt",
+            "last_refresh": "2026-03-28T00:00:00Z",
+            "tokens": {
+                "access_token": "access-token",
+                "refresh_token": "refresh-token",
+                "account_id": "acct_shared",
+                "id_token": "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiJ1c2VyX2xvb20iLCJlbWFpbCI6Imxvb21AZXhhbXBsZS5jb20iLCJuYW1lIjoiTG9vbSBVc2VyIn0.signature"
+            }
+        }))
+        .expect("encode loom auth json");
+        fs::write(fake_home.join(".codex/auth.json"), &shared_payload).expect("write shared auth json");
+        fs::write(fake_home.join(".meridian/auth/codex/auth.json"), &loom_payload).expect("write loom auth json");
+        let _home_guard = home_env_guard();
+        let previous_home = std::env::var("HOME").ok();
+        std::env::set_var("HOME", &fake_home);
+        let path = root.join(DEFAULT_PROVIDER_PROFILES_PATH);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create provider dir");
+        }
+        fs::write(
+            &path,
+            serde_json::to_string_pretty(&json!({
+                "default_profile": "manager_frontier",
+                "profiles": [
+                    {
+                        "name": "manager_frontier",
+                        "kind": "openai_codex",
+                        "base_url": DEFAULT_CODEX_BASE_URL,
+                        "model": DEFAULT_CODEX_MODEL_ALIAS,
+                        "auth": { "mode": "codex_auth_json", "path": ".meridian/auth/codex/auth.json" }
+                    }
+                ]
+            }))
+            .expect("encode provider json"),
+        )
+        .expect("write provider profiles");
+        let status = provider_auth_status(Some(&root), Some("manager_frontier")).expect("provider auth status");
+        let route = resolve_provider_route(
+            Some(&root),
+            &ProviderRouteIntent::llm_inference("").with_agent_id("leviathann"),
+        )
+        .expect("route should resolve");
+        if let Some(home) = previous_home {
+            std::env::set_var("HOME", home);
+        } else {
+            std::env::remove_var("HOME");
+        }
+        assert!(status.ready);
+        assert_eq!(route.profile_name, "manager_frontier");
     }
 
     #[test]

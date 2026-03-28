@@ -14,9 +14,9 @@ use loom_core::provider_auth_store::{
 };
 use loom_core::provider_router::{
     configure_onboard_provider_routes, default_codex_auth_path_hint, provider_auth_status, provider_plane_summary,
-    render_provider_auth_human, render_provider_auth_json, render_provider_plane_human,
+    read_codex_identity_fingerprint, render_provider_auth_human, render_provider_auth_json, render_provider_plane_human,
     render_provider_plane_json, render_provider_route_human, render_provider_route_json,
-    resolve_provider_route, shared_codex_auth_path_hint, ProviderRouteIntent,
+    resolve_provider_route, shared_codex_auth_path_hint, CodexIdentityFingerprint, ProviderRouteIntent,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -33,8 +33,12 @@ struct ProviderLoginSummary {
 struct CodexIdentityRelation {
     configured_auth_path: String,
     configured_account_id: Option<String>,
+    configured_subject_id: Option<String>,
+    configured_identity_label: Option<String>,
     shared_cli_auth_path: String,
     shared_cli_account_id: Option<String>,
+    shared_cli_subject_id: Option<String>,
+    shared_cli_identity_label: Option<String>,
     relation: String,
 }
 
@@ -198,55 +202,104 @@ fn codex_identity_relation(status: &loom_core::provider_router::ProviderAuthStat
     }
     let configured_path = status.credential_path.as_ref()?;
     let configured_auth_path = PathBuf::from(configured_path);
-    let configured_account_id = read_codex_account_id(&configured_auth_path);
+    let configured_identity = read_codex_identity_fingerprint(&configured_auth_path);
     let shared_cli_auth_path = shared_codex_auth_path_hint()
         .ok()
         .unwrap_or_else(|| PathBuf::from("~/.codex/auth.json"));
-    let shared_cli_account_id = read_codex_account_id(&shared_cli_auth_path);
+    let shared_cli_identity = read_codex_identity_fingerprint(&shared_cli_auth_path);
     let relation = if configured_auth_path == shared_cli_auth_path {
         "shared_cli_path".to_string()
-    } else if configured_account_id.is_some()
-        && shared_cli_account_id.is_some()
-        && configured_account_id == shared_cli_account_id
+    } else if configured_identity
+        .as_ref()
+        .zip(shared_cli_identity.as_ref())
+        .map(|(configured, shared)| codex_principal_matches(configured, shared))
+        .unwrap_or(false)
     {
-        "same_account_as_cli".to_string()
-    } else if configured_account_id.is_some() && shared_cli_account_id.is_some() {
+        "same_identity_as_cli".to_string()
+    } else if configured_identity.is_some() && shared_cli_identity.is_some() {
         "dedicated_account".to_string()
-    } else if shared_cli_account_id.is_none() {
+    } else if shared_cli_identity.is_none() {
         "cli_auth_unavailable".to_string()
     } else {
         "unknown".to_string()
     };
     Some(CodexIdentityRelation {
         configured_auth_path: configured_auth_path.display().to_string(),
-        configured_account_id,
+        configured_account_id: configured_identity.as_ref().and_then(|identity| identity.account_id.clone()),
+        configured_subject_id: configured_identity.as_ref().and_then(|identity| identity.subject_id.clone()),
+        configured_identity_label: configured_identity.as_ref().map(describe_identity_label),
         shared_cli_auth_path: shared_cli_auth_path.display().to_string(),
-        shared_cli_account_id,
+        shared_cli_account_id: shared_cli_identity.as_ref().and_then(|identity| identity.account_id.clone()),
+        shared_cli_subject_id: shared_cli_identity.as_ref().and_then(|identity| identity.subject_id.clone()),
+        shared_cli_identity_label: shared_cli_identity.as_ref().map(describe_identity_label),
         relation,
     })
 }
 
-fn read_codex_account_id(path: &Path) -> Option<String> {
-    let raw = fs::read_to_string(path).ok()?;
-    let value: serde_json::Value = serde_json::from_str(&raw).ok()?;
-    value
-        .pointer("/tokens/account_id")
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
+fn codex_principal_matches(left: &CodexIdentityFingerprint, right: &CodexIdentityFingerprint) -> bool {
+    if let (Some(left), Some(right)) = (left.subject_id.as_deref(), right.subject_id.as_deref()) {
+        return left == right;
+    }
+    if let (Some(left), Some(right)) = (left.email.as_deref(), right.email.as_deref()) {
+        return left.eq_ignore_ascii_case(right);
+    }
+    if let (Some(left), Some(right)) = (left.account_id.as_deref(), right.account_id.as_deref()) {
+        return left == right;
+    }
+    false
+}
+
+fn describe_identity_label(identity: &CodexIdentityFingerprint) -> String {
+    match (
+        identity.name.as_deref().filter(|value| !value.is_empty()),
+        identity.email.as_deref().filter(|value| !value.is_empty()),
+        identity.subject_id.as_deref().filter(|value| !value.is_empty()),
+        identity.account_id.as_deref().filter(|value| !value.is_empty()),
+    ) {
+        (Some(name), Some(email), _, _) => format!("{} <{}>", name, email),
+        (Some(name), None, Some(subject), _) => format!("{} [{}]", name, subject),
+        (Some(name), None, None, Some(account_id)) => format!("{} [{}]", name, account_id),
+        (None, Some(email), _, _) => email.to_string(),
+        (None, None, Some(subject), _) => subject.to_string(),
+        (None, None, None, Some(account_id)) => account_id.to_string(),
+        _ => "unknown".to_string(),
+    }
 }
 
 fn render_codex_identity_relation_human(relation: &CodexIdentityRelation) -> String {
     format!(
-        "identity_scope:      {}\nconfigured_account:  {}\nshared_cli_account:  {}\nshared_cli_auth:     {}\n",
+        "identity_scope:      {}
+configured_identity: {}
+shared_cli_identity: {}
+configured_account:  {}
+shared_cli_account:  {}
+configured_subject:  {}
+shared_cli_subject:  {}
+shared_cli_auth:     {}
+",
         relation.relation,
+        relation
+            .configured_identity_label
+            .as_deref()
+            .unwrap_or("(unknown)"),
+        relation
+            .shared_cli_identity_label
+            .as_deref()
+            .unwrap_or("(unknown)"),
         relation
             .configured_account_id
             .as_deref()
             .unwrap_or("(unknown)"),
         relation
             .shared_cli_account_id
+            .as_deref()
+            .unwrap_or("(unknown)"),
+        relation
+            .configured_subject_id
+            .as_deref()
+            .unwrap_or("(unknown)"),
+        relation
+            .shared_cli_subject_id
             .as_deref()
             .unwrap_or("(unknown)"),
         relation.shared_cli_auth_path,
@@ -272,9 +325,41 @@ fn render_provider_auth_with_relation_json(
                 .unwrap_or(serde_json::Value::Null),
         );
         object.insert(
+            "configured_subject_id".to_string(),
+            relation
+                .configured_subject_id
+                .as_ref()
+                .map(|value| serde_json::Value::String(value.clone()))
+                .unwrap_or(serde_json::Value::Null),
+        );
+        object.insert(
+            "configured_identity".to_string(),
+            relation
+                .configured_identity_label
+                .as_ref()
+                .map(|value| serde_json::Value::String(value.clone()))
+                .unwrap_or(serde_json::Value::Null),
+        );
+        object.insert(
             "shared_cli_account_id".to_string(),
             relation
                 .shared_cli_account_id
+                .as_ref()
+                .map(|value| serde_json::Value::String(value.clone()))
+                .unwrap_or(serde_json::Value::Null),
+        );
+        object.insert(
+            "shared_cli_subject_id".to_string(),
+            relation
+                .shared_cli_subject_id
+                .as_ref()
+                .map(|value| serde_json::Value::String(value.clone()))
+                .unwrap_or(serde_json::Value::Null),
+        );
+        object.insert(
+            "shared_cli_identity".to_string(),
+            relation
+                .shared_cli_identity_label
                 .as_ref()
                 .map(|value| serde_json::Value::String(value.clone()))
                 .unwrap_or(serde_json::Value::Null),
@@ -285,7 +370,8 @@ fn render_provider_auth_with_relation_json(
         );
     }
     format!(
-        "{}\n",
+        "{}
+",
         serde_json::to_string_pretty(&value).unwrap_or_else(|_| "{}".to_string())
     )
 }
