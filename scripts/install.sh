@@ -40,9 +40,12 @@ ensure_admin_access() {
 }
 
 ensure_privileges() {
-  local prefix_parent
-  prefix_parent="$(dirname "$PREFIX")"
-  if [[ -w "$prefix_parent" || -w "$PREFIX" ]]; then
+  local writable_probe
+  writable_probe="$PREFIX"
+  while [[ ! -e "$writable_probe" && "$writable_probe" != "/" ]]; do
+    writable_probe="$(dirname "$writable_probe")"
+  done
+  if [[ -w "$writable_probe" || -w "$PREFIX" ]]; then
     return
   fi
   ensure_admin_access "write to $PREFIX"
