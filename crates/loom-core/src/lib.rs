@@ -11,6 +11,7 @@ pub mod channels;
 pub mod capability_shims;
 pub mod capabilities;
 pub mod context_engine;
+pub mod gateway_runtime;
 pub mod onboarding;
 pub mod output_guard;
 pub mod provider_auth_store;
@@ -312,6 +313,7 @@ pub fn init_workspace(
     provider_auth_store::ensure_provider_auth_store_scaffold(&root)?;
     onboarding::ensure_onboard_manifest(&root, &config)?;
     channels::ensure_channel_runtime_scaffold(&root)?;
+    gateway_runtime::ensure_gateway_runtime_scaffold(&root)?;
 
     fs::write(&config_path, render_config(&config)).map_err(io_err)?;
     bindings::ensure_binding_runtime_scaffold(&root)?;
@@ -653,6 +655,43 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             level: "WARN",
             label: "provider_auth_store",
             detail: format!("provider auth store unavailable: {}", error),
+        }),
+    }
+    match gateway_runtime::ensure_gateway_runtime_scaffold(&root) {
+        Ok(gateway_registry) => {
+            push_path_check(
+                &mut checks,
+                "gateway_registry",
+                &gateway_registry,
+                false,
+                "gateway runtime registry present",
+            );
+            match gateway_runtime::gateway_runtime_overview(&root) {
+                Ok(summary) => checks.push(Check {
+                    level: if summary.enabled_channel_count > 0 { "OK" } else { "WARN" },
+                    label: "gateway_runtime",
+                    detail: format!(
+                        "gateway={} endpoint={} auth={} remote={} channels={}/{} daemon={}",
+                        summary.gateway_id,
+                        summary.endpoint,
+                        summary.auth_mode,
+                        summary.remote_mode,
+                        summary.enabled_channel_count,
+                        summary.total_channel_count,
+                        summary.daemon_summary
+                    ),
+                }),
+                Err(error) => checks.push(Check {
+                    level: "WARN",
+                    label: "gateway_runtime",
+                    detail: format!("gateway runtime unavailable: {}", error),
+                }),
+            }
+        }
+        Err(error) => checks.push(Check {
+            level: "WARN",
+            label: "gateway_registry",
+            detail: format!("gateway runtime unavailable: {}", error),
         }),
     }
     match onboarding::ensure_onboard_manifest(&root, &config) {

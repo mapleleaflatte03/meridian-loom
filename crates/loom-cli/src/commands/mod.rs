@@ -1,6 +1,7 @@
 pub(crate) mod action;
 pub(crate) mod capability;
 pub(crate) mod context;
+pub(crate) mod gateway;
 pub(crate) mod binding;
 pub(crate) mod channel;
 pub(crate) mod heartbeat;

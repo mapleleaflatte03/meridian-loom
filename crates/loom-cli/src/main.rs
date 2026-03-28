@@ -101,6 +101,7 @@ fn run() -> LoomResult<()> {
         "config" => commands::runtime::handle_config(&args[1..]),
         "provider" => commands::provider::handle_provider(&args[1..]),
         "context" => commands::context::handle_context(&args[1..]),
+        "gateway" => commands::gateway::handle_gateway(&args[1..]),
         "binding" => commands::binding::handle_binding(&args[1..]),
         "channel" => commands::channel::handle_channel(&args[1..]),
         "skill" => commands::skill::handle_skill(&args[1..]),
@@ -281,6 +282,8 @@ Bootstrap\n\
   loom provider profiles [--root PATH] [--profile NAME] [--format human|json]\n\
   loom provider mark-used --profile NAME [--root PATH] [--format human|json]\n\
   loom provider mark-failure --profile NAME [--reason TEXT] [--cooldown-ms N] [--root PATH] [--format human|json]\n\
+  loom gateway status [--root PATH] [--format human|json]\n\
+  loom gateway sync [--root PATH] [--format human|json]\n\
   loom binding status [--root PATH] [--format human|json]\n\
   loom binding sync [--root PATH] [--format human|json]\n\
   loom binding list [--root PATH] [--format human|json]\n\

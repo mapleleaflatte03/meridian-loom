@@ -9,6 +9,7 @@ use crate::*;
 use loom_core::agent_runtime::agent_runtime_overview;
 use loom_core::bindings::sync_binding_registry;
 use loom_core::channels::sync_channel_registry;
+use loom_core::gateway_runtime::sync_gateway_runtime;
 use loom_core::skills::sync_skill_registry;
 use loom_core::schedules::{schedule_overview, sync_schedule_registry};
 use loom_core::onboarding::{
@@ -174,6 +175,7 @@ Choose your manager brain, edge bindings, and runtime defaults. Meridian will sc
     loom_core::write_config(&root, &config)?;
     let manifest_path = write_onboard_manifest(&root, &manifest)?;
     let channel_summary = sync_channel_registry(&root)?;
+    let gateway_runtime = sync_gateway_runtime(&root)?;
     let binding_summary = sync_binding_registry(&root)?;
     let skill_summary = sync_skill_registry(&root)?;
     let schedule_sync = sync_schedule_registry(&root)?;
@@ -265,6 +267,16 @@ Choose your manager brain, edge bindings, and runtime defaults. Meridian will sc
                         "enabled_count": channel_summary.enabled_count,
                         "channel_ids": channel_summary.channel_ids.clone(),
                     },
+                    "gateway_runtime": {
+                        "gateway_id": gateway_runtime.gateway_id.clone(),
+                        "endpoint": gateway_runtime.endpoint.clone(),
+                        "auth_mode": gateway_runtime.auth_mode.clone(),
+                        "remote_mode": gateway_runtime.remote_mode.clone(),
+                        "daemon_summary": gateway_runtime.daemon_summary.clone(),
+                        "total_channel_count": gateway_runtime.total_channel_count,
+                        "enabled_channel_count": gateway_runtime.enabled_channel_count,
+                        "channel_ids": gateway_runtime.channel_ids.clone(),
+                    },
                     "bindings_runtime": {
                         "total_count": binding_summary.total_count,
                         "enabled_count": binding_summary.enabled_count,
@@ -349,6 +361,7 @@ codex_detail:        {}
 gateway:             {}
 telegram:            {}
 channels:            total={} enabled={} ids={}
+gateway_runtime:     endpoint={} auth={} remote={} daemon={} channels={}/{}
 bindings_runtime:    total={} enabled={} ids={}
 skills:              {}
 recurring:           {}
@@ -385,6 +398,12 @@ next_step:           loom doctor --root {} --format human
         channel_summary.total_count,
         channel_summary.enabled_count,
         if channel_summary.channel_ids.is_empty() { "(none)".to_string() } else { channel_summary.channel_ids.join(",") },
+        gateway_runtime.endpoint,
+        gateway_runtime.auth_mode,
+        gateway_runtime.remote_mode,
+        gateway_runtime.daemon_summary,
+        gateway_runtime.enabled_channel_count,
+        gateway_runtime.total_channel_count,
         binding_summary.total_count,
         binding_summary.enabled_count,
         if binding_summary.binding_ids.is_empty() { "(none)".to_string() } else { binding_summary.binding_ids.join(",") },
