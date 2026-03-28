@@ -524,7 +524,7 @@ parser.add_argument("--out")
         let records = load_skills(&root).expect("load skills");
         assert!(records.iter().any(|record| {
             record.install_state == "imported"
-                && record.runtime_refs.iter().any(|item| item.contains("capability:clawskill.sample-triage.v0"))
+                && record.runtime_refs.iter().any(|item| item.contains("capability:loomskill.sample-triage.v0"))
         }));
     }
 

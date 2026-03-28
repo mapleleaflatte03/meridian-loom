@@ -726,7 +726,7 @@ pub fn import_workspace_skill(
     let capability_name = capability_name_override
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| format!("clawskill.{}.v0", sanitize_name(&import_spec.skill_name)));
+        .unwrap_or_else(|| format!("loomskill.{}.v0", sanitize_name(&import_spec.skill_name)));
     let relative_worker_entry = format!(
         "{}/imported-{}.py",
         config.python_path,
@@ -2265,7 +2265,7 @@ fn resolve_legacy_v1_plugin_skill_root(
 
 fn legacy_v1_plugin_skill_capability_name(plugin_id: &str, skill_name: &str) -> String {
     format!(
-        "clawskill.{}.{}.v0",
+        "loomskill.{}.{}.v0",
         sanitize_name(plugin_id),
         sanitize_name(skill_name)
     )
@@ -3388,18 +3388,18 @@ name: beta-review
             .all(|item| !item.path.contains("nested")));
 
         let imported = &result.imported_skills[0];
-        assert_eq!(imported.capability.name, "clawskill.acme-plugin.alpha-review.v0");
+        assert_eq!(imported.capability.name, "loomskill.acme-plugin.alpha-review.v0");
         assert_eq!(imported.capability.description, "Alpha review skill");
         assert_eq!(imported.normalized_metadata.plugin_id, "acme-plugin");
         assert_eq!(imported.normalized_metadata.skill_name, "alpha-review");
         assert_eq!(imported.normalized_metadata.skill_description, "Alpha review skill");
         assert_eq!(imported.normalized_metadata.import_scope, "immediate_child_skill_dir");
-        assert_eq!(imported.normalized_metadata.capability_name, "clawskill.acme-plugin.alpha-review.v0");
+        assert_eq!(imported.normalized_metadata.capability_name, "loomskill.acme-plugin.alpha-review.v0");
         assert!(imported.manifest_path.exists());
         assert!(imported.worker_path.exists());
         let human = render_legacy_v1_plugin_import_human(&result);
         assert!(human.contains("worker_kind: python"));
-        assert!(human.contains("worker_entry: workers/python/imported-clawskill-acme-plugin-alpha-review-v0.py"));
+        assert!(human.contains("worker_entry: workers/python/imported-loomskill-acme-plugin-alpha-review-v0.py"));
         assert!(human.contains("payload_mode: json"));
         assert!(human.contains("runtime_lane: python_host_process/imported_legacy_v1_plugin_skill"));
         assert!(human.contains("dependency: plugin_host_python"));
@@ -3491,19 +3491,19 @@ parser.add_argument("--skip-container", action="store_true")
         assert_eq!(result.capability.adapter_kind, "artifact_report_v0");
         assert!(result.capability.import_provenance.contains("workspace_python_entrypoint"));
         assert_eq!(result.capability.action_type, "skill_exec");
-        assert_eq!(result.capability.resource, "capability:clawskill.malware-triage.v0");
+        assert_eq!(result.capability.resource, "capability:loomskill.malware-triage.v0");
 
         let registry = load_capability_registry(&root, &config).expect("load capability registry");
         let imported = registry
             .capabilities
             .into_iter()
-            .find(|item| item.name == "clawskill.malware-triage.v0")
+            .find(|item| item.name == "loomskill.malware-triage.v0")
             .expect("imported capability present");
         assert_eq!(imported.source_kind, "legacy_v1_workspace_skill");
         assert!(imported.source_path.contains("loom-cap-import-skill"));
         let human = render_capability_import_human(&result);
         assert!(human.contains("worker_kind:       python"));
-        assert!(human.contains("worker_entry:      workers/python/imported-clawskill-malware-triage-v0.py"));
+        assert!(human.contains("worker_entry:      workers/python/imported-loomskill-malware-triage-v0.py"));
         assert!(human.contains("payload_mode:      json"));
         assert!(human.contains("runtime_lane:      python_host_process/imported_workspace_skill"));
         assert!(human.contains("dependency:        workspace_host_python"));
@@ -3562,7 +3562,7 @@ parser.add_argument("--skip-container", action="store_true")
         assert_eq!(result.capability.adapter_kind, "artifact_report_v0");
         assert!(result.capability.import_provenance.contains("workspace_python_entrypoint"));
         assert_eq!(result.capability.action_type, "skill_exec");
-        assert_eq!(result.capability.resource, "capability:clawskill.malware-triage.v0");
+        assert_eq!(result.capability.resource, "capability:loomskill.malware-triage.v0");
     }
 
     #[test]

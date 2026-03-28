@@ -8650,7 +8650,7 @@ fn capture_reference_probe(
                 .filter(|value| !value.trim().is_empty())
         })
         .or_else(|| {
-            std::env::var("MERIDIAN_OPENCLAW_PROOF_SCRIPT")
+            std::env::var("MERIDIAN_RUNTIME_PROOF_SCRIPT")
                 .ok()
                 .filter(|value| !value.trim().is_empty())
         })
@@ -8658,16 +8658,16 @@ fn capture_reference_probe(
         .or_else(|| {
             [
                 "/home/ubuntu/.meridian/workspace/company/meridian_platform/meridian_compatible_runtime_proof.py",
-                "/home/ubuntu/.meridian/workspace/company/meridian_platform/openclaw_runtime_proof.py",
+                "/home/ubuntu/.meridian/workspace/company/meridian_platform/meridian_runtime_proof.py",
                 "/root/.meridian/workspace/company/meridian_platform/meridian_compatible_runtime_proof.py",
-                "/root/.meridian/workspace/company/meridian_platform/openclaw_runtime_proof.py",
+                "/root/.meridian/workspace/company/meridian_platform/meridian_runtime_proof.py",
             ]
             .iter()
             .map(PathBuf::from)
             .find(|candidate| candidate.exists())
         })
         .unwrap_or_else(|| {
-            PathBuf::from("/home/ubuntu/.meridian/workspace/company/meridian_platform/openclaw_runtime_proof.py")
+            PathBuf::from("/home/ubuntu/.meridian/workspace/company/meridian_platform/meridian_runtime_proof.py")
         });
     if !proof_script.exists() {
         append_line(

@@ -467,7 +467,7 @@ fn append_receipt(root: &Path, receipt: &SkillLifecycleReceipt) -> LoomResult<()
 }
 
 fn detect_skill_manifest(source_root: &Path) -> Option<PathBuf> {
-    for name in &["skill.json", "clawskill.json", "loomskill.json"] {
+    for name in &["skill.json", "loomskill.json", "clawskill.json"] {
         let path = source_root.join(name);
         if path.exists() {
             return Some(path);
