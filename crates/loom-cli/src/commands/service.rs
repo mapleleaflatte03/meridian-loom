@@ -275,6 +275,18 @@ fn handle_service_pipeline(args: &[String]) -> LoomResult<()> {
             "json".to_string()
         }
     });
+    if let Some(pipeline_id) = take_value(args, "--pipeline-id") {
+        let run = loom_core::pipeline::show_pipeline_run(&root, &pipeline_id)?
+            .ok_or_else(|| format!("pipeline run '{}' was not found", pipeline_id))?;
+        match format.as_str() {
+            "human" => {
+                print_startup_banner();
+                print_human(&loom_core::pipeline::render_pipeline_run_human(&run));
+            }
+            _ => print!("{}", loom_core::pipeline::render_pipeline_run_json(&run)),
+        }
+        return Ok(());
+    }
     let limit = take_value(args, "--limit")
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(20);
