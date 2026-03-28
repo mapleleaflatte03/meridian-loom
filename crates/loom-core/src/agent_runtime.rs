@@ -280,6 +280,10 @@ pub fn write_agent_memory_snapshot(
 }
 
 
+pub fn agent_provider_profile(root: &Path, agent_id: &str) -> LoomResult<String> {
+    Ok(resolve_agent_runtime_profile(root, agent_id)?.provider_profile)
+}
+
 pub fn agent_context_bundle(root: &Path, agent_id: &str) -> LoomResult<AgentContextBundle> {
     let profile = resolve_agent_runtime_profile(root, agent_id)?;
     let global_context_path = root.join(DEFAULT_GLOBAL_CONTEXT_DIR);

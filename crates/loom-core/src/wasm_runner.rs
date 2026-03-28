@@ -17,9 +17,9 @@ use wasmtime::{
 };
 
 #[cfg(not(test))]
-use crate::provider_router::{resolve_llm_route, ProviderRouteIntent};
+use crate::provider_router::{resolve_llm_route, ProviderKind, ProviderRouteIntent, ResolvedProviderRoute};
 #[cfg(test)]
-use super::provider_router::{resolve_llm_route, ProviderRouteIntent};
+use super::provider_router::{resolve_llm_route, ProviderKind, ProviderRouteIntent, ResolvedProviderRoute};
 
 use super::{
     host_config_hints, parse_wasm_browser_navigate_request, parse_wasm_fs_read_request,
@@ -987,8 +987,8 @@ fn dispatch_llm_inference(
         }
     };
     let endpoint_url = route.endpoint_url.clone();
-    let auth_header = match route.resolve_auth_header() {
-        Ok(auth_header) => auth_header,
+    let auth_headers = match route.resolve_auth_headers() {
+        Ok(auth_headers) => auth_headers,
         Err(error) => {
             let response = WasmLlmInferenceResponse {
                 decision: WasmHostCallDecision::Denied,
@@ -1018,26 +1018,16 @@ fn dispatch_llm_inference(
     }
     let timeout_ms = request.security.max_timeout_ms.max(1);
     let response_limit = request.security.max_response_bytes.max(1_024).min(65_536);
-    let mut messages = vec![];
-    if !request.system_prompt.trim().is_empty() {
-        messages.push(json!({"role": "system", "content": request.system_prompt}));
-    }
-    messages.push(json!({"role": "user", "content": request.user_prompt}));
-    let payload = json!({
-        "model": route.model,
-        "messages": messages,
-        "max_tokens": request.max_tokens,
-    });
-    let request_builder = ureq::post(endpoint_url.as_str())
+    let payload = build_llm_request_payload(&route, &request);
+    let mut request_builder = ureq::post(endpoint_url.as_str())
         .config()
         .timeout_global(Some(Duration::from_millis(timeout_ms)))
         .http_status_as_error(false)
         .build()
         .header("content-type", "application/json");
-    let request_builder = match auth_header {
-        Some((header_name, header_value)) => request_builder.header(&header_name, &header_value),
-        None => request_builder,
-    };
+    for (header_name, header_value) in auth_headers {
+        request_builder = request_builder.header(&header_name, &header_value);
+    }
     let mut response = match request_builder.send(payload.to_string()) {
         Ok(response) => response,
         Err(error) => {
@@ -1090,13 +1080,15 @@ fn dispatch_llm_inference(
         decision: WasmHostCallDecision::Allowed,
         model: response_model,
         output_text: extract_openai_output_text(&payload),
-        finish_reason: payload
-            .pointer("/choices/0/finish_reason")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
-        prompt_tokens: payload.pointer("/usage/prompt_tokens").and_then(Value::as_u64),
-        completion_tokens: payload.pointer("/usage/completion_tokens").and_then(Value::as_u64),
+        finish_reason: extract_openai_finish_reason(&payload),
+        prompt_tokens: payload
+            .pointer("/usage/input_tokens")
+            .and_then(Value::as_u64)
+            .or_else(|| payload.pointer("/usage/prompt_tokens").and_then(Value::as_u64)),
+        completion_tokens: payload
+            .pointer("/usage/output_tokens")
+            .and_then(Value::as_u64)
+            .or_else(|| payload.pointer("/usage/completion_tokens").and_then(Value::as_u64)),
         total_tokens: payload.pointer("/usage/total_tokens").and_then(Value::as_u64),
         note: format!(
             "bounded llm host call completed against {} via provider profile {} ({})",
@@ -1517,7 +1509,75 @@ fn read_guest_bytes_for_poge(
     buf
 }
 
+fn build_llm_request_payload(route: &ResolvedProviderRoute, request: &super::WasmLlmInferenceRequest) -> Value {
+    match route.profile_kind {
+        ProviderKind::OpenAiCodex => {
+            let mut input = Vec::new();
+            input.push(json!({
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": request.user_prompt,
+                    }
+                ]
+            }));
+            let mut payload = json!({
+                "model": route.model,
+                "store": false,
+                "input": input,
+            });
+            if let Some(max_tokens) = request.max_tokens {
+                payload["max_output_tokens"] = json!(max_tokens);
+            }
+            if !request.system_prompt.trim().is_empty() {
+                payload["instructions"] = json!(request.system_prompt);
+            }
+            payload
+        }
+        _ => {
+            let mut messages = vec![];
+            if !request.system_prompt.trim().is_empty() {
+                messages.push(json!({"role": "system", "content": request.system_prompt}));
+            }
+            messages.push(json!({"role": "user", "content": request.user_prompt}));
+            json!({
+                "model": route.model,
+                "messages": messages,
+                "max_tokens": request.max_tokens,
+            })
+        }
+    }
+}
+
+fn extract_openai_finish_reason(payload: &Value) -> String {
+    payload
+        .pointer("/choices/0/finish_reason")
+        .and_then(Value::as_str)
+        .or_else(|| payload.get("status").and_then(Value::as_str))
+        .unwrap_or_default()
+        .to_string()
+}
+
 fn extract_openai_output_text(payload: &Value) -> String {
+    if let Some(text) = payload.get("output_text").and_then(Value::as_str) {
+        return text.to_string();
+    }
+    if let Some(items) = payload.get("output").and_then(Value::as_array) {
+        let collected = items
+            .iter()
+            .flat_map(|item| item.get("content").and_then(Value::as_array).into_iter().flatten())
+            .filter_map(|part| {
+                part.get("text")
+                    .and_then(Value::as_str)
+                    .or_else(|| part.get("content").and_then(Value::as_str))
+            })
+            .collect::<Vec<_>>()
+            .join("");
+        if !collected.is_empty() {
+            return collected;
+        }
+    }
     let Some(content) = payload.pointer("/choices/0/message/content") else {
         return String::new();
     };

@@ -81,6 +81,7 @@ fn run() -> LoomResult<()> {
             print_startup_banner();
             Ok(())
         }
+        "onboard" => commands::onboard::handle_onboard(&args[1..]),
         "version" | "-V" | "--version" => {
             print_startup_banner();
             print_human(&format!(

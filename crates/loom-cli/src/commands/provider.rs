@@ -41,7 +41,7 @@ fn handle_provider_route(args: &[String]) -> LoomResult<()> {
     let root = root_from(take_value(args, "--root").as_deref())?;
     let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
     let capability = take_value(args, "--capability").unwrap_or_else(|| "loom.llm.inference.v1".to_string());
-    let requested_model = take_value(args, "--model").unwrap_or_else(|| "gpt-3.5-turbo".to_string());
+    let requested_model = take_value(args, "--model").unwrap_or_default();
     let mut intent = ProviderRouteIntent::for_capability(&capability, &requested_model);
     if let Some(agent_id) = take_value(args, "--agent-id") {
         intent = intent.with_agent_id(&agent_id);
