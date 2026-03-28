@@ -289,6 +289,7 @@ Governance surfaces\n\
   loom job inspect --job-id HASH [--root PATH] [--format human|json]\n\
   loom job approve --job-id HASH [--root PATH]\n\
   loom agent resolve --agent-id ID [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
+  loom agent runtime --agent-id ID [--root PATH] [--format human|json]\n\
   loom envelope build --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
   loom wasm limits [--config-file loom.toml.example] [--format human|json]\n\
   loom wasm profile show [--profile minimal|standard|heavy] [--format human|json]\n\

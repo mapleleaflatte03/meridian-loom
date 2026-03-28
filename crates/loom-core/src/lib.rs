@@ -5,6 +5,7 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub mod advanced_primitives;
+pub mod agent_runtime;
 pub mod capability_shims;
 pub mod capabilities;
 pub mod provider_router;
@@ -292,6 +293,7 @@ pub fn init_workspace(
     };
     ensure_runtime_worker_scaffold(&root, &config)?;
     capabilities::ensure_capability_registry_scaffold(&root, &config)?;
+    agent_runtime::ensure_agent_runtime_scaffold(&root)?;
     provider_router::ensure_provider_profiles_scaffold(&root)?;
 
     fs::write(&config_path, render_config(&config)).map_err(io_err)?;
@@ -591,6 +593,30 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             level: "WARN",
             label: "provider_auth",
             detail: format!("provider auth unavailable: {}", error),
+        }),
+    }
+    let agent_runtime_registry = agent_runtime::agent_runtime_registry_path(&root);
+    push_path_check(
+        &mut checks,
+        "agent_runtime_registry",
+        &agent_runtime_registry,
+        true,
+        "agent runtime registry present",
+    );
+    match agent_runtime::agent_runtime_overview(&root) {
+        Ok(overview) => checks.push(Check {
+            level: "OK",
+            label: "agent_runtime",
+            detail: format!(
+                "profiles={} agents={}",
+                overview.profile_count,
+                overview.agent_ids.join(",")
+            ),
+        }),
+        Err(error) => checks.push(Check {
+            level: "WARN",
+            label: "agent_runtime",
+            detail: format!("agent runtime unavailable: {}", error),
         }),
     }
     let delivery_queue = delivery_queue_path(&root, &config);

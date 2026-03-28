@@ -1,6 +1,7 @@
 use std::io::IsTerminal;
 
 use crate::*;
+use loom_core::agent_runtime::{agent_runtime_summary, render_agent_runtime_human, render_agent_runtime_json};
 
 pub(crate) fn handle_init(args: &[String]) -> LoomResult<()> {
     let mode = take_value(args, "--mode").unwrap_or_else(|| "standalone".to_string());
@@ -134,21 +135,35 @@ pub(crate) fn handle_capsule(args: &[String]) -> LoomResult<()> {
 
 
 pub(crate) fn handle_agent(args: &[String]) -> LoomResult<()> {
-    if args.first().map(String::as_str) != Some("resolve") {
-        return Err("agent only supports 'resolve' in this scaffold".to_string());
+    match args.first().map(String::as_str) {
+        Some("resolve") => {
+            let root = root_from(take_value(args, "--root").as_deref())?;
+            let agent_id = required_flag(args, "--agent-id")?;
+            let kernel_path = take_value(args, "--kernel-path");
+            let org_id = take_value(args, "--org-id");
+            let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+            let identity = resolve_agent_identity(&root, kernel_path.as_deref(), &agent_id, org_id.as_deref())?;
+            if format == "json" {
+                print!("{}", render_identity_json(&identity));
+            } else {
+                print_human(&render_identity_human(&identity));
+            }
+            Ok(())
+        }
+        Some("runtime") => {
+            let root = root_from(take_value(args, "--root").as_deref())?;
+            let agent_id = required_flag(args, "--agent-id")?;
+            let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+            let summary = agent_runtime_summary(&root, &agent_id)?;
+            if format == "json" {
+                print!("{}", render_agent_runtime_json(&summary));
+            } else {
+                print_human(&render_agent_runtime_human(&summary));
+            }
+            Ok(())
+        }
+        _ => Err("agent supports 'resolve' and 'runtime'".to_string()),
     }
-    let root = root_from(take_value(args, "--root").as_deref())?;
-    let agent_id = required_flag(args, "--agent-id")?;
-    let kernel_path = take_value(args, "--kernel-path");
-    let org_id = take_value(args, "--org-id");
-    let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
-    let identity = resolve_agent_identity(&root, kernel_path.as_deref(), &agent_id, org_id.as_deref())?;
-    if format == "json" {
-        print!("{}", render_identity_json(&identity));
-    } else {
-        print_human(&render_identity_human(&identity));
-    }
-    Ok(())
 }
 
 
