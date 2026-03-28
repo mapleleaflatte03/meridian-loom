@@ -25,6 +25,12 @@ const DEFAULT_SKILL_ENTRIES: [&str; 4] = [
     "web_bridge",
     "governed_memory",
 ];
+const DEFAULT_RECURRING_ENTRIES: [&str; 4] = [
+    "night_shift_kickoff",
+    "night_shift_research",
+    "night_shift_write",
+    "morning_brief",
+];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OnboardManifest {
@@ -50,6 +56,8 @@ pub struct OnboardManifest {
     pub skills_node_manager: String,
     pub skills_install_defaults: bool,
     pub skills_entries: Vec<String>,
+    pub recurring_install_defaults: bool,
+    pub recurring_entries: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -61,6 +69,7 @@ pub struct OnboardOverview {
     pub telegram_summary: String,
     pub daemon_summary: String,
     pub skills_summary: String,
+    pub recurring_summary: String,
     pub remote_mode: String,
 }
 
@@ -133,6 +142,11 @@ pub fn onboard_overview(root: &Path) -> LoomResult<OnboardOverview> {
             if manifest.skills_install_defaults { "yes" } else { "no" },
             manifest.skills_entries.join(",")
         ),
+        recurring_summary: format!(
+            "defaults={} entries={}",
+            if manifest.recurring_install_defaults { "yes" } else { "no" },
+            manifest.recurring_entries.join(",")
+        ),
         remote_mode: manifest.remote_mode,
     })
 }
@@ -174,6 +188,8 @@ impl OnboardManifest {
             skills_node_manager: DEFAULT_SKILLS_NODE_MANAGER.to_string(),
             skills_install_defaults: true,
             skills_entries: DEFAULT_SKILL_ENTRIES.iter().map(|entry| entry.to_string()).collect(),
+            recurring_install_defaults: true,
+            recurring_entries: DEFAULT_RECURRING_ENTRIES.iter().map(|entry| entry.to_string()).collect(),
         }
     }
 
@@ -218,6 +234,10 @@ impl OnboardManifest {
                 "nodeManager": self.skills_node_manager,
                 "installDefaults": self.skills_install_defaults,
                 "entries": self.skills_entries
+            },
+            "recurring": {
+                "installDefaults": self.recurring_install_defaults,
+                "entries": self.recurring_entries
             }
         })
     }
@@ -269,8 +289,23 @@ fn parse_onboard_manifest(raw: &str) -> LoomResult<OnboardManifest> {
         .get("skills")
         .and_then(Value::as_object)
         .ok_or_else(|| "onboard manifest missing skills object".to_string())?;
+    let recurring = value
+        .get("recurring")
+        .and_then(Value::as_object);
     let skill_entries = skills
         .get("entries")
+        .and_then(Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(Value::as_str)
+                .map(|entry| entry.trim().to_string())
+                .filter(|entry| !entry.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let recurring_entries = recurring
+        .and_then(|section| section.get("entries"))
         .and_then(Value::as_array)
         .map(|entries| {
             entries
@@ -307,6 +342,15 @@ fn parse_onboard_manifest(raw: &str) -> LoomResult<OnboardManifest> {
             DEFAULT_SKILL_ENTRIES.iter().map(|entry| entry.to_string()).collect()
         } else {
             skill_entries
+        },
+        recurring_install_defaults: recurring
+            .and_then(|section| section.get("installDefaults"))
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+        recurring_entries: if recurring_entries.is_empty() {
+            DEFAULT_RECURRING_ENTRIES.iter().map(|entry| entry.to_string()).collect()
+        } else {
+            recurring_entries
         },
     })
 }

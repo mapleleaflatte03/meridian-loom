@@ -103,6 +103,7 @@ fn run() -> LoomResult<()> {
         "binding" => commands::binding::handle_binding(&args[1..]),
         "channel" => commands::channel::handle_channel(&args[1..]),
         "skill" => commands::skill::handle_skill(&args[1..]),
+        "schedule" => commands::schedule::handle_schedule(&args[1..]),
         "heartbeat" => commands::heartbeat::handle_heartbeat(&args[1..]),
         "contract" => commands::runtime::handle_contract(&args[1..]),
         "capsule" => commands::runtime::handle_capsule(&args[1..]),
@@ -263,7 +264,7 @@ Bootstrap\n\
 ---------\n\
   loom banner\n\
   loom version\n\
-  loom onboard [--root PATH] [--mode MODE] [--org-id ID] [--kernel-path PATH] [--config-action setup|keep|modify|reset] [--manager-lane frontier|local] [--codex-auth-path PATH] [--gateway-port N] [--gateway-bind loopback|all] [--gateway-auth-mode token|none] [--gateway-token-env ENV] [--telegram-enabled yes|no] [--telegram-token-env ENV] [--telegram-dm-policy TEXT] [--telegram-group-policy TEXT] [--telegram-streaming TEXT] [--daemon-enabled yes|no] [--daemon-manager supervisor] [--start-daemon] [--skip-health-check] [--format human|json]\n\
+  loom onboard [--root PATH] [--mode MODE] [--org-id ID] [--kernel-path PATH] [--config-action setup|keep|modify|reset] [--manager-lane frontier|local] [--codex-auth-path PATH] [--gateway-port N] [--gateway-bind loopback|all] [--gateway-auth-mode token|none] [--gateway-token-env ENV] [--telegram-enabled yes|no] [--telegram-token-env ENV] [--telegram-dm-policy TEXT] [--telegram-group-policy TEXT] [--telegram-streaming TEXT] [--daemon-enabled yes|no] [--daemon-manager supervisor] [--recurring-install-defaults yes|no] [--recurring-entry ID]... [--start-daemon] [--skip-health-check] [--format human|json]\n\
   loom init --mode <embedded|shadow|standalone> [--kernel-path PATH] [--root PATH] [--org-id ID]\n\
   loom doctor [--root PATH] [--format json|human]\n\
   loom health [--root PATH] [--format json|human]\n\
@@ -289,6 +290,13 @@ Bootstrap\n\
   loom skill sync [--root PATH] [--format human|json]\n\
   loom skill list [--root PATH] [--format human|json]\n\
   loom skill show --skill-id ID [--root PATH] [--format human|json]\n\
+  loom schedule status [--root PATH] [--now-unix-ms MS] [--format human|json]\n\
+  loom schedule list [--root PATH] [--format human|json]\n\
+  loom schedule show --job-id ID [--root PATH] [--format human|json]\n\
+  loom schedule add --agent-id ID --job-kind KIND [--job-id ID] [--schedule daily|interval|once] [--expression HH:MM] [--every-seconds N] [--not-before-unix-ms MS] [--payload-json JSON] [--delivery-channel ID] [--delivery-recipient ID] [--delivery-allow-receipt-hashes] [--delivery-allow-operator-diagnostics] [--max-attempts N] [--source-kind default|manual] [--root PATH] [--format human|json]\n\
+  loom schedule pause --job-id ID [--root PATH] [--format human|json]\n\
+  loom schedule cancel --job-id ID [--root PATH] [--format human|json]\n\
+  loom schedule run-due [--root PATH] [--now-unix-ms MS] [--limit N] [--format human|json]\n\
   loom heartbeat status [--root PATH] [--now-unix-ms MS] [--format human|json]\n\
   loom heartbeat list [--root PATH] [--format human|json]\n\
   loom heartbeat show --heartbeat-id ID [--root PATH] [--format human|json]\n\

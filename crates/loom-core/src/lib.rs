@@ -14,6 +14,7 @@ pub mod onboarding;
 pub mod output_guard;
 pub mod provider_router;
 pub mod recurring;
+pub mod schedules;
 pub mod skills;
 pub mod wasm_host;
 pub mod wasm_limits;
@@ -303,6 +304,7 @@ pub fn init_workspace(
     capabilities::ensure_capability_registry_scaffold(&root, &config)?;
     agent_runtime::ensure_agent_runtime_scaffold(&root)?;
     recurring::ensure_heartbeat_runtime_scaffold(&root)?;
+    schedules::ensure_schedule_runtime_scaffold(&root)?;
     provider_router::ensure_provider_profiles_scaffold(&root)?;
     onboarding::ensure_onboard_manifest(&root, &config)?;
     channels::ensure_channel_runtime_scaffold(&root)?;
@@ -730,6 +732,51 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             level: "WARN",
             label: "heartbeat_registry",
             detail: format!("heartbeat runtime scaffold unavailable: {}", error),
+        }),
+    }
+    match schedules::ensure_schedule_runtime_scaffold(&root) {
+        Ok(schedule_registry) => {
+            push_path_check(
+                &mut checks,
+                "schedule_registry",
+                &schedule_registry,
+                true,
+                "schedule runtime registry present",
+            );
+            match schedules::schedule_overview(
+                &root,
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64,
+            ) {
+                Ok(overview) => checks.push(Check {
+                    level: if overview.enabled_count > 0 { "OK" } else { "WARN" },
+                    label: "schedule_runtime",
+                    detail: format!(
+                        "total={} enabled={} due={} runs_path={} schedules={}",
+                        overview.total_count,
+                        overview.enabled_count,
+                        overview.due_count,
+                        overview.runs_path.display(),
+                        if overview.job_ids.is_empty() {
+                            "(none)".to_string()
+                        } else {
+                            overview.job_ids.join(",")
+                        }
+                    ),
+                }),
+                Err(error) => checks.push(Check {
+                    level: "WARN",
+                    label: "schedule_runtime",
+                    detail: format!("schedule runtime unavailable: {}", error),
+                }),
+            }
+        }
+        Err(error) => checks.push(Check {
+            level: "WARN",
+            label: "schedule_registry",
+            detail: format!("schedule runtime scaffold unavailable: {}", error),
         }),
     }
     match channels::ensure_channel_runtime_scaffold(&root) {

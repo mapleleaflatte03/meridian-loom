@@ -10,6 +10,7 @@ use loom_core::agent_runtime::agent_runtime_overview;
 use loom_core::bindings::sync_binding_registry;
 use loom_core::channels::sync_channel_registry;
 use loom_core::skills::sync_skill_registry;
+use loom_core::schedules::{schedule_overview, sync_schedule_registry};
 use loom_core::onboarding::{
     derive_service_http_address, ensure_onboard_manifest, load_onboard_manifest,
     onboard_manifest_path, onboard_overview, write_onboard_manifest, OnboardManifest,
@@ -173,6 +174,8 @@ Choose your manager brain, edge bindings, and runtime defaults. Meridian will sc
     let channel_summary = sync_channel_registry(&root)?;
     let binding_summary = sync_binding_registry(&root)?;
     let skill_summary = sync_skill_registry(&root)?;
+    let schedule_sync = sync_schedule_registry(&root)?;
+    let schedule_runtime = schedule_overview(&root, current_unix_ms())?;
 
     let provider_summary = provider_plane_summary(Some(&root))?;
     let runtime_overview = agent_runtime_overview(&root)?;
@@ -244,6 +247,7 @@ Choose your manager brain, edge bindings, and runtime defaults. Meridian will sc
                     "telegram": overview.telegram_summary,
                     "daemon": overview.daemon_summary,
                     "skills": overview.skills_summary,
+                    "recurring": overview.recurring_summary,
                     "remote_mode": overview.remote_mode,
                     "channels": {
                         "total_count": channel_summary.total_count,
@@ -261,6 +265,12 @@ Choose your manager brain, edge bindings, and runtime defaults. Meridian will sc
                         "default_count": skill_summary.default_count,
                         "imported_count": skill_summary.imported_count,
                         "skill_ids": skill_summary.skill_ids.clone(),
+                    },
+                    "schedules_runtime": {
+                        "total_count": schedule_sync.total_count,
+                        "enabled_count": schedule_sync.enabled_count,
+                        "due_count": schedule_runtime.due_count,
+                        "job_ids": schedule_sync.job_ids.clone(),
                     },
                 },
                 "manager_route": manager_route.as_ref().map(route_json),
@@ -329,7 +339,9 @@ telegram:            {}
 channels:            total={} enabled={} ids={}
 bindings_runtime:    total={} enabled={} ids={}
 skills:              {}
+recurring:           {}
 skills_runtime:      total={} enabled={} defaults={} imported={} ids={}
+schedules_runtime:   total={} enabled={} due={} ids={}
 daemon:              {}
 health:              {}
 manager_route:       {}
@@ -361,11 +373,16 @@ next_step:           loom doctor --root {} --format human
         binding_summary.enabled_count,
         if binding_summary.binding_ids.is_empty() { "(none)".to_string() } else { binding_summary.binding_ids.join(",") },
         overview.skills_summary,
+        overview.recurring_summary,
         skill_summary.total_count,
         skill_summary.enabled_count,
         skill_summary.default_count,
         skill_summary.imported_count,
         if skill_summary.skill_ids.is_empty() { "(none)".to_string() } else { skill_summary.skill_ids.join(",") },
+        schedule_sync.total_count,
+        schedule_sync.enabled_count,
+        schedule_runtime.due_count,
+        if schedule_sync.job_ids.is_empty() { "(none)".to_string() } else { schedule_sync.job_ids.join(",") },
         daemon_summary,
         health_summary,
         manager_profile,
@@ -400,6 +417,8 @@ fn has_setup_overrides(args: &[String]) -> bool {
         "--remote-mode",
         "--skills-node-manager",
         "--skills-entry",
+        "--recurring-install-defaults",
+        "--recurring-entry",
         "--start-daemon",
         "--skip-health-check",
         "--mode",
@@ -461,6 +480,13 @@ fn apply_cli_overrides(args: &[String], manifest: &mut OnboardManifest) -> LoomR
     let entries = take_values(args, "--skills-entry");
     if !entries.is_empty() {
         manifest.skills_entries = entries;
+    }
+    if let Some(value) = take_value(args, "--recurring-install-defaults") {
+        manifest.recurring_install_defaults = parse_bool_flag("--recurring-install-defaults", &value)?;
+    }
+    let recurring_entries = take_values(args, "--recurring-entry");
+    if !recurring_entries.is_empty() {
+        manifest.recurring_entries = recurring_entries;
     }
     Ok(())
 }
@@ -535,6 +561,20 @@ fn apply_interactive_overrides(manifest: &mut OnboardManifest) -> LoomResult<()>
         &manifest.skills_entries.join(","),
     )?;
     manifest.skills_entries = skill_entries
+        .split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| entry.to_string())
+        .collect();
+    manifest.recurring_install_defaults = prompt_bool(
+        "Install default recurring jobs",
+        manifest.recurring_install_defaults,
+    )?;
+    let recurring_entries = prompt_text(
+        "Recurring job entries (comma separated)",
+        &manifest.recurring_entries.join(","),
+    )?;
+    manifest.recurring_entries = recurring_entries
         .split(',')
         .map(str::trim)
         .filter(|entry| !entry.is_empty())
@@ -675,4 +715,11 @@ fn render_daemon_summary(snapshot: &Value) -> String {
         .map(|pid| pid.to_string())
         .unwrap_or_else(|| "unknown".to_string());
     format!("supervisor {} pid={}", status, pid)
+}
+
+fn current_unix_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }

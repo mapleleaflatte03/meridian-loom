@@ -13,3 +13,4 @@ pub(crate) mod skill;
 pub(crate) mod supervisor;
 pub(crate) mod wasm;
 pub(crate) mod provider;
+pub(crate) mod schedule;
