@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub mod advanced_primitives;
 pub mod agent_runtime;
+pub mod channels;
 pub mod capability_shims;
 pub mod capabilities;
 pub mod onboarding;
@@ -300,6 +301,7 @@ pub fn init_workspace(
     recurring::ensure_heartbeat_runtime_scaffold(&root)?;
     provider_router::ensure_provider_profiles_scaffold(&root)?;
     onboarding::ensure_onboard_manifest(&root, &config)?;
+    channels::ensure_channel_runtime_scaffold(&root)?;
 
     fs::write(&config_path, render_config(&config)).map_err(io_err)?;
     fs::write(
@@ -722,6 +724,44 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             level: "WARN",
             label: "heartbeat_registry",
             detail: format!("heartbeat runtime scaffold unavailable: {}", error),
+        }),
+    }
+    match channels::ensure_channel_runtime_scaffold(&root) {
+        Ok(channel_registry) => {
+            push_path_check(
+                &mut checks,
+                "channel_registry",
+                &channel_registry,
+                true,
+                "channel runtime registry present",
+            );
+            match channels::channel_overview(&root) {
+                Ok(overview) => checks.push(Check {
+                    level: if overview.enabled_count > 0 { "OK" } else { "WARN" },
+                    label: "channel_runtime",
+                    detail: format!(
+                        "total={} enabled={} delivery_path={} channels={}",
+                        overview.total_count,
+                        overview.enabled_count,
+                        overview.delivery_path.display(),
+                        if overview.channel_ids.is_empty() {
+                            "(none)".to_string()
+                        } else {
+                            overview.channel_ids.join(",")
+                        }
+                    ),
+                }),
+                Err(error) => checks.push(Check {
+                    level: "WARN",
+                    label: "channel_runtime",
+                    detail: format!("channel runtime unavailable: {}", error),
+                }),
+            }
+        }
+        Err(error) => checks.push(Check {
+            level: "WARN",
+            label: "channel_registry",
+            detail: format!("channel runtime scaffold unavailable: {}", error),
         }),
     }
     let delivery_queue = delivery_queue_path(&root, &config);

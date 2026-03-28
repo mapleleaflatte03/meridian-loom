@@ -7,6 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::*;
 use loom_core::agent_runtime::agent_runtime_overview;
+use loom_core::channels::sync_channel_registry;
 use loom_core::onboarding::{
     derive_service_http_address, ensure_onboard_manifest, load_onboard_manifest,
     onboard_manifest_path, onboard_overview, write_onboard_manifest, OnboardManifest,
@@ -111,6 +112,7 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
     }
     loom_core::write_config(&root, &config)?;
     let manifest_path = write_onboard_manifest(&root, &manifest)?;
+    let channel_summary = sync_channel_registry(&root)?;
 
     let provider_summary = provider_plane_summary(Some(&root))?;
     let runtime_overview = agent_runtime_overview(&root)?;
@@ -181,6 +183,11 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
                     "daemon": overview.daemon_summary,
                     "skills": overview.skills_summary,
                     "remote_mode": overview.remote_mode,
+                    "channels": {
+                        "total_count": channel_summary.total_count,
+                        "enabled_count": channel_summary.enabled_count,
+                        "channel_ids": channel_summary.channel_ids.clone(),
+                    },
                 },
                 "manager_route": manager_route.as_ref().map(route_json),
                 "pulse_route": pulse_route.as_ref().map(route_json),
@@ -227,7 +234,32 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
 
     print_startup_banner();
     print_human(&format!(
-        "Meridian Loom // ONBOARD\n=========================\nroot:                {}\nconfig_status:       {}\nconfig_action:       {}\nmode:                {}\norg_id:              {}\nprovider_profiles:   {}\nagent_profiles:      {}\ncodex_auth_ready:    {}\ncodex_auth_path:     {}\ncodex_detail:        {}\ngateway:             {}\ntelegram:            {}\nskills:              {}\ndaemon:              {}\nhealth:              {}\nmanager_route:       {}\nmanager_endpoint:    {}\nmanager_model:       {}\npulse_route:         {}\npulse_model:         {}\nmanifest:            {}\nnext_step:           loom doctor --root {} --format human\n",
+        "Meridian Loom // ONBOARD
+=========================
+root:                {}
+config_status:       {}
+config_action:       {}
+mode:                {}
+org_id:              {}
+provider_profiles:   {}
+agent_profiles:      {}
+codex_auth_ready:    {}
+codex_auth_path:     {}
+codex_detail:        {}
+gateway:             {}
+telegram:            {}
+channels:            total={} enabled={} ids={}
+skills:              {}
+daemon:              {}
+health:              {}
+manager_route:       {}
+manager_endpoint:    {}
+manager_model:       {}
+pulse_route:         {}
+pulse_model:         {}
+manifest:            {}
+next_step:           loom doctor --root {} --format human
+",
         root.display(),
         config_status,
         config_action,
@@ -240,6 +272,9 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
         codex_detail,
         overview.gateway_summary,
         overview.telegram_summary,
+        channel_summary.total_count,
+        channel_summary.enabled_count,
+        if channel_summary.channel_ids.is_empty() { "(none)".to_string() } else { channel_summary.channel_ids.join(",") },
         overview.skills_summary,
         daemon_summary,
         health_summary,

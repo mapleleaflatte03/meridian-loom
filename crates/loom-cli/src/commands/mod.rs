@@ -1,5 +1,6 @@
 pub(crate) mod action;
 pub(crate) mod capability;
+pub(crate) mod channel;
 pub(crate) mod heartbeat;
 pub(crate) mod job;
 pub(crate) mod onboard;
