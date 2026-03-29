@@ -14,6 +14,7 @@ use loom_core::session_provenance::{
     render_session_provenance_json, render_session_provenance_list_human,
     render_session_provenance_list_json, render_session_provenance_overview_human,
     render_session_provenance_overview_json, session_provenance_overview,
+    update_session_provenance_job, update_session_provenance_route_full,
 };
 
 pub(crate) fn handle_session(args: &[String]) -> LoomResult<()> {
@@ -25,13 +26,14 @@ pub(crate) fn handle_session(args: &[String]) -> LoomResult<()> {
         Some("status") => handle_session_status(&args[1..]),
         Some("list") => handle_session_list(&args[1..]),
         Some("show") => handle_session_show(&args[1..]),
+        Some("route") => handle_session_route(&args[1..]),
         Some("override") => handle_session_override(&args[1..]),
         Some("clear-override") => handle_session_clear_override(&args[1..]),
         Some("send-policy") => handle_session_send_policy(&args[1..]),
         Some("overrides") => handle_session_overrides_list(&args[1..]),
         Some("policies") => handle_session_policies_list(&args[1..]),
         _ => Err(
-            "session supports: status, list, show, override, clear-override, send-policy, overrides, policies"
+            "session supports: status, list, show, route, override, clear-override, send-policy, overrides, policies"
                 .to_string(),
         ),
     }
@@ -49,6 +51,16 @@ COMMANDS:
   status                              Show session provenance overview
   list [--limit N]                    List active sessions
   show --session-key KEY              Show session details + override + send policy
+  route --session-key KEY             Update route/provenance facts for a session
+        [--provider-profile PROFILE]
+        [--model MODEL]
+        [--override-source SOURCE]
+        [--transport-kind KIND]
+        [--auth-mode MODE]
+        [--execution-owner OWNER]
+        [--ingress-request-id ID]
+        [--job-id ID]
+        [--delivery-id ID]
   override --session-key KEY          Set provider override for a session
         [--provider-profile PROFILE]
         [--model MODEL]
@@ -138,6 +150,56 @@ fn handle_session_show(args: &[String]) -> LoomResult<()> {
             });
             print!("{}\n", serde_json::to_string_pretty(&output).unwrap_or_default());
         }
+    }
+    Ok(())
+}
+
+fn handle_session_route(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_session_help();
+        return Ok(());
+    }
+    let root = root_from(take_value(args, "--root").as_deref())?;
+    let session_key = required_flag(args, "--session-key")?;
+    let provider_profile = take_value(args, "--provider-profile").unwrap_or_default();
+    let model = take_value(args, "--model").unwrap_or_default();
+    let override_source = take_value(args, "--override-source").unwrap_or_else(|| "default".to_string());
+    let transport_kind = take_value(args, "--transport-kind").unwrap_or_default();
+    let auth_mode = take_value(args, "--auth-mode").unwrap_or_default();
+    let execution_owner = take_value(args, "--execution-owner").unwrap_or_default();
+    let ingress_request_id = take_value(args, "--ingress-request-id");
+    let job_id = take_value(args, "--job-id");
+    let delivery_id = take_value(args, "--delivery-id");
+    let format = format_flag(args);
+
+    update_session_provenance_route_full(
+        &root,
+        &session_key,
+        &provider_profile,
+        &model,
+        &override_source,
+        &transport_kind,
+        &auth_mode,
+        &execution_owner,
+    )?;
+    if ingress_request_id.is_some() || job_id.is_some() || delivery_id.is_some() {
+        update_session_provenance_job(
+            &root,
+            &session_key,
+            job_id.as_deref(),
+            delivery_id.as_deref(),
+            ingress_request_id.as_deref(),
+        )?;
+    }
+
+    let record = find_session_provenance(&root, &session_key)?
+        .ok_or_else(|| format!("session '{}' was not found", session_key))?;
+    match format.as_str() {
+        "human" => {
+            print_startup_banner();
+            print_human(&render_session_provenance_human(&record));
+        }
+        _ => print!("{}", render_session_provenance_json(&record)),
     }
     Ok(())
 }
