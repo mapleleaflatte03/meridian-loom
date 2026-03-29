@@ -388,6 +388,65 @@ impl MemoryServiceOverview {
     }
 }
 
+pub fn render_memory_service_overview_human(overview: &MemoryServiceOverview) -> String {
+    let mut rendered = format!(
+        "agent_count:       {}\ntotal_entries:     {}\ntotal_bytes:       {}\nmax_entries:       {}\nmax_entry_bytes:   {}\nretention_days:    {}\nagent_isolation:   {}\n",
+        overview.agent_count,
+        overview.total_entries,
+        overview.total_bytes,
+        overview.policy.max_entries_per_agent,
+        overview.policy.max_entry_bytes,
+        overview.policy.retention_days,
+        overview.policy.agent_isolation,
+    );
+    for index in &overview.indices {
+        rendered.push_str(&format!(
+            "\n[agent:{}]\nentries:          {}\nbytes:            {}\ncategories:       {}\noldest_entry:     {}\nnewest_entry:     {}\n",
+            index.agent_id,
+            index.entry_count,
+            index.total_bytes,
+            if index.categories.is_empty() {
+                "(none)".to_string()
+            } else {
+                index.categories.join(",")
+            },
+            index.oldest_entry,
+            index.newest_entry,
+        ));
+    }
+    rendered
+}
+
+pub fn render_memory_service_overview_json(overview: &MemoryServiceOverview) -> String {
+    serde_json::to_string_pretty(&overview.to_json()).unwrap_or_else(|_| "{}".to_string()) + "\n"
+}
+
+pub fn render_memory_entries_human(entries: &[MemoryEntry]) -> String {
+    if entries.is_empty() {
+        return "entry_count:       0\n".to_string();
+    }
+    let mut rendered = format!("entry_count:       {}\n", entries.len());
+    for entry in entries {
+        rendered.push_str(&format!(
+            "\n[entry:{}]\nagent_id:         {}\ncategory:         {}\nkey:              {}\nsource:           {}\nupdated_at:       {}\ncontent:          {}\n",
+            entry.entry_id,
+            entry.agent_id,
+            entry.category,
+            entry.key,
+            entry.source,
+            entry.updated_at,
+            entry.content.replace('\n', "\\n"),
+        ));
+    }
+    rendered
+}
+
+pub fn render_memory_entries_json(entries: &[MemoryEntry]) -> String {
+    serde_json::to_string_pretty(&entries.iter().map(MemoryEntry::to_json).collect::<Vec<_>>())
+        .unwrap_or_else(|_| "[]".to_string())
+        + "\n"
+}
+
 fn current_unix() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

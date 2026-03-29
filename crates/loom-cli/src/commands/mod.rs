@@ -7,6 +7,7 @@ pub(crate) mod channel;
 pub(crate) mod heartbeat;
 pub(crate) mod ingress;
 pub(crate) mod job;
+pub(crate) mod memory;
 pub(crate) mod onboard;
 pub(crate) mod output;
 pub(crate) mod queue;

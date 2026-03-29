@@ -102,6 +102,7 @@ fn run() -> LoomResult<()> {
         "config" => commands::runtime::handle_config(&args[1..]),
         "provider" => commands::provider::handle_provider(&args[1..]),
         "context" => commands::context::handle_context(&args[1..]),
+        "memory" => commands::memory::handle_memory(&args[1..]),
         "gateway" => commands::gateway::handle_gateway(&args[1..]),
         "binding" => commands::binding::handle_binding(&args[1..]),
         "channel" => commands::channel::handle_channel(&args[1..]),
@@ -306,6 +307,11 @@ Bootstrap\n\
   loom context sync [--root PATH] [--format human|json]\n\
   loom context bundle --agent-id ID [--session-id ID] [--root PATH] [--format human|json]\n\
   loom context overlay --agent-id ID --session-id ID --section soul|user|tools|heartbeat|agents|memory [--text TEXT|--file PATH] [--root PATH] [--format human|json]\n\
+  loom memory status [--root PATH] [--format human|json]\n\
+  loom memory search --agent-id ID [--category NAME] [--key-prefix PREFIX] [--root PATH] [--format human|json]\n\
+  loom memory write --agent-id ID --category NAME --key KEY --content TEXT [--source NAME] [--root PATH] [--format human|json]\n\
+  loom memory remove --agent-id ID --category NAME --key KEY [--root PATH] [--format human|json]\n\
+  loom memory prune [--root PATH] [--format human|json]\n\
   loom skill status [--root PATH] [--format human|json]\n\
   loom skill sync [--root PATH] [--format human|json]\n\
   loom skill list [--root PATH] [--format human|json]\n\
