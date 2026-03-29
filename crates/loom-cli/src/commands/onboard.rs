@@ -282,6 +282,7 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
                 codex_auth_path.clone(),
                 false,
             )?;
+            print_provider_selection_preview(&provider_choice, &selection);
             manager_lane = selection.manager_lane;
             manager_model = selection.manager_model;
             codex_auth_source = selection.codex_auth_source;
@@ -337,6 +338,7 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
                 codex_auth_path.clone(),
                 true,
             )?;
+            print_provider_selection_preview(&provider_choice, &selection);
             manager_lane = selection.manager_lane;
             manager_model = selection.manager_model;
             codex_auth_source = selection.codex_auth_source;
@@ -1120,11 +1122,12 @@ fn print_quickstart_summary_card(manifest: &OnboardManifest, manager_model: &str
         "QuickStart summary",
         &format!(
             "Manager model:    {}\n\
-             Gateway edge:    {}:{} auth={} tailscale={}\n\
-             Telegram:        {}\n\
-             Daemon:          {} ({})\n\
-             Skills defaults: {}\n\
-             Recurring:       {}",
+             Runtime lane:     frontier-first with local edge defaults\n\
+             Gateway edge:     {}:{} auth={} tailscale={}\n\
+             Telegram:         {}\n\
+             Daemon:           {} ({})\n\
+             Skills defaults:  {}\n\
+             Recurring:        {}",
             manager_model,
             manifest.gateway_bind,
             manifest.gateway_port,
@@ -1149,6 +1152,114 @@ fn print_quickstart_summary_card(manifest: &OnboardManifest, manager_model: &str
             },
         ),
     );
+}
+
+fn print_provider_selection_preview(provider_choice: &str, selection: &ProviderSetupSelection) {
+    let (provider_label, transport_label, auth_label, next_label) =
+        provider_selection_details(provider_choice, selection);
+    print_setup_note(
+        "Route preview",
+        &format!(
+            "Provider:         {}\n\
+             Manager lane:     {}\n\
+             Model:            {}\n\
+             Transport:        {}\n\
+             Auth:             {}\n\
+             Next write:       {}",
+            provider_label,
+            selection.manager_lane,
+            selection.manager_model,
+            transport_label,
+            auth_label,
+            next_label,
+        ),
+    );
+}
+
+fn provider_selection_details(
+    provider_choice: &str,
+    selection: &ProviderSetupSelection,
+) -> (&'static str, &'static str, String, &'static str) {
+    match provider_choice {
+        "loom_codex" => {
+            let auth_label = match selection.codex_auth_source.as_str() {
+                "cli" => "shared operator Codex auth.json".to_string(),
+                "path" => format!(
+                    "custom Codex auth.json ({})",
+                    selection
+                        .codex_auth_path
+                        .as_deref()
+                        .unwrap_or("(missing path)")
+                ),
+                _ => "Loom-managed device auth file".to_string(),
+            };
+            (
+                "Loom-managed Codex OAuth",
+                "codex_session",
+                auth_label,
+                "Meridian will write the frontier route and keep local edge defaults.",
+            )
+        }
+        "local_ollama" => (
+            "Local Ollama",
+            "ollama_local",
+            "no remote credential required".to_string(),
+            "Meridian will keep the runtime local-only until you add a frontier path.",
+        ),
+        "local_only" => (
+            "Local-only",
+            "ollama_local",
+            "no remote credential required".to_string(),
+            "Meridian will skip remote provider setup for this install.",
+        ),
+        "openai_compatible" => {
+            let auth_label = match selection
+                .provider_config
+                .as_ref()
+                .map(|config| &config.auth)
+            {
+                Some(ProviderAuthMode::BearerEnv { env_var }) => {
+                    format!("bearer token env {}", env_var)
+                }
+                _ => "bearer token env".to_string(),
+            };
+            (
+                "OpenAI-compatible endpoint",
+                "openai_rest",
+                auth_label,
+                "Meridian will save the endpoint and expect the env var before doctor turns green.",
+            )
+        }
+        "custom_endpoint" => {
+            let auth_label = match selection
+                .provider_config
+                .as_ref()
+                .map(|config| &config.auth)
+            {
+                Some(ProviderAuthMode::StaticHeaderEnv {
+                    header_name,
+                    env_var,
+                }) => format!("{} from env {}", header_name, env_var),
+                Some(ProviderAuthMode::BearerEnv { env_var }) => {
+                    format!("bearer token env {}", env_var)
+                }
+                Some(ProviderAuthMode::None) => "no auth header".to_string(),
+                _ => "custom auth".to_string(),
+            };
+            (
+                "Custom endpoint",
+                "custom_http",
+                auth_label,
+                "Meridian will save the custom HTTP route exactly as configured here.",
+            )
+        }
+        _ => (
+            "Configured provider",
+            "custom",
+            "runtime-managed auth".to_string(),
+            "Meridian will write the selected route into the runtime root.",
+        ),
+    }
 }
 
 fn prompt_provider_setup(
@@ -1493,9 +1604,12 @@ fn normalize_codex_auth_selection(
 mod tests {
     use super::{
         auth_paths_match, choice_matches, codex_detail_for_manager, manager_current_state_hint,
-        normalize_choice_token, normalize_codex_auth_selection, PromptSelectOption, SetupState,
+        normalize_choice_token, normalize_codex_auth_selection, provider_selection_details,
+        render_stage_progress, PromptSelectOption, ProviderSetupSelection, SetupState,
     };
-    use loom_core::provider_router::{ProviderAuthStatus, ProviderKind};
+    use loom_core::provider_router::{
+        OnboardProviderRouteConfig, ProviderAuthMode, ProviderAuthStatus, ProviderKind,
+    };
 
     fn auth_status(
         profile_kind: ProviderKind,
@@ -1630,6 +1744,40 @@ mod tests {
             "/tmp/meridian-home/.meridian/auth/codex/auth.json"
         ));
     }
+
+    #[test]
+    fn stage_progress_renders_simple_meter() {
+        assert_eq!(render_stage_progress(1, 5), "[#----]");
+        assert_eq!(render_stage_progress(3, 5), "[###--]");
+        assert_eq!(render_stage_progress(5, 5), "[#####]");
+    }
+
+    #[test]
+    fn provider_selection_details_surface_openai_env_requirement() {
+        let selection = ProviderSetupSelection {
+            manager_lane: "frontier".to_string(),
+            manager_model: "gpt-5.4-mini".to_string(),
+            codex_auth_source: "none".to_string(),
+            codex_auth_path: None,
+            provider_config: Some(OnboardProviderRouteConfig {
+                profile_name: "openai_default".to_string(),
+                kind: ProviderKind::OpenAiCompatible,
+                base_url: "https://api.openai.com/v1/chat/completions".to_string(),
+                default_model: "gpt-5.4-mini".to_string(),
+                auth: ProviderAuthMode::BearerEnv {
+                    env_var: "OPENAI_API_KEY".to_string(),
+                },
+                note: "test".to_string(),
+                make_default: true,
+            }),
+        };
+        let (provider, transport, auth, next) =
+            provider_selection_details("openai_compatible", &selection);
+        assert_eq!(provider, "OpenAI-compatible endpoint");
+        assert_eq!(transport, "openai_rest");
+        assert!(auth.contains("OPENAI_API_KEY"));
+        assert!(next.contains("doctor"));
+    }
 }
 
 fn codex_detail_for_manager(manager_profile_kind: Option<&ProviderKind>) -> String {
@@ -1705,18 +1853,30 @@ fn trimmed_string_option(raw: &str) -> Option<String> {
 }
 
 fn print_setup_stage(step: usize, total: usize, title: &str, detail: &str) {
+    let progress = render_stage_progress(step, total);
     print_human(&format!(
-        "Stage {} of {}
+        "Progress {}  Stage {} of {}
 {}
 {}
 
 ",
+        progress,
         step,
         total,
         title,
         underline_for(title),
     ));
     print_setup_note("What happens here", detail);
+}
+
+fn render_stage_progress(step: usize, total: usize) -> String {
+    let safe_total = total.max(1);
+    let safe_step = step.clamp(1, safe_total);
+    format!(
+        "[{}{}]",
+        "#".repeat(safe_step),
+        "-".repeat(safe_total.saturating_sub(safe_step))
+    )
 }
 
 fn print_setup_note(title: &str, body: &str) {
@@ -1793,6 +1953,7 @@ fn prompt_select(
             print_human(&format!("     {}\n", option.hint));
         }
     }
+    print_human("Enter a number or type the label. Press Enter to keep the default.\n");
     loop {
         print!("choice [{}]: ", default_index + 1);
         io::stdout().flush().map_err(|error| error.to_string())?;
