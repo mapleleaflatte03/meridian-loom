@@ -11365,6 +11365,48 @@ print(json.dumps({'id': agent_id, 'name': 'Atlas', 'org_id': org_id, 'role': 'an
     }
 
     #[test]
+    fn runtime_service_cancel_marks_queued_job_cancelled() {
+        let root = temp_path("loom-shadow-cancel-queued");
+        fs::create_dir_all(&root).expect("root");
+        let kernel_root = temp_path("loom-shadow-cancel-queued-kernel");
+        scaffold_queue_kernel(&kernel_root, "cancel queued fixture", 0.5);
+        init_workspace(
+            &root,
+            "embedded",
+            Some(kernel_root.to_string_lossy().as_ref()),
+            "org_demo",
+        )
+        .expect("init workspace");
+
+        let envelope = sample_envelope();
+        let capture = enqueue_action(&root, &kernel_root, &envelope).expect("enqueue");
+
+        let request = format!(
+            "{{\"request_type\":{},\"request_id\":{},\"job_id\":{}}}\n",
+            json_string("cancel_job"),
+            json_string("cancel-test"),
+            json_string(&capture.input_hash),
+        );
+        let reply = handle_runtime_service_request(
+            &root,
+            Some(kernel_root.to_string_lossy().as_ref()),
+            "test-socket",
+            "socket",
+            &request,
+        )
+        .expect("cancel request");
+
+        assert_eq!(reply.status, "cancelled");
+        assert!(reply.payload.contains(r#""status":"cancelled""#));
+        assert!(reply.payload.contains(&capture.input_hash));
+
+        let state = load_scheduler_state_or_default(&root).expect("load scheduler");
+        let job = state.jobs.get(&capture.input_hash).expect("job");
+        assert_eq!(job.status, JobStatus::Cancelled);
+        assert_eq!(job.result_summary.as_deref(), Some("cancelled via service cancel request"));
+    }
+
+    #[test]
     fn queue_run_once_processes_a_single_batch_and_records_progress() {
         let root = temp_path("loom-shadow-queue-run-once");
         fs::create_dir_all(&root).expect("root");
