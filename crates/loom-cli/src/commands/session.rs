@@ -10,7 +10,7 @@ use loom_core::session_policy::{
     set_session_send_policy,
 };
 use loom_core::session_provenance::{
-    find_session_provenance, list_session_provenance, render_session_provenance_human,
+    find_session_provenance, list_session_provenance, open_session_provenance, render_session_provenance_human,
     render_session_provenance_json, render_session_provenance_list_human,
     render_session_provenance_list_json, render_session_provenance_overview_human,
     render_session_provenance_overview_json, session_provenance_overview,
@@ -52,6 +52,10 @@ COMMANDS:
   list [--limit N]                    List active sessions
   show --session-key KEY              Show session details + override + send policy
   route --session-key KEY             Update route/provenance facts for a session
+        [--channel-id CHANNEL]
+        [--peer-id PEER]
+        [--binding-id BINDING]
+        [--agent-id AGENT]
         [--provider-profile PROFILE]
         [--model MODEL]
         [--override-source SOURCE]
@@ -161,6 +165,26 @@ fn handle_session_route(args: &[String]) -> LoomResult<()> {
     }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let session_key = required_flag(args, "--session-key")?;
+    let channel_id = take_value(args, "--channel-id").unwrap_or_else(|| {
+        session_key
+            .split_once(':')
+            .map(|(channel, _)| channel.to_string())
+            .unwrap_or_default()
+    });
+    let peer_id = take_value(args, "--peer-id").unwrap_or_else(|| {
+        session_key
+            .split_once(':')
+            .map(|(_, peer)| peer.to_string())
+            .unwrap_or_default()
+    });
+    let binding_id = take_value(args, "--binding-id").unwrap_or_else(|| {
+        if channel_id.is_empty() {
+            String::new()
+        } else {
+            format!("binding-{}", channel_id)
+        }
+    });
+    let agent_id = take_value(args, "--agent-id").unwrap_or_default();
     let provider_profile = take_value(args, "--provider-profile").unwrap_or_default();
     let model = take_value(args, "--model").unwrap_or_default();
     let override_source = take_value(args, "--override-source").unwrap_or_else(|| "default".to_string());
@@ -171,6 +195,22 @@ fn handle_session_route(args: &[String]) -> LoomResult<()> {
     let job_id = take_value(args, "--job-id");
     let delivery_id = take_value(args, "--delivery-id");
     let format = format_flag(args);
+
+    if find_session_provenance(&root, &session_key)?.is_none()
+        && !channel_id.is_empty()
+        && !peer_id.is_empty()
+        && !agent_id.is_empty()
+        && !binding_id.is_empty()
+    {
+        open_session_provenance(
+            &root,
+            &session_key,
+            &channel_id,
+            &peer_id,
+            &agent_id,
+            &binding_id,
+        )?;
+    }
 
     update_session_provenance_route_full(
         &root,
