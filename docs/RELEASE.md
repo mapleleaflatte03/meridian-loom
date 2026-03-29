@@ -1,6 +1,6 @@
 # Release
 
-Loom releases are currently local-first operator packages.
+Loom releases are local-first operator packages published as GitHub release assets.
 
 ## Release layout
 
@@ -28,6 +28,15 @@ The tarball produced by `scripts/package_release.sh` contains:
 ```bash
 ./scripts/release_local.sh --kernel-path /opt/meridian-kernel
 ```
+
+## Publish a tagged release
+
+Create and push a tag like `v0.1.0`. The GitHub release workflow builds the package archive for the host runner, attaches:
+
+- `meridian-loom-<version>-<os>-<arch>.tar.gz`
+- `meridian-loom-<version>-<os>-<arch>.tar.gz.sha256`
+
+and publishes them on the matching GitHub Release.
 
 ## Install a release
 

@@ -1,0 +1,42 @@
+name: Loom Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run workspace tests
+        run: cargo test --workspace --locked
+
+      - name: Package release
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          artifact="$(./scripts/package_release.sh --version "${GITHUB_REF_NAME}" --output-dir dist)"
+          echo "artifact=${artifact}" >> "${GITHUB_OUTPUT}"
+          if [[ -f "${artifact}.sha256" ]]; then
+            echo "checksum=${artifact}.sha256" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          fail_on_unmatched_files: true
+          files: |
+            ${{ steps.package.outputs.artifact }}
+            ${{ steps.package.outputs.checksum }}

@@ -23,7 +23,7 @@
 
 # Meridian Loom
 
-Meridian Loom is the primary hands-on product surface for Meridian v0.1.0. It carries the Mantis-branded installer and CLI, provisions into the operator's home directory, and exposes the bounded execution primitives that operators can install, inspect, and run directly.
+Meridian Loom is the primary hands-on product surface for Meridian v0.1.0. It carries the Meridian installer and CLI, provisions into the operator's home directory, and exposes the bounded execution primitives that operators can install, inspect, and run directly.
 
 ## Proof of Governed Execution (PoGE)
 
@@ -35,10 +35,10 @@ The platform's cryptographic execution-receipt architecture is defined in the [M
 ## 1-Command Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/meridian/loom/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/mapleleaflatte03/meridian-loom/main/scripts/install.sh | bash
 ```
 
-The installer keeps the Mantis banner, bootstraps Rust when missing, provisions the runtime under `$HOME/.local/share/meridian-loom`, and seeds the built-in Wasm capability registry.
+The installer now prefers a prebuilt GitHub release for the current host and only falls back to a source build when a compatible release asset is unavailable. It provisions the runtime under `$HOME/.local/share/meridian-loom`, links `loom` into `$HOME/.local/bin`, and seeds the built-in Wasm capability registry.
 
 ## Runtime Primitive Story
 
@@ -53,7 +53,7 @@ Meridian Loom is the local runtime layer for the following primitive surfaces:
 
 ## What Ships In v0.1.0
 
-- 1-command installer with the Mantis banner.
+- 1-command installer with Meridian branding and binary-first release installs.
 - Local service lifecycle with foreground and background modes.
 - Tokenized local HTTP control plane.
 - Queue, job ledger, audit, parity, and shadow artifacts on disk.

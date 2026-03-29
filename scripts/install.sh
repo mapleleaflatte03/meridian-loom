@@ -11,10 +11,14 @@ fi
 export HOME="$HOME_DIR"
 
 PREFIX="${LOOM_PREFIX:-${HOME_DIR}/.local/share/meridian-loom}"
-BIN_DIR="${LOOM_BIN_DIR:-${PREFIX}/current/bin}"
+CURRENT_DIR="${PREFIX}/current"
+BIN_DIR="${LOOM_BIN_DIR:-${HOME_DIR}/.local/bin}"
 RUNTIME_ROOT="${LOOM_RUNTIME_ROOT:-${PREFIX}/runtime/default}"
 BINARY_PATH="${BIN_DIR}/loom"
 KERNEL_PATH="${LOOM_KERNEL_PATH:-}"
+RELEASE_REPO="${LOOM_RELEASE_REPO:-mapleleaflatte03/meridian-loom}"
+RELEASE_VERSION="${LOOM_RELEASE_VERSION:-latest}"
+INSTALL_MODE="${LOOM_INSTALL_MODE:-auto}"
 CARGO_HOME="${CARGO_HOME:-${HOME_DIR}/.cargo}"
 RUSTUP_HOME="${RUSTUP_HOME:-${HOME_DIR}/.rustup}"
 CARGO_ENV="${CARGO_HOME}/env"
@@ -24,6 +28,7 @@ SUDO=()
 APT_UPDATED=0
 RUNTIME_WAS_INITIALIZED=0
 ONBOARD_WAS_RUN=0
+INSTALL_SOURCE="unknown"
 
 ensure_admin_access() {
   local reason="${1:-administrative action}"
@@ -42,15 +47,18 @@ ensure_admin_access() {
 }
 
 ensure_privileges() {
+  local target
   local writable_probe
-  writable_probe="$PREFIX"
-  while [[ ! -e "$writable_probe" && "$writable_probe" != "/" ]]; do
-    writable_probe="$(dirname "$writable_probe")"
+  for target in "$PREFIX" "$BIN_DIR"; do
+    writable_probe="$target"
+    while [[ ! -e "$writable_probe" && "$writable_probe" != "/" ]]; do
+      writable_probe="$(dirname "$writable_probe")"
+    done
+    if [[ -w "$writable_probe" || -w "$target" ]]; then
+      continue
+    fi
+    ensure_admin_access "write to $target"
   done
-  if [[ -w "$writable_probe" || -w "$PREFIX" ]]; then
-    return
-  fi
-  ensure_admin_access "write to $PREFIX"
 }
 
 run_privileged() {
@@ -105,6 +113,147 @@ ensure_command_or_package() {
   ensure_apt_updated
   printf '==> Installing missing package %s for %s\n' "$package_name" "$command_name"
   run_admin env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends "$package_name"
+}
+
+repo_has_source_checkout() {
+  [[ -f "$REPO_ROOT/Cargo.toml" && -x "$REPO_ROOT/scripts/package_release.sh" ]]
+}
+
+normalize_os() {
+  case "$(uname -s)" in
+    Linux) printf 'linux\n' ;;
+    Darwin) printf 'darwin\n' ;;
+    *)
+      printf 'unsupported operating system: %s\n' "$(uname -s)" >&2
+      return 1
+      ;;
+  esac
+}
+
+normalize_arch() {
+  case "$(uname -m)" in
+    x86_64|amd64) printf 'x86_64\n' ;;
+    aarch64|arm64) printf 'aarch64\n' ;;
+    *)
+      printf 'unsupported architecture: %s\n' "$(uname -m)" >&2
+      return 1
+      ;;
+  esac
+}
+
+release_metadata_url() {
+  if [[ "$RELEASE_VERSION" == "latest" ]]; then
+    printf 'https://api.github.com/repos/%s/releases/latest\n' "$RELEASE_REPO"
+  else
+    printf 'https://api.github.com/repos/%s/releases/tags/%s\n' "$RELEASE_REPO" "$RELEASE_VERSION"
+  fi
+}
+
+extract_release_asset_urls() {
+  local metadata_path="$1"
+  local target_os="$2"
+  local target_arch="$3"
+  python3 - "$metadata_path" "$target_os" "$target_arch" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+metadata_path = pathlib.Path(sys.argv[1])
+target_os = sys.argv[2]
+target_arch = sys.argv[3]
+payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+assets = payload.get("assets", [])
+pattern = re.compile(rf"^meridian-loom-.*-{re.escape(target_os)}-{re.escape(target_arch)}\.tar\.gz$")
+package = None
+checksum = None
+for asset in assets:
+    name = asset.get("name", "")
+    if pattern.match(name):
+        package = asset
+    elif package and name == package["name"] + ".sha256":
+        checksum = asset
+if package is None:
+    for asset in assets:
+        name = asset.get("name", "")
+        if pattern.match(name):
+            package = asset
+            break
+if package is not None and checksum is None:
+    checksum_name = package["name"] + ".sha256"
+    for asset in assets:
+        if asset.get("name") == checksum_name:
+            checksum = asset
+            break
+if package is None:
+    sys.exit(1)
+print(package["name"])
+print(package["browser_download_url"])
+print(checksum["browser_download_url"] if checksum else "")
+PY
+}
+
+verify_checksum() {
+  local artifact_path="$1"
+  local checksum_path="$2"
+  python3 - "$artifact_path" "$checksum_path" <<'PY'
+import hashlib
+import pathlib
+import sys
+
+artifact = pathlib.Path(sys.argv[1])
+checksum = pathlib.Path(sys.argv[2])
+line = checksum.read_text(encoding="utf-8").strip().splitlines()[0]
+expected = line.split()[0]
+h = hashlib.sha256()
+with artifact.open("rb") as handle:
+    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+        h.update(chunk)
+actual = h.hexdigest()
+if actual != expected:
+    raise SystemExit(f"checksum mismatch for {artifact.name}: expected {expected}, got {actual}")
+PY
+}
+
+download_prebuilt_release() {
+  local target_os
+  local target_arch
+  local metadata_path
+  local asset_name
+  local asset_url
+  local checksum_url
+  local artifact_dir
+  local artifact_path
+  local checksum_path
+
+  ensure_command_or_package curl curl
+  ensure_command_or_package python3 python3
+
+  target_os="$(normalize_os)" || return 1
+  target_arch="$(normalize_arch)" || return 1
+  metadata_path="$(mktemp)"
+  if ! curl -fsSL -H 'Accept: application/vnd.github+json' "$(release_metadata_url)" -o "$metadata_path" 2>/dev/null; then
+    rm -f "$metadata_path"
+    return 1
+  fi
+  if ! readarray -t asset_info < <(extract_release_asset_urls "$metadata_path" "$target_os" "$target_arch"); then
+    rm -f "$metadata_path"
+    return 1
+  fi
+  rm -f "$metadata_path"
+  asset_name="${asset_info[0]}"
+  asset_url="${asset_info[1]}"
+  checksum_url="${asset_info[2]}"
+  artifact_dir="$(mktemp -d)"
+  artifact_path="${artifact_dir}/${asset_name}"
+  printf '==> Downloading Meridian Loom release %s\n' "$asset_name" >&2
+  curl -fsSL "$asset_url" -o "$artifact_path"
+  if [[ -n "$checksum_url" ]]; then
+    checksum_path="${artifact_path}.sha256"
+    curl -fsSL "$checksum_url" -o "$checksum_path"
+    verify_checksum "$artifact_path" "$checksum_path"
+  fi
+  printf '%s\n' "$artifact_path"
 }
 
 seed_builtin_capabilities() {
@@ -318,24 +467,41 @@ ensure_python3() {
   ensure_command_or_package python3 python3
 }
 
-build_release() {
-  printf '==> Building Meridian Loom release\n'
-  (
-    cd "$REPO_ROOT"
-    cargo build --release -p meridian-loom
-  )
+package_source_release() {
+  local output_dir
+  output_dir="$(mktemp -d)"
+  printf '==> Building Meridian Loom release from source checkout\n' >&2
+  "$REPO_ROOT/scripts/package_release.sh" --kernel-path "${KERNEL_PATH:-/opt/meridian-kernel}" --output-dir "$output_dir"
 }
 
-install_binary() {
-  local source_path
-  source_path="$REPO_ROOT/target/release/loom"
-  if [[ ! -x "$source_path" ]]; then
-    echo "missing release binary: $source_path" >&2
+install_archive() {
+  local archive_path="$1"
+  local tmpdir
+  local package_dir
+  local package_name
+
+  if [[ ! -f "$archive_path" ]]; then
+    printf 'missing release archive: %s\n' "$archive_path" >&2
     exit 1
   fi
-  run_privileged mkdir -p "$BIN_DIR"
-  run_privileged install -m 0755 "$source_path" "$BINARY_PATH"
-  printf '==> Installed loom binary to %s\n' "$BINARY_PATH"
+
+  tmpdir="$(mktemp -d)"
+  tar -xzf "$archive_path" -C "$tmpdir"
+  package_dir="$(find "$tmpdir" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+  if [[ -z "$package_dir" || ! -d "$package_dir" ]]; then
+    rm -rf "$tmpdir"
+    printf 'failed to unpack release archive: %s\n' "$archive_path" >&2
+    exit 1
+  fi
+  package_name="$(basename "$package_dir")"
+
+  run_privileged mkdir -p "$PREFIX/releases" "$BIN_DIR"
+  run_privileged rm -rf "$PREFIX/releases/$package_name"
+  run_privileged cp -a "$package_dir" "$PREFIX/releases/"
+  run_privileged ln -sfn "$PREFIX/releases/$package_name" "$CURRENT_DIR"
+  run_privileged ln -sfn "$CURRENT_DIR/bin/loom" "$BINARY_PATH"
+  rm -rf "$tmpdir"
+  printf '==> Installed Meridian Loom release %s\n' "$package_name"
 }
 
 ensure_runtime_root() {
@@ -393,6 +559,7 @@ run_onboard_if_interactive() {
 
 print_summary() {
   local next_step
+  local path_hint
   if [[ "$ONBOARD_WAS_RUN" -eq 1 ]]; then
     next_step="$BINARY_PATH doctor --root \"$RUNTIME_ROOT\" --format human"
   elif [[ "$RUNTIME_WAS_INITIALIZED" -eq 1 ]]; then
@@ -400,22 +567,53 @@ print_summary() {
   else
     next_step="$BINARY_PATH doctor --root \"$RUNTIME_ROOT\" --format human"
   fi
+  path_hint=""
+  case ":$PATH:" in
+    *":$BIN_DIR:"*) ;;
+    *)
+      path_hint="path:     add $BIN_DIR to PATH to run 'loom' directly"
+      ;;
+  esac
   cat <<SUMMARY
 ==> Installation complete
+source:   $INSTALL_SOURCE
 binary:   $BINARY_PATH
+release:  $CURRENT_DIR
 runtime:  $RUNTIME_ROOT
 config:   $RUNTIME_ROOT/loom.toml
 registry: $RUNTIME_ROOT/capabilities/registry.json
 next:     $next_step
+$path_hint
 SUMMARY
 }
 
 main() {
+  local archive_path=""
   print_banner
   ensure_privileges
-  ensure_cargo
-  build_release
-  install_binary
+  if [[ "$INSTALL_MODE" != "source" ]]; then
+    archive_path="$(download_prebuilt_release || true)"
+    if [[ -n "$archive_path" ]]; then
+      INSTALL_SOURCE="github-release"
+      install_archive "$archive_path"
+    elif [[ "$INSTALL_MODE" == "release" ]]; then
+      printf 'no compatible Meridian Loom release asset was available for %s/%s\n' "$(normalize_os 2>/dev/null || echo unknown)" "$(normalize_arch 2>/dev/null || echo unknown)" >&2
+      exit 1
+    fi
+  fi
+  if [[ -z "$archive_path" ]]; then
+    if ! repo_has_source_checkout; then
+      printf 'no compatible Meridian Loom release asset was found, and this installer is not running inside a source checkout for source fallback\n' >&2
+      exit 1
+    fi
+    if [[ "$INSTALL_MODE" == "auto" ]]; then
+      printf '==> No compatible release asset was available; falling back to source build\n' >&2
+    fi
+    ensure_cargo
+    archive_path="$(package_source_release)"
+    INSTALL_SOURCE="source-fallback"
+    install_archive "$archive_path"
+  fi
   ensure_runtime_root
   run_onboard_if_interactive
   print_summary

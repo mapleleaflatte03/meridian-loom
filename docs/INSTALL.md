@@ -5,9 +5,18 @@ ad-hoc repo script pile.
 
 Preferred install order:
 
-1. Docker
-2. prebuilt tarball
-3. source build
+1. release installer
+2. Docker
+3. prebuilt tarball
+4. source build
+
+## Release installer
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mapleleaflatte03/meridian-loom/main/scripts/install.sh | bash
+```
+
+The installer prefers a matching GitHub release asset for the current host and only falls back to a source build when no compatible asset exists and the installer is running inside a source checkout.
 
 ## Docker
 
@@ -61,7 +70,7 @@ explicitly.
 
 ## Prebuilt tarball
 
-Build a release archive:
+Build a release archive locally:
 
 ```bash
 ./scripts/package_release.sh --kernel-path /opt/meridian-kernel

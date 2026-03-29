@@ -48,6 +48,7 @@ for doc in INSTALL.md RUN_LOCAL.md SERVICE.md CONFIG.md OPERATIONS.md RELEASE.md
 done
 
 install -m 0644 "$repo_root/README.md" "$staging_dir/README.md"
+install -m 0755 "$repo_root/scripts/install.sh" "$staging_dir/scripts/install.sh"
 install -m 0755 "$repo_root/scripts/install_local.sh" "$staging_dir/scripts/install_local.sh"
 install -m 0755 "$repo_root/scripts/release_local.sh" "$staging_dir/scripts/release_local.sh"
 install -m 0755 "$repo_root/scripts/package_release.sh" "$staging_dir/scripts/package_release.sh"
@@ -77,6 +78,8 @@ EOF
 
 if command -v sha256sum >/dev/null 2>&1; then
   sha256sum "$tarball" > "${tarball}.sha256"
+elif command -v shasum >/dev/null 2>&1; then
+  shasum -a 256 "$tarball" > "${tarball}.sha256"
 fi
 
 printf '%s\n' "$tarball"
