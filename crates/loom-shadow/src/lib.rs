@@ -6986,7 +6986,7 @@ pub fn render_shadow_report(root: &Path) -> ShadowResult<String> {
 
     if stale_latest && no_newer_artifacts {
         out.push_str(&format!(
-            "\nCurrent state\n=============\nsource: {}\nstatus:      not_started\nmeaning:     no shadow or runtime rehearsal artifacts have been captured yet\n\nRecommended next step\n=====================\n  loom shadow preflight --agent-id agent_atlas --action-type research --resource web_search --kernel-path /tmp/meridian-kernel --root {}\n  loom shadow decide --agent-id agent_atlas --action-type research --resource web_search --kernel-path /tmp/meridian-kernel --root {}\n  loom action execute --agent-id agent_atlas --action-type research --resource web_search --kernel-path /tmp/meridian-kernel --root {}\n",
+            "\nCurrent state\n=============\nsource: {}\nstatus:      not_started\nmeaning:     no shadow or runtime rehearsal artifacts have been captured yet\n\nRecommended next step\n=====================\n  loom shadow preflight --agent-id agent_atlas --action-type research --resource web_search --kernel-path /opt/meridian-kernel --root {}\n  loom shadow decide --agent-id agent_atlas --action-type research --resource web_search --kernel-path /opt/meridian-kernel --root {}\n  loom action execute --agent-id agent_atlas --action-type research --resource web_search --kernel-path /opt/meridian-kernel --root {}\n",
             report_path.display(),
             root.display(),
             root.display(),
@@ -7088,7 +7088,7 @@ pub fn render_parity_report(root: &Path) -> ShadowResult<String> {
         && reference_probe_stream.is_none()
     {
         return Ok(format!(
-            "Meridian Loom // PARITY REPORT\n===============================\nphase:       runtime-side parity surface\nboundary:    parity artifacts appear only after runtime rehearsal\n\nCurrent state\n=============\nstatus:      not_started\nmeaning:     no parity stream, parity report, or live reference probe has been captured yet\n\nRecommended next step\n=====================\n1. loom action execute --agent-id agent_atlas --action-type research --resource web_search --kernel-path /tmp/meridian-kernel --root {}\n2. loom shadow report --root {}\n3. Re-run loom parity report after runtime rehearsal artifacts exist.\n",
+            "Meridian Loom // PARITY REPORT\n===============================\nphase:       runtime-side parity surface\nboundary:    parity artifacts appear only after runtime rehearsal\n\nCurrent state\n=============\nstatus:      not_started\nmeaning:     no parity stream, parity report, or live reference probe has been captured yet\n\nRecommended next step\n=====================\n1. loom action execute --agent-id agent_atlas --action-type research --resource web_search --kernel-path /opt/meridian-kernel --root {}\n2. loom shadow report --root {}\n3. Re-run loom parity report after runtime rehearsal artifacts exist.\n",
             root.display(),
             root.display(),
         ));

@@ -1,6 +1,6 @@
 [runtime]
 mode = "embedded"
-kernel_path = "/tmp/meridian-kernel"
+kernel_path = "/opt/meridian-kernel"
 org_id = "local_foundry"
 state_dir = "state"
 run_dir = "run"

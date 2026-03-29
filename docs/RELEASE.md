@@ -26,7 +26,7 @@ The tarball produced by `scripts/package_release.sh` contains:
 ## Build a release
 
 ```bash
-./scripts/release_local.sh --kernel-path /tmp/meridian-kernel
+./scripts/release_local.sh --kernel-path /opt/meridian-kernel
 ```
 
 ## Install a release
@@ -38,13 +38,13 @@ The tarball produced by `scripts/package_release.sh` contains:
 ## Validate a release
 
 ```bash
-./scripts/verify_release_local.sh --kernel-path /tmp/meridian-kernel
+./scripts/verify_release_local.sh --kernel-path /opt/meridian-kernel
 ```
 
 To force a fresh Docker image build during container verification:
 
 ```bash
-./scripts/acceptance_container_service.sh --kernel-path /tmp/meridian-kernel --build-image always
+./scripts/acceptance_container_service.sh --kernel-path /opt/meridian-kernel --build-image always
 ```
 
 ## systemd

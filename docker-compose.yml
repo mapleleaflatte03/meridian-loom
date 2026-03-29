@@ -15,7 +15,7 @@ services:
       - "${LOOM_HTTP_PORT:-8080}:8080"
     volumes:
       - ${LOOM_RUNTIME_DIR:-./runtime}:/var/lib/loom
-      - ${MERIDIAN_KERNEL_PATH:-/tmp/meridian-kernel}:/kernel:ro
+      - ${MERIDIAN_KERNEL_PATH:-/opt/meridian-kernel}:/kernel:ro
     restart: unless-stopped
     command:
       - /bin/sh

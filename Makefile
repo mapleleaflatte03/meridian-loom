@@ -1,5 +1,5 @@
 ROOT ?= $(CURDIR)
-KERNEL_PATH ?= /tmp/meridian-kernel
+KERNEL_PATH ?= /opt/meridian-kernel
 LOOM ?= $(ROOT)/target/release/loom
 LOOM_ROOT ?= $(HOME)/.local/share/meridian-loom/runtime/default
 SERVICE_TOKEN ?= loom-local-token

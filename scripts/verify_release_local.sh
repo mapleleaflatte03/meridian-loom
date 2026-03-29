@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-KERNEL_PATH="${KERNEL_PATH:-/tmp/meridian-kernel}"
+KERNEL_PATH="${KERNEL_PATH:-/opt/meridian-kernel}"
 OUTPUT_DIR="${OUTPUT_DIR:-$(mktemp -d /tmp/meridian-loom-release-verify.XXXXXX)}"
 INSTALL_PREFIX="${INSTALL_PREFIX:-$(mktemp -d /tmp/meridian-loom-install-prefix.XXXXXX)}"
 BIN_DIR="${BIN_DIR:-$(mktemp -d /tmp/meridian-loom-install-bin.XXXXXX)}"

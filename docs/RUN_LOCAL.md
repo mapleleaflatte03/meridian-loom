@@ -7,7 +7,7 @@ Linux host.
 
 ```bash
 export LOOM_ROOT="$HOME/.local/share/meridian-loom/runtime/default"
-export MERIDIAN_KERNEL_PATH=/tmp/meridian-kernel
+export MERIDIAN_KERNEL_PATH=/opt/meridian-kernel
 export LOOM_SERVICE_TOKEN=loom-local-token
 mkdir -p "$LOOM_ROOT"
 ```
@@ -171,7 +171,7 @@ curl -sS \
     "action_type":"research",
     "resource":"web_search",
     "estimated_cost_usd":0.05,
-    "kernel_path":"/tmp/meridian-kernel"
+    "kernel_path":"/opt/meridian-kernel"
   }' \
   http://127.0.0.1:18910/submit
 ```

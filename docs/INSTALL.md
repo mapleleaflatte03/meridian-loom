@@ -13,7 +13,7 @@ Preferred install order:
 
 ```bash
 docker build -t meridian-loom:local .
-export MERIDIAN_KERNEL_PATH=/tmp/meridian-kernel
+export MERIDIAN_KERNEL_PATH=/opt/meridian-kernel
 export LOOM_SERVICE_TOKEN=loom-local-token
 mkdir -p "$PWD/runtime"
 docker run --rm \
@@ -50,7 +50,7 @@ is optional, not required.
 For automated verification without compose:
 
 ```bash
-./scripts/acceptance_container_service.sh --kernel-path /tmp/meridian-kernel
+./scripts/acceptance_container_service.sh --kernel-path /opt/meridian-kernel
 ```
 
 That script reuses `meridian-loom:acceptance` if it already exists and only
@@ -64,7 +64,7 @@ explicitly.
 Build a release archive:
 
 ```bash
-./scripts/package_release.sh --kernel-path /tmp/meridian-kernel
+./scripts/package_release.sh --kernel-path /opt/meridian-kernel
 ```
 
 Install it:
@@ -99,7 +99,7 @@ Use the resulting binary:
 ```bash
 export LOOM_ROOT="$HOME/.local/share/meridian-loom/runtime/default"
 export LOOM_SERVICE_TOKEN=loom-local-token
-export MERIDIAN_KERNEL_PATH=/tmp/meridian-kernel
+export MERIDIAN_KERNEL_PATH=/opt/meridian-kernel
 
 loom init --mode embedded --root "$LOOM_ROOT" --kernel-path "$MERIDIAN_KERNEL_PATH"
 loom doctor --root "$LOOM_ROOT" --format human
@@ -109,5 +109,5 @@ loom start --root "$LOOM_ROOT" --kernel-path "$MERIDIAN_KERNEL_PATH" --http-addr
 For maintainers validating a release from end to end:
 
 ```bash
-./scripts/verify_release_local.sh --kernel-path /tmp/meridian-kernel
+./scripts/verify_release_local.sh --kernel-path /opt/meridian-kernel
 ```

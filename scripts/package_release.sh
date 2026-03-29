@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 output_dir="${OUTPUT_DIR:-${repo_root}/dist}"
-kernel_path="${KERNEL_PATH:-/tmp/meridian-kernel}"
+kernel_path="${KERNEL_PATH:-/opt/meridian-kernel}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in

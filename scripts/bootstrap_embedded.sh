@@ -19,7 +19,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 LOOM="${LOOM:-${REPO_ROOT}/target/release/loom}"
 ROOT_DIR="${ROOT_DIR:-/tmp/loom-bootstrap}"
-KERNEL_PATH="${KERNEL_PATH:-/tmp/meridian-kernel}"
+KERNEL_PATH="${KERNEL_PATH:-/opt/meridian-kernel}"
 ORG_ID="${ORG_ID:-local_foundry}"
 
 echo "=============================="

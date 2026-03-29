@@ -312,7 +312,9 @@ install_binary() {
 
 ensure_runtime_root() {
   run_privileged mkdir -p "$RUNTIME_ROOT/capabilities"
-  if [[ -z "$KERNEL_PATH" && -d /tmp/meridian-kernel ]]; then
+  if [[ -z "$KERNEL_PATH" && -d /opt/meridian-kernel ]]; then
+    KERNEL_PATH=/opt/meridian-kernel
+  elif [[ -z "$KERNEL_PATH" && -d /tmp/meridian-kernel ]]; then
     KERNEL_PATH=/tmp/meridian-kernel
   fi
 
