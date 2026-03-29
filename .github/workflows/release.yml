@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -34,9 +34,18 @@ jobs:
           fi
 
       - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
-        with:
-          fail_on_unmatched_files: true
-          files: |
-            ${{ steps.package.outputs.artifact }}
-            ${{ steps.package.outputs.checksum }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT: ${{ steps.package.outputs.artifact }}
+          CHECKSUM: ${{ steps.package.outputs.checksum }}
+        run: |
+          set -euo pipefail
+          files=("${ARTIFACT}")
+          if [[ -n "${CHECKSUM}" ]]; then
+            files+=("${CHECKSUM}")
+          fi
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" "${files[@]}" --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" "${files[@]}" --verify-tag --title "${GITHUB_REF_NAME}" --notes "Binary-first Meridian Loom release."
+          fi
