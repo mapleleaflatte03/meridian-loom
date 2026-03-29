@@ -950,7 +950,7 @@ fn current_manager_brain(root: &Path, manifest: &OnboardManifest) -> ManagerBrai
         .unwrap_or_else(|_| manifest_codex_auth_selection(manifest, &lane));
     let provider_kind = route.as_ref().map(|resolved| resolved.profile_kind.clone());
     let (codex_auth_source, codex_auth_path) = match provider_kind.as_ref() {
-        Some(ProviderKind::OpenAiCodex) => (codex_auth_source, codex_auth_path),
+        Some(ProviderKind::OpenAiCodex) | None => (codex_auth_source, codex_auth_path),
         _ => ("none".to_string(), None),
     };
     ManagerBrainSelection {
@@ -1291,7 +1291,7 @@ fn normalize_codex_auth_selection(
     };
     let explicit_path = codex_auth_path.and_then(|value| trimmed_string_option(&value));
     match source.as_str() {
-        "loom" => {
+        "loom" | "none" => {
             let expected = default_codex_auth_path_hint()?.display().to_string();
             if let Some(raw) = explicit_path.as_deref() {
                 if !auth_paths_match(raw, &expected) {
@@ -1325,6 +1325,27 @@ fn normalize_codex_auth_selection(
             "unsupported Codex auth source '{}'; expected 'loom', 'cli', or 'path'",
             other
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_codex_auth_selection;
+
+    #[test]
+    fn frontier_none_defaults_to_loom_managed_auth() {
+        let (source, path) = normalize_codex_auth_selection("frontier", "none", None)
+            .expect("frontier default should normalize");
+        assert_eq!(source, "loom");
+        assert!(path.is_some());
+    }
+
+    #[test]
+    fn local_lane_keeps_codex_auth_disabled() {
+        let (source, path) = normalize_codex_auth_selection("local", "none", None)
+            .expect("local lane should disable codex auth");
+        assert_eq!(source, "none");
+        assert!(path.is_none());
     }
 }
 
