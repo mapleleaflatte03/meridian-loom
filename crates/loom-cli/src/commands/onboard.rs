@@ -474,6 +474,7 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
         None
     };
 
+    let final_setup_state = detect_setup_state(&root);
     let overview = onboard_overview(&root)?;
 
     let codex_ready = codex_status
@@ -502,8 +503,8 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
             "{}",
             serde_json::to_string_pretty(&json!({
                 "root": root.display().to_string(),
-                "setup_state": setup_state_label(&setup_state),
-                "setup_hint": onboard_path_hint(&setup_state),
+                "setup_state": setup_state_label(&final_setup_state),
+                "setup_hint": onboard_path_hint(&final_setup_state),
                 "config_status": config_status,
                 "config_action": config_action,
                 "mode": config.mode,
@@ -664,7 +665,7 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
         format!("loom doctor --root {} --format human", root.display())
     };
     let current_state_hint = manager_current_state_hint(
-        &setup_state,
+        &final_setup_state,
         manager_profile_kind.as_ref(),
         manager_route.is_some(),
         &manager_endpoint,
@@ -703,7 +704,7 @@ Next
             root.display(),
             config.mode,
             config.org_id,
-            setup_state_label(&setup_state),
+            setup_state_label(&final_setup_state),
             manager_model,
             manager_route
                 .as_ref()
@@ -768,7 +769,7 @@ manifest:            {}
 next_step:           loom doctor --root {} --format human
 ",
             root.display(),
-            setup_state_label(&setup_state),
+            setup_state_label(&final_setup_state),
             config_status,
             config_action,
             config.mode,
@@ -834,6 +835,7 @@ fn setup_state_label(state: &SetupState) -> &'static str {
     match state {
         SetupState::FreshWorkspace => "fresh_workspace",
         SetupState::FreshNoAuth { .. } => "fresh_no_auth",
+        SetupState::ProviderConfiguredAuthPending { .. } => "provider_configured_auth_pending",
         SetupState::LocalOnly { .. } => "local_only",
         SetupState::FrontierAvailable { .. } => "frontier_available",
         SetupState::FullyConfigured { .. } => "fully_configured",

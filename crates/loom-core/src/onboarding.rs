@@ -159,12 +159,20 @@ pub fn onboard_overview(root: &Path) -> LoomResult<OnboardOverview> {
         skills_summary: format!(
             "node_manager={} defaults={} entries={}",
             manifest.skills_node_manager,
-            if manifest.skills_install_defaults { "yes" } else { "no" },
+            if manifest.skills_install_defaults {
+                "yes"
+            } else {
+                "no"
+            },
             manifest.skills_entries.join(",")
         ),
         recurring_summary: format!(
             "defaults={} entries={}",
-            if manifest.recurring_install_defaults { "yes" } else { "no" },
+            if manifest.recurring_install_defaults {
+                "yes"
+            } else {
+                "no"
+            },
             manifest.recurring_entries.join(",")
         ),
         remote_mode: manifest.remote_mode,
@@ -178,12 +186,26 @@ pub enum SetupState {
     FreshWorkspace,
     /// Workspace initialized but no provider credentials detected.
     FreshNoAuth { provider_count: usize },
+    /// Provider profiles exist, but the selected frontier path still needs credentials.
+    ProviderConfiguredAuthPending {
+        profiles: Vec<String>,
+        provider_count: usize,
+    },
     /// Credentials are local-only (Ollama), no frontier auth.
-    LocalOnly { ollama_available: bool, agent_count: usize },
+    LocalOnly {
+        ollama_available: bool,
+        agent_count: usize,
+    },
     /// At least one frontier provider credential found.
-    FrontierAvailable { profiles: Vec<String>, agent_count: usize },
+    FrontierAvailable {
+        profiles: Vec<String>,
+        agent_count: usize,
+    },
     /// Workspace is fully configured with agents, providers, and credentials.
-    FullyConfigured { agent_count: usize, provider_count: usize },
+    FullyConfigured {
+        agent_count: usize,
+        provider_count: usize,
+    },
 }
 
 /// Detect the current setup state to guide the user-first onboarding path.
@@ -196,7 +218,9 @@ pub fn detect_setup_state(root: &Path) -> SetupState {
         Ok(ps) => ps,
         Err(_) => return SetupState::FreshNoAuth { provider_count: 0 },
     };
-    let agent_count = crate::agent_runtime::agent_runtime_overview(root).map(|o| o.profile_count).unwrap_or(0);
+    let agent_count = crate::agent_runtime::agent_runtime_overview(root)
+        .map(|o| o.profile_count)
+        .unwrap_or(0);
     let provider_count = profiles.profiles.len();
     let manager_lane = manifest
         .as_ref()
@@ -205,7 +229,10 @@ pub fn detect_setup_state(root: &Path) -> SetupState {
     if provider_count == 0 {
         return SetupState::FreshNoAuth { provider_count: 0 };
     }
-    let has_ollama = profiles.profiles.iter().any(|p| p.kind.label() == "local_ollama");
+    let has_ollama = profiles
+        .profiles
+        .iter()
+        .any(|p| p.kind.label() == "local_ollama");
     let ollama_available = has_ollama
         && crate::provider_router::provider_auth_status(Some(root), Some("local_ollama"))
             .map(|s| s.ready)
@@ -216,7 +243,66 @@ pub fn detect_setup_state(root: &Path) -> SetupState {
             agent_count,
         };
     }
-    let ready_profiles: Vec<String> = profiles.profiles.iter()
+    let configured_manager_profile = profiles
+        .routing
+        .agents
+        .get("leviathann")
+        .and_then(|policy| policy.profile_name.as_ref())
+        .and_then(|name| {
+            profiles
+                .profiles
+                .iter()
+                .find(|profile| profile.name == *name)
+        });
+    if let Some(manager_profile) = configured_manager_profile {
+        let label = manager_profile.kind.label();
+        if label != "local_ollama" && label != "unknown" {
+            let manager_ready = crate::provider_router::provider_auth_status(
+                Some(root),
+                Some(&manager_profile.name),
+            )
+            .map(|status| status.ready)
+            .unwrap_or(false);
+            if !manager_ready {
+                return SetupState::ProviderConfiguredAuthPending {
+                    profiles: vec![manager_profile.name.clone()],
+                    provider_count,
+                };
+            }
+            let manager_route_ready = crate::provider_router::resolve_provider_route(
+                Some(root),
+                &crate::provider_router::ProviderRouteIntent::llm_inference("")
+                    .with_agent_id("leviathann"),
+            )
+            .is_ok();
+            let onboard_complete = manifest
+                .as_ref()
+                .map(|value| value.last_action.trim() == "setup")
+                .unwrap_or(false);
+            if !manager_route_ready || !onboard_complete || agent_count == 0 {
+                return SetupState::FrontierAvailable {
+                    profiles: vec![manager_profile.name.clone()],
+                    agent_count,
+                };
+            }
+            return SetupState::FullyConfigured {
+                agent_count,
+                provider_count,
+            };
+        }
+    }
+    let configured_frontier_profiles: Vec<String> = profiles
+        .profiles
+        .iter()
+        .filter(|p| {
+            let label = p.kind.label();
+            label != "local_ollama" && label != "unknown"
+        })
+        .map(|p| p.name.clone())
+        .collect();
+    let ready_profiles: Vec<String> = profiles
+        .profiles
+        .iter()
         .filter(|p| {
             let label = p.kind.label();
             label != "local_ollama" && label != "unknown"
@@ -229,6 +315,12 @@ pub fn detect_setup_state(root: &Path) -> SetupState {
         .map(|p| p.name.clone())
         .collect();
     if ready_profiles.is_empty() {
+        if !configured_frontier_profiles.is_empty() {
+            return SetupState::ProviderConfiguredAuthPending {
+                profiles: configured_frontier_profiles,
+                provider_count,
+            };
+        }
         return SetupState::FreshNoAuth { provider_count };
     }
     let manager_route_ready = crate::provider_router::resolve_provider_route(
@@ -241,9 +333,15 @@ pub fn detect_setup_state(root: &Path) -> SetupState {
         .map(|value| value.last_action.trim() == "setup")
         .unwrap_or(false);
     if !manager_route_ready || !onboard_complete || agent_count == 0 {
-        return SetupState::FrontierAvailable { profiles: ready_profiles, agent_count };
+        return SetupState::FrontierAvailable {
+            profiles: ready_profiles,
+            agent_count,
+        };
     }
-    SetupState::FullyConfigured { agent_count, provider_count }
+    SetupState::FullyConfigured {
+        agent_count,
+        provider_count,
+    }
 }
 
 /// Returns a human-readable action hint appropriate for the given setup state.
@@ -254,6 +352,12 @@ pub fn onboard_path_hint(state: &SetupState) -> String {
         }
         SetupState::FreshNoAuth { .. } => {
             "No provider credentials configured.\n  Option 1 (local):    install Ollama and run loom onboard --manager-lane local\n  Option 2 (frontier): sign in a dedicated Loom account and run loom onboard --manager-lane frontier --codex-auth-source loom\n  Convenience:        reuse an existing Codex CLI login with --codex-auth-source cli".to_string()
+        }
+        SetupState::ProviderConfiguredAuthPending { profiles, .. } => {
+            format!(
+                "Provider route configured (profiles: {}), but credentials are still missing.\n  Export the required auth env var or complete Loom-managed sign-in, then run loom doctor.",
+                profiles.join(", ")
+            )
         }
         SetupState::LocalOnly { ollama_available, .. } => {
             if *ollama_available {
@@ -315,9 +419,15 @@ impl OnboardManifest {
             daemon_state: DEFAULT_DAEMON_STATE.to_string(),
             skills_node_manager: DEFAULT_SKILLS_NODE_MANAGER.to_string(),
             skills_install_defaults: true,
-            skills_entries: DEFAULT_SKILL_ENTRIES.iter().map(|entry| entry.to_string()).collect(),
+            skills_entries: DEFAULT_SKILL_ENTRIES
+                .iter()
+                .map(|entry| entry.to_string())
+                .collect(),
             recurring_install_defaults: true,
-            recurring_entries: DEFAULT_RECURRING_ENTRIES.iter().map(|entry| entry.to_string()).collect(),
+            recurring_entries: DEFAULT_RECURRING_ENTRIES
+                .iter()
+                .map(|entry| entry.to_string())
+                .collect(),
         }
     }
 
@@ -380,8 +490,8 @@ impl OnboardManifest {
 }
 
 fn render_onboard_manifest(manifest: &OnboardManifest) -> String {
-    let mut rendered = serde_json::to_string_pretty(&manifest.as_json())
-        .unwrap_or_else(|_| "{}".to_string());
+    let mut rendered =
+        serde_json::to_string_pretty(&manifest.as_json()).unwrap_or_else(|_| "{}".to_string());
     rendered.push('\n');
     rendered
 }
@@ -429,9 +539,7 @@ fn parse_onboard_manifest(raw: &str) -> LoomResult<OnboardManifest> {
         .get("skills")
         .and_then(Value::as_object)
         .ok_or_else(|| "onboard manifest missing skills object".to_string())?;
-    let recurring = value
-        .get("recurring")
-        .and_then(Value::as_object);
+    let recurring = value.get("recurring").and_then(Value::as_object);
     let skill_entries = skills
         .get("entries")
         .and_then(Value::as_array)
@@ -459,12 +567,24 @@ fn parse_onboard_manifest(raw: &str) -> LoomResult<OnboardManifest> {
     Ok(OnboardManifest {
         wizard_version: value_string(wizard.get("version"), DEFAULT_WIZARD_VERSION),
         last_action: value_string(wizard.get("lastAction"), "initialized"),
-        last_run_at: wizard.get("lastRunAt").and_then(Value::as_u64).unwrap_or_else(unix_now),
+        last_run_at: wizard
+            .get("lastRunAt")
+            .and_then(Value::as_u64)
+            .unwrap_or_else(unix_now),
         last_run_mode: value_string(wizard.get("lastRunMode"), "embedded"),
         remote_mode: value_string(wizard.get("remoteMode"), DEFAULT_REMOTE_MODE),
-        manager_lane: value_string(brain.and_then(|section| section.get("managerLane")), DEFAULT_MANAGER_LANE),
-        manager_model: value_string(brain.and_then(|section| section.get("managerModel")), DEFAULT_FRONTIER_MANAGER_MODEL),
-        codex_auth_source: value_string(brain_codex_auth.and_then(|section| section.get("source")), DEFAULT_CODEX_AUTH_SOURCE),
+        manager_lane: value_string(
+            brain.and_then(|section| section.get("managerLane")),
+            DEFAULT_MANAGER_LANE,
+        ),
+        manager_model: value_string(
+            brain.and_then(|section| section.get("managerModel")),
+            DEFAULT_FRONTIER_MANAGER_MODEL,
+        ),
+        codex_auth_source: value_string(
+            brain_codex_auth.and_then(|section| section.get("source")),
+            DEFAULT_CODEX_AUTH_SOURCE,
+        ),
         codex_auth_path: value_string_preserve_empty(
             brain_codex_auth.and_then(|section| section.get("path")),
             DEFAULT_LOOM_CODEX_AUTH_PATH,
@@ -473,20 +593,38 @@ fn parse_onboard_manifest(raw: &str) -> LoomResult<OnboardManifest> {
         gateway_bind: value_string(gateway.get("bind"), DEFAULT_GATEWAY_BIND),
         gateway_auth_mode: value_string(gateway_auth.get("mode"), DEFAULT_GATEWAY_AUTH_MODE),
         gateway_token_env: value_string(gateway_auth.get("tokenEnv"), "LOOM_SERVICE_TOKEN"),
-        gateway_tailscale_mode: value_string(gateway_tailscale.get("mode"), DEFAULT_GATEWAY_TAILSCALE_MODE),
-        telegram_enabled: telegram.get("enabled").and_then(Value::as_bool).unwrap_or(false),
+        gateway_tailscale_mode: value_string(
+            gateway_tailscale.get("mode"),
+            DEFAULT_GATEWAY_TAILSCALE_MODE,
+        ),
+        telegram_enabled: telegram
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
         telegram_token_env: value_string(telegram.get("tokenEnv"), DEFAULT_TELEGRAM_TOKEN_ENV),
         telegram_dm_policy: value_string(telegram.get("dmPolicy"), DEFAULT_TELEGRAM_DM_POLICY),
-        telegram_group_policy: value_string(telegram.get("groupPolicy"), DEFAULT_TELEGRAM_GROUP_POLICY),
+        telegram_group_policy: value_string(
+            telegram.get("groupPolicy"),
+            DEFAULT_TELEGRAM_GROUP_POLICY,
+        ),
         telegram_streaming: value_string(telegram.get("streaming"), DEFAULT_TELEGRAM_STREAMING),
         session_dm_scope: value_string(session.get("dmScope"), DEFAULT_SESSION_DM_SCOPE),
-        daemon_enabled: daemon.get("enabled").and_then(Value::as_bool).unwrap_or(false),
+        daemon_enabled: daemon
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
         daemon_manager: value_string(daemon.get("manager"), DEFAULT_DAEMON_MANAGER),
         daemon_state: value_string(daemon.get("state"), DEFAULT_DAEMON_STATE),
         skills_node_manager: value_string(skills.get("nodeManager"), DEFAULT_SKILLS_NODE_MANAGER),
-        skills_install_defaults: skills.get("installDefaults").and_then(Value::as_bool).unwrap_or(true),
+        skills_install_defaults: skills
+            .get("installDefaults")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
         skills_entries: if skill_entries.is_empty() {
-            DEFAULT_SKILL_ENTRIES.iter().map(|entry| entry.to_string()).collect()
+            DEFAULT_SKILL_ENTRIES
+                .iter()
+                .map(|entry| entry.to_string())
+                .collect()
         } else {
             skill_entries
         },
@@ -495,7 +633,10 @@ fn parse_onboard_manifest(raw: &str) -> LoomResult<OnboardManifest> {
             .and_then(Value::as_bool)
             .unwrap_or(true),
         recurring_entries: if recurring_entries.is_empty() {
-            DEFAULT_RECURRING_ENTRIES.iter().map(|entry| entry.to_string()).collect()
+            DEFAULT_RECURRING_ENTRIES
+                .iter()
+                .map(|entry| entry.to_string())
+                .collect()
         } else {
             recurring_entries
         },
@@ -550,6 +691,10 @@ fn default_loom_codex_auth_path_string() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider_router::{
+        configure_onboard_provider_profile, OnboardProviderRouteConfig, ProviderAuthMode,
+        ProviderKind,
+    };
     use crate::{init_workspace, read_config};
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -566,15 +711,57 @@ mod tests {
         assert_eq!(manifest.manager_lane, "frontier");
         assert_eq!(manifest.manager_model, "gpt-5.4");
         assert_eq!(manifest.codex_auth_source, "loom");
-        assert!(manifest.codex_auth_path.ends_with(".meridian/auth/codex/auth.json"));
+        assert!(manifest
+            .codex_auth_path
+            .ends_with(".meridian/auth/codex/auth.json"));
         assert!(!manifest.telegram_enabled);
-        assert_eq!(manifest.gateway_token_env, read_config(&root).expect("config").service_token_env);
+        assert_eq!(
+            manifest.gateway_token_env,
+            read_config(&root).expect("config").service_token_env
+        );
     }
 
     #[test]
     fn derive_service_http_address_tracks_bind_and_port() {
-        assert_eq!(derive_service_http_address("loopback", 18789), "127.0.0.1:18789");
+        assert_eq!(
+            derive_service_http_address("loopback", 18789),
+            "127.0.0.1:18789"
+        );
         assert_eq!(derive_service_http_address("all", 18789), "0.0.0.0:18789");
+    }
+
+    #[test]
+    fn detect_setup_state_marks_configured_provider_without_auth_as_pending() {
+        let root = temp_path("loom-onboard-provider-pending");
+        let config = init_workspace(&root, "embedded", None, "org_demo").expect("init");
+        ensure_onboard_manifest(&root, &config).expect("manifest");
+        configure_onboard_provider_profile(
+            &root,
+            &OnboardProviderRouteConfig {
+                profile_name: "openai_default".to_string(),
+                kind: ProviderKind::OpenAiCompatible,
+                base_url: "https://api.openai.com/v1/chat/completions".to_string(),
+                default_model: "gpt-5.4-mini".to_string(),
+                auth: ProviderAuthMode::BearerEnv {
+                    env_var: "OPENAI_API_KEY".to_string(),
+                },
+                note: "test profile".to_string(),
+                make_default: true,
+            },
+        )
+        .expect("provider profile");
+
+        let state = detect_setup_state(&root);
+        match state {
+            SetupState::ProviderConfiguredAuthPending {
+                profiles,
+                provider_count,
+            } => {
+                assert_eq!(profiles, vec!["openai_default".to_string()]);
+                assert!(provider_count >= 2);
+            }
+            other => panic!("expected provider-configured-auth-pending, got {:?}", other),
+        }
     }
 
     fn temp_path(label: &str) -> PathBuf {
