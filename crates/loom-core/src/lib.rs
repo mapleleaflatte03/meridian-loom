@@ -1233,8 +1233,10 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                     level: "OK",
                     label: "session_provenance",
                     detail: format!(
-                        "total={} sessions={}",
+                        "total={} active={} archived={} sessions={}",
                         overview.total_count,
+                        overview.active_count,
+                        overview.archived_count,
                         if overview.session_keys.is_empty() {
                             "(none)".to_string()
                         } else {

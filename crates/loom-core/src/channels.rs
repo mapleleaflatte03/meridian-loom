@@ -13,6 +13,7 @@ pub type LoomResult<T> = Result<T, String>;
 pub const DEFAULT_CHANNEL_REGISTRY_PATH: &str = "state/channels/registry.json";
 pub const DEFAULT_CHANNEL_DELIVERY_DIR: &str = "state/channels/delivery";
 pub const DEFAULT_CHANNEL_INBOX_DIR: &str = "state/channels/inbox";
+pub const LEGACY_CHANNEL_ARCHIVE_AFTER_MS: u64 = 5 * 60 * 1000;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChannelRecord {
@@ -288,6 +289,14 @@ pub fn update_channel_delivery(
 }
 
 pub fn list_channel_deliveries(root: &Path, limit: usize) -> LoomResult<Vec<ChannelDeliveryRecord>> {
+    list_channel_deliveries_with_options(root, limit, false)
+}
+
+pub fn list_channel_deliveries_with_options(
+    root: &Path,
+    limit: usize,
+    include_archived: bool,
+) -> LoomResult<Vec<ChannelDeliveryRecord>> {
     ensure_channel_runtime_scaffold(root)?;
     let mut records = Vec::new();
     for entry in fs::read_dir(channel_delivery_path(root)).map_err(io_err)? {
@@ -308,10 +317,29 @@ pub fn list_channel_deliveries(root: &Path, limit: usize) -> LoomResult<Vec<Chan
             .cmp(&left.submitted_at_unix_ms)
             .then_with(|| right.delivery_id.cmp(&left.delivery_id))
     });
+    if !include_archived {
+        let now = now_unix_ms();
+        records.retain(|record| !channel_delivery_is_archived(record, now));
+    }
     if limit > 0 && records.len() > limit {
         records.truncate(limit);
     }
     Ok(records)
+}
+
+fn channel_delivery_is_archived(record: &ChannelDeliveryRecord, now_unix_ms: u64) -> bool {
+    match record.status.as_str() {
+        "legacy_unclosed" => true,
+        "failed" | "blocked" => {
+            let anchor = if record.completed_at_unix_ms > 0 {
+                record.completed_at_unix_ms
+            } else {
+                record.submitted_at_unix_ms
+            };
+            anchor > 0 && now_unix_ms.saturating_sub(anchor) >= LEGACY_CHANNEL_ARCHIVE_AFTER_MS
+        }
+        _ => false,
+    }
 }
 
 pub fn ingest_channel_message(root: &Path, request: &ChannelIngressRequest) -> LoomResult<ChannelIngressRecord> {
@@ -955,6 +983,53 @@ mod tests {
         assert_eq!(updated.status, "legacy_unclosed");
         assert_eq!(updated.completed_at_unix_ms, 0);
         assert_eq!(updated.status_detail, "record predates completion tracking");
+    }
+
+    #[test]
+    fn list_channel_deliveries_hides_archived_legacy_records_by_default() {
+        let root = temp_path("loom-channel-active-list");
+        init_workspace(&root, "embedded", Some("/tmp/meridian-kernel"), "org_demo")
+            .expect("init workspace");
+        ensure_channel_runtime_scaffold(&root).expect("channel scaffold");
+
+        let active = enqueue_channel_delivery(
+            &root,
+            &ChannelDeliveryRequest {
+                channel_id: "web_api".to_string(),
+                recipient: "founder".to_string(),
+                raw_text: "active".to_string(),
+                allow_receipt_hashes: false,
+                allow_operator_diagnostics: false,
+            },
+        )
+        .expect("enqueue active");
+        let archived = enqueue_channel_delivery(
+            &root,
+            &ChannelDeliveryRequest {
+                channel_id: "web_api".to_string(),
+                recipient: "founder".to_string(),
+                raw_text: "legacy".to_string(),
+                allow_receipt_hashes: false,
+                allow_operator_diagnostics: false,
+            },
+        )
+        .expect("enqueue archived");
+
+        update_channel_delivery(
+            &root,
+            &archived.delivery_id,
+            "legacy_unclosed",
+            None,
+            Some("historical"),
+        )
+        .expect("mark archived");
+
+        let visible = list_channel_deliveries(&root, 10).expect("list visible");
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].delivery_id, active.delivery_id);
+
+        let all = list_channel_deliveries_with_options(&root, 10, true).expect("list all");
+        assert_eq!(all.len(), 2);
     }
 
     #[test]

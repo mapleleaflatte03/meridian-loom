@@ -8,6 +8,7 @@ pub type LoomResult<T> = Result<T, String>;
 
 pub const DEFAULT_SESSION_PROVENANCE_REGISTRY_PATH: &str =
     "state/session-provenance/registry.json";
+pub const LEGACY_SESSION_ARCHIVE_AFTER_SECS: u64 = 6 * 60 * 60;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SessionProvenanceRecord {
@@ -34,10 +35,13 @@ pub struct SessionProvenanceRecord {
 pub struct SessionProvenanceOverview {
     pub registry_path: PathBuf,
     pub total_count: usize,
+    pub active_count: usize,
+    pub archived_count: usize,
     pub session_keys: Vec<String>,
+    pub archived_session_keys: Vec<String>,
 }
 
-fn session_provenance_state(record: &SessionProvenanceRecord) -> &'static str {
+fn session_provenance_state_with_now(record: &SessionProvenanceRecord, now_secs: u64) -> &'static str {
     if !record.provider_profile.is_empty()
         && !record.model.is_empty()
         && !record.transport_kind.is_empty()
@@ -47,9 +51,18 @@ fn session_provenance_state(record: &SessionProvenanceRecord) -> &'static str {
         "complete"
     } else if record.ingress_request_id.is_some() || record.job_id.is_some() || record.delivery_id.is_some() {
         "partial"
+    } else if last_activity_unix_secs(record)
+        .map(|last| now_secs.saturating_sub(last) >= LEGACY_SESSION_ARCHIVE_AFTER_SECS)
+        .unwrap_or(false)
+    {
+        "legacy_archived"
     } else {
         "legacy_incomplete"
     }
+}
+
+fn session_provenance_state(record: &SessionProvenanceRecord) -> &'static str {
+    session_provenance_state_with_now(record, now_unix_secs())
 }
 
 pub fn session_provenance_registry_path(root: &Path) -> PathBuf {
@@ -207,8 +220,19 @@ pub fn list_session_provenance(
     root: &Path,
     limit: usize,
 ) -> LoomResult<Vec<SessionProvenanceRecord>> {
+    list_session_provenance_with_options(root, limit, false)
+}
+
+pub fn list_session_provenance_with_options(
+    root: &Path,
+    limit: usize,
+    include_archived: bool,
+) -> LoomResult<Vec<SessionProvenanceRecord>> {
     let mut records = load_session_provenance_records(root)?;
     records.sort_by(|a, b| b.last_active_at.cmp(&a.last_active_at));
+    if !include_archived {
+        records.retain(|record| session_provenance_state(record) != "legacy_archived");
+    }
     if limit > 0 && records.len() > limit {
         records.truncate(limit);
     }
@@ -217,10 +241,22 @@ pub fn list_session_provenance(
 
 pub fn session_provenance_overview(root: &Path) -> LoomResult<SessionProvenanceOverview> {
     let records = load_session_provenance_records(root)?;
+    let mut session_keys = Vec::new();
+    let mut archived_session_keys = Vec::new();
+    for record in &records {
+        if session_provenance_state(record) == "legacy_archived" {
+            archived_session_keys.push(record.session_key.clone());
+        } else {
+            session_keys.push(record.session_key.clone());
+        }
+    }
     Ok(SessionProvenanceOverview {
         registry_path: session_provenance_registry_path(root),
         total_count: records.len(),
-        session_keys: records.iter().map(|r| r.session_key.clone()).collect(),
+        active_count: session_keys.len(),
+        archived_count: archived_session_keys.len(),
+        session_keys,
+        archived_session_keys,
     })
 }
 
@@ -233,9 +269,11 @@ pub fn sync_session_provenance_registry(root: &Path) -> LoomResult<()> {
 
 pub fn render_session_provenance_overview_human(overview: &SessionProvenanceOverview) -> String {
     format!(
-        "registry_path:   {}\ntotal_count:     {}\nsessions:        {}\n",
+        "registry_path:   {}\ntotal_count:     {}\nactive_count:    {}\narchived_count:  {}\nsessions:        {}\n",
         overview.registry_path.display(),
         overview.total_count,
+        overview.active_count,
+        overview.archived_count,
         if overview.session_keys.is_empty() {
             "(none)".to_string()
         } else {
@@ -248,7 +286,10 @@ pub fn render_session_provenance_overview_json(overview: &SessionProvenanceOverv
     serde_json::to_string_pretty(&json!({
         "registry_path": overview.registry_path.display().to_string(),
         "total_count": overview.total_count,
+        "active_count": overview.active_count,
+        "archived_count": overview.archived_count,
         "session_keys": overview.session_keys,
+        "archived_session_keys": overview.archived_session_keys,
     }))
     .unwrap_or_else(|_| "{}".to_string())
         + "\n"
@@ -395,11 +436,22 @@ fn session_provenance_record_json(record: &SessionProvenanceRecord) -> Value {
 }
 
 fn timestamp_now() -> String {
-    let secs = SystemTime::now()
+    format!("{}", now_unix_secs())
+}
+
+fn now_unix_secs() -> u64 {
+    SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
-        .as_secs();
-    format!("{}", secs)
+        .as_secs()
+}
+
+fn last_activity_unix_secs(record: &SessionProvenanceRecord) -> Option<u64> {
+    parse_unix_secs(&record.last_active_at).or_else(|| parse_unix_secs(&record.opened_at))
+}
+
+fn parse_unix_secs(value: &str) -> Option<u64> {
+    value.trim().parse::<u64>().ok()
 }
 
 fn io_err(error: std::io::Error) -> String {
@@ -531,6 +583,7 @@ mod tests {
 
     #[test]
     fn render_session_provenance_marks_legacy_incomplete_records() {
+        let now = now_unix_secs().to_string();
         let record = SessionProvenanceRecord {
             session_key: "telegram:legacy".to_string(),
             channel_id: "telegram".to_string(),
@@ -547,11 +600,84 @@ mod tests {
             delivery_id: None,
             override_source: "default".to_string(),
             send_policy: "deliver".to_string(),
-            opened_at: "1".to_string(),
-            last_active_at: "2".to_string(),
+            opened_at: now.clone(),
+            last_active_at: now,
         };
         let rendered = render_session_provenance_json(&record);
         assert!(rendered.contains("\"provenance_state\": \"legacy_incomplete\""));
+    }
+
+    #[test]
+    fn render_session_provenance_marks_legacy_archived_records() {
+        let old = (now_unix_secs() - LEGACY_SESSION_ARCHIVE_AFTER_SECS - 1).to_string();
+        let record = SessionProvenanceRecord {
+            session_key: "telegram:archived".to_string(),
+            channel_id: "telegram".to_string(),
+            peer_id: "archived".to_string(),
+            agent_id: "leviathann".to_string(),
+            binding_id: "binding-telegram".to_string(),
+            provider_profile: String::new(),
+            model: String::new(),
+            transport_kind: String::new(),
+            auth_mode: String::new(),
+            execution_owner: String::new(),
+            ingress_request_id: None,
+            job_id: None,
+            delivery_id: None,
+            override_source: "default".to_string(),
+            send_policy: "deliver".to_string(),
+            opened_at: old.clone(),
+            last_active_at: old,
+        };
+        let rendered = render_session_provenance_json(&record);
+        assert!(rendered.contains("\"provenance_state\": \"legacy_archived\""));
+    }
+
+    #[test]
+    fn session_overview_separates_archived_sessions_from_active_sessions() {
+        let root = temp_path("loom-session-prov-overview");
+        init_workspace(&root, "embedded", None, "org_demo").expect("init");
+        open_session_provenance(
+            &root,
+            "telegram:active",
+            "telegram",
+            "active",
+            "leviathann",
+            "binding-telegram",
+        )
+        .expect("open active");
+        let mut records = load_session_provenance_records(&root).expect("load records");
+        records.push(SessionProvenanceRecord {
+            session_key: "telegram:archived".to_string(),
+            channel_id: "telegram".to_string(),
+            peer_id: "archived".to_string(),
+            agent_id: "leviathann".to_string(),
+            binding_id: "binding-telegram".to_string(),
+            provider_profile: String::new(),
+            model: String::new(),
+            transport_kind: String::new(),
+            auth_mode: String::new(),
+            execution_owner: String::new(),
+            ingress_request_id: None,
+            job_id: None,
+            delivery_id: None,
+            override_source: "default".to_string(),
+            send_policy: "deliver".to_string(),
+            opened_at: (now_unix_secs() - LEGACY_SESSION_ARCHIVE_AFTER_SECS - 10).to_string(),
+            last_active_at: (now_unix_secs() - LEGACY_SESSION_ARCHIVE_AFTER_SECS - 10).to_string(),
+        });
+        persist_session_provenance_registry(&root, &records).expect("persist");
+
+        let visible = list_session_provenance(&root, 10).expect("visible");
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].session_key, "telegram:active");
+
+        let overview = session_provenance_overview(&root).expect("overview");
+        assert_eq!(overview.total_count, 2);
+        assert_eq!(overview.active_count, 1);
+        assert_eq!(overview.archived_count, 1);
+        assert_eq!(overview.session_keys, vec!["telegram:active".to_string()]);
+        assert_eq!(overview.archived_session_keys, vec!["telegram:archived".to_string()]);
     }
 
     #[test]

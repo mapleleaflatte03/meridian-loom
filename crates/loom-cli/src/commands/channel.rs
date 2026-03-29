@@ -2,7 +2,8 @@ use std::io::IsTerminal;
 
 use crate::*;
 use loom_core::channels::{
-    channel_overview, enqueue_channel_delivery, ingest_channel_message, list_channel_deliveries, list_channel_ingress,
+    channel_overview, enqueue_channel_delivery, ingest_channel_message, list_channel_deliveries,
+    list_channel_deliveries_with_options, list_channel_ingress,
     render_channel_delivery_human, render_channel_delivery_json, render_channel_delivery_list_human,
     render_channel_delivery_list_json, render_channel_ingress_human, render_channel_ingress_json,
     render_channel_ingress_list_human, render_channel_ingress_list_json, render_channel_overview_human,
@@ -104,6 +105,7 @@ fn handle_channel_deliveries(args: &[String]) -> LoomResult<()> {
     let limit = take_value(args, "--limit")
         .and_then(|raw| raw.parse::<usize>().ok())
         .unwrap_or(20);
+    let include_archived = has_flag(args, "--include-archived");
     let format = take_value(args, "--format").unwrap_or_else(|| {
         if std::io::stdout().is_terminal() {
             "human".to_string()
@@ -111,7 +113,11 @@ fn handle_channel_deliveries(args: &[String]) -> LoomResult<()> {
             "json".to_string()
         }
     });
-    let records = list_channel_deliveries(&root, limit)?;
+    let records = if include_archived {
+        list_channel_deliveries_with_options(&root, limit, true)?
+    } else {
+        list_channel_deliveries(&root, limit)?
+    };
     match format.as_str() {
         "human" => {
             print_startup_banner();
