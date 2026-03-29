@@ -179,11 +179,14 @@ fn sanitize_token(input: &str) -> String {
 
 fn print_last_lines(path: &PathBuf, lines: usize) -> LoomResult<u64> {
     let contents = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-    let collected = contents.lines().collect::<Vec<_>>();
-    let start = collected.len().saturating_sub(lines);
-    for line in &collected[start..] {
+
+    // Instead of collecting all lines into a Vec (which takes O(N) memory),
+    // we take only the lines we need from the end of the file in O(lines) memory.
+    let collected: Vec<_> = contents.lines().rev().take(lines).collect();
+    for line in collected.into_iter().rev() {
         println!("{}", line);
     }
+
     Ok(contents.len() as u64)
 }
 
