@@ -226,6 +226,10 @@ pub fn detect_setup_state(root: &Path) -> SetupState {
         .as_ref()
         .map(|value| value.manager_lane.trim().to_ascii_lowercase())
         .unwrap_or_else(|| DEFAULT_MANAGER_LANE.to_string());
+    let onboard_complete = manifest
+        .as_ref()
+        .map(|value| value.last_action.trim() == "setup")
+        .unwrap_or(false);
     if provider_count == 0 {
         return SetupState::FreshNoAuth { provider_count: 0 };
     }
@@ -264,9 +268,13 @@ pub fn detect_setup_state(root: &Path) -> SetupState {
             .map(|status| status.ready)
             .unwrap_or(false);
             if !manager_ready {
-                return SetupState::ProviderConfiguredAuthPending {
-                    profiles: vec![manager_profile.name.clone()],
-                    provider_count,
+                return if onboard_complete {
+                    SetupState::ProviderConfiguredAuthPending {
+                        profiles: vec![manager_profile.name.clone()],
+                        provider_count,
+                    }
+                } else {
+                    SetupState::FreshNoAuth { provider_count }
                 };
             }
             let manager_route_ready = crate::provider_router::resolve_provider_route(
@@ -275,10 +283,6 @@ pub fn detect_setup_state(root: &Path) -> SetupState {
                     .with_agent_id("leviathann"),
             )
             .is_ok();
-            let onboard_complete = manifest
-                .as_ref()
-                .map(|value| value.last_action.trim() == "setup")
-                .unwrap_or(false);
             if !manager_route_ready || !onboard_complete || agent_count == 0 {
                 return SetupState::FrontierAvailable {
                     profiles: vec![manager_profile.name.clone()],
@@ -316,9 +320,13 @@ pub fn detect_setup_state(root: &Path) -> SetupState {
         .collect();
     if ready_profiles.is_empty() {
         if !configured_frontier_profiles.is_empty() {
-            return SetupState::ProviderConfiguredAuthPending {
-                profiles: configured_frontier_profiles,
-                provider_count,
+            return if onboard_complete {
+                SetupState::ProviderConfiguredAuthPending {
+                    profiles: configured_frontier_profiles,
+                    provider_count,
+                }
+            } else {
+                SetupState::FreshNoAuth { provider_count }
             };
         }
         return SetupState::FreshNoAuth { provider_count };
@@ -328,10 +336,6 @@ pub fn detect_setup_state(root: &Path) -> SetupState {
         &crate::provider_router::ProviderRouteIntent::llm_inference("").with_agent_id("leviathann"),
     )
     .is_ok();
-    let onboard_complete = manifest
-        .as_ref()
-        .map(|value| value.last_action.trim() == "setup")
-        .unwrap_or(false);
     if !manager_route_ready || !onboard_complete || agent_count == 0 {
         return SetupState::FrontierAvailable {
             profiles: ready_profiles,
@@ -696,6 +700,8 @@ mod tests {
         ProviderKind,
     };
     use crate::{init_workspace, read_config};
+    use std::fs;
+    use std::sync::{Mutex, MutexGuard, OnceLock};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -733,8 +739,16 @@ mod tests {
     #[test]
     fn detect_setup_state_marks_configured_provider_without_auth_as_pending() {
         let root = temp_path("loom-onboard-provider-pending");
+        let fake_home = root.join("fake-home");
+        fs::create_dir_all(&fake_home).expect("create fake home");
+        let _home_guard = home_env_guard();
+        let previous_home = std::env::var("HOME").ok();
+        std::env::set_var("HOME", &fake_home);
         let config = init_workspace(&root, "embedded", None, "org_demo").expect("init");
         ensure_onboard_manifest(&root, &config).expect("manifest");
+        let mut manifest = load_onboard_manifest(&root).expect("manifest");
+        manifest.last_action = "setup".to_string();
+        write_onboard_manifest(&root, &manifest).expect("write manifest");
         configure_onboard_provider_profile(
             &root,
             &OnboardProviderRouteConfig {
@@ -752,6 +766,7 @@ mod tests {
         .expect("provider profile");
 
         let state = detect_setup_state(&root);
+        restore_home(previous_home);
         match state {
             SetupState::ProviderConfiguredAuthPending {
                 profiles,
@@ -761,6 +776,42 @@ mod tests {
                 assert!(provider_count >= 2);
             }
             other => panic!("expected provider-configured-auth-pending, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn detect_setup_state_keeps_fresh_runtime_at_no_auth_before_setup() {
+        let root = temp_path("loom-onboard-fresh-no-auth");
+        let fake_home = root.join("fake-home");
+        fs::create_dir_all(&fake_home).expect("create fake home");
+        let _home_guard = home_env_guard();
+        let previous_home = std::env::var("HOME").ok();
+        std::env::set_var("HOME", &fake_home);
+        let config = init_workspace(&root, "embedded", None, "org_demo").expect("init");
+        ensure_onboard_manifest(&root, &config).expect("manifest");
+
+        let state = detect_setup_state(&root);
+        restore_home(previous_home);
+        match state {
+            SetupState::FreshNoAuth { provider_count } => {
+                assert!(provider_count >= 1);
+            }
+            other => panic!("expected fresh_no_auth, got {:?}", other),
+        }
+    }
+
+    fn home_env_guard() -> MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("lock HOME env")
+    }
+
+    fn restore_home(previous_home: Option<String>) {
+        if let Some(home) = previous_home {
+            std::env::set_var("HOME", home);
+        } else {
+            std::env::remove_var("HOME");
         }
     }
 
