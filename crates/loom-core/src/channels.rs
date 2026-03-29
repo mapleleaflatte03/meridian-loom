@@ -37,6 +37,8 @@ pub struct ChannelRuntimeOverview {
     pub total_count: usize,
     pub enabled_count: usize,
     pub ingress_count: usize,
+    pub active_delivery_count: usize,
+    pub archived_delivery_count: usize,
     pub channel_ids: Vec<String>,
 }
 
@@ -145,6 +147,12 @@ pub fn load_channels(root: &Path) -> LoomResult<Vec<ChannelRecord>> {
 pub fn channel_overview(root: &Path) -> LoomResult<ChannelRuntimeOverview> {
     let records = load_channels(root)?;
     let ingress_count = list_channel_ingress(root, 0)?.len();
+    let deliveries = list_channel_deliveries_with_options(root, 0, true)?;
+    let now = now_unix_ms();
+    let archived_delivery_count = deliveries
+        .iter()
+        .filter(|record| channel_delivery_is_archived(record, now))
+        .count();
     Ok(ChannelRuntimeOverview {
         registry_path: channel_registry_path(root),
         delivery_path: channel_delivery_path(root),
@@ -152,6 +160,8 @@ pub fn channel_overview(root: &Path) -> LoomResult<ChannelRuntimeOverview> {
         total_count: records.len(),
         enabled_count: records.iter().filter(|record| record.enabled).count(),
         ingress_count,
+        active_delivery_count: deliveries.len().saturating_sub(archived_delivery_count),
+        archived_delivery_count,
         channel_ids: records.iter().map(|record| record.channel_id.clone()).collect(),
     })
 }
@@ -422,13 +432,15 @@ pub fn list_channel_ingress(root: &Path, limit: usize) -> LoomResult<Vec<Channel
 
 pub fn render_channel_overview_human(summary: &ChannelRuntimeOverview) -> String {
     format!(
-        "registry_path:   {}\ndelivery_path:   {}\ninbox_path:      {}\ntotal_count:     {}\nenabled_count:   {}\ningress_count:   {}\nchannels:        {}\n",
+        "registry_path:   {}\ndelivery_path:   {}\ninbox_path:      {}\ntotal_count:     {}\nenabled_count:   {}\ningress_count:   {}\nactive_delivery_count:   {}\narchived_delivery_count: {}\nchannels:        {}\n",
         summary.registry_path.display(),
         summary.delivery_path.display(),
         summary.inbox_path.display(),
         summary.total_count,
         summary.enabled_count,
         summary.ingress_count,
+        summary.active_delivery_count,
+        summary.archived_delivery_count,
         if summary.channel_ids.is_empty() {
             "(none)".to_string()
         } else {
@@ -445,6 +457,8 @@ pub fn render_channel_overview_json(summary: &ChannelRuntimeOverview) -> String 
         "total_count": summary.total_count,
         "enabled_count": summary.enabled_count,
         "ingress_count": summary.ingress_count,
+        "active_delivery_count": summary.active_delivery_count,
+        "archived_delivery_count": summary.archived_delivery_count,
         "channel_ids": summary.channel_ids,
     }))
     .unwrap_or_else(|_| "{}".to_string())
@@ -1030,6 +1044,52 @@ mod tests {
 
         let all = list_channel_deliveries_with_options(&root, 10, true).expect("list all");
         assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn channel_overview_reports_active_and_archived_delivery_counts() {
+        let root = temp_path("loom-channel-overview-counts");
+        init_workspace(&root, "embedded", Some("/tmp/meridian-kernel"), "org_demo")
+            .expect("init workspace");
+        ensure_channel_runtime_scaffold(&root).expect("channel scaffold");
+
+        let active = enqueue_channel_delivery(
+            &root,
+            &ChannelDeliveryRequest {
+                channel_id: "web_api".to_string(),
+                recipient: "founder".to_string(),
+                raw_text: "active".to_string(),
+                allow_receipt_hashes: false,
+                allow_operator_diagnostics: false,
+            },
+        )
+        .expect("enqueue active");
+        update_channel_delivery(&root, &active.delivery_id, "delivered", Some("http_response"), None)
+            .expect("mark delivered");
+
+        let archived = enqueue_channel_delivery(
+            &root,
+            &ChannelDeliveryRequest {
+                channel_id: "web_api".to_string(),
+                recipient: "founder".to_string(),
+                raw_text: "legacy".to_string(),
+                allow_receipt_hashes: false,
+                allow_operator_diagnostics: false,
+            },
+        )
+        .expect("enqueue archived");
+        update_channel_delivery(
+            &root,
+            &archived.delivery_id,
+            "legacy_unclosed",
+            None,
+            Some("historical"),
+        )
+        .expect("mark archived");
+
+        let overview = channel_overview(&root).expect("channel overview");
+        assert_eq!(overview.active_delivery_count, 1);
+        assert_eq!(overview.archived_delivery_count, 1);
     }
 
     #[test]

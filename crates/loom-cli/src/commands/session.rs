@@ -10,10 +10,10 @@ use loom_core::session_policy::{
     set_session_send_policy,
 };
 use loom_core::session_provenance::{
-    find_session_provenance, list_session_provenance, open_session_provenance, render_session_provenance_human,
-    render_session_provenance_json, render_session_provenance_list_human,
-    render_session_provenance_list_json, render_session_provenance_overview_human,
-    render_session_provenance_overview_json, session_provenance_overview,
+    find_session_provenance, list_session_provenance, list_session_provenance_with_options,
+    open_session_provenance, render_session_provenance_human, render_session_provenance_json,
+    render_session_provenance_list_human, render_session_provenance_list_json,
+    render_session_provenance_overview_human, render_session_provenance_overview_json, session_provenance_overview,
     update_session_provenance_job, update_session_provenance_route_full,
 };
 
@@ -49,7 +49,8 @@ USAGE: loom session <COMMAND> [OPTIONS]
 
 COMMANDS:
   status                              Show session provenance overview
-  list [--limit N]                    List active sessions
+  list [--limit N] [--include-archived]
+                                      List active sessions, optionally including archived legacy sessions
   show --session-key KEY              Show session details + override + send policy
   route --session-key KEY             Update route/provenance facts for a session
         [--channel-id CHANNEL]
@@ -109,7 +110,12 @@ fn handle_session_list(args: &[String]) -> LoomResult<()> {
     let limit = take_value(args, "--limit")
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(20);
-    let records = list_session_provenance(&root, limit)?;
+    let include_archived = has_flag(args, "--include-archived");
+    let records = if include_archived {
+        list_session_provenance_with_options(&root, limit, true)?
+    } else {
+        list_session_provenance(&root, limit)?
+    };
     match format.as_str() {
         "human" => {
             print_startup_banner();
