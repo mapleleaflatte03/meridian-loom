@@ -66,6 +66,9 @@ pub struct ChannelDeliveryRecord {
     pub final_class: String,
     pub allowed: bool,
     pub status: String,
+    pub completed_at_unix_ms: u64,
+    pub external_ref: String,
+    pub status_detail: String,
     pub display_text: String,
     pub deny_reason: String,
     pub redactions_applied: Vec<String>,
@@ -180,6 +183,9 @@ pub fn enqueue_channel_delivery(root: &Path, request: &ChannelDeliveryRequest) -
             final_class: "blocked".to_string(),
             allowed: false,
             status: "blocked".to_string(),
+            completed_at_unix_ms: 0,
+            external_ref: String::new(),
+            status_detail: String::new(),
             display_text: String::new(),
             deny_reason: format!("channel '{}' is disabled", channel.channel_id),
             redactions_applied: Vec::new(),
@@ -206,6 +212,9 @@ pub fn enqueue_channel_delivery(root: &Path, request: &ChannelDeliveryRequest) -
             } else {
                 "blocked".to_string()
             },
+            completed_at_unix_ms: 0,
+            external_ref: String::new(),
+            status_detail: String::new(),
             display_text: guarded.display_text,
             deny_reason: guarded.deny_reason.unwrap_or_default(),
             redactions_applied: guarded.redactions_applied,
@@ -216,6 +225,66 @@ pub fn enqueue_channel_delivery(root: &Path, request: &ChannelDeliveryRequest) -
     persist_delivery_record(root, &delivery)?;
     delivery.display_text = delivery.display_text.trim().to_string();
     Ok(delivery)
+}
+
+
+pub fn update_channel_delivery(
+    root: &Path,
+    delivery_id: &str,
+    status: &str,
+    external_ref: Option<&str>,
+    status_detail: Option<&str>,
+) -> LoomResult<ChannelDeliveryRecord> {
+    ensure_channel_runtime_scaffold(root)?;
+    let delivery_id = delivery_id.trim();
+    if delivery_id.is_empty() {
+        return Err("delivery_id is required".to_string());
+    }
+    let status = status.trim();
+    if status.is_empty() {
+        return Err("status is required".to_string());
+    }
+    match status {
+        "queued" | "delivered" | "failed" | "blocked" => {}
+        _ => return Err(format!("unsupported channel delivery status '{}'", status)),
+    }
+
+    let mut matched_path: Option<PathBuf> = None;
+    let mut record: Option<ChannelDeliveryRecord> = None;
+    for entry in fs::read_dir(channel_delivery_path(root)).map_err(io_err)? {
+        let entry = entry.map_err(io_err)?;
+        if !entry.file_type().map_err(io_err)?.is_file() {
+            continue;
+        }
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("json") {
+            continue;
+        }
+        let raw = fs::read_to_string(&path).map_err(io_err)?;
+        let candidate = parse_delivery_record(&raw)?;
+        if candidate.delivery_id == delivery_id {
+            matched_path = Some(path);
+            record = Some(candidate);
+            break;
+        }
+    }
+
+    let path = matched_path.ok_or_else(|| format!("delivery '{}' was not found", delivery_id))?;
+    let mut record = record.expect("matched record");
+    record.status = status.to_string();
+    if matches!(status, "delivered" | "failed" | "blocked") {
+        record.completed_at_unix_ms = now_unix_ms();
+    } else {
+        record.completed_at_unix_ms = 0;
+    }
+    if let Some(external_ref) = external_ref {
+        record.external_ref = external_ref.trim().to_string();
+    }
+    if let Some(status_detail) = status_detail {
+        record.status_detail = status_detail.trim().to_string();
+    }
+    persist_delivery_record_at_path(&path, &record)?;
+    Ok(record)
 }
 
 pub fn list_channel_deliveries(root: &Path, limit: usize) -> LoomResult<Vec<ChannelDeliveryRecord>> {
@@ -381,13 +450,32 @@ pub fn render_channel_sync_json(result: &ChannelSyncResult) -> String {
 
 pub fn render_channel_delivery_human(record: &ChannelDeliveryRecord) -> String {
     format!(
-        "delivery_id:        {}\nchannel_id:         {}\nrecipient:          {}\nsubmitted_at:       {}\nallowed:            {}\nstatus:             {}\nsource_class:       {}\nfinal_class:        {}\ndeny_reason:        {}\nredactions:         {}\ndetected_tokens:    {}\noutput:\n{}\n",
+        "delivery_id:        {}
+channel_id:         {}
+recipient:          {}
+submitted_at:       {}
+completed_at:       {}
+allowed:            {}
+status:             {}
+external_ref:       {}
+status_detail:      {}
+source_class:       {}
+final_class:        {}
+deny_reason:        {}
+redactions:         {}
+detected_tokens:    {}
+output:
+{}
+",
         record.delivery_id,
         record.channel_id,
         record.recipient,
         record.submitted_at_unix_ms,
+        if record.completed_at_unix_ms == 0 { "(pending)".to_string() } else { record.completed_at_unix_ms.to_string() },
         record.allowed,
         record.status,
+        if record.external_ref.is_empty() { "(none)".to_string() } else { record.external_ref.clone() },
+        if record.status_detail.is_empty() { "(none)".to_string() } else { record.status_detail.clone() },
         record.source_class,
         record.final_class,
         if record.deny_reason.is_empty() { "(none)" } else { &record.deny_reason },
@@ -569,6 +657,10 @@ fn persist_delivery_record(root: &Path, record: &ChannelDeliveryRecord) -> LoomR
         safe_file_token(&record.delivery_id)
     );
     let path = channel_delivery_path(root).join(file_name);
+    persist_delivery_record_at_path(&path, record)
+}
+
+fn persist_delivery_record_at_path(path: &Path, record: &ChannelDeliveryRecord) -> LoomResult<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(io_err)?;
     }
@@ -606,6 +698,9 @@ fn parse_delivery_record(raw: &str) -> LoomResult<ChannelDeliveryRecord> {
         final_class: value_string_or(value.get("final_class"), "user_visible"),
         allowed: value.get("allowed").and_then(Value::as_bool).unwrap_or(false),
         status: value_string_or(value.get("status"), "queued"),
+        completed_at_unix_ms: value_u64(value.get("completed_at_unix_ms")).unwrap_or(0),
+        external_ref: value_string_or(value.get("external_ref"), ""),
+        status_detail: value_string_or(value.get("status_detail"), ""),
         display_text: value_string_or(value.get("display_text"), ""),
         deny_reason: value_string_or(value.get("deny_reason"), ""),
         redactions_applied: value_array_strings(value.get("redactions_applied")),
@@ -659,6 +754,9 @@ fn delivery_record_json(record: &ChannelDeliveryRecord) -> Value {
         "final_class": record.final_class,
         "allowed": record.allowed,
         "status": record.status,
+        "completed_at_unix_ms": record.completed_at_unix_ms,
+        "external_ref": record.external_ref,
+        "status_detail": record.status_detail,
         "display_text": record.display_text,
         "deny_reason": record.deny_reason,
         "redactions_applied": record.redactions_applied,

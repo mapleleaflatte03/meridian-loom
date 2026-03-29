@@ -7,7 +7,7 @@ use loom_core::channels::{
     render_channel_delivery_list_json, render_channel_ingress_human, render_channel_ingress_json,
     render_channel_ingress_list_human, render_channel_ingress_list_json, render_channel_overview_human,
     render_channel_overview_json, render_channel_sync_human, render_channel_sync_json, sync_channel_registry,
-    ChannelDeliveryRequest, ChannelIngressRequest,
+    update_channel_delivery, ChannelDeliveryRequest, ChannelIngressRequest,
 };
 
 pub(crate) fn handle_channel(args: &[String]) -> LoomResult<()> {
@@ -16,9 +16,10 @@ pub(crate) fn handle_channel(args: &[String]) -> LoomResult<()> {
         Some("sync") => handle_channel_sync(&args[1..]),
         Some("send") => handle_channel_send(&args[1..]),
         Some("deliveries") => handle_channel_deliveries(&args[1..]),
+        Some("update") => handle_channel_update(&args[1..]),
         Some("ingest") => handle_channel_ingest(&args[1..]),
         Some("inbox") => handle_channel_inbox(&args[1..]),
-        _ => Err("channel supports 'status', 'sync', 'send', 'deliveries', 'ingest', and 'inbox'".to_string()),
+        _ => Err("channel supports 'status', 'sync', 'send', 'deliveries', 'update', 'ingest', and 'inbox'".to_string()),
     }
 }
 
@@ -117,6 +118,35 @@ fn handle_channel_deliveries(args: &[String]) -> LoomResult<()> {
             print_human(&render_channel_delivery_list_human(&records));
         }
         _ => print!("{}", render_channel_delivery_list_json(&records)),
+    }
+    Ok(())
+}
+
+
+fn handle_channel_update(args: &[String]) -> LoomResult<()> {
+    let root = root_from(take_value(args, "--root").as_deref())?;
+    let delivery_id = required_flag(args, "--delivery-id")?;
+    let status = required_flag(args, "--status")?;
+    let format = take_value(args, "--format").unwrap_or_else(|| {
+        if std::io::stdout().is_terminal() {
+            "human".to_string()
+        } else {
+            "json".to_string()
+        }
+    });
+    let record = update_channel_delivery(
+        &root,
+        &delivery_id,
+        &status,
+        take_value(args, "--external-ref").as_deref(),
+        take_value(args, "--detail").as_deref(),
+    )?;
+    match format.as_str() {
+        "human" => {
+            print_startup_banner();
+            print_human(&render_channel_delivery_human(&record));
+        }
+        _ => print!("{}", render_channel_delivery_json(&record)),
     }
     Ok(())
 }
