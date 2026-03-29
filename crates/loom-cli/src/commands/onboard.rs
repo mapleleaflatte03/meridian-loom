@@ -361,6 +361,13 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
     manifest.manager_model = manager_model.clone();
     manifest.codex_auth_source = codex_auth_source.clone();
     manifest.codex_auth_path = codex_auth_path.clone().unwrap_or_default();
+    if format == "human" {
+        print_progress_status(
+            "..",
+            "Writing runtime plan",
+            Some("Saving the manager route, gateway edge, and governed defaults."),
+        );
+    }
     let provider_profiles_path = if let Some(provider_config) = interactive_provider_config.as_ref()
     {
         configure_onboard_provider_profile(&root, provider_config)?
@@ -394,6 +401,21 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
     }
     loom_core::write_config(&root, &config)?;
     let manifest_path = write_onboard_manifest(&root, &manifest)?;
+    if format == "human" {
+        print_progress_status(
+            "ok",
+            "Runtime plan saved",
+            Some(&format!(
+                "The runtime root and onboard manifest were updated under {}.",
+                root.display()
+            )),
+        );
+        print_progress_status(
+            "..",
+            "Syncing runtime ledgers",
+            Some("Refreshing provider state, channels, services, bindings, skills, and schedules."),
+        );
+    }
     let channel_summary = sync_channel_registry(&root)?;
     let gateway_runtime = sync_gateway_runtime(&root)?;
     let service_runtime = sync_service_runtime(&root)?;
@@ -403,6 +425,19 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
     let schedule_sync = sync_schedule_registry(&root)?;
     let schedule_runtime = schedule_overview(&root, current_unix_ms())?;
     fs::create_dir_all(root.join("state/memory")).map_err(|error| error.to_string())?;
+    if format == "human" {
+        print_progress_status(
+            "ok",
+            "Runtime ledgers synced",
+            Some(&format!(
+                "Providers={} channels={} skills={} recurring={}",
+                provider_auth_sync.profile_count,
+                channel_summary.total_count,
+                skill_summary.total_count,
+                schedule_sync.total_count
+            )),
+        );
+    }
 
     let provider_summary = provider_plane_summary(Some(&root))?;
     let provider_auth_summary = provider_auth_store_overview(&root)?;
@@ -453,9 +488,23 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
         && manifest.daemon_enabled
         && manifest.daemon_manager == "supervisor"
     {
+        if format == "human" {
+            print_progress_status(
+                "..",
+                "Starting supervisor daemon",
+                Some("Handing background lifecycle to the local supervisor."),
+            );
+        }
         let snapshot = start_supervisor_daemon(&root, kernel_path.as_deref())?;
         manifest.daemon_state = daemon_state_from_snapshot(&snapshot);
         write_onboard_manifest(&root, &manifest)?;
+        if format == "human" {
+            print_progress_status(
+                "ok",
+                "Supervisor daemon ready",
+                Some(&render_daemon_summary(&snapshot)),
+            );
+        }
         Some(snapshot)
     } else {
         None
@@ -470,9 +519,34 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
         !has_flag(args, "--skip-health-check")
     };
     let health_snapshot = if health_requested {
+        if format == "human" {
+            print_progress_status(
+                "..",
+                "Running post-setup health check",
+                Some("Checking provider, gateway, service, and runtime surfaces."),
+            );
+        }
         let (healthy, report) = health(&root)?;
+        if format == "human" {
+            print_progress_status(
+                if healthy { "ok" } else { "!!" },
+                "Health check complete",
+                Some(if healthy {
+                    "The fresh runtime is healthy."
+                } else {
+                    "Some runtime surfaces still need attention before the operator can call this green."
+                }),
+            );
+        }
         Some((healthy, report))
     } else {
+        if format == "human" {
+            print_progress_status(
+                "--",
+                "Health check skipped",
+                Some("Run loom doctor when you are ready to verify the runtime."),
+            );
+        }
         None
     };
 
@@ -674,70 +748,62 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
         &manager_route_model,
         manager_auth_status.as_ref(),
     );
+    let manager_profile_name = manager_route
+        .as_ref()
+        .map(|route| route.profile_name.as_str())
+        .or_else(|| {
+            configured_manager_provider
+                .as_ref()
+                .map(|route| route.profile_name.as_str())
+        })
+        .unwrap_or("(pending provider setup)");
+    let manager_transport_label = manager_route
+        .as_ref()
+        .map(|route| route.transport_kind())
+        .or_else(|| {
+            configured_manager_provider
+                .as_ref()
+                .map(|route| route.transport_kind.as_str())
+        })
+        .unwrap_or("(pending provider setup)");
+    let next_steps = build_next_steps(&root, manager_auth_ready, &manager_next_step);
 
     if !banner_rendered {
         print_startup_banner();
     }
     if config_status == "initialized" {
-        print_human(&format!(
-            "Meridian // RUNTIME READY
-=========================
-root:                {}
-mode:                {}
-org_id:              {}
-setup_state:         {}
-manager:             {} via {} ({})
-auth:                {} [{}]
-gateway:             {}
-telegram:            {}
-defaults seeded:     skills={} recurring={}
-runtime health:      {}
-
-Current state
--------------
-{}
-
-Next
-----
-1. loom doctor --root {} --format human
-2. loom onboard --root {} --format human --config-action modify
-3. {}
-",
-            root.display(),
-            config.mode,
-            config.org_id,
-            setup_state_label(&final_setup_state),
-            manager_model,
-            manager_route
-                .as_ref()
-                .map(|route| route.profile_name.as_str())
-                .or_else(|| configured_manager_provider
-                    .as_ref()
-                    .map(|route| route.profile_name.as_str()))
-                .unwrap_or("(pending provider setup)"),
-            manager_route
-                .as_ref()
-                .map(|route| route.transport_kind())
-                .or_else(|| configured_manager_provider
-                    .as_ref()
-                    .map(|route| route.transport_kind.as_str()))
-                .unwrap_or("(pending provider setup)"),
-            manager_auth_mode.as_str(),
-            if manager_auth_ready {
-                "ready"
-            } else {
-                "action required"
-            },
-            overview.gateway_summary,
-            overview.telegram_summary,
-            skill_summary.total_count,
-            schedule_sync.total_count,
-            health_summary,
-            current_state_hint,
-            root.display(),
-            root.display(),
-            manager_next_step,
-        ));
+        print_human("Meridian // READY TO LAUNCH\n============================\n");
+        print_setup_note(
+            "Finish line",
+            &format!(
+                "Root:             {}\n\
+                 Setup state:      {}\n\
+                 Manager route:    {} via {} ({})\n\
+                 Auth:             {} [{}]\n\
+                 Gateway edge:     {}\n\
+                 Telegram:         {}\n\
+                 Defaults seeded:  skills={} recurring={}\n\
+                 Runtime health:   {}",
+                root.display(),
+                setup_state_label(&final_setup_state),
+                manager_model,
+                manager_profile_name,
+                manager_transport_label,
+                manager_auth_mode.as_str(),
+                if manager_auth_ready {
+                    "ready"
+                } else {
+                    "action required"
+                },
+                overview.gateway_summary,
+                overview.telegram_summary,
+                skill_summary.total_count,
+                schedule_sync.total_count,
+                health_summary,
+            ),
+        );
+        print_setup_note("Current state", &current_state_hint);
+        print_setup_note("Next move", &render_numbered_steps(&next_steps));
     } else {
         print_human(&format!(
             "Meridian Loom // ONBOARD
@@ -1603,13 +1669,15 @@ fn normalize_codex_auth_selection(
 #[cfg(test)]
 mod tests {
     use super::{
-        auth_paths_match, choice_matches, codex_detail_for_manager, manager_current_state_hint,
-        normalize_choice_token, normalize_codex_auth_selection, provider_selection_details,
-        render_stage_progress, PromptSelectOption, ProviderSetupSelection, SetupState,
+        auth_paths_match, build_next_steps, choice_matches, codex_detail_for_manager,
+        manager_current_state_hint, normalize_choice_token, normalize_codex_auth_selection,
+        provider_selection_details, render_stage_progress, PromptSelectOption,
+        ProviderSetupSelection, SetupState,
     };
     use loom_core::provider_router::{
         OnboardProviderRouteConfig, ProviderAuthMode, ProviderAuthStatus, ProviderKind,
     };
+    use std::path::Path;
 
     fn auth_status(
         profile_kind: ProviderKind,
@@ -1778,6 +1846,31 @@ mod tests {
         assert!(auth.contains("OPENAI_API_KEY"));
         assert!(next.contains("doctor"));
     }
+
+    #[test]
+    fn next_steps_dedupe_doctor_when_auth_pending() {
+        let steps = build_next_steps(
+            Path::new("/tmp/loom"),
+            false,
+            "export OPENAI_API_KEY=... && loom doctor --root /tmp/loom --format human",
+        );
+        assert_eq!(steps.len(), 2);
+        assert!(steps[0].contains("OPENAI_API_KEY"));
+        assert!(steps[1].contains("--config-action modify"));
+    }
+
+    #[test]
+    fn next_steps_keep_doctor_and_service_status_when_ready() {
+        let steps = build_next_steps(
+            Path::new("/tmp/loom"),
+            true,
+            "loom service status --root /tmp/loom",
+        );
+        assert_eq!(steps.len(), 3);
+        assert!(steps[0].contains("loom doctor"));
+        assert!(steps[1].contains("loom service status"));
+        assert!(steps[2].contains("--config-action modify"));
+    }
 }
 
 fn codex_detail_for_manager(manager_profile_kind: Option<&ProviderKind>) -> String {
@@ -1854,18 +1947,10 @@ fn trimmed_string_option(raw: &str) -> Option<String> {
 
 fn print_setup_stage(step: usize, total: usize, title: &str, detail: &str) {
     let progress = render_stage_progress(step, total);
-    print_human(&format!(
-        "Progress {}  Stage {} of {}
-{}
-{}
-
-",
-        progress,
-        step,
-        total,
-        title,
-        underline_for(title),
-    ));
+    print_setup_note(
+        &format!("Stage {} of {}", step, total),
+        &format!("{}\nProgress: {}", title, progress),
+    );
     print_setup_note("What happens here", detail);
 }
 
@@ -1904,8 +1989,53 @@ fn print_setup_note(title: &str, body: &str) {
     print_human(&(block.join("\n") + "\n\n"));
 }
 
-fn underline_for(title: &str) -> String {
-    "=".repeat(title.len().max(12))
+fn print_progress_status(marker: &str, title: &str, detail: Option<&str>) {
+    print_human(&format!("[{}] {}\n", marker, title));
+    if let Some(detail) = detail {
+        if !detail.trim().is_empty() {
+            print_human(&format!("     {}\n", detail));
+        }
+    }
+    print_human("\n");
+}
+
+fn render_numbered_steps(steps: &[String]) -> String {
+    steps
+        .iter()
+        .enumerate()
+        .map(|(index, step)| format!("{}. {}", index + 1, step))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn build_next_steps(root: &Path, manager_auth_ready: bool, manager_next_step: &str) -> Vec<String> {
+    let doctor_step = format!("loom doctor --root {} --format human", root.display());
+    let modify_step = format!(
+        "loom onboard --root {} --format human --config-action modify",
+        root.display()
+    );
+    let mut steps = Vec::new();
+    if manager_auth_ready {
+        steps.push(doctor_step.clone());
+        steps.push(manager_next_step.to_string());
+    } else {
+        steps.push(manager_next_step.to_string());
+        if !manager_next_step.contains("loom doctor") {
+            steps.push(doctor_step.clone());
+        }
+    }
+    steps.push(modify_step);
+    dedupe_steps(steps)
+}
+
+fn dedupe_steps(steps: Vec<String>) -> Vec<String> {
+    let mut unique = Vec::new();
+    for step in steps {
+        if !unique.contains(&step) {
+            unique.push(step);
+        }
+    }
+    unique
 }
 
 fn prompt_text(label: &str, default: &str) -> LoomResult<String> {
