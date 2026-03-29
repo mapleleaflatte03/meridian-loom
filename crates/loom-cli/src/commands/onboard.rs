@@ -367,8 +367,15 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
     manifest.codex_auth_source = codex_auth_source.clone();
     manifest.codex_auth_path = codex_auth_path.clone().unwrap_or_default();
     let human_output = format == "human";
+    let progress_mode = if interactive {
+        ProgressRenderMode::Animated
+    } else if human_output {
+        ProgressRenderMode::Transcript
+    } else {
+        ProgressRenderMode::Silent
+    };
     let (provider_profiles_path, provider_auth_sync, manifest_path) = run_with_spinner(
-        human_output,
+        progress_mode,
         "Writing runtime plan",
         Some("Saving the manager route, gateway edge, and governed defaults."),
         || {
@@ -429,7 +436,7 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
         schedule_sync,
         schedule_runtime,
     ) = run_with_spinner(
-        human_output,
+        progress_mode,
         "Syncing runtime ledgers",
         Some("Refreshing provider state, channels, services, bindings, skills, and schedules."),
         || {
@@ -518,7 +525,7 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
         && manifest.daemon_manager == "supervisor"
     {
         let snapshot = run_with_spinner(
-            human_output,
+            progress_mode,
             "Starting supervisor daemon",
             Some("Handing background lifecycle to the local supervisor."),
             || start_supervisor_daemon(&root, kernel_path.as_deref()),
@@ -547,7 +554,7 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
     };
     let health_snapshot = if health_requested {
         let (healthy, report) = run_with_spinner(
-            human_output,
+            progress_mode,
             "Running post-setup health check",
             Some("Checking provider, gateway, service, and runtime surfaces."),
             || health(&root),
@@ -2015,6 +2022,13 @@ enum PanelTone {
     Warning,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ProgressRenderMode {
+    Animated,
+    Transcript,
+    Silent,
+}
+
 fn print_setup_note(title: &str, body: &str) {
     let lines = body
         .lines()
@@ -2068,52 +2082,59 @@ fn print_progress_status(marker: &str, title: &str, detail: Option<&str>) {
     print_human("\n");
 }
 
-fn run_with_spinner<T, F>(
-    enabled: bool,
-    title: &str,
-    detail: Option<&str>,
-    action: F,
-) -> LoomResult<T>
+fn run_with_spinner<T, F>(mode: ProgressRenderMode, title: &str, detail: Option<&str>, action: F) -> LoomResult<T>
 where
     F: FnOnce() -> LoomResult<T>,
 {
-    if enabled && rich_terminal_enabled() {
-        let started_at = Instant::now();
-        if let Some(detail) = detail {
-            if !detail.trim().is_empty() {
-                print_human(&format!("     {}\n", style_progress_detail(detail, "..")));
+    match mode {
+        ProgressRenderMode::Animated if rich_terminal_enabled() => {
+            let started_at = Instant::now();
+            if let Some(detail) = detail {
+                if !detail.trim().is_empty() {
+                    print_human(&format!("     {}\n", style_progress_detail(detail, "..")));
+                }
             }
-        }
-        let running = Arc::new(AtomicBool::new(true));
-        let title_string = title.to_string();
-        let running_worker = Arc::clone(&running);
-        let spinner_thread = thread::spawn(move || {
-            let frames = ["[|]", "[/]", "[-]", "[\\]"];
-            let mut frame_index = 0usize;
-            while running_worker.load(Ordering::Relaxed) {
-                let frame = style_progress_marker(frames[frame_index]);
-                print!("\r{} {}", frame, title_string);
-                let _ = io::stdout().flush();
-                thread::sleep(Duration::from_millis(90));
-                frame_index = (frame_index + 1) % frames.len();
+            let running = Arc::new(AtomicBool::new(true));
+            let title_string = title.to_string();
+            let running_worker = Arc::clone(&running);
+            let spinner_thread = thread::spawn(move || {
+                let frames = ["[|]", "[/]", "[-]", "[\\]"];
+                let mut frame_index = 0usize;
+                while running_worker.load(Ordering::Relaxed) {
+                    let frame = style_progress_marker(frames[frame_index]);
+                    print!("\r{} {}", frame, title_string);
+                    let _ = io::stdout().flush();
+                    thread::sleep(Duration::from_millis(90));
+                    frame_index = (frame_index + 1) % frames.len();
+                }
+            });
+            let result = action();
+            let min_visible = Duration::from_millis(240);
+            if started_at.elapsed() < min_visible {
+                thread::sleep(min_visible - started_at.elapsed());
             }
-        });
-        let result = action();
-        let min_visible = Duration::from_millis(240);
-        if started_at.elapsed() < min_visible {
-            thread::sleep(min_visible - started_at.elapsed());
+            running.store(false, Ordering::Relaxed);
+            let _ = spinner_thread.join();
+            print!("\r\x1b[2K");
+            let _ = io::stdout().flush();
+            result
         }
-        running.store(false, Ordering::Relaxed);
-        let _ = spinner_thread.join();
-        print!("\r\x1b[2K");
-        let _ = io::stdout().flush();
-        result
-    } else {
-        if enabled {
-            print_progress_status("..", title, detail);
+        ProgressRenderMode::Animated | ProgressRenderMode::Transcript => {
+            print_progress_transcript_start(title, detail);
+            action()
         }
-        action()
+        ProgressRenderMode::Silent => action(),
     }
+}
+
+fn print_progress_transcript_start(title: &str, detail: Option<&str>) {
+    print_human(&format!("{} {}\n", style_progress_marker(">>"), title));
+    if let Some(detail) = detail {
+        if !detail.trim().is_empty() {
+            print_human(&format!("     {}\n", style_progress_detail(detail, ">>")));
+        }
+    }
+    print_human("\n");
 }
 
 fn render_numbered_steps(steps: &[String]) -> String {
@@ -2243,6 +2264,7 @@ fn style_progress_marker(marker: &str) -> String {
     match marker {
         "ok" => paint(marker, "1;92"),
         "!!" => paint(marker, "1;93"),
+        ">>" => paint(marker, "1;94"),
         ".." | "[|]" | "[/]" | "[-]" | "[\\]" => paint(marker, "1;96"),
         "--" => paint(marker, "2;37"),
         _ => marker.to_string(),
@@ -2253,6 +2275,7 @@ fn style_progress_detail(detail: &str, marker: &str) -> String {
     match marker {
         "ok" => paint(detail, "0;92"),
         "!!" => paint(detail, "0;93"),
+        ">>" => paint(detail, "0;94"),
         _ => paint(detail, "0;37"),
     }
 }
