@@ -199,6 +199,19 @@ pub struct ResolvedProviderRoute {
 }
 
 impl ResolvedProviderRoute {
+    pub fn transport_kind(&self) -> &'static str {
+        match self.profile_kind {
+            ProviderKind::LocalOllama => "ollama_local",
+            ProviderKind::OpenAiCompatible => "openai_rest",
+            ProviderKind::OpenAiCodex => "codex_session",
+            ProviderKind::CustomEndpoint => "custom_http",
+        }
+    }
+
+    pub fn execution_owner(&self) -> &'static str {
+        "meridian"
+    }
+
     pub fn resolve_auth_headers(&self) -> LoomResult<Vec<(String, String)>> {
         match &self.auth {
             ProviderAuthMode::None => Ok(vec![]),
@@ -686,7 +699,9 @@ pub fn render_provider_route_human(route: &ResolvedProviderRoute) -> String {
     format!(
         "capability:         {}
 profile:            {} ({})
+transport_kind:     {}
 auth_mode:          {}
+execution_owner:    {}
 endpoint:           {}
 model:              {}
 matched_rule:       {}
@@ -696,7 +711,9 @@ note:               {}
         route.capability_name,
         route.profile_name,
         route.profile_kind.label(),
+        route.transport_kind(),
         route.auth.label(),
+        route.execution_owner(),
         route.endpoint_url,
         route.model,
         route.matched_rule,
@@ -707,11 +724,28 @@ note:               {}
 
 pub fn render_provider_route_json(route: &ResolvedProviderRoute) -> String {
     format!(
-        "{{\n  \"capability\": {},\n  \"profile\": {},\n  \"profile_kind\": {},\n  \"auth_mode\": {},\n  \"endpoint\": {},\n  \"model\": {},\n  \"matched_rule\": {},\n  \"source\": {},\n  \"note\": {},\n  \"agent_id\": {},\n  \"org_id\": {}\n}}\n",
+        "{{
+  \"capability\": {},
+  \"profile\": {},
+  \"profile_kind\": {},
+  \"transport_kind\": {},
+  \"auth_mode\": {},
+  \"execution_owner\": {},
+  \"endpoint\": {},
+  \"model\": {},
+  \"matched_rule\": {},
+  \"source\": {},
+  \"note\": {},
+  \"agent_id\": {},
+  \"org_id\": {}
+}}
+",
         json_string(&route.capability_name),
         json_string(&route.profile_name),
         json_string(route.profile_kind.label()),
+        json_string(route.transport_kind()),
         json_string(route.auth.label()),
+        json_string(route.execution_owner()),
         json_string(route.endpoint_url.as_str()),
         json_string(&route.model),
         json_string(&route.matched_rule),

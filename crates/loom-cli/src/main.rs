@@ -41,13 +41,14 @@ use loom_shadow::{
     render_preflight_human, render_preflight_json, render_runtime_execution_human,
     render_runtime_execution_json, render_supervisor_daemon_human,
     render_supervisor_daemon_json, render_runtime_service_human,
+    render_runtime_service_cancel_human, render_runtime_service_cancel_json,
     render_runtime_service_import_human, render_runtime_service_import_json,
     render_runtime_service_json, render_runtime_service_submit_human,
     render_runtime_service_submit_json, render_shadow_report, render_supervisor_run_human,
     render_supervisor_run_json, render_supervisor_status_human, render_supervisor_status_json,
     render_supervisor_watch_human, render_supervisor_watch_json, run_queue_once, run_queue_until_empty, run_supervisor,
     import_commitment_execution_requests,
-    run_supervisor_daemon_loop, request_runtime_service_stop, request_supervisor_daemon_stop,
+    run_supervisor_daemon_loop, request_runtime_service_cancel, request_runtime_service_stop, request_supervisor_daemon_stop,
     run_runtime_service_loop, runtime_service_status, submit_runtime_service_action,
     supervisor_daemon_status, supervisor_status, watch_supervisor,
 };
@@ -361,6 +362,7 @@ Runtime rehearsal\n\
   loom service start [--root PATH] [--kernel-path PATH] [--socket PATH] [--http-address HOST:PORT] [--service-token TOKEN] [--commitments-source PATH|URL] [--workspace-token TOKEN] [--max-jobs N] [--poll-seconds N] [--iterations N] [--foreground] [--format human|json]\n\
   loom service status [--root PATH] [--socket PATH] [--format human|json]\n\
   loom service submit --agent-id ID [--capability NAME] [--gap-class CLASS] [--goal TEXT] [--action-type TYPE] [--resource RESOURCE] [--payload-json JSON] [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--socket PATH] [--http-url URL] [--service-token TOKEN] [--format human|json]\n\
+  loom service cancel --job-id ID [--root PATH] [--socket PATH] [--http-url URL] [--service-token TOKEN] [--format human|json]\n\
   loom service import-commitments --commitments-source PATH|URL [--workspace-token TOKEN] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
   loom service stop [--root PATH] [--socket PATH] [--format human|json]\n\
   loom supervisor run [--root PATH] [--kernel-path PATH] [--max-jobs N] [--format human|json]\n\

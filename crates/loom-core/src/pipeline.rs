@@ -28,6 +28,9 @@ pub struct PipelineRunRecord {
     pub agent_id: String,
     pub provider_profile: String,
     pub model: String,
+    pub transport_kind: String,
+    pub auth_mode: String,
+    pub execution_owner: String,
     pub job_id: Option<String>,
     pub delivery_id: Option<String>,
     pub status: String,
@@ -95,6 +98,9 @@ pub fn execute_pipeline_step(
                 agent_id: ingress.agent_id.clone(),
                 provider_profile: String::new(),
                 model: String::new(),
+                transport_kind: String::new(),
+                auth_mode: String::new(),
+                execution_owner: String::new(),
                 job_id: None,
                 delivery_id: None,
                 status: "failed".to_string(),
@@ -130,18 +136,39 @@ pub fn execute_pipeline_step(
     if let Some(ref model) = override_model {
         intent.requested_model = model.clone();
     }
-    let (provider_profile, model) = match resolve_provider_route(Some(root), &intent) {
-        Ok(route) => (route.profile_name, route.model),
-        Err(_) => (String::new(), String::new()),
-    };
+    let (provider_profile, model, transport_kind, auth_mode, execution_owner) =
+        match resolve_provider_route(Some(root), &intent) {
+            Ok(route) => {
+                let transport_kind = route.transport_kind().to_string();
+                let auth_mode = route.auth.label().to_string();
+                let execution_owner = route.execution_owner().to_string();
+                (
+                    route.profile_name,
+                    route.model,
+                    transport_kind,
+                    auth_mode,
+                    execution_owner,
+                )
+            }
+            Err(_) => (
+                String::new(),
+                String::new(),
+                String::new(),
+                String::new(),
+                String::new(),
+            ),
+        };
 
     // Update session provenance with route info
-    let _ = crate::session_provenance::update_session_provenance_route(
+    let _ = crate::session_provenance::update_session_provenance_route_full(
         root,
         &session_key,
         &provider_profile,
         &model,
         &override_source,
+        &transport_kind,
+        &auth_mode,
+        &execution_owner,
     );
 
     // Step 5: Determine send policy
@@ -161,6 +188,9 @@ pub fn execute_pipeline_step(
         agent_id: agent_id.clone(),
         provider_profile: provider_profile.clone(),
         model: model.clone(),
+        transport_kind: transport_kind.clone(),
+        auth_mode: auth_mode.clone(),
+        execution_owner: execution_owner.clone(),
         job_id: ingress.job_id.clone().if_not_empty(),
         delivery_id: None,
         status: "dispatched".to_string(),
@@ -275,18 +305,39 @@ pub fn record_pipeline_from_ingress(
     if let Some(ref model) = override_model {
         intent.requested_model = model.clone();
     }
-    let (provider_profile, model) = match resolve_provider_route(Some(root), &intent) {
-        Ok(route) => (route.profile_name, route.model),
-        Err(_) => (String::new(), String::new()),
-    };
+    let (provider_profile, model, transport_kind, auth_mode, execution_owner) =
+        match resolve_provider_route(Some(root), &intent) {
+            Ok(route) => {
+                let transport_kind = route.transport_kind().to_string();
+                let auth_mode = route.auth.label().to_string();
+                let execution_owner = route.execution_owner().to_string();
+                (
+                    route.profile_name,
+                    route.model,
+                    transport_kind,
+                    auth_mode,
+                    execution_owner,
+                )
+            }
+            Err(_) => (
+                String::new(),
+                String::new(),
+                String::new(),
+                String::new(),
+                String::new(),
+            ),
+        };
 
     // Update session provenance with route info
-    let _ = crate::session_provenance::update_session_provenance_route(
+    let _ = crate::session_provenance::update_session_provenance_route_full(
         root,
         &session_key,
         &provider_profile,
         &model,
         &override_source,
+        &transport_kind,
+        &auth_mode,
+        &execution_owner,
     );
 
     // Get send policy
@@ -315,6 +366,9 @@ pub fn record_pipeline_from_ingress(
         agent_id: resolved_agent,
         provider_profile,
         model,
+        transport_kind,
+        auth_mode,
+        execution_owner,
         job_id: if job_id.is_empty() { None } else { Some(job_id.to_string()) },
         delivery_id: None,
         status: "accepted".to_string(),
@@ -392,7 +446,7 @@ pub fn pipeline_overview(root: &Path) -> LoomResult<PipelineOverview> {
 
 pub fn render_pipeline_run_human(run: &PipelineRunRecord) -> String {
     format!(
-        "pipeline_id:       {}\ningress_id:        {}\nchannel_id:        {}\npeer_id:           {}\nsession_key:       {}\nbinding_id:        {}\nagent_id:          {}\nprovider_profile:  {}\nmodel:             {}\njob_id:            {}\ndelivery_id:       {}\nstatus:            {}\nstarted_at:        {}\ncompleted_at:      {}\noverride_applied:  {}\nsend_policy:       {}\noutput_guard_class:{}\nlast_error:        {}\n",
+        "pipeline_id:       {}\ningress_id:        {}\nchannel_id:        {}\npeer_id:           {}\nsession_key:       {}\nbinding_id:        {}\nagent_id:          {}\nprovider_profile:  {}\nmodel:             {}\ntransport_kind:    {}\nauth_mode:         {}\nexecution_owner:   {}\njob_id:            {}\ndelivery_id:       {}\nstatus:            {}\nstarted_at:        {}\ncompleted_at:      {}\noverride_applied:  {}\nsend_policy:       {}\noutput_guard_class:{}\nlast_error:        {}\n",
         run.pipeline_id,
         run.ingress_request_id,
         run.channel_id,
@@ -402,6 +456,9 @@ pub fn render_pipeline_run_human(run: &PipelineRunRecord) -> String {
         run.agent_id,
         if run.provider_profile.is_empty() { "(none)" } else { &run.provider_profile },
         if run.model.is_empty() { "(none)" } else { &run.model },
+        if run.transport_kind.is_empty() { "(none)" } else { &run.transport_kind },
+        if run.auth_mode.is_empty() { "(none)" } else { &run.auth_mode },
+        if run.execution_owner.is_empty() { "(none)" } else { &run.execution_owner },
         run.job_id.as_deref().unwrap_or("(none)"),
         run.delivery_id.as_deref().unwrap_or("(none)"),
         run.status,
@@ -572,6 +629,9 @@ fn parse_pipeline_run(raw: &str) -> LoomResult<PipelineRunRecord> {
         agent_id: value_string_or(v.get("agent_id"), ""),
         provider_profile: value_string_or(v.get("provider_profile"), ""),
         model: value_string_or(v.get("model"), ""),
+        transport_kind: value_string_or(v.get("transport_kind"), ""),
+        auth_mode: value_string_or(v.get("auth_mode"), ""),
+        execution_owner: value_string_or(v.get("execution_owner"), ""),
         job_id: value_opt_string(v.get("job_id")),
         delivery_id: value_opt_string(v.get("delivery_id")),
         status: value_string_or(v.get("status"), "unknown"),
@@ -595,6 +655,9 @@ fn pipeline_run_json(run: &PipelineRunRecord) -> Value {
         "agent_id": run.agent_id,
         "provider_profile": run.provider_profile,
         "model": run.model,
+        "transport_kind": run.transport_kind,
+        "auth_mode": run.auth_mode,
+        "execution_owner": run.execution_owner,
         "job_id": run.job_id,
         "delivery_id": run.delivery_id,
         "status": run.status,

@@ -448,6 +448,19 @@ pub struct RuntimeServiceSubmitCapture {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RuntimeServiceCancelCapture {
+    pub request_id: String,
+    pub transport: String,
+    pub service_target: String,
+    pub socket_path: PathBuf,
+    pub job_id: String,
+    pub status: String,
+    pub current_status: String,
+    pub previous_status: String,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RuntimeServiceImportCapture {
     pub commitments_source: String,
     pub imports_dir: PathBuf,
@@ -3673,17 +3686,16 @@ pub fn submit_runtime_service_action(
     if !service_snapshot.available || !service_snapshot.running {
         return Err("runtime service is not running; start it with `loom service start` first".to_string());
     }
+    let explicit_http_url = http_url
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
     let fallback_http_url = if service_snapshot.http_address.trim().is_empty() {
         None
     } else {
         Some(format!("http://{}", service_snapshot.http_address))
     };
-    let effective_http_url = http_url
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .or(fallback_http_url);
 
-    if let Some(http_url) = effective_http_url.as_deref() {
+    if let Some(http_url) = explicit_http_url.as_deref() {
         let reply = send_runtime_service_http_request(
             http_url,
             "POST",
@@ -3829,6 +3841,141 @@ pub fn submit_runtime_service_action(
         accepted_at: timestamp_now(),
         note: "service request staged for file-backed ingress; awaiting acceptance receipt".to_string(),
     })
+}
+
+
+pub fn request_runtime_service_cancel(
+    root: &Path,
+    socket_override: Option<&str>,
+    http_url: Option<&str>,
+    service_token: Option<&str>,
+    job_id: &str,
+) -> ShadowResult<RuntimeServiceCancelCapture> {
+    let socket_path = service_socket_path(root, socket_override)?;
+    let request_id = canonical_join_runtime(&["cancel", job_id, &timestamp_now()]);
+    let request = format!(
+        "{{\"request_type\":{},\"request_id\":{},\"job_id\":{}}}\n",
+        json_string("cancel_job"),
+        json_string(&request_id),
+        json_string(job_id),
+    );
+
+    let service_snapshot = runtime_service_status(root, socket_override)?;
+    if !service_snapshot.available || !service_snapshot.running {
+        return Err("runtime service is not running; start it with `loom service start` first".to_string());
+    }
+
+    let explicit_http_url = http_url
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let fallback_http_url = if service_snapshot.http_address.trim().is_empty() {
+        None
+    } else {
+        Some(format!("http://{}", service_snapshot.http_address))
+    };
+
+    if let Some(http_url) = explicit_http_url.as_deref() {
+        let reply = send_runtime_service_http_request(
+            http_url,
+            "POST",
+            "/cancel",
+            Some(&format!(
+                "{{\"request_id\":{},\"job_id\":{}}}\n",
+                json_string(&request_id),
+                json_string(job_id),
+            )),
+            service_token,
+        )?;
+        let body = extract_http_body(&reply);
+        return parse_runtime_service_cancel_capture(
+            &body,
+            &request_id,
+            http_url,
+            &socket_path,
+            "http",
+            job_id,
+        );
+    }
+
+    if socket_path.exists() && !socket_path.is_dir() {
+        if let Ok(reply) = send_runtime_service_request(&socket_path, &request) {
+            return parse_runtime_service_cancel_capture(
+                &reply,
+                &request_id,
+                &socket_path.display().to_string(),
+                &socket_path,
+                "socket",
+                job_id,
+            );
+        }
+    }
+
+    if let Some(http_url) = fallback_http_url.as_deref() {
+        let reply = send_runtime_service_http_request(
+            http_url,
+            "POST",
+            "/cancel",
+            Some(&format!(
+                "{{\"request_id\":{},\"job_id\":{}}}\n",
+                json_string(&request_id),
+                json_string(job_id),
+            )),
+            service_token,
+        )?;
+        let body = extract_http_body(&reply);
+        return parse_runtime_service_cancel_capture(
+            &body,
+            &request_id,
+            http_url,
+            &socket_path,
+            "http",
+            job_id,
+        );
+    }
+
+    Err("runtime service cancel requires the local HTTP or socket control plane".to_string())
+}
+
+fn parse_runtime_service_cancel_capture(
+    reply: &str,
+    fallback_request_id: &str,
+    service_target: &str,
+    socket_path: &Path,
+    fallback_transport: &str,
+    fallback_job_id: &str,
+) -> ShadowResult<RuntimeServiceCancelCapture> {
+    let status = extract_json_string(reply, "\"status\"").unwrap_or_else(|| "unknown".to_string());
+    let note = extract_json_string(reply, "\"note\"").unwrap_or_else(|| reply.trim().to_string());
+    let lowered_note = note.to_ascii_lowercase();
+    if lowered_note.contains("unsupported route") || lowered_note.contains("unknown request_type") {
+        return Err(format!("runtime service cancel failed: {}", note));
+    }
+
+    let capture = RuntimeServiceCancelCapture {
+        request_id: extract_json_string(reply, "\"request_id\"")
+            .unwrap_or_else(|| fallback_request_id.to_string()),
+        transport: extract_json_string(reply, "\"transport\"")
+            .unwrap_or_else(|| fallback_transport.to_string()),
+        service_target: service_target.to_string(),
+        socket_path: socket_path.to_path_buf(),
+        job_id: extract_json_string(reply, "\"job_id\"").unwrap_or_else(|| fallback_job_id.to_string()),
+        status: status.clone(),
+        current_status: extract_json_string(reply, "\"current_status\"").unwrap_or_default(),
+        previous_status: extract_json_string(reply, "\"previous_status\"").unwrap_or_default(),
+        note,
+    };
+
+    match status.as_str() {
+        "cancelled" | "not_cancelable" | "not_found" => Ok(capture),
+        _ => Err(format!(
+            "runtime service cancel failed: {}",
+            if capture.note.trim().is_empty() {
+                reply.trim().to_string()
+            } else {
+                capture.note.clone()
+            }
+        )),
+    }
 }
 
 struct RuntimeServiceReply {
@@ -6665,6 +6812,37 @@ pub fn render_runtime_service_submit_json(capture: &RuntimeServiceSubmitCapture)
         json_string(&capture.job_id),
         json_string(&capture.policy_class),
         json_string(&capture.queue_path.display().to_string()),
+        json_string(&capture.note),
+    )
+}
+
+
+pub fn render_runtime_service_cancel_human(capture: &RuntimeServiceCancelCapture) -> String {
+    format!(
+        "Meridian Loom // SERVICE CANCEL\n================================\nrequest_id:      {}\ntransport:       {}\nservice_target:  {}\nsocket_path:     {}\njob_id:          {}\nstatus:          {}\nprevious_status: {}\ncurrent_status:  {}\nnote:            {}\n",
+        capture.request_id,
+        capture.transport,
+        capture.service_target,
+        capture.socket_path.display(),
+        capture.job_id,
+        capture.status,
+        if capture.previous_status.trim().is_empty() { "(none)" } else { capture.previous_status.as_str() },
+        if capture.current_status.trim().is_empty() { "(none)" } else { capture.current_status.as_str() },
+        capture.note,
+    )
+}
+
+pub fn render_runtime_service_cancel_json(capture: &RuntimeServiceCancelCapture) -> String {
+    format!(
+        "{{\n  \"request_id\": {},\n  \"transport\": {},\n  \"service_target\": {},\n  \"socket_path\": {},\n  \"job_id\": {},\n  \"status\": {},\n  \"previous_status\": {},\n  \"current_status\": {},\n  \"note\": {}\n}}\n",
+        json_string(&capture.request_id),
+        json_string(&capture.transport),
+        json_string(&capture.service_target),
+        json_string(&capture.socket_path.display().to_string()),
+        json_string(&capture.job_id),
+        json_string(&capture.status),
+        json_string(&capture.previous_status),
+        json_string(&capture.current_status),
         json_string(&capture.note),
     )
 }

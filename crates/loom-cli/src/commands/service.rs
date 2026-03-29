@@ -144,6 +144,7 @@ pub(crate) fn handle_service(args: &[String]) -> LoomResult<()> {
             Ok(())
         }
         Some("stop") => handle_stop(&args[1..]),
+        Some("cancel") => handle_service_cancel(&args[1..]),
         Some("submit") => {
             let root = root_from(take_value(args, "--root").as_deref())?;
             let config = read_config(&root)?;
@@ -261,8 +262,36 @@ pub(crate) fn handle_service(args: &[String]) -> LoomResult<()> {
             }
             Ok(())
         }
-        _ => Err("service supports 'start', 'loop', 'status', 'submit', 'pipeline', 'import-commitments', and 'stop'".to_string()),
+        _ => Err("service supports 'start', 'loop', 'status', 'submit', 'cancel', 'pipeline', 'import-commitments', and 'stop'".to_string()),
     }
+}
+
+
+fn handle_service_cancel(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_service_cancel_help();
+        return Ok(());
+    }
+    let root = root_from(take_value(args, "--root").as_deref())?;
+    let config = read_config(&root)?;
+    let socket_path = take_value(args, "--socket");
+    let http_url = take_value(args, "--http-url");
+    let service_token = effective_service_token(&config, take_value(args, "--service-token"))?;
+    let job_id = required_flag(args, "--job-id")?;
+    let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+    let capture = request_runtime_service_cancel(
+        &root,
+        socket_path.as_deref(),
+        http_url.as_deref(),
+        service_token.as_deref(),
+        &job_id,
+    )?;
+    if format == "json" {
+        print!("{}", render_runtime_service_cancel_json(&capture));
+    } else {
+        print_human(&render_runtime_service_cancel_human(&capture));
+    }
+    Ok(())
 }
 
 
@@ -521,6 +550,20 @@ notes:\n\
 }
 
 
+pub(crate) fn print_service_cancel_help() {
+    print_human(
+        "Meridian Loom // SERVICE CANCEL HELP\n\
+======================================\n\
+usage: loom service cancel --job-id ID [--root PATH] [--socket PATH] [--http-url URL] [--service-token TOKEN] [--format human|json]\n\
+\n\
+notes:\n\
+  - requests cancellation for a queued or in-flight runtime job\n\
+  - returns truthful state: cancelled, not_cancelable, or not_found\n\
+  - safe cancellation depends on the runtime service queue state\n",
+    );
+}
+
+
 pub(crate) fn print_logs_help() {
     print_human(
         "Meridian Loom // LOGS HELP\n\
@@ -542,6 +585,7 @@ usage:\n\
   loom service start [--root PATH] [--kernel-path PATH] [--socket PATH] [--http-address HOST:PORT] [--service-token TOKEN] [--commitments-source PATH|URL] [--workspace-token TOKEN] [--max-jobs N] [--poll-seconds N] [--iterations N] [--foreground] [--format human|json]\n\
   loom service status [--root PATH] [--socket PATH] [--format human|json]\n\
   loom service submit --agent-id ID [--capability NAME] [--action-type TYPE] [--resource RESOURCE] [--payload-json JSON] [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--socket PATH] [--http-url URL] [--service-token TOKEN] [--format human|json]\n\
+  loom service cancel --job-id ID [--root PATH] [--socket PATH] [--http-url URL] [--service-token TOKEN] [--format human|json]\n\
   loom service import-commitments --root PATH --commitments-source PATH|URL [--kernel-path PATH] [--workspace-token TOKEN] [--format human|json]\n\
   loom service stop [--root PATH] [--socket PATH] [--format human|json]\n\
 \n\
@@ -552,6 +596,7 @@ http surface:\n\
   GET  /config\n\
   GET  /jobs/<id>\n\
   POST /submit\n\
+  POST /cancel\n\
   POST /import-commitments\n\
   POST /stop\n\
   POST /mcp/tools/list\n\
