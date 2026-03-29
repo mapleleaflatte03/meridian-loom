@@ -191,34 +191,56 @@ pub fn detect_setup_state(root: &Path) -> SetupState {
     if !root.join("loom.toml").exists() {
         return SetupState::FreshWorkspace;
     }
+    let manifest = load_onboard_manifest(root).ok();
     let profiles = match crate::provider_router::load_provider_profiles(Some(root)) {
         Ok(ps) => ps,
         Err(_) => return SetupState::FreshNoAuth { provider_count: 0 },
     };
     let agent_count = crate::agent_runtime::agent_runtime_overview(root).map(|o| o.profile_count).unwrap_or(0);
     let provider_count = profiles.profiles.len();
+    let manager_lane = manifest
+        .as_ref()
+        .map(|value| value.manager_lane.trim().to_ascii_lowercase())
+        .unwrap_or_else(|| DEFAULT_MANAGER_LANE.to_string());
     if provider_count == 0 {
         return SetupState::FreshNoAuth { provider_count: 0 };
     }
-    let has_frontier = profiles.profiles.iter().any(|p| {
-        let label = p.kind.label();
-        label != "local_ollama" && label != "unknown"
-    });
     let has_ollama = profiles.profiles.iter().any(|p| p.kind.label() == "local_ollama");
-    if !has_frontier {
-        let ollama_available = has_ollama && crate::provider_router::provider_auth_status(Some(root), Some("local_ollama"))
+    let ollama_available = has_ollama
+        && crate::provider_router::provider_auth_status(Some(root), Some("local_ollama"))
             .map(|s| s.ready)
             .unwrap_or(false);
-        return SetupState::LocalOnly { ollama_available, agent_count };
+    if manager_lane == "local" {
+        return SetupState::LocalOnly {
+            ollama_available,
+            agent_count,
+        };
     }
     let ready_profiles: Vec<String> = profiles.profiles.iter()
         .filter(|p| {
             let label = p.kind.label();
             label != "local_ollama" && label != "unknown"
         })
+        .filter(|p| {
+            crate::provider_router::provider_auth_status(Some(root), Some(&p.name))
+                .map(|status| status.ready)
+                .unwrap_or(false)
+        })
         .map(|p| p.name.clone())
         .collect();
-    if ready_profiles.is_empty() || agent_count == 0 {
+    if ready_profiles.is_empty() {
+        return SetupState::FreshNoAuth { provider_count };
+    }
+    let manager_route_ready = crate::provider_router::resolve_provider_route(
+        Some(root),
+        &crate::provider_router::ProviderRouteIntent::llm_inference("").with_agent_id("leviathann"),
+    )
+    .is_ok();
+    let onboard_complete = manifest
+        .as_ref()
+        .map(|value| value.last_action.trim() == "setup")
+        .unwrap_or(false);
+    if !manager_route_ready || !onboard_complete || agent_count == 0 {
         return SetupState::FrontierAvailable { profiles: ready_profiles, agent_count };
     }
     SetupState::FullyConfigured { agent_count, provider_count }

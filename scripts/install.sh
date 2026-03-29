@@ -265,22 +265,44 @@ source_cargo_env() {
   fi
 }
 
+cargo_is_usable() {
+  if [[ -x "${CARGO_HOME}/bin/cargo" ]]; then
+    "${CARGO_HOME}/bin/cargo" --version >/dev/null 2>&1
+    return $?
+  fi
+  command -v cargo >/dev/null 2>&1 && cargo --version >/dev/null 2>&1
+}
+
 bootstrap_rust_toolchain() {
   ensure_command_or_package curl curl
   ensure_command_or_package cc build-essential
   printf '==> Installing Rust toolchain via rustup\n'
   export CARGO_HOME RUSTUP_HOME HOME
   curl --proto '=https' --tlsv1.2 -fsSL "$RUSTUP_INIT_URL" | sh -s -- -y --profile minimal --default-toolchain stable
+  export PATH="${CARGO_HOME}/bin:${PATH}"
 }
 
 ensure_cargo() {
   source_cargo_env
-  if command -v cargo >/dev/null 2>&1; then
+  export PATH="${CARGO_HOME}/bin:${PATH}"
+  if cargo_is_usable; then
+    return
+  fi
+  if [[ -x "${CARGO_HOME}/bin/rustup" ]]; then
+    ensure_command_or_package cc build-essential
+    printf '==> Activating Rust stable toolchain\n'
+    export CARGO_HOME RUSTUP_HOME HOME
+    "${CARGO_HOME}/bin/rustup" toolchain install stable --profile minimal
+    "${CARGO_HOME}/bin/rustup" default stable
+    source_cargo_env
+    export PATH="${CARGO_HOME}/bin:${PATH}"
+  fi
+  if cargo_is_usable; then
     return
   fi
   bootstrap_rust_toolchain
   source_cargo_env
-  if ! command -v cargo >/dev/null 2>&1; then
+  if ! cargo_is_usable; then
     echo 'cargo not found after rustup bootstrap' >&2
     exit 1
   fi

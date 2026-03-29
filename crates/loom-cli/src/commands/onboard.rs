@@ -1161,6 +1161,7 @@ fn manifest_codex_auth_selection(
 
 fn current_codex_auth_selection(root: &Path) -> LoomResult<(String, Option<String>)> {
     let profiles = load_provider_profiles(Some(root))?;
+    let manifest = load_onboard_manifest(root).ok();
     let profile = profiles
         .profiles
         .iter()
@@ -1171,7 +1172,17 @@ fn current_codex_auth_selection(root: &Path) -> LoomResult<(String, Option<Strin
             let loom_path = default_codex_auth_path_hint()?.display().to_string();
             let cli_path = shared_codex_auth_path_hint()?.display().to_string();
             match path.as_deref() {
-                None => Ok(("cli".to_string(), Some(cli_path))),
+                None => {
+                    let prefer_loom_path = manifest
+                        .as_ref()
+                        .map(|value| value.last_action.trim() == "initialized")
+                        .unwrap_or(false);
+                    if prefer_loom_path {
+                        Ok(("loom".to_string(), Some(loom_path)))
+                    } else {
+                        Ok(("cli".to_string(), Some(cli_path)))
+                    }
+                }
                 Some(raw) if auth_paths_match(raw, &loom_path) => {
                     Ok(("loom".to_string(), Some(loom_path)))
                 }
