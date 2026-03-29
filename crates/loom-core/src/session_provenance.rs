@@ -18,6 +18,9 @@ pub struct SessionProvenanceRecord {
     pub binding_id: String,
     pub provider_profile: String,
     pub model: String,
+    pub transport_kind: String,
+    pub auth_mode: String,
+    pub execution_owner: String,
     pub ingress_request_id: Option<String>,
     pub job_id: Option<String>,
     pub delivery_id: Option<String>,
@@ -77,6 +80,9 @@ pub fn open_session_provenance(
         binding_id: binding_id.to_string(),
         provider_profile: String::new(),
         model: String::new(),
+        transport_kind: String::new(),
+        auth_mode: String::new(),
+        execution_owner: String::new(),
         ingress_request_id: None,
         job_id: None,
         delivery_id: None,
@@ -98,6 +104,19 @@ pub fn update_session_provenance_route(
     model: &str,
     override_source: &str,
 ) -> LoomResult<()> {
+    update_session_provenance_route_full(root, session_key, provider_profile, model, override_source, "", "", "")
+}
+
+pub fn update_session_provenance_route_full(
+    root: &Path,
+    session_key: &str,
+    provider_profile: &str,
+    model: &str,
+    override_source: &str,
+    transport_kind: &str,
+    auth_mode: &str,
+    execution_owner: &str,
+) -> LoomResult<()> {
     let ts = timestamp_now();
     let mut records = load_session_provenance_records(root)?;
     if let Some(record) = records.iter_mut().find(|r| r.session_key == session_key) {
@@ -109,6 +128,15 @@ pub fn update_session_provenance_route(
         }
         if !override_source.is_empty() {
             record.override_source = override_source.to_string();
+        }
+        if !transport_kind.is_empty() {
+            record.transport_kind = transport_kind.to_string();
+        }
+        if !auth_mode.is_empty() {
+            record.auth_mode = auth_mode.to_string();
+        }
+        if !execution_owner.is_empty() {
+            record.execution_owner = execution_owner.to_string();
         }
         record.last_active_at = ts;
         persist_session_provenance_registry(root, &records)?;
@@ -213,7 +241,7 @@ pub fn render_session_provenance_overview_json(overview: &SessionProvenanceOverv
 
 pub fn render_session_provenance_human(record: &SessionProvenanceRecord) -> String {
     format!(
-        "session_key:          {}\nchannel_id:           {}\npeer_id:              {}\nagent_id:             {}\nbinding_id:           {}\nprovider_profile:     {}\nmodel:                {}\ningress_request_id:   {}\njob_id:               {}\ndelivery_id:          {}\noverride_source:      {}\nsend_policy:          {}\nopened_at:            {}\nlast_active_at:       {}\n",
+        "session_key:          {}\nchannel_id:           {}\npeer_id:              {}\nagent_id:             {}\nbinding_id:           {}\nprovider_profile:     {}\nmodel:                {}\ntransport_kind:       {}\nauth_mode:            {}\nexecution_owner:      {}\ningress_request_id:   {}\njob_id:               {}\ndelivery_id:          {}\noverride_source:      {}\nsend_policy:          {}\nopened_at:            {}\nlast_active_at:       {}\n",
         record.session_key,
         record.channel_id,
         record.peer_id,
@@ -221,6 +249,9 @@ pub fn render_session_provenance_human(record: &SessionProvenanceRecord) -> Stri
         record.binding_id,
         if record.provider_profile.is_empty() { "(none)" } else { &record.provider_profile },
         if record.model.is_empty() { "(none)" } else { &record.model },
+        if record.transport_kind.is_empty() { "(none)" } else { &record.transport_kind },
+        if record.auth_mode.is_empty() { "(none)" } else { &record.auth_mode },
+        if record.execution_owner.is_empty() { "(none)" } else { &record.execution_owner },
         record.ingress_request_id.as_deref().unwrap_or("(none)"),
         record.job_id.as_deref().unwrap_or("(none)"),
         record.delivery_id.as_deref().unwrap_or("(none)"),
@@ -311,6 +342,9 @@ fn parse_session_provenance_record(value: &Value) -> LoomResult<SessionProvenanc
         binding_id: value_string_or(value.get("binding_id"), ""),
         provider_profile: value_string_or(value.get("provider_profile"), ""),
         model: value_string_or(value.get("model"), ""),
+        transport_kind: value_string_or(value.get("transport_kind"), ""),
+        auth_mode: value_string_or(value.get("auth_mode"), ""),
+        execution_owner: value_string_or(value.get("execution_owner"), ""),
         ingress_request_id: value_opt_string(value.get("ingress_request_id")),
         job_id: value_opt_string(value.get("job_id")),
         delivery_id: value_opt_string(value.get("delivery_id")),
@@ -330,6 +364,9 @@ fn session_provenance_record_json(record: &SessionProvenanceRecord) -> Value {
         "binding_id": record.binding_id,
         "provider_profile": record.provider_profile,
         "model": record.model,
+        "transport_kind": record.transport_kind,
+        "auth_mode": record.auth_mode,
+        "execution_owner": record.execution_owner,
         "ingress_request_id": record.ingress_request_id,
         "job_id": record.job_id,
         "delivery_id": record.delivery_id,
