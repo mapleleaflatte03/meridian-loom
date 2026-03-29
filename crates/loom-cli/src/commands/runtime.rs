@@ -23,16 +23,12 @@ pub(crate) fn handle_init(args: &[String]) -> LoomResult<()> {
     let org_id = take_value(args, "--org-id").unwrap_or_else(|| "local_foundry".to_string());
     let config = init_workspace(&root, &mode, kernel_path.as_deref(), &org_id)?;
     print_human(&format!(
-        "Meridian Loom // INIT\n====================\nroot:        {}\nconfig:      {}\nmode:        {}\norg_id:      {}\nstate_dir:   {}\nrun_dir:     {}\nlog_dir:     {}\nartifact_dir: {}\nkernel_path: {}\nstatus:      initialized local-first runtime root\nnext_step:   loom doctor --root {} --format human\n",
+        "Meridian Loom // INIT\n====================\nroot:        {}\nmode:        {}\norg_id:      {}\nkernel_path: {}\nstatus:      local runtime root ready\n\nQuick start\n-----------\n1. loom onboard --root {} --format human\n2. loom provider login --source loom --device-auth\n3. loom doctor --root {} --format human\n",
         root.display(),
-        root.join("loom.toml").display(),
         config.mode,
         config.org_id,
-        config.state_dir,
-        config.run_dir,
-        config.log_dir,
-        config.artifact_dir,
         if config.kernel_path.is_empty() { "(not set)" } else { &config.kernel_path },
+        root.display(),
         root.display()
     ));
     Ok(())

@@ -5,7 +5,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/license-MIT-1f6feb?style=flat-square" alt="MIT license">
   <img src="https://img.shields.io/github/actions/workflow/status/mapleleaflatte03/meridian-loom/rust.yml?branch=main&style=flat-square" alt="Build passing">
-  <img src="https://img.shields.io/badge/version-0.1.4-0c1117?style=flat-square" alt="Version 0.1.4">
+  <img src="https://img.shields.io/badge/version-0.1.5-0c1117?style=flat-square" alt="Version 0.1.5">
 </p>
 
 <p align="center">
@@ -23,7 +23,7 @@
 
 # Meridian Loom
 
-Meridian Loom is the primary hands-on product surface for Meridian v0.1.4. It carries the Meridian installer and CLI, provisions into the operator's home directory, and exposes the bounded execution primitives that operators can install, inspect, and run directly.
+Meridian Loom is the primary hands-on product surface for Meridian v0.1.5. It carries the Meridian installer and CLI, provisions into the operator's home directory, and exposes the bounded execution primitives that operators can install, inspect, and run directly.
 
 ## Proof of Governed Execution (PoGE)
 
@@ -51,7 +51,7 @@ Meridian Loom is the local runtime layer for the following primitive surfaces:
 - Heartbeat / Background Autonomy: built-in heartbeat scheduling primitive with local receipt logging and truthful scheduler boundaries.
 - Dynamic Skill Loading: imported workspace skills, plugin compatibility, and capability loading through the operator surface.
 
-## What Ships In v0.1.4
+## What Ships In v0.1.5
 
 - 1-command installer with Meridian branding and binary-first release installs.
 - Local service lifecycle with foreground and background modes.

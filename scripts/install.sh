@@ -372,7 +372,6 @@ capabilities.sort(key=lambda item: item.get("name", ""))
 path.parent.mkdir(parents=True, exist_ok=True)
 path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY2
-  printf '==> Seeded built-in Wasm capabilities into %s\n' "$registry_path"
 }
 
 print_banner() {
@@ -397,7 +396,7 @@ BANNER
 ' 'CONSTITUTIONAL OS'
     printf '[38;5;153m%s[0m
 
-' 'Loom v0.1.4 - governed runtime for bounded autonomous work.'
+' 'Loom v0.1.5 - governed runtime for bounded autonomous work.'
   else
     printf '%s
 ' "$icon"
@@ -407,7 +406,7 @@ BANNER
 ' 'CONSTITUTIONAL OS'
     printf '%s
 
-' 'Loom v0.1.4 - governed runtime for bounded autonomous work.'
+' 'Loom v0.1.5 - governed runtime for bounded autonomous work.'
   fi
 }
 
@@ -505,6 +504,7 @@ install_archive() {
 }
 
 ensure_runtime_root() {
+  local prepared_capabilities=0
   run_privileged mkdir -p "$RUNTIME_ROOT/capabilities"
   if [[ -z "$KERNEL_PATH" && -d /opt/meridian-kernel ]]; then
     KERNEL_PATH=/opt/meridian-kernel
@@ -525,14 +525,16 @@ ensure_runtime_root() {
   fi
 
   if ! file_exists "$RUNTIME_ROOT/capabilities/registry.json"; then
-    printf '==> Scaffolding capability registry\n'
+    printf '==> Preparing built-in capabilities\n'
     run_privileged "$BINARY_PATH" capability list --root "$RUNTIME_ROOT" --format json >/dev/null
-  else
-    printf '==> Reusing existing capability registry at %s\n' "$RUNTIME_ROOT/capabilities/registry.json"
+    prepared_capabilities=1
   fi
 
   ensure_python3
   seed_builtin_capabilities
+  if [[ "$prepared_capabilities" -eq 1 ]]; then
+    printf '==> Built-in capabilities ready\n'
+  fi
 }
 
 run_onboard_if_interactive() {
@@ -559,13 +561,30 @@ run_onboard_if_interactive() {
 
 print_summary() {
   local next_step
+  local doctor_step
+  local provider_step
+  local local_step
   local path_hint
+  local quickstart
   if [[ "$ONBOARD_WAS_RUN" -eq 1 ]]; then
     next_step="$BINARY_PATH doctor --root \"$RUNTIME_ROOT\" --format human"
   elif [[ "$RUNTIME_WAS_INITIALIZED" -eq 1 ]]; then
     next_step="$BINARY_PATH onboard --root \"$RUNTIME_ROOT\" --format human"
   else
     next_step="$BINARY_PATH doctor --root \"$RUNTIME_ROOT\" --format human"
+  fi
+  doctor_step="$BINARY_PATH doctor --root \"$RUNTIME_ROOT\" --format human"
+  provider_step="$BINARY_PATH provider login --source loom --device-auth"
+  local_step="$BINARY_PATH onboard --root \"$RUNTIME_ROOT\" --format human --manager-lane local"
+  if [[ "$ONBOARD_WAS_RUN" -eq 1 ]]; then
+    quickstart="Quick start:
+  1. Inspect health: $doctor_step
+  2. Re-open setup:  $BINARY_PATH onboard --root \"$RUNTIME_ROOT\" --format human --config-action modify"
+  else
+    quickstart="Quick start:
+  1. Finish setup:   $next_step
+  2. Frontier auth:  $provider_step
+  3. Local-only:     $local_step"
   fi
   path_hint=""
   case ":$PATH:" in
@@ -575,14 +594,12 @@ print_summary() {
       ;;
   esac
   cat <<SUMMARY
-==> Installation complete
+==> Meridian install ready
 source:   $INSTALL_SOURCE
 binary:   $BINARY_PATH
-release:  $CURRENT_DIR
 runtime:  $RUNTIME_ROOT
-config:   $RUNTIME_ROOT/loom.toml
-registry: $RUNTIME_ROOT/capabilities/registry.json
-next:     $next_step
+
+$quickstart
 $path_hint
 SUMMARY
 }
