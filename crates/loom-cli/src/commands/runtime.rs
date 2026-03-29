@@ -42,13 +42,63 @@ pub(crate) fn handle_doctor(args: &[String]) -> LoomResult<()> {
             "json".to_string()
         }
     });
+    let fix = args.iter().any(|a| a == "--fix");
+
     let checks = doctor(&root)?;
+
+    // --fix: attempt safe remediations (scaffold creation only)
+    let mut fix_results: Vec<String> = Vec::new();
+    if fix {
+        let fixable_remediations: Vec<&str> = checks
+            .iter()
+            .filter(|c| c.level == "WARN" && c.remediation == "loom onboard")
+            .map(|c| c.label)
+            .collect();
+        if !fixable_remediations.is_empty() {
+            match loom_core::init_workspace(&root, "embedded", None, "local_foundry") {
+                Ok(_) => {
+                    fix_results.push(format!(
+                        "fix: re-ran scaffold for {} check(s): {}",
+                        fixable_remediations.len(),
+                        fixable_remediations.join(", ")
+                    ));
+                }
+                Err(e) => {
+                    fix_results.push(format!("fix: scaffold re-run failed: {}", e));
+                }
+            }
+        }
+        if fix_results.is_empty() {
+            fix_results.push("fix: no safe remediations to apply".to_string());
+        }
+    }
+
     match format.as_str() {
         "human" => {
             print_startup_banner();
             print_human(&render_doctor_human(&checks));
+            for msg in &fix_results {
+                println!("{}", msg);
+            }
         }
-        _ => print!("{}", render_doctor_json(&checks)),
+        _ => {
+            if fix_results.is_empty() {
+                print!("{}", render_doctor_json(&checks));
+            } else {
+                // Append fix results to JSON output
+                let checks_json = render_doctor_json(&checks);
+                let trimmed = checks_json.trim_end();
+                if trimmed.ends_with(']') {
+                    // Wrap in object with fix_results
+                    print!("{{\"checks\":{},\"fix_results\":{:?}}}\n", trimmed, fix_results);
+                } else {
+                    print!("{}", checks_json);
+                    for msg in &fix_results {
+                        eprintln!("{}", msg);
+                    }
+                }
+            }
+        }
     }
     Ok(())
 }

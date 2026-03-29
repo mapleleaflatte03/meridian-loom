@@ -1500,6 +1500,30 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
         }),
     }
 
+    // Memory service check
+    let memory_svc = memory_service::MemoryService::with_defaults(&root);
+    match memory_svc.overview() {
+        Ok(overview) => checks.push(Check {
+            level: "OK",
+            label: "memory_service",
+            detail: format!(
+                "agents={} entries={} bytes={}",
+                overview.agent_count,
+                overview.total_entries,
+                overview.total_bytes,
+            ),
+            category: "memory",
+            remediation: "",
+        }),
+        Err(_) => checks.push(Check {
+            level: "OK",
+            label: "memory_service",
+            detail: "agents=0 entries=0 bytes=0".to_string(),
+            category: "memory",
+            remediation: "",
+        }),
+    }
+
     Ok(checks)
 }
 
