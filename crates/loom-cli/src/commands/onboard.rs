@@ -3,7 +3,12 @@ use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::*;
 use loom_core::agent_runtime::agent_runtime_overview;
@@ -361,47 +366,50 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
     manifest.manager_model = manager_model.clone();
     manifest.codex_auth_source = codex_auth_source.clone();
     manifest.codex_auth_path = codex_auth_path.clone().unwrap_or_default();
-    if format == "human" {
-        print_progress_status(
-            "..",
-            "Writing runtime plan",
-            Some("Saving the manager route, gateway edge, and governed defaults."),
-        );
-    }
-    let provider_profiles_path = if let Some(provider_config) = interactive_provider_config.as_ref()
-    {
-        configure_onboard_provider_profile(&root, provider_config)?
-    } else {
-        configure_onboard_provider_routes(
-            &root,
-            &manager_lane,
-            Some(&manager_model),
-            codex_auth_path.as_deref(),
-        )?
-    };
-    let provider_auth_sync = sync_provider_auth_store(&root)?;
+    let human_output = format == "human";
+    let (provider_profiles_path, provider_auth_sync, manifest_path) = run_with_spinner(
+        human_output,
+        "Writing runtime plan",
+        Some("Saving the manager route, gateway edge, and governed defaults."),
+        || {
+            let provider_profiles_path =
+                if let Some(provider_config) = interactive_provider_config.as_ref() {
+                    configure_onboard_provider_profile(&root, provider_config)?
+                } else {
+                    configure_onboard_provider_routes(
+                        &root,
+                        &manager_lane,
+                        Some(&manager_model),
+                        codex_auth_path.as_deref(),
+                    )?
+                };
+            let provider_auth_sync = sync_provider_auth_store(&root)?;
 
-    if manifest.gateway_auth_mode == "none" && manifest.gateway_token_env.trim().is_empty() {
-        manifest.gateway_token_env = config.service_token_env.clone();
-    }
-    manifest.last_action = if is_fresh_runtime {
-        "setup".to_string()
-    } else if had_existing_config {
-        config_action.clone()
-    } else {
-        "init".to_string()
-    };
-    manifest.last_run_at = current_unix();
-    manifest.last_run_mode = config.mode.clone();
+            if manifest.gateway_auth_mode == "none" && manifest.gateway_token_env.trim().is_empty()
+            {
+                manifest.gateway_token_env = config.service_token_env.clone();
+            }
+            manifest.last_action = if is_fresh_runtime {
+                "setup".to_string()
+            } else if had_existing_config {
+                config_action.clone()
+            } else {
+                "init".to_string()
+            };
+            manifest.last_run_at = current_unix();
+            manifest.last_run_mode = config.mode.clone();
 
-    config.service_http_address =
-        derive_service_http_address(&manifest.gateway_bind, manifest.gateway_port);
-    if manifest.gateway_auth_mode != "none" {
-        config.service_token_env = manifest.gateway_token_env.clone();
-    }
-    loom_core::write_config(&root, &config)?;
-    let manifest_path = write_onboard_manifest(&root, &manifest)?;
-    if format == "human" {
+            config.service_http_address =
+                derive_service_http_address(&manifest.gateway_bind, manifest.gateway_port);
+            if manifest.gateway_auth_mode != "none" {
+                config.service_token_env = manifest.gateway_token_env.clone();
+            }
+            loom_core::write_config(&root, &config)?;
+            let manifest_path = write_onboard_manifest(&root, &manifest)?;
+            Ok((provider_profiles_path, provider_auth_sync, manifest_path))
+        },
+    )?;
+    if human_output {
         print_progress_status(
             "ok",
             "Runtime plan saved",
@@ -410,22 +418,43 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
                 root.display()
             )),
         );
-        print_progress_status(
-            "..",
-            "Syncing runtime ledgers",
-            Some("Refreshing provider state, channels, services, bindings, skills, and schedules."),
-        );
     }
-    let channel_summary = sync_channel_registry(&root)?;
-    let gateway_runtime = sync_gateway_runtime(&root)?;
-    let service_runtime = sync_service_runtime(&root)?;
-    let ingress_runtime = sync_service_ingress_runtime(&root)?;
-    let binding_summary = sync_binding_registry(&root)?;
-    let skill_summary = sync_skill_registry(&root)?;
-    let schedule_sync = sync_schedule_registry(&root)?;
-    let schedule_runtime = schedule_overview(&root, current_unix_ms())?;
-    fs::create_dir_all(root.join("state/memory")).map_err(|error| error.to_string())?;
-    if format == "human" {
+    let (
+        channel_summary,
+        gateway_runtime,
+        service_runtime,
+        ingress_runtime,
+        binding_summary,
+        skill_summary,
+        schedule_sync,
+        schedule_runtime,
+    ) = run_with_spinner(
+        human_output,
+        "Syncing runtime ledgers",
+        Some("Refreshing provider state, channels, services, bindings, skills, and schedules."),
+        || {
+            let channel_summary = sync_channel_registry(&root)?;
+            let gateway_runtime = sync_gateway_runtime(&root)?;
+            let service_runtime = sync_service_runtime(&root)?;
+            let ingress_runtime = sync_service_ingress_runtime(&root)?;
+            let binding_summary = sync_binding_registry(&root)?;
+            let skill_summary = sync_skill_registry(&root)?;
+            let schedule_sync = sync_schedule_registry(&root)?;
+            let schedule_runtime = schedule_overview(&root, current_unix_ms())?;
+            fs::create_dir_all(root.join("state/memory")).map_err(|error| error.to_string())?;
+            Ok((
+                channel_summary,
+                gateway_runtime,
+                service_runtime,
+                ingress_runtime,
+                binding_summary,
+                skill_summary,
+                schedule_sync,
+                schedule_runtime,
+            ))
+        },
+    )?;
+    if human_output {
         print_progress_status(
             "ok",
             "Runtime ledgers synced",
@@ -488,17 +517,15 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
         && manifest.daemon_enabled
         && manifest.daemon_manager == "supervisor"
     {
-        if format == "human" {
-            print_progress_status(
-                "..",
-                "Starting supervisor daemon",
-                Some("Handing background lifecycle to the local supervisor."),
-            );
-        }
-        let snapshot = start_supervisor_daemon(&root, kernel_path.as_deref())?;
+        let snapshot = run_with_spinner(
+            human_output,
+            "Starting supervisor daemon",
+            Some("Handing background lifecycle to the local supervisor."),
+            || start_supervisor_daemon(&root, kernel_path.as_deref()),
+        )?;
         manifest.daemon_state = daemon_state_from_snapshot(&snapshot);
         write_onboard_manifest(&root, &manifest)?;
-        if format == "human" {
+        if human_output {
             print_progress_status(
                 "ok",
                 "Supervisor daemon ready",
@@ -519,15 +546,13 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
         !has_flag(args, "--skip-health-check")
     };
     let health_snapshot = if health_requested {
-        if format == "human" {
-            print_progress_status(
-                "..",
-                "Running post-setup health check",
-                Some("Checking provider, gateway, service, and runtime surfaces."),
-            );
-        }
-        let (healthy, report) = health(&root)?;
-        if format == "human" {
+        let (healthy, report) = run_with_spinner(
+            human_output,
+            "Running post-setup health check",
+            Some("Checking provider, gateway, service, and runtime surfaces."),
+            || health(&root),
+        )?;
+        if human_output {
             print_progress_status(
                 if healthy { "ok" } else { "!!" },
                 "Health check complete",
@@ -540,7 +565,7 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
         }
         Some((healthy, report))
     } else {
-        if format == "human" {
+        if human_output {
             print_progress_status(
                 "--",
                 "Health check skipped",
@@ -1188,6 +1213,7 @@ fn print_quickstart_summary_card(manifest: &OnboardManifest, manager_model: &str
         "QuickStart summary",
         &format!(
             "Manager model:    {}\n\
+             Best for:         operator-first frontier setup with local edge defaults\n\
              Runtime lane:     frontier-first with local edge defaults\n\
              Gateway edge:     {}:{} auth={} tailscale={}\n\
              Telegram:         {}\n\
@@ -1335,6 +1361,7 @@ fn prompt_provider_setup(
     current_codex_auth_path: Option<String>,
     detailed_flow: bool,
 ) -> LoomResult<ProviderSetupSelection> {
+    print_provider_branch_card(provider_choice, detailed_flow);
     match provider_choice {
         "loom_codex" => {
             if looks_remote_headless() {
@@ -1411,12 +1438,6 @@ fn prompt_provider_setup(
             })
         }
         "openai_compatible" => {
-            if detailed_flow {
-                print_setup_note(
-                    "Provider branch",
-                    "Meridian will route the manager through a standard OpenAI-compatible chat completions endpoint using a bearer token environment variable.",
-                );
-            }
             let default_model = if current_model.trim().is_empty() {
                 "gpt-5.4"
             } else {
@@ -1671,7 +1692,8 @@ mod tests {
     use super::{
         auth_paths_match, build_next_steps, choice_matches, codex_detail_for_manager,
         manager_current_state_hint, normalize_choice_token, normalize_codex_auth_selection,
-        provider_selection_details, render_stage_progress, PromptSelectOption,
+        panel_tone, provider_branch_story, provider_selection_details, render_stage_progress,
+        PanelTone, PromptSelectOption,
         ProviderSetupSelection, SetupState,
     };
     use loom_core::provider_router::{
@@ -1848,6 +1870,28 @@ mod tests {
     }
 
     #[test]
+    fn provider_branch_story_surfaces_openai_cutover_copy() {
+        let (best_for, meridian_path, operator_step, after_write) =
+            provider_branch_story("openai_compatible");
+        assert!(best_for.contains("fastest remote cutover"));
+        assert!(meridian_path.contains("chat-completions"));
+        assert!(operator_step.contains("token env var"));
+        assert!(after_write.contains("Codex device-auth"));
+    }
+
+    #[test]
+    fn panel_tone_marks_action_required_surfaces_as_warning() {
+        assert_eq!(
+            panel_tone("Current state", "Auth is action required before doctor turns green"),
+            PanelTone::Warning
+        );
+        assert_eq!(
+            panel_tone("Finish line", "Runtime health is healthy"),
+            PanelTone::Success
+        );
+    }
+
+    #[test]
     fn next_steps_dedupe_doctor_when_auth_pending() {
         let steps = build_next_steps(
             Path::new("/tmp/loom"),
@@ -1964,6 +2008,13 @@ fn render_stage_progress(step: usize, total: usize) -> String {
     )
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PanelTone {
+    Info,
+    Success,
+    Warning,
+}
+
 fn print_setup_note(title: &str, body: &str) {
     let lines = body
         .lines()
@@ -1977,26 +2028,92 @@ fn print_setup_note(title: &str, body: &str) {
         .max()
         .unwrap_or(0)
         .max(24);
+    let tone = panel_tone(title, body);
     let border = format!("+{}+", "-".repeat(width + 2));
     let mut block = Vec::new();
-    block.push(border.clone());
-    block.push(format!("| {:width$} |", title, width = width));
-    block.push(format!("| {:width$} |", "", width = width));
+    block.push(style_panel_border(&border, tone));
+    block.push(style_panel_title_line(
+        &format!(
+        "| {:width$} |",
+        title,
+        width = width
+    ),
+        tone,
+    ));
+    block.push(style_panel_border(
+        &format!("| {:width$} |", "", width = width),
+        tone,
+    ));
     for line in lines {
-        block.push(format!("| {:width$} |", line, width = width));
+        block.push(style_panel_body_line(
+            &format!(
+            "| {:width$} |",
+            line,
+            width = width
+        ),
+            tone,
+        ));
     }
-    block.push(border);
+    block.push(style_panel_border(&border, tone));
     print_human(&(block.join("\n") + "\n\n"));
 }
 
 fn print_progress_status(marker: &str, title: &str, detail: Option<&str>) {
-    print_human(&format!("[{}] {}\n", marker, title));
+    print_human(&format!("{} {}\n", style_progress_marker(marker), title));
     if let Some(detail) = detail {
         if !detail.trim().is_empty() {
-            print_human(&format!("     {}\n", detail));
+            print_human(&format!("     {}\n", style_progress_detail(detail, marker)));
         }
     }
     print_human("\n");
+}
+
+fn run_with_spinner<T, F>(
+    enabled: bool,
+    title: &str,
+    detail: Option<&str>,
+    action: F,
+) -> LoomResult<T>
+where
+    F: FnOnce() -> LoomResult<T>,
+{
+    if enabled && rich_terminal_enabled() {
+        let started_at = Instant::now();
+        if let Some(detail) = detail {
+            if !detail.trim().is_empty() {
+                print_human(&format!("     {}\n", style_progress_detail(detail, "..")));
+            }
+        }
+        let running = Arc::new(AtomicBool::new(true));
+        let title_string = title.to_string();
+        let running_worker = Arc::clone(&running);
+        let spinner_thread = thread::spawn(move || {
+            let frames = ["[|]", "[/]", "[-]", "[\\]"];
+            let mut frame_index = 0usize;
+            while running_worker.load(Ordering::Relaxed) {
+                let frame = style_progress_marker(frames[frame_index]);
+                print!("\r{} {}", frame, title_string);
+                let _ = io::stdout().flush();
+                thread::sleep(Duration::from_millis(90));
+                frame_index = (frame_index + 1) % frames.len();
+            }
+        });
+        let result = action();
+        let min_visible = Duration::from_millis(240);
+        if started_at.elapsed() < min_visible {
+            thread::sleep(min_visible - started_at.elapsed());
+        }
+        running.store(false, Ordering::Relaxed);
+        let _ = spinner_thread.join();
+        print!("\r\x1b[2K");
+        let _ = io::stdout().flush();
+        result
+    } else {
+        if enabled {
+            print_progress_status("..", title, detail);
+        }
+        action()
+    }
 }
 
 fn render_numbered_steps(steps: &[String]) -> String {
@@ -2036,6 +2153,140 @@ fn dedupe_steps(steps: Vec<String>) -> Vec<String> {
         }
     }
     unique
+}
+
+fn print_provider_branch_card(provider_choice: &str, detailed_flow: bool) {
+    let (best_for, meridian_path, operator_step, after_write) = provider_branch_story(provider_choice);
+    let title = if detailed_flow {
+        "Manual provider branch"
+    } else {
+        "QuickStart provider branch"
+    };
+    let mode_fit = if detailed_flow {
+        "Manual fit:       Meridian will keep this provider selection, then hand you every gateway, Telegram, daemon, and defaults decision before the root is written."
+    } else {
+        "QuickStart fit:   Meridian wires this provider now and keeps the local edge, recurring jobs, and runtime defaults on the fast path."
+    };
+    print_setup_note(
+        title,
+        &format!(
+            "Best for:        {}\n\
+             {}\n\
+             Meridian path:   {}\n\
+             Operator step:   {}\n\
+             After write:     {}",
+            best_for, mode_fit, meridian_path, operator_step, after_write
+        ),
+    );
+}
+
+fn provider_branch_story(
+    provider_choice: &str,
+) -> (&'static str, &'static str, &'static str, &'static str) {
+    match provider_choice {
+        "loom_codex" => (
+            "frontier-first installs that want a Meridian-owned auth boundary from day one",
+            "dedicated Codex session routing with Loom-managed or explicitly chosen auth.json ownership",
+            "choose whether Meridian should own the auth file, reuse the shared CLI account, or point at a custom auth.json",
+            "doctor expects a live auth.json before the frontier lane turns green",
+        ),
+        "local_ollama" => (
+            "operators who want local inference now without any remote dependency",
+            "bind Leviathann to the local Ollama lane while keeping the rest of the runtime scaffold intact",
+            "point Meridian at the local model already running on this host",
+            "doctor verifies the local model lane and keeps the remote auth boundary out of scope",
+        ),
+        "local_only" => (
+            "staging the runtime today and adding a remote provider later",
+            "keep the runtime entirely local and skip remote provider setup for this pass",
+            "finish the local edge now, then rerun onboarding when the remote route is ready",
+            "Meridian lands in a local-only runtime state with a clean follow-up path back into onboarding",
+        ),
+        "openai_compatible" => (
+            "teams that already have a bearer-token provider and want the fastest remote cutover",
+            "standard chat-completions routing with an environment variable the operator controls",
+            "set the endpoint, choose the model, and export the required token env var before doctor turns green",
+            "doctor checks the env var and remote route without asking for a Codex device-auth login",
+        ),
+        "custom_endpoint" => (
+            "proxies, gateways, and non-standard auth headers that still need a governed HTTP route",
+            "custom HTTP routing with explicit auth mode selection and no hidden provider assumptions",
+            "define the base URL and tell Meridian exactly how credentials should be attached",
+            "doctor verifies the explicit auth attachment rules exactly as written into the runtime root",
+        ),
+        _ => (
+            "a custom provider path",
+            "write the selected route into the runtime root",
+            "finish the provider prompts and let doctor verify the route afterwards",
+            "the runtime root keeps the selected route and waits for doctor to confirm it",
+        ),
+    }
+}
+
+fn panel_tone(title: &str, body: &str) -> PanelTone {
+    let title = title.to_ascii_lowercase();
+    let body = body.to_ascii_lowercase();
+    if title.contains("security") || body.contains("action required") || body.contains("not ready") || body.contains("failed") || body.contains("attention") {
+        PanelTone::Warning
+    } else if title.contains("finish line") || title.contains("ready to launch") {
+        PanelTone::Success
+    } else {
+        PanelTone::Info
+    }
+}
+
+fn rich_terminal_enabled() -> bool {
+    std::io::stdout().is_terminal() && env::var_os("NO_COLOR").is_none()
+}
+
+fn style_progress_marker(marker: &str) -> String {
+    match marker {
+        "ok" => paint(marker, "1;92"),
+        "!!" => paint(marker, "1;93"),
+        ".." | "[|]" | "[/]" | "[-]" | "[\\]" => paint(marker, "1;96"),
+        "--" => paint(marker, "2;37"),
+        _ => marker.to_string(),
+    }
+}
+
+fn style_progress_detail(detail: &str, marker: &str) -> String {
+    match marker {
+        "ok" => paint(detail, "0;92"),
+        "!!" => paint(detail, "0;93"),
+        _ => paint(detail, "0;37"),
+    }
+}
+
+fn style_panel_border(line: &str, tone: PanelTone) -> String {
+    match tone {
+        PanelTone::Info => paint(line, "2;36"),
+        PanelTone::Success => paint(line, "2;92"),
+        PanelTone::Warning => paint(line, "2;93"),
+    }
+}
+
+fn style_panel_title_line(line: &str, tone: PanelTone) -> String {
+    match tone {
+        PanelTone::Info => paint(line, "1;96"),
+        PanelTone::Success => paint(line, "1;92"),
+        PanelTone::Warning => paint(line, "1;93"),
+    }
+}
+
+fn style_panel_body_line(line: &str, tone: PanelTone) -> String {
+    match tone {
+        PanelTone::Info => paint(line, "0;37"),
+        PanelTone::Success => paint(line, "0;97"),
+        PanelTone::Warning => paint(line, "0;93"),
+    }
+}
+
+fn paint(text: &str, style: &str) -> String {
+    if rich_terminal_enabled() {
+        format!("\x1b[{}m{}\x1b[0m", style, text)
+    } else {
+        text.to_string()
+    }
 }
 
 fn prompt_text(label: &str, default: &str) -> LoomResult<String> {
