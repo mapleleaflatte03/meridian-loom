@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::fs;
 use std::io::IsTerminal;
 
 use crate::*;
@@ -9,6 +10,11 @@ use loom_core::agent_runtime::{
     render_agent_session_json, write_agent_memory_snapshot,
 };
 use loom_core::context_engine::{context_bundle, render_context_bundle_human, render_context_bundle_json};
+use loom_core::{
+    bindings, channels, gateway_runtime, onboarding, pipeline, provider_auth_store,
+    provider_router, recurring, recurring_executor, schedules, service_ingress_runtime,
+    service_runtime, session_provenance, skill_lifecycle, skills,
+};
 
 pub(crate) fn handle_init(args: &[String]) -> LoomResult<()> {
     let mode = take_value(args, "--mode").unwrap_or_else(|| "standalone".to_string());
@@ -34,6 +40,11 @@ pub(crate) fn handle_init(args: &[String]) -> LoomResult<()> {
 
 
 pub(crate) fn handle_doctor(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_doctor_help();
+        return Ok(());
+    }
+
     let root = root_from(take_value(args, "--root").as_deref())?;
     let format = take_value(args, "--format").unwrap_or_else(|| {
         if std::io::stdout().is_terminal() {
@@ -44,33 +55,15 @@ pub(crate) fn handle_doctor(args: &[String]) -> LoomResult<()> {
     });
     let fix = args.iter().any(|a| a == "--fix");
 
-    let checks = doctor(&root)?;
+    let mut checks = doctor(&root)?;
 
-    // --fix: attempt safe remediations (scaffold creation only)
     let mut fix_results: Vec<String> = Vec::new();
     if fix {
-        let fixable_remediations: Vec<&str> = checks
-            .iter()
-            .filter(|c| c.level == "WARN" && c.remediation == "loom onboard")
-            .map(|c| c.label)
-            .collect();
-        if !fixable_remediations.is_empty() {
-            match loom_core::init_workspace(&root, "embedded", None, "local_foundry") {
-                Ok(_) => {
-                    fix_results.push(format!(
-                        "fix: re-ran scaffold for {} check(s): {}",
-                        fixable_remediations.len(),
-                        fixable_remediations.join(", ")
-                    ));
-                }
-                Err(e) => {
-                    fix_results.push(format!("fix: scaffold re-run failed: {}", e));
-                }
-            }
-        }
+        fix_results.extend(apply_safe_doctor_fixes(&root)?);
         if fix_results.is_empty() {
             fix_results.push("fix: no safe remediations to apply".to_string());
         }
+        checks = doctor(&root)?;
     }
 
     match format.as_str() {
@@ -101,6 +94,63 @@ pub(crate) fn handle_doctor(args: &[String]) -> LoomResult<()> {
         }
     }
     Ok(())
+}
+
+fn print_doctor_help() {
+    print_human(
+        "Meridian Loom // DOCTOR HELP
+===============================
+USAGE: loom doctor [OPTIONS]
+
+PURPOSE:
+  Inspect the local runtime for configuration gaps, provider readiness,
+  service health, session/pipeline state, memory/context health, and proof surfaces.
+
+OPTIONS:
+  --root PATH            Runtime root to inspect.
+  --format human|json    Output format.
+  --fix                  Apply only safe scaffold and registry repairs.
+
+NOTES:
+  - --fix does not perform destructive changes.
+  - --fix does not claim a service is running unless it can verify it.
+  - JSON output is stable for automation and external probe tooling.
+",
+    );
+}
+
+fn apply_safe_doctor_fixes(root: &std::path::Path) -> LoomResult<Vec<String>> {
+    let mut results = Vec::new();
+    let config = read_config(root)?;
+    fs::create_dir_all(root.join(&config.state_dir)).map_err(|error| error.to_string())?;
+    fs::create_dir_all(root.join(&config.run_dir)).map_err(|error| error.to_string())?;
+    fs::create_dir_all(root.join(&config.log_dir)).map_err(|error| error.to_string())?;
+    fs::create_dir_all(root.join(&config.artifact_dir)).map_err(|error| error.to_string())?;
+    fs::create_dir_all(root.join(&config.capabilities_dir)).map_err(|error| error.to_string())?;
+    fs::create_dir_all(root.join("state/memory")).map_err(|error| error.to_string())?;
+    results.push("fix: ensured runtime directories exist".to_string());
+
+    onboarding::ensure_onboard_manifest(root, &config)?;
+    provider_router::ensure_provider_profiles_scaffold(root)?;
+    provider_auth_store::ensure_provider_auth_store_scaffold(root)?;
+    provider_auth_store::sync_provider_auth_store(root)?;
+    gateway_runtime::ensure_gateway_runtime_scaffold(root)?;
+    service_runtime::ensure_service_runtime_scaffold(root)?;
+    service_ingress_runtime::ensure_service_ingress_runtime_scaffold(root)?;
+    loom_core::agent_runtime::ensure_agent_runtime_scaffold(root)?;
+    loom_core::context_engine::ensure_context_engine_scaffold(root)?;
+    recurring::ensure_heartbeat_runtime_scaffold(root)?;
+    schedules::ensure_schedule_runtime_scaffold(root)?;
+    channels::ensure_channel_runtime_scaffold(root)?;
+    bindings::ensure_binding_runtime_scaffold(root)?;
+    skills::ensure_skill_runtime_scaffold(root)?;
+    session_provenance::ensure_session_provenance_scaffold(root)?;
+    skill_lifecycle::ensure_skill_lifecycle_scaffold(root)?;
+    recurring_executor::ensure_recurring_executor_scaffold(root)?;
+    pipeline::ensure_pipeline_scaffold(root)?;
+    results.push("fix: refreshed safe scaffold files and runtime registries".to_string());
+
+    Ok(results)
 }
 
 

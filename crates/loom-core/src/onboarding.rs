@@ -443,7 +443,7 @@ fn parse_onboard_manifest(raw: &str) -> LoomResult<OnboardManifest> {
         manager_lane: value_string(brain.and_then(|section| section.get("managerLane")), DEFAULT_MANAGER_LANE),
         manager_model: value_string(brain.and_then(|section| section.get("managerModel")), DEFAULT_FRONTIER_MANAGER_MODEL),
         codex_auth_source: value_string(brain_codex_auth.and_then(|section| section.get("source")), DEFAULT_CODEX_AUTH_SOURCE),
-        codex_auth_path: value_string(
+        codex_auth_path: value_string_preserve_empty(
             brain_codex_auth.and_then(|section| section.get("path")),
             DEFAULT_LOOM_CODEX_AUTH_PATH,
         ),
@@ -509,6 +509,13 @@ fn value_string(value: Option<&Value>, default: &str) -> String {
         .filter(|value| !value.is_empty())
         .unwrap_or(default)
         .to_string()
+}
+
+fn value_string_preserve_empty(value: Option<&Value>, default: &str) -> String {
+    match value.and_then(Value::as_str) {
+        Some(raw) => raw.trim().to_string(),
+        None => default.to_string(),
+    }
 }
 
 fn default_loom_codex_auth_path_string() -> String {

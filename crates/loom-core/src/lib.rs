@@ -1500,6 +1500,17 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
         }),
     }
 
+    let memory_root = state_dir.join("memory");
+    push_path_check(
+        &mut checks,
+        "memory_repo",
+        &memory_root,
+        false,
+        "memory repository present",
+        "memory",
+        "loom doctor --fix",
+    );
+
     // Memory service check
     let memory_svc = memory_service::MemoryService::with_defaults(&root);
     match memory_svc.overview() {
@@ -1507,10 +1518,13 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             level: "OK",
             label: "memory_service",
             detail: format!(
-                "agents={} entries={} bytes={}",
+                "agents={} entries={} bytes={} max_entries={} max_entry_bytes={} retention_days={}",
                 overview.agent_count,
                 overview.total_entries,
                 overview.total_bytes,
+                overview.policy.max_entries_per_agent,
+                overview.policy.max_entry_bytes,
+                overview.policy.retention_days,
             ),
             category: "memory",
             remediation: "",

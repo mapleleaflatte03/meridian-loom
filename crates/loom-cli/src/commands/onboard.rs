@@ -21,13 +21,19 @@ use loom_core::onboarding::{
 };
 use loom_core::provider_auth_store::{provider_auth_store_overview, sync_provider_auth_store};
 use loom_core::provider_router::{
-    configure_onboard_provider_routes, default_codex_auth_path_hint, load_provider_profiles,
-    provider_auth_status, provider_plane_summary, resolve_provider_route,
-    shared_codex_auth_path_hint, ProviderAuthMode, ProviderRouteIntent,
+    configure_onboard_provider_profile, configure_onboard_provider_routes,
+    default_codex_auth_path_hint, load_provider_profiles, provider_auth_status,
+    provider_plane_summary, resolve_provider_route, shared_codex_auth_path_hint,
+    OnboardProviderRouteConfig, ProviderAuthMode, ProviderKind, ProviderRouteIntent,
 };
 use serde_json::{json, Value};
 
 pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_onboard_help();
+        return Ok(());
+    }
+
     let root = root_from(take_value(args, "--root").as_deref())?;
     let format = take_value(args, "--format").unwrap_or_else(|| {
         if std::io::stdout().is_terminal() {
@@ -136,6 +142,7 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
         codex_auth_source = "path".to_string();
     }
     let mut banner_rendered = false;
+    let mut interactive_provider_config: Option<OnboardProviderRouteConfig> = None;
 
     if interactive {
         print_startup_banner();
@@ -186,85 +193,108 @@ hint:                {}\n\n",
             "quickstart",
             &["quickstart", "manual"],
         )?;
+        let default_provider_choice = default_provider_choice_for_state(
+            &manager_lane,
+            current_brain.provider_kind.as_ref(),
+        );
 
         if setup_mode == "quickstart" {
-            // Quickstart: provider chooser only, rest is defaults
+            print_quickstart_summary_card(&manifest, &manager_model);
             print_setup_stage(
                 1,
-                2,
+                5,
                 "Provider",
-                "Choose where inference runs. Local uses Ollama on this host. Frontier uses a remote provider via OAuth.",
+                "Choose the inference path Meridian should wire now. QuickStart keeps the edge, daemon, and recurring defaults intact.",
             );
-            manager_lane = prompt_choice(
-                "Provider lane",
-                &manager_lane,
-                &["local", "frontier"],
+            let provider_choice = prompt_choice(
+                "Inference provider",
+                default_provider_choice,
+                &[
+                    "loom_codex",
+                    "local_ollama",
+                    "openai_compatible",
+                    "custom_endpoint",
+                    "local_only",
+                ],
             )?;
-            if manager_lane == "frontier" {
-                codex_auth_source = "loom".to_string();
-                codex_auth_path = None;
-            } else {
-                codex_auth_source = "none".to_string();
-                codex_auth_path = None;
-            }
-            print_setup_stage(
-                2,
-                2,
-                "Defaults",
-                "Applying quickstart defaults for gateway, channels, and scheduling.",
+            let selection = prompt_provider_setup(
+                &provider_choice,
+                &manager_model,
+                &codex_auth_source,
+                codex_auth_path.clone(),
+                false,
+            )?;
+            manager_lane = selection.manager_lane;
+            manager_model = selection.manager_model;
+            codex_auth_source = selection.codex_auth_source;
+            codex_auth_path = selection.codex_auth_path;
+            interactive_provider_config = selection.provider_config;
+            print_human(
+                "QuickStart defaults
+-------------------
+Meridian will now confirm the local edge, daemon, and built-in runtime defaults before writing the runtime root.
+
+",
             );
         } else {
             // Manual: full interactive flow
             print_setup_stage(
                 1,
                 5,
-                "Manager brain",
-                "Pick the lane, model, and account Meridian should use for Leviathann.",
+                "Manager provider",
+                "Pick the provider, model, and account Meridian should use for Leviathann.",
             );
-            manager_lane = prompt_choice(
-                "Manager brain lane",
-                &manager_lane,
-                &["frontier", "local"],
+            let provider_choice = prompt_choice(
+                "Inference provider",
+                default_provider_choice,
+                &[
+                    "loom_codex",
+                    "local_ollama",
+                    "openai_compatible",
+                    "custom_endpoint",
+                    "local_only",
+                ],
             )?;
-            manager_model = prompt_text("Manager model", &manager_model)?;
-            if manager_lane == "frontier" {
-                codex_auth_source = prompt_choice(
-                    "Codex auth source",
-                    &codex_auth_source,
-                    &["loom", "cli", "path"],
-                )?;
-                codex_auth_path = match codex_auth_source.as_str() {
-                    "loom" => None,
-                    "cli" => None,
-                    _ => {
-                        let hint = codex_auth_path.clone().unwrap_or_else(|| {
-                            default_codex_auth_path_hint()
-                                .map(|path| path.display().to_string())
-                                .unwrap_or_else(|_| "~/.meridian/auth/codex/auth.json".to_string())
-                        });
-                        Some(prompt_text("Custom Codex auth.json path", &hint)?)
-                    }
-                };
-            } else {
-                codex_auth_source = "none".to_string();
-                codex_auth_path = None;
-            }
-        }
-        apply_interactive_overrides(&mut manifest)?;
+            let selection = prompt_provider_setup(
+                &provider_choice,
+                &manager_model,
+                &codex_auth_source,
+                codex_auth_path.clone(),
+                true,
+            )?;
+            manager_lane = selection.manager_lane;
+            manager_model = selection.manager_model;
+            codex_auth_source = selection.codex_auth_source;
+            codex_auth_path = selection.codex_auth_path;
+            interactive_provider_config = selection.provider_config;
+    }
+    apply_interactive_overrides(&mut manifest)?;
     }
     apply_cli_overrides(args, &mut manifest)?;
-    let (codex_auth_source, codex_auth_path) =
-        normalize_codex_auth_selection(&manager_lane, &codex_auth_source, codex_auth_path)?;
+    let uses_codex_auth = interactive_provider_config
+        .as_ref()
+        .map(|config| matches!(config.kind, ProviderKind::OpenAiCodex))
+        .unwrap_or(true);
+    let (codex_auth_source, codex_auth_path) = if uses_codex_auth {
+        normalize_codex_auth_selection(&manager_lane, &codex_auth_source, codex_auth_path)?
+    } else {
+        ("none".to_string(), None)
+    };
     manifest.manager_lane = manager_lane.clone();
     manifest.manager_model = manager_model.clone();
     manifest.codex_auth_source = codex_auth_source.clone();
     manifest.codex_auth_path = codex_auth_path.clone().unwrap_or_default();
-    let provider_profiles_path = configure_onboard_provider_routes(
-        &root,
-        &manager_lane,
-        Some(&manager_model),
-        codex_auth_path.as_deref(),
-    )?;
+    let provider_profiles_path = if let Some(provider_config) = interactive_provider_config.as_ref()
+    {
+        configure_onboard_provider_profile(&root, provider_config)?
+    } else {
+        configure_onboard_provider_routes(
+            &root,
+            &manager_lane,
+            Some(&manager_model),
+            codex_auth_path.as_deref(),
+        )?
+    };
     let provider_auth_sync = sync_provider_auth_store(&root)?;
 
     if manifest.gateway_auth_mode == "none" && manifest.gateway_token_env.trim().is_empty() {
@@ -295,16 +325,21 @@ hint:                {}\n\n",
     let skill_summary = sync_skill_registry(&root)?;
     let schedule_sync = sync_schedule_registry(&root)?;
     let schedule_runtime = schedule_overview(&root, current_unix_ms())?;
+    fs::create_dir_all(root.join("state/memory")).map_err(|error| error.to_string())?;
 
     let provider_summary = provider_plane_summary(Some(&root))?;
     let provider_auth_summary = provider_auth_store_overview(&root)?;
     let runtime_overview = agent_runtime_overview(&root)?;
-    let codex_status = provider_auth_status(Some(&root), Some("manager_frontier")).ok();
     let manager_route = resolve_provider_route(
         Some(&root),
         &ProviderRouteIntent::llm_inference("").with_agent_id("leviathann"),
     )
     .ok();
+    let configured_manager_provider = configured_manager_provider(&root).ok();
+    let codex_status = manager_route
+        .as_ref()
+        .filter(|route| matches!(route.profile_kind, ProviderKind::OpenAiCodex))
+        .and_then(|route| provider_auth_status(Some(&root), Some(&route.profile_name)).ok());
     let pulse_route = resolve_provider_route(
         Some(&root),
         &ProviderRouteIntent::llm_inference("").with_agent_id("pulse"),
@@ -340,10 +375,17 @@ hint:                {}\n\n",
 
     let codex_ready = codex_status.as_ref().map(|status| status.ready).unwrap_or(false);
     let codex_path = codex_status.as_ref().and_then(|status| status.credential_path.clone());
-    let codex_detail = codex_status
+    let codex_detail = if let Some(status) = codex_status.as_ref() {
+        status.detail.clone()
+    } else if manager_route
         .as_ref()
-        .map(|status| status.detail.clone())
-        .unwrap_or_else(|| "Codex OAuth is not configured yet".to_string());
+        .map(|route| matches!(route.profile_kind, ProviderKind::OpenAiCodex))
+        .unwrap_or(false)
+    {
+        "Codex OAuth is not configured yet".to_string()
+    } else {
+        "current manager provider does not use Codex OAuth".to_string()
+    };
 
     if format == "json" {
         print!(
@@ -368,6 +410,14 @@ hint:                {}\n\n",
                 },
                 "agent_profiles": runtime_overview.profile_count,
                 "manager_lane": manager_lane,
+                "manager_provider_profile": manager_route
+                    .as_ref()
+                    .map(|route| route.profile_name.clone())
+                    .or_else(|| configured_manager_provider.as_ref().map(|route| route.profile_name.clone())),
+                "manager_transport_kind": manager_route
+                    .as_ref()
+                    .map(|route| route.transport_kind().to_string())
+                    .or_else(|| configured_manager_provider.as_ref().map(|route| route.transport_kind.clone())),
                 "manager_model_config": manager_model,
                 "codex_auth_source": manifest.codex_auth_source,
                 "configured_codex_auth_path": if manifest.codex_auth_path.trim().is_empty() { None } else { Some(manifest.codex_auth_path.clone()) },
@@ -434,6 +484,7 @@ hint:                {}\n\n",
                     },
                 },
                 "manager_route": manager_route.as_ref().map(route_json),
+                "manager_route_configured": configured_manager_provider.as_ref().map(configured_route_json),
                 "pulse_route": pulse_route.as_ref().map(route_json),
                 "daemon": daemon_snapshot,
                 "health": health_snapshot.as_ref().map(|(healthy, report)| json!({
@@ -447,18 +498,23 @@ hint:                {}\n\n",
         return Ok(());
     }
 
-    let manager_profile = manager_route
-        .as_ref()
-        .map(|route| format!("{} ({})", route.profile_name, route.profile_kind.label()))
-        .unwrap_or_else(|| "not connected — action required".to_string());
     let manager_endpoint = manager_route
         .as_ref()
         .map(|route| route.endpoint_url.to_string())
+        .or_else(|| configured_manager_provider.as_ref().map(|route| route.endpoint.clone()))
         .unwrap_or_else(|| "(pending provider setup)".to_string());
-    let manager_model = manager_route
+    let manager_route_model = manager_route
         .as_ref()
         .map(|route| route.model.clone())
+        .or_else(|| configured_manager_provider.as_ref().map(|route| route.model.clone()))
         .unwrap_or_else(|| "(pending provider setup)".to_string());
+    let manager_route_status = if manager_route.is_some() {
+        "ready".to_string()
+    } else if configured_manager_provider.is_some() {
+        "configured but not ready — action required".to_string()
+    } else {
+        "not connected — action required".to_string()
+    };
     let pulse_profile = pulse_route
         .as_ref()
         .map(|route| format!("{} ({})", route.profile_name, route.profile_kind.label()))
@@ -494,6 +550,8 @@ provider_auth:       profiles={} ready={} last_good={} usage_stats={}
 agent_profiles:      {}
 brain:               {}
 manager_lane:        {}
+manager_provider:    {}
+manager_transport:   {}
 manager_model_cfg:   {}
 codex_auth_source:   {}
 configured_auth:     {}
@@ -536,6 +594,16 @@ next_step:           loom doctor --root {} --format human
         runtime_overview.profile_count,
         overview.brain_summary,
         manager_lane,
+        manager_route
+            .as_ref()
+            .map(|route| route.profile_name.as_str())
+            .or_else(|| configured_manager_provider.as_ref().map(|route| route.profile_name.as_str()))
+            .unwrap_or("(pending provider setup)"),
+        manager_route
+            .as_ref()
+            .map(|route| route.transport_kind())
+            .or_else(|| configured_manager_provider.as_ref().map(|route| route.transport_kind.as_str()))
+            .unwrap_or("(pending provider setup)"),
         manager_model,
         manifest.codex_auth_source,
         if manifest.codex_auth_path.trim().is_empty() { "(none)" } else { manifest.codex_auth_path.as_str() },
@@ -580,9 +648,9 @@ next_step:           loom doctor --root {} --format human
         if schedule_sync.job_ids.is_empty() { "(none)".to_string() } else { schedule_sync.job_ids.join(",") },
         daemon_summary,
         health_summary,
-        manager_profile,
+        manager_route_status,
         manager_endpoint,
-        manager_model,
+        manager_route_model,
         pulse_profile,
         pulse_model,
         manifest_path.display(),
@@ -796,6 +864,7 @@ struct ManagerBrainSelection {
     model: String,
     codex_auth_source: String,
     codex_auth_path: Option<String>,
+    provider_kind: Option<ProviderKind>,
 }
 
 fn current_manager_brain(root: &Path, manifest: &OnboardManifest) -> ManagerBrainSelection {
@@ -821,11 +890,236 @@ fn current_manager_brain(root: &Path, manifest: &OnboardManifest) -> ManagerBrai
         .unwrap_or_else(|| default_manager_model(&lane, manifest));
     let (codex_auth_source, codex_auth_path) = current_codex_auth_selection(root)
         .unwrap_or_else(|_| manifest_codex_auth_selection(manifest, &lane));
+    let provider_kind = route.as_ref().map(|resolved| resolved.profile_kind.clone());
+    let (codex_auth_source, codex_auth_path) = match provider_kind.as_ref() {
+        Some(ProviderKind::OpenAiCodex) => (codex_auth_source, codex_auth_path),
+        _ => ("none".to_string(), None),
+    };
     ManagerBrainSelection {
         lane,
         model,
         codex_auth_source,
         codex_auth_path,
+        provider_kind,
+    }
+}
+
+#[derive(Clone, Debug)]
+struct ProviderSetupSelection {
+    manager_lane: String,
+    manager_model: String,
+    codex_auth_source: String,
+    codex_auth_path: Option<String>,
+    provider_config: Option<OnboardProviderRouteConfig>,
+}
+
+#[derive(Clone, Debug)]
+struct ConfiguredManagerRoute {
+    profile_name: String,
+    profile_kind: ProviderKind,
+    endpoint: String,
+    model: String,
+    transport_kind: String,
+}
+
+fn default_provider_choice_for_state(
+    lane: &str,
+    provider_kind: Option<&ProviderKind>,
+) -> &'static str {
+    match provider_kind {
+        Some(ProviderKind::OpenAiCompatible) => "openai_compatible",
+        Some(ProviderKind::CustomEndpoint) => "custom_endpoint",
+        Some(ProviderKind::LocalOllama) => "local_ollama",
+        _ if lane.eq_ignore_ascii_case("local") => "local_ollama",
+        _ => "loom_codex",
+    }
+}
+
+fn print_quickstart_summary_card(manifest: &OnboardManifest, manager_model: &str) {
+    print_human(&format!(
+        "QuickStart Summary
+------------------
+gateway:            {}:{} auth={} tailscale={}
+telegram:           {}
+daemon:             {} ({})
+skills defaults:    {}
+recurring defaults: {}
+manager default:    {}
+
+",
+        manifest.gateway_bind,
+        manifest.gateway_port,
+        manifest.gateway_auth_mode,
+        manifest.gateway_tailscale_mode,
+        if manifest.telegram_enabled { "enabled" } else { "disabled" },
+        if manifest.daemon_enabled { "enabled" } else { "disabled" },
+        manifest.daemon_manager,
+        manifest.skills_entries.join(","),
+        if manifest.recurring_install_defaults {
+            "enabled"
+        } else {
+            "disabled"
+        },
+        manager_model,
+    ));
+}
+
+fn prompt_provider_setup(
+    provider_choice: &str,
+    current_model: &str,
+    current_codex_auth_source: &str,
+    current_codex_auth_path: Option<String>,
+    detailed_flow: bool,
+) -> LoomResult<ProviderSetupSelection> {
+    match provider_choice {
+        "loom_codex" => {
+            if looks_remote_headless() {
+                print_human(
+                    "Remote OAuth
+------------
+This host appears to be headless or remote. Keep the Loom-managed auth path on this runtime, then finish device auth in your local browser when prompted. Meridian will keep the Loom-managed auth file separate from the shared operator login.
+
+",
+                );
+            }
+            let manager_model = prompt_text("Manager model", current_model)?;
+            let codex_auth_source = prompt_choice(
+                "Codex auth source",
+                if current_codex_auth_source == "none" {
+                    "loom"
+                } else {
+                    current_codex_auth_source
+                },
+                &["loom", "cli", "path"],
+            )?;
+            let codex_auth_path = match codex_auth_source.as_str() {
+                "loom" => None,
+                "cli" => None,
+                _ => {
+                    let hint = current_codex_auth_path.unwrap_or_else(|| {
+                        default_codex_auth_path_hint()
+                            .map(|path| path.display().to_string())
+                            .unwrap_or_else(|_| "~/.meridian/auth/codex/auth.json".to_string())
+                    });
+                    Some(prompt_text("Custom Codex auth.json path", &hint)?)
+                }
+            };
+            Ok(ProviderSetupSelection {
+                manager_lane: "frontier".to_string(),
+                manager_model,
+                codex_auth_source,
+                codex_auth_path,
+                provider_config: None,
+            })
+        }
+        "local_ollama" | "local_only" => {
+            if provider_choice == "local_only" {
+                print_human(
+                    "Local-only setup
+----------------
+Meridian will stay on the local inference path and skip remote provider setup for now.
+
+",
+                );
+            }
+            let default_model = if current_model.trim().is_empty() {
+                "qwen2.5:7b"
+            } else {
+                current_model
+            };
+            let manager_model = prompt_text("Local model", default_model)?;
+            Ok(ProviderSetupSelection {
+                manager_lane: "local".to_string(),
+                manager_model,
+                codex_auth_source: "none".to_string(),
+                codex_auth_path: None,
+                provider_config: None,
+            })
+        }
+        "openai_compatible" => {
+            if detailed_flow {
+                print_human(
+                    "Provider branch
+---------------
+Meridian will route the manager through a standard OpenAI-compatible chat completions endpoint using a bearer token environment variable.
+
+",
+                );
+            }
+            let default_model = if current_model.trim().is_empty() {
+                "gpt-5.4"
+            } else {
+                current_model
+            };
+            let manager_model = prompt_text("Remote model", default_model)?;
+            let base_url = prompt_text(
+                "OpenAI-compatible base URL",
+                "https://api.openai.com/v1/chat/completions",
+            )?;
+            let env_var = prompt_text("Bearer token env var", "OPENAI_API_KEY")?;
+            Ok(ProviderSetupSelection {
+                manager_lane: "frontier".to_string(),
+                manager_model: manager_model.clone(),
+                codex_auth_source: "none".to_string(),
+                codex_auth_path: None,
+                provider_config: Some(OnboardProviderRouteConfig {
+                    profile_name: "openai_default".to_string(),
+                    kind: ProviderKind::OpenAiCompatible,
+                    base_url,
+                    default_model: manager_model,
+                    auth: ProviderAuthMode::BearerEnv { env_var },
+                    note: "seeded Meridian OpenAI-compatible route for manager reasoning"
+                        .to_string(),
+                    make_default: true,
+                }),
+            })
+        }
+        "custom_endpoint" => {
+            let default_model = if current_model.trim().is_empty() {
+                "gpt-5.4"
+            } else {
+                current_model
+            };
+            let manager_model = prompt_text("Remote model", default_model)?;
+            let base_url = prompt_text(
+                "Custom endpoint base URL",
+                "https://api.example.test/v1/chat/completions",
+            )?;
+            let auth_mode = prompt_choice(
+                "Custom endpoint auth mode",
+                "bearer_env",
+                &["bearer_env", "static_header_env", "none"],
+            )?;
+            let auth = match auth_mode.as_str() {
+                "none" => ProviderAuthMode::None,
+                "static_header_env" => {
+                    let header_name = prompt_text("Header name", "x-api-key")?;
+                    let env_var = prompt_text("Header env var", "MERIDIAN_CUSTOM_LLM_KEY")?;
+                    ProviderAuthMode::StaticHeaderEnv { header_name, env_var }
+                }
+                _ => {
+                    let env_var = prompt_text("Bearer token env var", "MERIDIAN_CUSTOM_LLM_KEY")?;
+                    ProviderAuthMode::BearerEnv { env_var }
+                }
+            };
+            Ok(ProviderSetupSelection {
+                manager_lane: "frontier".to_string(),
+                manager_model: manager_model.clone(),
+                codex_auth_source: "none".to_string(),
+                codex_auth_path: None,
+                provider_config: Some(OnboardProviderRouteConfig {
+                    profile_name: "custom_endpoint".to_string(),
+                    kind: ProviderKind::CustomEndpoint,
+                    base_url,
+                    default_model: manager_model,
+                    auth,
+                    note: "seeded Meridian custom endpoint route for manager reasoning"
+                        .to_string(),
+                    make_default: true,
+                }),
+            })
+        }
+        other => Err(format!("unsupported provider choice '{}'", other)),
     }
 }
 
@@ -889,6 +1183,28 @@ fn current_codex_auth_selection(root: &Path) -> LoomResult<(String, Option<Strin
         }
         _ => Ok(("none".to_string(), None)),
     }
+}
+
+fn configured_manager_provider(root: &Path) -> LoomResult<ConfiguredManagerRoute> {
+    let profiles = load_provider_profiles(Some(root))?;
+    let configured_name = profiles
+        .routing
+        .agents
+        .get("leviathann")
+        .and_then(|policy| policy.profile_name.clone())
+        .unwrap_or_else(|| profiles.default_profile_name.clone());
+    let profile = profiles
+        .profiles
+        .iter()
+        .find(|candidate| candidate.name == configured_name)
+        .ok_or_else(|| format!("configured provider profile '{}' was not found", configured_name))?;
+    Ok(ConfiguredManagerRoute {
+        profile_name: profile.name.clone(),
+        profile_kind: profile.kind.clone(),
+        endpoint: profile.base_url.clone(),
+        model: profile.default_model.clone(),
+        transport_kind: transport_kind_for_profile(&profile.kind).to_string(),
+    })
 }
 
 fn normalize_codex_auth_selection(
@@ -961,6 +1277,30 @@ fn expand_auth_path(raw: &str) -> Option<PathBuf> {
         return Some(path);
     }
     env::var("HOME").ok().map(|home| PathBuf::from(home).join(path))
+}
+
+fn looks_remote_headless() -> bool {
+    env::var("SSH_CONNECTION")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .is_some()
+        || env::var("SSH_CLIENT")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .is_some()
+        || env::var("DISPLAY")
+            .ok()
+            .map(|value| value.trim().is_empty())
+            .unwrap_or(true)
+}
+
+fn transport_kind_for_profile(kind: &ProviderKind) -> &'static str {
+    match kind {
+        ProviderKind::LocalOllama => "ollama_local",
+        ProviderKind::OpenAiCompatible => "openai_rest",
+        ProviderKind::OpenAiCodex => "codex_session",
+        ProviderKind::CustomEndpoint => "custom_http",
+    }
 }
 
 fn trimmed_string_option(raw: &str) -> Option<String> {
@@ -1047,6 +1387,53 @@ fn route_json(route: &loom_core::provider_router::ResolvedProviderRoute) -> Valu
         "model": route.model,
         "matched_rule": route.matched_rule,
     })
+}
+
+fn configured_route_json(route: &ConfiguredManagerRoute) -> Value {
+    json!({
+        "profile": route.profile_name,
+        "kind": route.profile_kind.label(),
+        "endpoint": route.endpoint,
+        "model": route.model,
+        "transport_kind": route.transport_kind,
+        "matched_rule": "configured",
+    })
+}
+
+fn print_onboard_help() {
+    print_human(
+        "Meridian Loom // ONBOARD HELP
+================================
+USAGE: loom onboard [OPTIONS]
+
+PURPOSE:
+  Configure a Loom runtime root, choose a manager provider, and materialize
+  the local runtime state Meridian expects.
+
+OPTIONS:
+  --root PATH                 Runtime root to initialize or modify.
+  --format human|json         Output format. Human becomes interactive on a TTY.
+  --non-interactive           Skip prompts and apply CLI flags plus safe defaults.
+  --config-action ACTION      keep | modify | reset
+  --manager-lane LANE         frontier | local
+  --manager-model MODEL       Manager model alias or provider-native name.
+  --codex-auth-source SRC     loom | cli | path | none
+  --codex-auth-path PATH      Custom auth.json path when using path mode.
+  --gateway-bind MODE         loopback | all
+  --gateway-port PORT         Gateway port.
+  --gateway-auth-mode MODE    token | none
+  --gateway-token-env NAME    Gateway token environment variable.
+  --tailscale-mode MODE       off | on
+  --start-daemon              Start the supervisor daemon after setup when enabled.
+  --skip-health-check         Skip the post-setup health check.
+
+NOTES:
+  - Interactive setup offers QuickStart and Manual paths.
+  - Provider selection and model selection are separate.
+  - Loom-managed OAuth stays under the runtime-owned auth path.
+  - Non-interactive onboarding still writes real runtime state.
+",
+    );
 }
 
 fn start_supervisor_daemon(root: &Path, kernel_path: Option<&str>) -> LoomResult<Value> {

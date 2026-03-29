@@ -8,7 +8,6 @@
 //! layers can read from the repo, but all writes go through the service to
 //! enforce governance (retention policy, size limits, agent isolation).
 
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};

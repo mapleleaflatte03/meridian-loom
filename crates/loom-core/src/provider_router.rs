@@ -281,6 +281,17 @@ pub struct ProviderPlaneSummary {
     pub agent_route_count: usize,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OnboardProviderRouteConfig {
+    pub profile_name: String,
+    pub kind: ProviderKind,
+    pub base_url: String,
+    pub default_model: String,
+    pub auth: ProviderAuthMode,
+    pub note: String,
+    pub make_default: bool,
+}
+
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProviderAuthStatus {
@@ -370,6 +381,52 @@ pub fn configure_onboard_provider_routes(
         .routing
         .agents
         .insert("leviathann".to_string(), manager_policy);
+
+    persist_provider_profiles(root, &profiles)
+}
+
+pub fn configure_onboard_provider_profile(
+    root: &Path,
+    config: &OnboardProviderRouteConfig,
+) -> LoomResult<PathBuf> {
+    ensure_provider_profiles_scaffold(root)?;
+    let mut profiles = load_provider_profiles(Some(root))?;
+    let route_model = trim_to_option(&config.default_model)
+        .unwrap_or_else(|| match config.kind {
+            ProviderKind::OpenAiCodex => DEFAULT_CODEX_MODEL_ALIAS.to_string(),
+            ProviderKind::LocalOllama => DEFAULT_MODEL_ALIAS.to_string(),
+            _ => DEFAULT_CODEX_MODEL_ALIAS.to_string(),
+        });
+
+    upsert_provider_profile(
+        &mut profiles,
+        ProviderProfile {
+            name: config.profile_name.clone(),
+            kind: config.kind.clone(),
+            base_url: config.base_url.trim().to_string(),
+            default_model: route_model.clone(),
+            auth: config.auth.clone(),
+            note: config.note.trim().to_string(),
+        },
+    );
+
+    if config.make_default {
+        profiles.default_profile_name = config.profile_name.clone();
+    }
+    profiles.routing.capabilities.insert(
+        "loom.llm.inference.v1".to_string(),
+        ProviderRoutePolicy {
+            profile_name: Some(config.profile_name.clone()),
+            default_model: Some(route_model.clone()),
+        },
+    );
+    profiles.routing.agents.insert(
+        "leviathann".to_string(),
+        ProviderRoutePolicy {
+            profile_name: Some(config.profile_name.clone()),
+            default_model: Some(route_model),
+        },
+    );
 
     persist_provider_profiles(root, &profiles)
 }
@@ -1125,6 +1182,18 @@ fn ensure_frontier_profiles(profiles: &mut ProviderProfileSet) {
         if !profiles.profiles.iter().any(|profile| profile.name == *name) {
             profiles.profiles.push(build_frontier_profile(name, note));
         }
+    }
+}
+
+fn upsert_provider_profile(profiles: &mut ProviderProfileSet, candidate: ProviderProfile) {
+    if let Some(existing) = profiles
+        .profiles
+        .iter_mut()
+        .find(|profile| profile.name == candidate.name)
+    {
+        *existing = candidate;
+    } else {
+        profiles.profiles.push(candidate);
     }
 }
 
@@ -1896,6 +1965,44 @@ mod tests {
             std::env::remove_var("HOME");
         }
         assert_eq!(route.model, "gpt-5.3-codex");
+    }
+
+    #[test]
+    fn configure_onboard_provider_profile_materializes_openai_compatible_route() {
+        let root = temp_path("loom-provider-onboard-openai-compatible");
+        ensure_provider_profiles_scaffold(&root).expect("scaffold provider profiles");
+        let path = configure_onboard_provider_profile(
+            &root,
+            &OnboardProviderRouteConfig {
+                profile_name: DEFAULT_OPENAI_PROFILE_NAME.to_string(),
+                kind: ProviderKind::OpenAiCompatible,
+                base_url: DEFAULT_OPENAI_ENDPOINT.to_string(),
+                default_model: "gpt-5.4".to_string(),
+                auth: ProviderAuthMode::BearerEnv {
+                    env_var: "OPENAI_API_KEY".to_string(),
+                },
+                note: "seeded openai-compatible route".to_string(),
+                make_default: true,
+            },
+        )
+        .expect("configure provider profile");
+        assert!(path.exists());
+        let profiles = load_provider_profiles(Some(&root)).expect("load provider profiles");
+        assert_eq!(profiles.default_profile_name, DEFAULT_OPENAI_PROFILE_NAME);
+        let route = resolve_provider_route(
+            Some(&root),
+            &ProviderRouteIntent::llm_inference("").with_agent_id("leviathann"),
+        )
+        .expect_err("route should require OPENAI_API_KEY");
+        assert!(route.contains("provider profile 'openai_default' is not ready"));
+        assert!(route.contains("OPENAI_API_KEY"));
+        let manager = profiles
+            .profiles
+            .iter()
+            .find(|profile| profile.name == DEFAULT_OPENAI_PROFILE_NAME)
+            .expect("openai profile");
+        assert_eq!(manager.kind, ProviderKind::OpenAiCompatible);
+        assert_eq!(manager.default_model, "gpt-5.4");
     }
 
     #[test]
