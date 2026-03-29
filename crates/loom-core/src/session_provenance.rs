@@ -37,6 +37,21 @@ pub struct SessionProvenanceOverview {
     pub session_keys: Vec<String>,
 }
 
+fn session_provenance_state(record: &SessionProvenanceRecord) -> &'static str {
+    if !record.provider_profile.is_empty()
+        && !record.model.is_empty()
+        && !record.transport_kind.is_empty()
+        && !record.auth_mode.is_empty()
+        && !record.execution_owner.is_empty()
+    {
+        "complete"
+    } else if record.ingress_request_id.is_some() || record.job_id.is_some() || record.delivery_id.is_some() {
+        "partial"
+    } else {
+        "legacy_incomplete"
+    }
+}
+
 pub fn session_provenance_registry_path(root: &Path) -> PathBuf {
     root.join(DEFAULT_SESSION_PROVENANCE_REGISTRY_PATH)
 }
@@ -241,8 +256,9 @@ pub fn render_session_provenance_overview_json(overview: &SessionProvenanceOverv
 
 pub fn render_session_provenance_human(record: &SessionProvenanceRecord) -> String {
     format!(
-        "session_key:          {}\nchannel_id:           {}\npeer_id:              {}\nagent_id:             {}\nbinding_id:           {}\nprovider_profile:     {}\nmodel:                {}\ntransport_kind:       {}\nauth_mode:            {}\nexecution_owner:      {}\ningress_request_id:   {}\njob_id:               {}\ndelivery_id:          {}\noverride_source:      {}\nsend_policy:          {}\nopened_at:            {}\nlast_active_at:       {}\n",
+        "session_key:          {}\nprovenance_state:     {}\nchannel_id:           {}\npeer_id:              {}\nagent_id:             {}\nbinding_id:           {}\nprovider_profile:     {}\nmodel:                {}\ntransport_kind:       {}\nauth_mode:            {}\nexecution_owner:      {}\ningress_request_id:   {}\njob_id:               {}\ndelivery_id:          {}\noverride_source:      {}\nsend_policy:          {}\nopened_at:            {}\nlast_active_at:       {}\n",
         record.session_key,
+        session_provenance_state(record),
         record.channel_id,
         record.peer_id,
         record.agent_id,
@@ -358,6 +374,7 @@ fn parse_session_provenance_record(value: &Value) -> LoomResult<SessionProvenanc
 fn session_provenance_record_json(record: &SessionProvenanceRecord) -> Value {
     json!({
         "session_key": record.session_key,
+        "provenance_state": session_provenance_state(record),
         "channel_id": record.channel_id,
         "peer_id": record.peer_id,
         "agent_id": record.agent_id,
@@ -510,5 +527,55 @@ mod tests {
         assert_eq!(record.job_id.as_deref(), Some("job-abc"));
         assert_eq!(record.delivery_id.as_deref(), Some("delivery-xyz"));
         assert_eq!(record.ingress_request_id.as_deref(), Some("req-123"));
+    }
+
+    #[test]
+    fn render_session_provenance_marks_legacy_incomplete_records() {
+        let record = SessionProvenanceRecord {
+            session_key: "telegram:legacy".to_string(),
+            channel_id: "telegram".to_string(),
+            peer_id: "legacy".to_string(),
+            agent_id: "leviathann".to_string(),
+            binding_id: "binding-telegram".to_string(),
+            provider_profile: String::new(),
+            model: String::new(),
+            transport_kind: String::new(),
+            auth_mode: String::new(),
+            execution_owner: String::new(),
+            ingress_request_id: None,
+            job_id: None,
+            delivery_id: None,
+            override_source: "default".to_string(),
+            send_policy: "deliver".to_string(),
+            opened_at: "1".to_string(),
+            last_active_at: "2".to_string(),
+        };
+        let rendered = render_session_provenance_json(&record);
+        assert!(rendered.contains("\"provenance_state\": \"legacy_incomplete\""));
+    }
+
+    #[test]
+    fn render_session_provenance_marks_complete_records() {
+        let record = SessionProvenanceRecord {
+            session_key: "web_api:org_demo".to_string(),
+            channel_id: "web_api".to_string(),
+            peer_id: "org_demo".to_string(),
+            agent_id: "leviathann".to_string(),
+            binding_id: "binding-web_api".to_string(),
+            provider_profile: "manager_frontier".to_string(),
+            model: "gpt-5.4".to_string(),
+            transport_kind: "codex_session".to_string(),
+            auth_mode: "codex_auth_json".to_string(),
+            execution_owner: "meridian".to_string(),
+            ingress_request_id: Some("ingress-1".to_string()),
+            job_id: Some("job-1".to_string()),
+            delivery_id: Some("delivery-1".to_string()),
+            override_source: "default".to_string(),
+            send_policy: "deliver".to_string(),
+            opened_at: "1".to_string(),
+            last_active_at: "2".to_string(),
+        };
+        let rendered = render_session_provenance_json(&record);
+        assert!(rendered.contains("\"provenance_state\": \"complete\""));
     }
 }
