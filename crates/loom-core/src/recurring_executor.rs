@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 
 use crate::channels::{enqueue_channel_delivery, ChannelDeliveryRequest};
 use crate::recurring::HeartbeatRecord;
-use crate::schedules::ScheduledJobRecord;
+use crate::schedules::{schedule_runs_path, ScheduledJobRecord};
 
 pub type LoomResult<T> = Result<T, String>;
 
@@ -233,23 +233,16 @@ pub fn list_recurring_runs(
     job_type_filter: Option<&str>,
 ) -> LoomResult<Vec<RecurringRunRecord>> {
     ensure_recurring_executor_scaffold(root)?;
-    let runs_dir = recurring_runs_dir(root);
     let mut records = Vec::new();
-    let entries = match fs::read_dir(&runs_dir) {
-        Ok(entries) => entries,
-        Err(_) => return Ok(records),
-    };
-    let mut paths: Vec<PathBuf> = entries
-        .filter_map(|entry| entry.ok().map(|e| e.path()))
-        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json"))
-        .collect();
+    let mut paths: Vec<PathBuf> = collect_run_paths(&recurring_runs_dir(root));
+    paths.extend(collect_run_paths(&schedule_runs_path(root)));
     paths.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
     for path in paths {
         let raw = match fs::read_to_string(&path) {
             Ok(raw) => raw,
             Err(_) => continue,
         };
-        match parse_run_record(&raw) {
+        match parse_any_run_record(&raw) {
             Ok(run) => {
                 if let Some(filter) = job_type_filter {
                     if !filter.is_empty() && run.job_type != filter {
@@ -277,11 +270,16 @@ pub fn show_recurring_run(
     }
     ensure_recurring_executor_scaffold(root)?;
     let path = recurring_runs_dir(root).join(format!("{}.json", safe_filename(run_id)));
-    if !path.exists() {
-        return Ok(None);
+    if path.exists() {
+        let raw = fs::read_to_string(&path).map_err(io_err)?;
+        return Ok(Some(parse_run_record(&raw)?));
     }
-    let raw = fs::read_to_string(&path).map_err(io_err)?;
-    Ok(Some(parse_run_record(&raw)?))
+    let schedule_path = schedule_runs_path(root).join(format!("{}.json", safe_filename(run_id)));
+    if schedule_path.exists() {
+        let raw = fs::read_to_string(&schedule_path).map_err(io_err)?;
+        return Ok(Some(parse_schedule_run_record(&raw)?));
+    }
+    Ok(None)
 }
 
 // --- render ---
@@ -344,6 +342,17 @@ fn persist_run_record(root: &Path, run: &RecurringRunRecord) -> LoomResult<()> {
         .map_err(|e| e.to_string())?;
     rendered.push('\n');
     fs::write(path, rendered).map_err(io_err)
+}
+
+fn collect_run_paths(dir: &Path) -> Vec<PathBuf> {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(_) => return Vec::new(),
+    };
+    entries
+        .filter_map(|entry| entry.ok().map(|e| e.path()))
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json"))
+        .collect()
 }
 
 fn index_run_record(root: &Path, run: &RecurringRunRecord) -> LoomResult<()> {
@@ -456,6 +465,55 @@ fn parse_run_record(raw: &str) -> LoomResult<RecurringRunRecord> {
     })
 }
 
+fn parse_any_run_record(raw: &str) -> LoomResult<RecurringRunRecord> {
+    let value: Value =
+        serde_json::from_str(raw).map_err(|e| format!("invalid run record json: {e}"))?;
+    if value.get("job_type").is_some() || value.get("triggered_at").is_some() {
+        parse_run_record(raw)
+    } else {
+        parse_schedule_run_record(raw)
+    }
+}
+
+fn parse_schedule_run_record(raw: &str) -> LoomResult<RecurringRunRecord> {
+    let value: Value =
+        serde_json::from_str(raw).map_err(|e| format!("invalid schedule run record json: {e}"))?;
+    let fired_at = value
+        .get("fired_at_unix_ms")
+        .and_then(Value::as_u64)
+        .map(|v| v.to_string())
+        .unwrap_or_default();
+    let delivery_id = value_opt_string(value.get("delivery_id"));
+    let session_key = match (
+        value_opt_string(value.get("delivery_channel_id")),
+        value_opt_string(value.get("delivery_recipient")),
+    ) {
+        (Some(channel), Some(recipient)) if !channel.is_empty() && !recipient.is_empty() => {
+            Some(format!("{channel}:{recipient}"))
+        }
+        _ => None,
+    };
+    Ok(RecurringRunRecord {
+        run_id: value_string(value.get("run_id"), "run_id")?,
+        job_type: "schedule".to_string(),
+        job_id: value_string_or(value.get("job_id"), ""),
+        triggered_at: fired_at.clone(),
+        started_at: if fired_at.is_empty() { None } else { Some(fired_at.clone()) },
+        completed_at: if fired_at.is_empty() { None } else { Some(fired_at) },
+        status: value_string_or(value.get("status"), "unknown"),
+        exit_code: None,
+        stdout_summary: None,
+        stderr_summary: None,
+        delivery_intent_id: delivery_id,
+        session_key,
+        retry_count: 0,
+        last_error: None,
+        payload_json: value_string_or(value.get("payload_json"), "{}"),
+        agent_id: value_string_or(value.get("agent_id"), ""),
+        capability_name: value_string_or(value.get("job_kind"), ""),
+    })
+}
+
 fn run_record_json(run: &RecurringRunRecord) -> Value {
     json!({
         "run_id": run.run_id,
@@ -563,6 +621,7 @@ impl OrEmptyFallback for String {
 mod tests {
     use super::*;
     use crate::init_workspace;
+    use crate::schedules::{add_schedule, run_due_schedules, ScheduleRequest};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_path(label: &str) -> PathBuf {
@@ -596,5 +655,39 @@ mod tests {
         init_workspace(&root, "embedded", None, "org_demo").expect("init");
         let result = show_recurring_run(&root, "run-does-not-exist").expect("show");
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn list_recurring_runs_includes_schedule_run_records() {
+        let root = temp_path("loom-recurring-exec-schedule-runs");
+        init_workspace(&root, "embedded", None, "org_demo").expect("init");
+        add_schedule(
+            &root,
+            &ScheduleRequest {
+                job_id: Some("recurring-visible-schedule".to_string()),
+                agent_id: "atlas".to_string(),
+                job_kind: "research".to_string(),
+                schedule_kind: "once".to_string(),
+                schedule_expression: String::new(),
+                timezone: "UTC".to_string(),
+                every_seconds: 0,
+                not_before_unix_ms: Some(10),
+                payload_json: "{\"message\":\"recurring schedule visible\"}".to_string(),
+                delivery_target: None,
+                max_attempts: 1,
+                source_kind: "manual".to_string(),
+            },
+        )
+        .expect("add schedule");
+        let summary = run_due_schedules(&root, 10, 10).expect("run due");
+        assert_eq!(summary.dispatched_count, 1);
+        let run_id = summary.run_records[0].run_id.clone();
+
+        let runs = list_recurring_runs(&root, 10, Some("schedule")).expect("list recurring runs");
+        assert!(runs.iter().any(|run| run.run_id == run_id));
+
+        let shown = show_recurring_run(&root, &run_id).expect("show run").expect("schedule run visible");
+        assert_eq!(shown.job_type, "schedule");
+        assert_eq!(shown.run_id, run_id);
     }
 }
