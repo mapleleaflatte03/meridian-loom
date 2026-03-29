@@ -663,6 +663,14 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
     } else {
         format!("loom doctor --root {} --format human", root.display())
     };
+    let current_state_hint = manager_current_state_hint(
+        &setup_state,
+        manager_profile_kind.as_ref(),
+        manager_route.is_some(),
+        &manager_endpoint,
+        &manager_route_model,
+        manager_auth_status.as_ref(),
+    );
 
     if !banner_rendered {
         print_startup_banner();
@@ -722,7 +730,7 @@ Next
             skill_summary.total_count,
             schedule_sync.total_count,
             health_summary,
-            onboard_path_hint(&setup_state),
+            current_state_hint,
             root.display(),
             root.display(),
             manager_next_step,
@@ -1482,10 +1490,32 @@ fn normalize_codex_auth_selection(
 #[cfg(test)]
 mod tests {
     use super::{
-        choice_matches, codex_detail_for_manager, normalize_choice_token,
-        normalize_codex_auth_selection, PromptSelectOption,
+        auth_paths_match, choice_matches, codex_detail_for_manager, manager_current_state_hint,
+        normalize_choice_token, normalize_codex_auth_selection, PromptSelectOption, SetupState,
     };
-    use loom_core::provider_router::ProviderKind;
+    use loom_core::provider_router::{ProviderAuthStatus, ProviderKind};
+
+    fn auth_status(
+        profile_kind: ProviderKind,
+        auth_mode: &str,
+        env_var: Option<&str>,
+        header_name: Option<&str>,
+        credential_path: Option<&str>,
+        ready: bool,
+        detail: &str,
+    ) -> ProviderAuthStatus {
+        ProviderAuthStatus {
+            profile_name: "manager".to_string(),
+            profile_kind,
+            auth_mode: auth_mode.to_string(),
+            env_var: env_var.map(|value| value.to_string()),
+            header_name: header_name.map(|value| value.to_string()),
+            credential_path: credential_path.map(|value| value.to_string()),
+            source: "test".to_string(),
+            ready,
+            detail: detail.to_string(),
+        }
+    }
 
     #[test]
     fn frontier_none_defaults_to_loom_managed_auth() {
@@ -1539,6 +1569,65 @@ mod tests {
         assert!(choice_matches(&option, "OpenAI compatible endpoint"));
         assert!(!choice_matches(&option, "local_ollama"));
     }
+
+    #[test]
+    fn current_state_hint_is_provider_specific_for_openai_env() {
+        let hint = manager_current_state_hint(
+            &SetupState::FreshNoAuth { provider_count: 1 },
+            Some(&ProviderKind::OpenAiCompatible),
+            false,
+            "https://api.openai.com/v1/chat/completions",
+            "gpt-5.4-mini",
+            Some(&auth_status(
+                ProviderKind::OpenAiCompatible,
+                "bearer_env",
+                Some("OPENAI_API_KEY"),
+                Some("authorization"),
+                None,
+                false,
+                "bearer token env OPENAI_API_KEY is missing",
+            )),
+        );
+        assert!(hint.contains("OpenAI-compatible manager route is configured"));
+        assert!(hint.contains("OPENAI_API_KEY is not set yet"));
+        assert!(hint.contains("gpt-5.4-mini"));
+        assert!(hint.contains("https://api.openai.com/v1/chat/completions"));
+    }
+
+    #[test]
+    fn current_state_hint_surfaces_codex_ready_state() {
+        let hint = manager_current_state_hint(
+            &SetupState::FrontierAvailable {
+                profiles: vec!["manager_frontier".to_string()],
+                agent_count: 1,
+            },
+            Some(&ProviderKind::OpenAiCodex),
+            true,
+            "https://chatgpt.com/backend-api",
+            "gpt-5.4",
+            Some(&auth_status(
+                ProviderKind::OpenAiCodex,
+                "codex_auth_json",
+                None,
+                Some("authorization"),
+                Some("/tmp/auth.json"),
+                true,
+                "Codex OAuth auth.json is ready",
+            )),
+        );
+        assert!(hint.contains("Frontier manager route is ready"));
+        assert!(hint.contains("Codex OAuth is available"));
+        assert!(hint.contains("/tmp/auth.json"));
+    }
+
+    #[test]
+    fn auth_path_matching_expands_relative_home_paths() {
+        std::env::set_var("HOME", "/tmp/meridian-home");
+        assert!(auth_paths_match(
+            "~/.meridian/auth/codex/auth.json",
+            "/tmp/meridian-home/.meridian/auth/codex/auth.json"
+        ));
+    }
 }
 
 fn codex_detail_for_manager(manager_profile_kind: Option<&ProviderKind>) -> String {
@@ -1561,6 +1650,15 @@ fn expand_auth_path(raw: &str) -> Option<PathBuf> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return None;
+    }
+    if trimmed == "~" {
+        return env::var("HOME").ok().map(PathBuf::from);
+    }
+    if let Some(rest) = trimmed.strip_prefix("~/") {
+        return env::var("HOME")
+            .ok()
+            .map(PathBuf::from)
+            .map(|home| home.join(rest));
     }
     let path = PathBuf::from(trimmed);
     if path.is_absolute() {
@@ -1845,6 +1943,116 @@ fn configured_route_json(route: &ConfiguredManagerRoute) -> Value {
         "transport_kind": route.transport_kind,
         "matched_rule": "configured",
     })
+}
+
+fn manager_current_state_hint(
+    setup_state: &SetupState,
+    manager_profile_kind: Option<&ProviderKind>,
+    manager_route_ready: bool,
+    manager_endpoint: &str,
+    manager_model: &str,
+    manager_auth_status: Option<&loom_core::provider_router::ProviderAuthStatus>,
+) -> String {
+    let fallback = onboard_path_hint(setup_state);
+    let Some(kind) = manager_auth_status
+        .map(|status| &status.profile_kind)
+        .or(manager_profile_kind)
+    else {
+        return fallback;
+    };
+    let endpoint =
+        if manager_endpoint.trim().is_empty() || manager_endpoint == "(pending provider setup)" {
+            None
+        } else {
+            Some(manager_endpoint.trim())
+        };
+    let model = if manager_model.trim().is_empty() || manager_model == "(pending provider setup)" {
+        None
+    } else {
+        Some(manager_model.trim())
+    };
+
+    let endpoint_line = endpoint
+        .map(|value| format!("\n  Endpoint:           {}", value))
+        .unwrap_or_default();
+    let model_line = model
+        .map(|value| format!("\n  Model:              {}", value))
+        .unwrap_or_default();
+
+    match kind {
+        ProviderKind::OpenAiCompatible => {
+            let Some(status) = manager_auth_status else {
+                return fallback;
+            };
+            let env_var = status.env_var.as_deref().unwrap_or("OPENAI_API_KEY");
+            if status.ready && manager_route_ready {
+                format!(
+                    "OpenAI-compatible manager route is ready.{}{}\n  Auth:               bearer token loaded from {}",
+                    endpoint_line, model_line, env_var
+                )
+            } else {
+                format!(
+                    "OpenAI-compatible manager route is configured, but {} is not set yet.{}{}\n  Detail:             {}",
+                    env_var, endpoint_line, model_line, status.detail
+                )
+            }
+        }
+        ProviderKind::CustomEndpoint => {
+            let Some(status) = manager_auth_status else {
+                return fallback;
+            };
+            let env_var = status
+                .env_var
+                .as_deref()
+                .unwrap_or("MERIDIAN_PROVIDER_TOKEN");
+            let header_name = status.header_name.as_deref().unwrap_or("authorization");
+            if status.ready && manager_route_ready {
+                format!(
+                    "Custom manager endpoint is ready.{}{}\n  Auth:               {} from {}",
+                    endpoint_line, model_line, header_name, env_var
+                )
+            } else {
+                format!(
+                    "Custom manager endpoint is configured, but {} is not set yet.{}{}\n  Detail:             {}",
+                    env_var, endpoint_line, model_line, status.detail
+                )
+            }
+        }
+        ProviderKind::OpenAiCodex => {
+            let Some(status) = manager_auth_status else {
+                return fallback;
+            };
+            let identity_hint = status
+                .credential_path
+                .as_deref()
+                .map(|path| format!("\n  Credentials:        {}", path))
+                .unwrap_or_default();
+            if status.ready && manager_route_ready {
+                format!(
+                    "Frontier manager route is ready.{}{}\n  Auth:               Codex OAuth is available{}",
+                    endpoint_line, model_line, identity_hint
+                )
+            } else {
+                format!(
+                    "Frontier manager route is configured, but Codex OAuth is not ready yet.{}{}\n  Detail:             {}{}",
+                    endpoint_line, model_line, status.detail, identity_hint
+                )
+            }
+        }
+        ProviderKind::LocalOllama => {
+            if manager_route_ready {
+                format!(
+                    "Local Ollama manager route is ready.{}{}\n  Auth:               no external credentials required",
+                    endpoint_line, model_line
+                )
+            } else {
+                format!(
+                    "Local Ollama manager route is configured, but the local endpoint has not come up yet.{}{}",
+                    endpoint_line, model_line
+                )
+            }
+        }
+    }
 }
 
 fn print_onboard_help() {
