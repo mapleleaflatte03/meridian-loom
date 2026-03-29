@@ -10,14 +10,10 @@ use loom_core::agent_runtime::agent_runtime_overview;
 use loom_core::bindings::sync_binding_registry;
 use loom_core::channels::sync_channel_registry;
 use loom_core::gateway_runtime::sync_gateway_runtime;
-use loom_core::skills::sync_skill_registry;
-use loom_core::service_runtime::sync_service_runtime;
-use loom_core::service_ingress_runtime::sync_service_ingress_runtime;
-use loom_core::schedules::{schedule_overview, sync_schedule_registry};
 use loom_core::onboarding::{
-    derive_service_http_address, detect_setup_state, ensure_onboard_manifest, load_onboard_manifest,
-    onboard_manifest_path, onboard_overview, onboard_path_hint, write_onboard_manifest,
-    OnboardManifest, SetupState,
+    derive_service_http_address, detect_setup_state, ensure_onboard_manifest,
+    load_onboard_manifest, onboard_manifest_path, onboard_overview, onboard_path_hint,
+    write_onboard_manifest, OnboardManifest, SetupState,
 };
 use loom_core::provider_auth_store::{provider_auth_store_overview, sync_provider_auth_store};
 use loom_core::provider_router::{
@@ -26,6 +22,10 @@ use loom_core::provider_router::{
     provider_plane_summary, resolve_provider_route, shared_codex_auth_path_hint,
     OnboardProviderRouteConfig, ProviderAuthMode, ProviderKind, ProviderRouteIntent,
 };
+use loom_core::schedules::{schedule_overview, sync_schedule_registry};
+use loom_core::service_ingress_runtime::sync_service_ingress_runtime;
+use loom_core::service_runtime::sync_service_runtime;
+use loom_core::skills::sync_skill_registry;
 use serde_json::{json, Value};
 
 pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
@@ -60,8 +60,8 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
     } else {
         None
     };
-    let is_fresh_runtime = had_existing_config
-        && existing_manifest_action.as_deref() == Some("initialized");
+    let is_fresh_runtime =
+        had_existing_config && existing_manifest_action.as_deref() == Some("initialized");
     let mut config_action = take_value(args, "--config-action").unwrap_or_else(|| {
         if is_fresh_runtime {
             "setup".to_string()
@@ -74,11 +74,32 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
     if had_existing_config && has_setup_overrides(args) && config_action == "keep" {
         config_action = "modify".to_string();
     }
-    if interactive && had_existing_config && had_existing_manifest && !is_fresh_runtime && !has_setup_overrides(args) {
-        config_action = prompt_choice(
+    if interactive
+        && had_existing_config
+        && had_existing_manifest
+        && !is_fresh_runtime
+        && !has_setup_overrides(args)
+    {
+        config_action = prompt_select(
             "Existing Loom runtime detected. Choose action",
             &config_action,
-            &["keep", "modify", "reset"],
+            &[
+                PromptSelectOption {
+                    value: "keep",
+                    label: "Keep current setup",
+                    hint: "Leave the runtime as-is and review the current state only.",
+                },
+                PromptSelectOption {
+                    value: "modify",
+                    label: "Adjust current setup",
+                    hint: "Walk through setup again and update the live runtime defaults.",
+                },
+                PromptSelectOption {
+                    value: "reset",
+                    label: "Reset and rebuild",
+                    hint: "Discard the current runtime config and rewrite it from scratch.",
+                },
+            ],
         )?;
     }
 
@@ -102,7 +123,12 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
     let mut config = if root.join("loom.toml").exists() {
         read_config(&root)?
     } else {
-        init_workspace(&root, &requested_mode, kernel_path.as_deref(), &requested_org_id)?
+        init_workspace(
+            &root,
+            &requested_mode,
+            kernel_path.as_deref(),
+            &requested_org_id,
+        )?
     };
 
     if config_action != "keep" {
@@ -123,8 +149,8 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
     let explicit_manager_model = take_value(args, "--manager-model");
     let explicit_codex_auth_source = take_value(args, "--codex-auth-source");
     let explicit_codex_auth_path = take_value(args, "--codex-auth-path");
-    let mut manager_lane = take_value(args, "--manager-lane")
-        .unwrap_or_else(|| current_brain.lane.clone());
+    let mut manager_lane =
+        take_value(args, "--manager-lane").unwrap_or_else(|| current_brain.lane.clone());
     let mut manager_model = explicit_manager_model
         .clone()
         .unwrap_or_else(|| current_brain.model.clone());
@@ -147,40 +173,43 @@ pub(crate) fn handle_onboard(args: &[String]) -> LoomResult<()> {
     if interactive {
         print_startup_banner();
         banner_rendered = true;
-        print_human(&format!(
-            "Meridian Loom // SETUP
-=======================
-Choose your manager brain, edge bindings, and runtime defaults. Meridian will scaffold the governed runtime, but the end-user still owns the final configuration.
-
-setup_state:         {}
-hint:                {}
-
-",
-            setup_state_label(&setup_state),
-            onboard_path_hint(&setup_state),
-        ));
+        print_human("Meridian Loom // SETUP\n=======================\n");
+        print_setup_note(
+            "Setup overview",
+            &format!(
+                "Choose your manager brain, edge bindings, and runtime defaults.\n\
+                 Meridian will scaffold the governed runtime, but the operator still owns the final configuration.\n\
+                 Current setup state: {}\n\
+                 Hint: {}",
+                setup_state_label(&setup_state),
+                onboard_path_hint(&setup_state),
+            ),
+        );
     } else if format == "human" {
         print_startup_banner();
         banner_rendered = true;
-        print_human(&format!(
-            "Meridian Loom // SETUP (non-interactive)\n\
-setup_state:         {}\n\
-hint:                {}\n\n",
-            setup_state_label(&setup_state),
-            onboard_path_hint(&setup_state),
-        ));
+        print_human(
+            "Meridian Loom // SETUP (non-interactive)\n=========================================\n",
+        );
+        print_setup_note(
+            "Current state",
+            &format!(
+                "Setup state: {}\nHint: {}",
+                setup_state_label(&setup_state),
+                onboard_path_hint(&setup_state),
+            ),
+        );
     }
 
     if interactive && config_action != "keep" {
         // Security acknowledgment
-        print_human(
-            "SECURITY NOTICE\n\
-             ===============\n\
-             Meridian Loom governs autonomous agent actions on your behalf.\n\
+        print_setup_note(
+            "Security notice",
+            "Meridian Loom governs autonomous agent actions on your behalf.\n\
              All pipeline runs are subject to the constitutional contract.\n\
              Actions are audited and cost-attributed to the owning org.\n\
-             Provider credentials are stored locally under the runtime root.\n\
-             No telemetry leaves this host without explicit configuration.\n",
+             Provider credentials stay under the runtime root.\n\
+             No telemetry leaves this host without explicit configuration.",
         );
         let ack = prompt_bool("Acknowledge and continue", true)?;
         if !ack {
@@ -188,15 +217,24 @@ hint:                {}\n\n",
         }
 
         // Quickstart vs manual mode
-        let setup_mode = prompt_choice(
+        let setup_mode = prompt_select(
             "Setup mode",
             "quickstart",
-            &["quickstart", "manual"],
+            &[
+                PromptSelectOption {
+                    value: "quickstart",
+                    label: "QuickStart",
+                    hint: "Keep Meridian's default edge, daemon, and recurring setup. You only choose the provider path now.",
+                },
+                PromptSelectOption {
+                    value: "manual",
+                    label: "Manual setup",
+                    hint: "Walk every stage and tune the runtime defaults before writing the root.",
+                },
+            ],
         )?;
-        let default_provider_choice = default_provider_choice_for_state(
-            &manager_lane,
-            current_brain.provider_kind.as_ref(),
-        );
+        let default_provider_choice =
+            default_provider_choice_for_state(&manager_lane, current_brain.provider_kind.as_ref());
 
         if setup_mode == "quickstart" {
             print_quickstart_summary_card(&manifest, &manager_model);
@@ -206,15 +244,35 @@ hint:                {}\n\n",
                 "Provider",
                 "Choose the inference path Meridian should wire now. QuickStart keeps the edge, daemon, and recurring defaults intact.",
             );
-            let provider_choice = prompt_choice(
+            let provider_choice = prompt_select(
                 "Inference provider",
                 default_provider_choice,
                 &[
-                    "loom_codex",
-                    "local_ollama",
-                    "openai_compatible",
-                    "custom_endpoint",
-                    "local_only",
+                    PromptSelectOption {
+                        value: "loom_codex",
+                        label: "Loom-managed Codex OAuth",
+                        hint: "Frontier lane with a Meridian-owned auth file and device-auth setup.",
+                    },
+                    PromptSelectOption {
+                        value: "local_ollama",
+                        label: "Local Ollama",
+                        hint: "Stay fully local and point the manager at an Ollama model on this host.",
+                    },
+                    PromptSelectOption {
+                        value: "openai_compatible",
+                        label: "OpenAI-compatible endpoint",
+                        hint: "Use a standard chat-completions endpoint with a bearer token env var.",
+                    },
+                    PromptSelectOption {
+                        value: "custom_endpoint",
+                        label: "Custom endpoint",
+                        hint: "Wire a non-standard HTTP endpoint with explicit auth mode selection.",
+                    },
+                    PromptSelectOption {
+                        value: "local_only",
+                        label: "Local-only for now",
+                        hint: "Skip remote provider setup and keep the runtime entirely local until later.",
+                    },
                 ],
             )?;
             let selection = prompt_provider_setup(
@@ -229,12 +287,9 @@ hint:                {}\n\n",
             codex_auth_source = selection.codex_auth_source;
             codex_auth_path = selection.codex_auth_path;
             interactive_provider_config = selection.provider_config;
-            print_human(
-                "QuickStart defaults
--------------------
-Meridian will now confirm the local edge, daemon, and built-in runtime defaults before writing the runtime root.
-
-",
+            print_setup_note(
+                "QuickStart defaults",
+                "Meridian will now confirm the local edge, daemon, and built-in runtime defaults before writing the runtime root.",
             );
         } else {
             // Manual: full interactive flow
@@ -244,15 +299,35 @@ Meridian will now confirm the local edge, daemon, and built-in runtime defaults 
                 "Manager provider",
                 "Pick the provider, model, and account Meridian should use for Leviathann.",
             );
-            let provider_choice = prompt_choice(
+            let provider_choice = prompt_select(
                 "Inference provider",
                 default_provider_choice,
                 &[
-                    "loom_codex",
-                    "local_ollama",
-                    "openai_compatible",
-                    "custom_endpoint",
-                    "local_only",
+                    PromptSelectOption {
+                        value: "loom_codex",
+                        label: "Loom-managed Codex OAuth",
+                        hint: "Frontier lane with a Meridian-owned auth file and device-auth setup.",
+                    },
+                    PromptSelectOption {
+                        value: "local_ollama",
+                        label: "Local Ollama",
+                        hint: "Stay fully local and point the manager at an Ollama model on this host.",
+                    },
+                    PromptSelectOption {
+                        value: "openai_compatible",
+                        label: "OpenAI-compatible endpoint",
+                        hint: "Use a standard chat-completions endpoint with a bearer token env var.",
+                    },
+                    PromptSelectOption {
+                        value: "custom_endpoint",
+                        label: "Custom endpoint",
+                        hint: "Wire a non-standard HTTP endpoint with explicit auth mode selection.",
+                    },
+                    PromptSelectOption {
+                        value: "local_only",
+                        label: "Local-only for now",
+                        hint: "Skip remote provider setup and keep the runtime entirely local until later.",
+                    },
                 ],
             )?;
             let selection = prompt_provider_setup(
@@ -267,8 +342,8 @@ Meridian will now confirm the local edge, daemon, and built-in runtime defaults 
             codex_auth_source = selection.codex_auth_source;
             codex_auth_path = selection.codex_auth_path;
             interactive_provider_config = selection.provider_config;
-    }
-    apply_interactive_overrides(&mut manifest)?;
+        }
+        apply_interactive_overrides(&mut manifest)?;
     }
     apply_cli_overrides(args, &mut manifest)?;
     let uses_codex_auth = interactive_provider_config
@@ -339,26 +414,43 @@ Meridian will now confirm the local edge, daemon, and built-in runtime defaults 
     let manager_profile_name = manager_route
         .as_ref()
         .map(|route| route.profile_name.clone())
-        .or_else(|| configured_manager_provider.as_ref().map(|route| route.profile_name.clone()));
+        .or_else(|| {
+            configured_manager_provider
+                .as_ref()
+                .map(|route| route.profile_name.clone())
+        });
     let manager_profile_kind = manager_route
         .as_ref()
         .map(|route| route.profile_kind.clone())
-        .or_else(|| configured_manager_provider.as_ref().map(|route| route.profile_kind.clone()));
+        .or_else(|| {
+            configured_manager_provider
+                .as_ref()
+                .map(|route| route.profile_kind.clone())
+        });
+    let manager_auth_status =
+        provider_auth_status(Some(&root), manager_profile_name.as_deref()).ok();
     let codex_status = manager_profile_kind
         .as_ref()
         .filter(|kind| matches!(kind, ProviderKind::OpenAiCodex))
-        .and_then(|_| provider_auth_status(Some(&root), manager_profile_name.as_deref()).ok());
+        .and_then(|_| manager_auth_status.clone());
     let pulse_route = resolve_provider_route(
         Some(&root),
         &ProviderRouteIntent::llm_inference("").with_agent_id("pulse"),
     )
     .ok();
-    let start_daemon_requested = if interactive && config_action != "keep" && manifest.daemon_enabled {
-        prompt_bool("Start supervisor daemon now", has_flag(args, "--start-daemon"))?
-    } else {
-        has_flag(args, "--start-daemon")
-    };
-    let daemon_snapshot = if start_daemon_requested && manifest.daemon_enabled && manifest.daemon_manager == "supervisor" {
+    let start_daemon_requested =
+        if interactive && config_action != "keep" && manifest.daemon_enabled {
+            prompt_bool(
+                "Start supervisor daemon now",
+                has_flag(args, "--start-daemon"),
+            )?
+        } else {
+            has_flag(args, "--start-daemon")
+        };
+    let daemon_snapshot = if start_daemon_requested
+        && manifest.daemon_enabled
+        && manifest.daemon_manager == "supervisor"
+    {
         let snapshot = start_supervisor_daemon(&root, kernel_path.as_deref())?;
         manifest.daemon_state = daemon_state_from_snapshot(&snapshot);
         write_onboard_manifest(&root, &manifest)?;
@@ -368,7 +460,10 @@ Meridian will now confirm the local edge, daemon, and built-in runtime defaults 
     };
 
     let health_requested = if interactive && config_action != "keep" {
-        prompt_bool("Run post-setup health check", !has_flag(args, "--skip-health-check"))?
+        prompt_bool(
+            "Run post-setup health check",
+            !has_flag(args, "--skip-health-check"),
+        )?
     } else {
         !has_flag(args, "--skip-health-check")
     };
@@ -381,13 +476,26 @@ Meridian will now confirm the local edge, daemon, and built-in runtime defaults 
 
     let overview = onboard_overview(&root)?;
 
-    let codex_ready = codex_status.as_ref().map(|status| status.ready).unwrap_or(false);
-    let codex_path = codex_status.as_ref().and_then(|status| status.credential_path.clone());
+    let codex_ready = codex_status
+        .as_ref()
+        .map(|status| status.ready)
+        .unwrap_or(false);
+    let codex_path = codex_status
+        .as_ref()
+        .and_then(|status| status.credential_path.clone());
     let codex_detail = if let Some(status) = codex_status.as_ref() {
         status.detail.clone()
     } else {
         codex_detail_for_manager(manager_profile_kind.as_ref())
     };
+    let manager_auth_ready = manager_auth_status
+        .as_ref()
+        .map(|status| status.ready)
+        .unwrap_or(false);
+    let manager_auth_mode = manager_auth_status
+        .as_ref()
+        .map(|status| status.auth_mode.clone())
+        .unwrap_or_else(|| "(unknown)".to_string());
 
     if format == "json" {
         print!(
@@ -503,12 +611,20 @@ Meridian will now confirm the local edge, daemon, and built-in runtime defaults 
     let manager_endpoint = manager_route
         .as_ref()
         .map(|route| route.endpoint_url.to_string())
-        .or_else(|| configured_manager_provider.as_ref().map(|route| route.endpoint.clone()))
+        .or_else(|| {
+            configured_manager_provider
+                .as_ref()
+                .map(|route| route.endpoint.clone())
+        })
         .unwrap_or_else(|| "(pending provider setup)".to_string());
     let manager_route_model = manager_route
         .as_ref()
         .map(|route| route.model.clone())
-        .or_else(|| configured_manager_provider.as_ref().map(|route| route.model.clone()))
+        .or_else(|| {
+            configured_manager_provider
+                .as_ref()
+                .map(|route| route.model.clone())
+        })
         .unwrap_or_else(|| "(pending provider setup)".to_string());
     let manager_route_status = if manager_route.is_some() {
         "ready".to_string()
@@ -521,10 +637,6 @@ Meridian will now confirm the local edge, daemon, and built-in runtime defaults 
         .as_ref()
         .map(|route| format!("{} ({})", route.profile_name, route.profile_kind.label()))
         .unwrap_or_else(|| "not connected — action required".to_string());
-    let pulse_model = pulse_route
-        .as_ref()
-        .map(|route| route.model.clone())
-        .unwrap_or_else(|| "(pending provider setup)".to_string());
     let daemon_summary = daemon_snapshot
         .as_ref()
         .map(render_daemon_summary)
@@ -533,6 +645,24 @@ Meridian will now confirm the local edge, daemon, and built-in runtime defaults 
         .as_ref()
         .map(|(healthy, _)| if *healthy { "healthy" } else { "degraded" }.to_string())
         .unwrap_or_else(|| "skipped".to_string());
+    let manager_next_step = if manager_auth_ready {
+        format!("loom service status --root {}", root.display())
+    } else if let Some(status) = manager_auth_status.as_ref() {
+        match status.auth_mode.as_str() {
+            "codex_auth_json" => "loom provider login --source loom --device-auth".to_string(),
+            "bearer_env" | "static_header_env" => format!(
+                "export {}=... && loom doctor --root {} --format human",
+                status
+                    .env_var
+                    .as_deref()
+                    .unwrap_or("MERIDIAN_PROVIDER_TOKEN"),
+                root.display()
+            ),
+            _ => format!("loom doctor --root {} --format human", root.display()),
+        }
+    } else {
+        format!("loom doctor --root {} --format human", root.display())
+    };
 
     if !banner_rendered {
         print_startup_banner();
@@ -570,15 +700,23 @@ Next
             manager_route
                 .as_ref()
                 .map(|route| route.profile_name.as_str())
-                .or_else(|| configured_manager_provider.as_ref().map(|route| route.profile_name.as_str()))
+                .or_else(|| configured_manager_provider
+                    .as_ref()
+                    .map(|route| route.profile_name.as_str()))
                 .unwrap_or("(pending provider setup)"),
             manager_route
                 .as_ref()
                 .map(|route| route.transport_kind())
-                .or_else(|| configured_manager_provider.as_ref().map(|route| route.transport_kind.as_str()))
+                .or_else(|| configured_manager_provider
+                    .as_ref()
+                    .map(|route| route.transport_kind.as_str()))
                 .unwrap_or("(pending provider setup)"),
-            manifest.codex_auth_source,
-            if codex_ready { "ready" } else { "action required" },
+            manager_auth_mode.as_str(),
+            if manager_auth_ready {
+                "ready"
+            } else {
+                "action required"
+            },
             overview.gateway_summary,
             overview.telegram_summary,
             skill_summary.total_count,
@@ -587,11 +725,7 @@ Next
             onboard_path_hint(&setup_state),
             root.display(),
             root.display(),
-            if codex_ready {
-                "loom service status --root".to_string() + " " + &root.display().to_string()
-            } else {
-                "loom provider login --source loom --device-auth".to_string()
-            },
+            manager_next_step,
         ));
     } else {
         print_human(&format!(
@@ -603,38 +737,25 @@ config_status:       {}
 config_action:       {}
 mode:                {}
 org_id:              {}
-provider_profiles:   {}
-provider_cfg:        {}
-provider_auth:       profiles={} ready={} last_good={} usage_stats={}
-agent_profiles:      {}
 brain:               {}
 manager_lane:        {}
 manager_provider:    {}
 manager_transport:   {}
-manager_model_cfg:   {}
-codex_auth_source:   {}
-configured_auth:     {}
-codex_auth_ready:    {}
-codex_auth_path:     {}
-codex_detail:        {}
 gateway:             {}
 telegram:            {}
-channels:            total={} enabled={} ids={}
-gateway_runtime:     endpoint={} auth={} remote={} daemon={} channels={}/{}
-service_runtime:     service={} jobs={}/{} supervisor={} jobs={}/{}
-ingress_runtime:     requests={} accepted={} pending={} last_request={} last_job={}
-bindings_runtime:    total={} enabled={} ids={}
-skills:              {}
-recurring:           {}
-skills_runtime:      total={} enabled={} defaults={} imported={} ids={}
-schedules_runtime:   total={} enabled={} due={} ids={}
 daemon:              {}
 health:              {}
-manager_route:       {}
+provider plane:      profiles={} ready={} last_good={}
 manager_endpoint:    {}
 manager_model:       {}
-pulse_route:         {}
-pulse_model:         {}
+manager_route:       {}
+channels:            total={} enabled={}
+service runtime:     service={} supervisor={} pending={} processed={}
+ingress runtime:     requests={} accepted={} pending={}
+skills runtime:      total={} enabled={} defaults={} imported={}
+recurring runtime:   total={} enabled={} due={}
+codex auth:          {} [{}]
+pulse route:         {}
 manifest:            {}
 next_step:           loom doctor --root {} --format human
 ",
@@ -644,74 +765,55 @@ next_step:           loom doctor --root {} --format human
             config_action,
             config.mode,
             config.org_id,
-            provider_summary.profile_count,
-            provider_profiles_path.display(),
-            provider_auth_summary.profile_count,
-            provider_auth_summary.ready_count,
-            provider_auth_summary.last_good_count,
-            provider_auth_summary.usage_stats_count,
-            runtime_overview.profile_count,
             overview.brain_summary,
             manager_lane,
             manager_route
                 .as_ref()
                 .map(|route| route.profile_name.as_str())
-                .or_else(|| configured_manager_provider.as_ref().map(|route| route.profile_name.as_str()))
+                .or_else(|| configured_manager_provider
+                    .as_ref()
+                    .map(|route| route.profile_name.as_str()))
                 .unwrap_or("(pending provider setup)"),
             manager_route
                 .as_ref()
                 .map(|route| route.transport_kind())
-                .or_else(|| configured_manager_provider.as_ref().map(|route| route.transport_kind.as_str()))
+                .or_else(|| configured_manager_provider
+                    .as_ref()
+                    .map(|route| route.transport_kind.as_str()))
                 .unwrap_or("(pending provider setup)"),
-            manager_model,
-            manifest.codex_auth_source,
-            if manifest.codex_auth_path.trim().is_empty() { "(none)" } else { manifest.codex_auth_path.as_str() },
-            if codex_ready { "yes" } else { "no" },
-            codex_path.as_deref().unwrap_or("(none)"),
-            codex_detail,
             overview.gateway_summary,
             overview.telegram_summary,
+            daemon_summary,
+            health_summary,
+            provider_auth_summary.profile_count,
+            provider_auth_summary.ready_count,
+            provider_auth_summary.last_good_count,
+            manager_endpoint,
+            manager_route_model,
+            manager_route_status,
             channel_summary.total_count,
             channel_summary.enabled_count,
-            if channel_summary.channel_ids.is_empty() { "(none)".to_string() } else { channel_summary.channel_ids.join(",") },
-            gateway_runtime.endpoint,
-            gateway_runtime.auth_mode,
-            gateway_runtime.remote_mode,
-            gateway_runtime.daemon_summary,
-            gateway_runtime.enabled_channel_count,
-            gateway_runtime.total_channel_count,
             service_runtime.service_health,
-            service_runtime.service_pending_jobs,
-            service_runtime.service_processed_jobs,
             service_runtime.supervisor_health,
-            service_runtime.supervisor_pending_jobs,
-            service_runtime.supervisor_processed_jobs,
+            service_runtime.service_pending_jobs + service_runtime.supervisor_pending_jobs,
+            service_runtime.service_processed_jobs + service_runtime.supervisor_processed_jobs,
             ingress_runtime.total_requests,
             ingress_runtime.accepted_count,
             ingress_runtime.pending_count,
-            if ingress_runtime.last_request_id.is_empty() { "(none)".to_string() } else { ingress_runtime.last_request_id.clone() },
-            if ingress_runtime.last_job_id.is_empty() { "(none)".to_string() } else { ingress_runtime.last_job_id.clone() },
-            binding_summary.total_count,
-            binding_summary.enabled_count,
-            if binding_summary.binding_ids.is_empty() { "(none)".to_string() } else { binding_summary.binding_ids.join(",") },
-            overview.skills_summary,
-            overview.recurring_summary,
             skill_summary.total_count,
             skill_summary.enabled_count,
             skill_summary.default_count,
             skill_summary.imported_count,
-            if skill_summary.skill_ids.is_empty() { "(none)".to_string() } else { skill_summary.skill_ids.join(",") },
             schedule_sync.total_count,
             schedule_sync.enabled_count,
             schedule_runtime.due_count,
-            if schedule_sync.job_ids.is_empty() { "(none)".to_string() } else { schedule_sync.job_ids.join(",") },
-            daemon_summary,
-            health_summary,
-            manager_route_status,
-            manager_endpoint,
-            manager_route_model,
+            manager_auth_mode.as_str(),
+            if manager_auth_ready {
+                "ready"
+            } else {
+                "action required"
+            },
             pulse_profile,
-            pulse_model,
             manifest_path.display(),
             root.display(),
         ));
@@ -817,7 +919,8 @@ fn apply_cli_overrides(args: &[String], manifest: &mut OnboardManifest) -> LoomR
         manifest.skills_entries = entries;
     }
     if let Some(value) = take_value(args, "--recurring-install-defaults") {
-        manifest.recurring_install_defaults = parse_bool_flag("--recurring-install-defaults", &value)?;
+        manifest.recurring_install_defaults =
+            parse_bool_flag("--recurring-install-defaults", &value)?;
     }
     let recurring_entries = take_values(args, "--recurring-entry");
     if !recurring_entries.is_empty() {
@@ -834,11 +937,8 @@ fn apply_interactive_overrides(manifest: &mut OnboardManifest) -> LoomResult<()>
         "Shape the local web edge before Meridian exposes the service.",
     );
     manifest.remote_mode = prompt_text("Remote mode", &manifest.remote_mode)?;
-    manifest.gateway_bind = prompt_choice(
-        "Gateway bind",
-        &manifest.gateway_bind,
-        &["loopback", "all"],
-    )?;
+    manifest.gateway_bind =
+        prompt_choice("Gateway bind", &manifest.gateway_bind, &["loopback", "all"])?;
     manifest.gateway_port = parse_u16(
         "gateway port",
         &prompt_text("Gateway port", &manifest.gateway_port.to_string())?,
@@ -862,10 +962,14 @@ fn apply_interactive_overrides(manifest: &mut OnboardManifest) -> LoomResult<()>
     );
     manifest.telegram_enabled = prompt_bool("Enable Telegram channel", manifest.telegram_enabled)?;
     if manifest.telegram_enabled {
-        manifest.telegram_token_env = prompt_text("Telegram token env", &manifest.telegram_token_env)?;
-        manifest.telegram_dm_policy = prompt_text("Telegram DM policy", &manifest.telegram_dm_policy)?;
-        manifest.telegram_group_policy = prompt_text("Telegram group policy", &manifest.telegram_group_policy)?;
-        manifest.telegram_streaming = prompt_text("Telegram streaming", &manifest.telegram_streaming)?;
+        manifest.telegram_token_env =
+            prompt_text("Telegram token env", &manifest.telegram_token_env)?;
+        manifest.telegram_dm_policy =
+            prompt_text("Telegram DM policy", &manifest.telegram_dm_policy)?;
+        manifest.telegram_group_policy =
+            prompt_text("Telegram group policy", &manifest.telegram_group_policy)?;
+        manifest.telegram_streaming =
+            prompt_text("Telegram streaming", &manifest.telegram_streaming)?;
     }
     print_setup_stage(
         4,
@@ -875,11 +979,8 @@ fn apply_interactive_overrides(manifest: &mut OnboardManifest) -> LoomResult<()>
     );
     manifest.session_dm_scope = prompt_text("Session DM scope", &manifest.session_dm_scope)?;
     manifest.daemon_enabled = prompt_bool("Enable supervisor daemon", manifest.daemon_enabled)?;
-    manifest.daemon_manager = prompt_choice(
-        "Daemon manager",
-        &manifest.daemon_manager,
-        &["supervisor"],
-    )?;
+    manifest.daemon_manager =
+        prompt_choice("Daemon manager", &manifest.daemon_manager, &["supervisor"])?;
     print_setup_stage(
         5,
         5,
@@ -936,7 +1037,9 @@ fn current_manager_brain(root: &Path, manifest: &OnboardManifest) -> ManagerBrai
     let lane = route
         .as_ref()
         .map(|resolved| {
-            if resolved.profile_name == "local_ollama" || resolved.profile_kind.label() == "local_ollama" {
+            if resolved.profile_name == "local_ollama"
+                || resolved.profile_kind.label() == "local_ollama"
+            {
                 "local".to_string()
             } else {
                 "frontier".to_string()
@@ -973,6 +1076,13 @@ struct ProviderSetupSelection {
     provider_config: Option<OnboardProviderRouteConfig>,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct PromptSelectOption<'a> {
+    value: &'a str,
+    label: &'a str,
+    hint: &'a str,
+}
+
 #[derive(Clone, Debug)]
 struct ConfiguredManagerRoute {
     profile_name: String,
@@ -996,32 +1106,39 @@ fn default_provider_choice_for_state(
 }
 
 fn print_quickstart_summary_card(manifest: &OnboardManifest, manager_model: &str) {
-    print_human(&format!(
-        "QuickStart Summary
-------------------
-gateway:            {}:{} auth={} tailscale={}
-telegram:           {}
-daemon:             {} ({})
-skills defaults:    {}
-recurring defaults: {}
-manager default:    {}
-
-",
-        manifest.gateway_bind,
-        manifest.gateway_port,
-        manifest.gateway_auth_mode,
-        manifest.gateway_tailscale_mode,
-        if manifest.telegram_enabled { "enabled" } else { "disabled" },
-        if manifest.daemon_enabled { "enabled" } else { "disabled" },
-        manifest.daemon_manager,
-        manifest.skills_entries.join(","),
-        if manifest.recurring_install_defaults {
-            "enabled"
-        } else {
-            "disabled"
-        },
-        manager_model,
-    ));
+    print_setup_note(
+        "QuickStart summary",
+        &format!(
+            "Manager model:    {}\n\
+             Gateway edge:    {}:{} auth={} tailscale={}\n\
+             Telegram:        {}\n\
+             Daemon:          {} ({})\n\
+             Skills defaults: {}\n\
+             Recurring:       {}",
+            manager_model,
+            manifest.gateway_bind,
+            manifest.gateway_port,
+            manifest.gateway_auth_mode,
+            manifest.gateway_tailscale_mode,
+            if manifest.telegram_enabled {
+                "enabled"
+            } else {
+                "disabled"
+            },
+            if manifest.daemon_enabled {
+                "enabled"
+            } else {
+                "disabled"
+            },
+            manifest.daemon_manager,
+            manifest.skills_entries.join(","),
+            if manifest.recurring_install_defaults {
+                "enabled"
+            } else {
+                "disabled"
+            },
+        ),
+    );
 }
 
 fn prompt_provider_setup(
@@ -1034,23 +1151,36 @@ fn prompt_provider_setup(
     match provider_choice {
         "loom_codex" => {
             if looks_remote_headless() {
-                print_human(
-                    "Remote OAuth
-------------
-This host appears to be headless or remote. Keep the Loom-managed auth path on this runtime, then finish device auth in your local browser when prompted. Meridian will keep the Loom-managed auth file separate from the shared operator login.
-
-",
+                print_setup_note(
+                    "Remote OAuth",
+                    "This host appears to be headless or remote.\nKeep the Loom-managed auth path on this runtime, then finish device auth in your local browser when prompted.\nMeridian keeps the Loom-owned auth file separate from the shared operator login.",
                 );
             }
             let manager_model = prompt_text("Manager model", current_model)?;
-            let codex_auth_source = prompt_choice(
+            let codex_auth_source = prompt_select(
                 "Codex auth source",
                 if current_codex_auth_source == "none" {
                     "loom"
                 } else {
                     current_codex_auth_source
                 },
-                &["loom", "cli", "path"],
+                &[
+                    PromptSelectOption {
+                        value: "loom",
+                        label: "Loom-managed account",
+                        hint: "Use the runtime-owned Meridian auth file for this install.",
+                    },
+                    PromptSelectOption {
+                        value: "cli",
+                        label: "Shared operator account",
+                        hint: "Reuse the shared auth.json path already present on this host.",
+                    },
+                    PromptSelectOption {
+                        value: "path",
+                        label: "Custom auth.json path",
+                        hint: "Point Meridian at a specific Codex auth.json file.",
+                    },
+                ],
             )?;
             let codex_auth_path = match codex_auth_source.as_str() {
                 "loom" => None,
@@ -1074,12 +1204,9 @@ This host appears to be headless or remote. Keep the Loom-managed auth path on t
         }
         "local_ollama" | "local_only" => {
             if provider_choice == "local_only" {
-                print_human(
-                    "Local-only setup
-----------------
-Meridian will stay on the local inference path and skip remote provider setup for now.
-
-",
+                print_setup_note(
+                    "Local-only setup",
+                    "Meridian will stay on the local inference path and skip remote provider setup for now.",
                 );
             }
             let default_model = if current_model.trim().is_empty() {
@@ -1098,12 +1225,9 @@ Meridian will stay on the local inference path and skip remote provider setup fo
         }
         "openai_compatible" => {
             if detailed_flow {
-                print_human(
-                    "Provider branch
----------------
-Meridian will route the manager through a standard OpenAI-compatible chat completions endpoint using a bearer token environment variable.
-
-",
+                print_setup_note(
+                    "Provider branch",
+                    "Meridian will route the manager through a standard OpenAI-compatible chat completions endpoint using a bearer token environment variable.",
                 );
             }
             let default_model = if current_model.trim().is_empty() {
@@ -1145,17 +1269,38 @@ Meridian will route the manager through a standard OpenAI-compatible chat comple
                 "Custom endpoint base URL",
                 "https://api.example.test/v1/chat/completions",
             )?;
-            let auth_mode = prompt_choice(
+            let auth_mode = prompt_select(
                 "Custom endpoint auth mode",
                 "bearer_env",
-                &["bearer_env", "static_header_env", "none"],
+                &[
+                    PromptSelectOption {
+                        value: "bearer_env",
+                        label: "Bearer token from env",
+                        hint: "Send Authorization: Bearer using an environment variable.",
+                    },
+                    PromptSelectOption {
+                        value: "static_header_env",
+                        label: "Static header from env",
+                        hint:
+                            "Attach a fixed header whose value comes from an environment variable.",
+                    },
+                    PromptSelectOption {
+                        value: "none",
+                        label: "No auth header",
+                        hint:
+                            "Only use this for trusted local gateways or pre-authenticated proxies.",
+                    },
+                ],
             )?;
             let auth = match auth_mode.as_str() {
                 "none" => ProviderAuthMode::None,
                 "static_header_env" => {
                     let header_name = prompt_text("Header name", "x-api-key")?;
                     let env_var = prompt_text("Header env var", "MERIDIAN_CUSTOM_LLM_KEY")?;
-                    ProviderAuthMode::StaticHeaderEnv { header_name, env_var }
+                    ProviderAuthMode::StaticHeaderEnv {
+                        header_name,
+                        env_var,
+                    }
                 }
                 _ => {
                     let env_var = prompt_text("Bearer token env var", "MERIDIAN_CUSTOM_LLM_KEY")?;
@@ -1173,8 +1318,7 @@ Meridian will route the manager through a standard OpenAI-compatible chat comple
                     base_url,
                     default_model: manager_model,
                     auth,
-                    note: "seeded Meridian custom endpoint route for manager reasoning"
-                        .to_string(),
+                    note: "seeded Meridian custom endpoint route for manager reasoning".to_string(),
                     make_default: true,
                 }),
             })
@@ -1268,7 +1412,12 @@ fn configured_manager_provider(root: &Path) -> LoomResult<ConfiguredManagerRoute
         .profiles
         .iter()
         .find(|candidate| candidate.name == configured_name)
-        .ok_or_else(|| format!("configured provider profile '{}' was not found", configured_name))?;
+        .ok_or_else(|| {
+            format!(
+                "configured provider profile '{}' was not found",
+                configured_name
+            )
+        })?;
     Ok(ConfiguredManagerRoute {
         profile_name: profile.name.clone(),
         profile_kind: profile.kind.clone(),
@@ -1332,7 +1481,10 @@ fn normalize_codex_auth_selection(
 
 #[cfg(test)]
 mod tests {
-    use super::{codex_detail_for_manager, normalize_codex_auth_selection};
+    use super::{
+        choice_matches, codex_detail_for_manager, normalize_choice_token,
+        normalize_codex_auth_selection, PromptSelectOption,
+    };
     use loom_core::provider_router::ProviderKind;
 
     #[test]
@@ -1366,6 +1518,27 @@ mod tests {
             "current manager provider does not use Codex OAuth"
         );
     }
+
+    #[test]
+    fn choice_tokens_normalize_spacing_and_case() {
+        assert_eq!(
+            normalize_choice_token("OpenAI-compatible endpoint"),
+            "openai compatible endpoint"
+        );
+        assert_eq!(normalize_choice_token("  Loom_Managed  "), "loom managed");
+    }
+
+    #[test]
+    fn choice_match_accepts_human_label_or_internal_value() {
+        let option = PromptSelectOption {
+            value: "openai_compatible",
+            label: "OpenAI-compatible endpoint",
+            hint: "",
+        };
+        assert!(choice_matches(&option, "openai_compatible"));
+        assert!(choice_matches(&option, "OpenAI compatible endpoint"));
+        assert!(!choice_matches(&option, "local_ollama"));
+    }
 }
 
 fn codex_detail_for_manager(manager_profile_kind: Option<&ProviderKind>) -> String {
@@ -1393,7 +1566,9 @@ fn expand_auth_path(raw: &str) -> Option<PathBuf> {
     if path.is_absolute() {
         return Some(path);
     }
-    env::var("HOME").ok().map(|home| PathBuf::from(home).join(path))
+    env::var("HOME")
+        .ok()
+        .map(|home| PathBuf::from(home).join(path))
 }
 
 fn looks_remote_headless() -> bool {
@@ -1431,20 +1606,59 @@ fn trimmed_string_option(raw: &str) -> Option<String> {
 
 fn print_setup_stage(step: usize, total: usize, title: &str, detail: &str) {
     print_human(&format!(
-        "Stage {}/{} // {}
-----------------------
+        "Stage {} of {}
+{}
 {}
 
 ",
-        step, total, title, detail
+        step,
+        total,
+        title,
+        underline_for(title),
     ));
+    print_setup_note("What happens here", detail);
+}
+
+fn print_setup_note(title: &str, body: &str) {
+    let lines = body
+        .lines()
+        .map(str::trim_end)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    let width = lines
+        .iter()
+        .map(|line| line.len())
+        .chain(std::iter::once(title.len()))
+        .max()
+        .unwrap_or(0)
+        .max(24);
+    let border = format!("+{}+", "-".repeat(width + 2));
+    let mut block = Vec::new();
+    block.push(border.clone());
+    block.push(format!("| {:width$} |", title, width = width));
+    block.push(format!("| {:width$} |", "", width = width));
+    for line in lines {
+        block.push(format!("| {:width$} |", line, width = width));
+    }
+    block.push(border);
+    print_human(&(block.join("\n") + "\n\n"));
+}
+
+fn underline_for(title: &str) -> String {
+    "=".repeat(title.len().max(12))
 }
 
 fn prompt_text(label: &str, default: &str) -> LoomResult<String> {
-    print!("{} [{}]: ", label, default);
+    print_human(&format!("{label}\n"));
+    if !default.trim().is_empty() {
+        print_human(&format!("default: {}\n", default));
+    }
+    print!("> ");
     io::stdout().flush().map_err(|error| error.to_string())?;
     let mut input = String::new();
-    io::stdin().read_line(&mut input).map_err(|error| error.to_string())?;
+    io::stdin()
+        .read_line(&mut input)
+        .map_err(|error| error.to_string())?;
     let trimmed = input.trim();
     if trimmed.is_empty() {
         Ok(default.to_string())
@@ -1453,25 +1667,141 @@ fn prompt_text(label: &str, default: &str) -> LoomResult<String> {
     }
 }
 
-fn prompt_choice(label: &str, default: &str, allowed: &[&str]) -> LoomResult<String> {
-    let rendered = allowed.join("/");
-    loop {
-        let value = prompt_text(&format!("{} ({})", label, rendered), default)?;
-        if allowed.iter().any(|candidate| *candidate == value) {
-            return Ok(value);
+fn prompt_select(
+    label: &str,
+    default: &str,
+    options: &[PromptSelectOption<'_>],
+) -> LoomResult<String> {
+    let default_index = options
+        .iter()
+        .position(|option| choice_matches(option, default))
+        .unwrap_or(0);
+    print_human(&format!("{label}\n"));
+    for (index, option) in options.iter().enumerate() {
+        let default_marker = if index == default_index {
+            " [default]"
+        } else {
+            ""
+        };
+        print_human(&format!(
+            "  {}. {}{}\n",
+            index + 1,
+            option.label,
+            default_marker
+        ));
+        if !option.hint.trim().is_empty() {
+            print_human(&format!("     {}\n", option.hint));
         }
-        eprintln!("invalid value '{}'; expected one of {}", value, rendered);
+    }
+    loop {
+        print!("choice [{}]: ", default_index + 1);
+        io::stdout().flush().map_err(|error| error.to_string())?;
+        let mut input = String::new();
+        io::stdin()
+            .read_line(&mut input)
+            .map_err(|error| error.to_string())?;
+        let trimmed = input.trim();
+        if trimmed.is_empty() {
+            return Ok(options[default_index].value.to_string());
+        }
+        if let Ok(index) = trimmed.parse::<usize>() {
+            if let Some(option) = index.checked_sub(1).and_then(|value| options.get(value)) {
+                return Ok(option.value.to_string());
+            }
+        }
+        if let Some(option) = options
+            .iter()
+            .find(|option| choice_matches(option, trimmed))
+        {
+            return Ok(option.value.to_string());
+        }
+        let expected = options
+            .iter()
+            .enumerate()
+            .map(|(index, option)| format!("{}={}", index + 1, option.value))
+            .collect::<Vec<_>>()
+            .join(", ");
+        eprintln!("invalid value '{}'; expected one of {}", trimmed, expected);
     }
 }
 
+fn prompt_choice(label: &str, default: &str, allowed: &[&str]) -> LoomResult<String> {
+    let options = allowed
+        .iter()
+        .map(|value| PromptSelectOption {
+            value,
+            label: humanize_choice_value(value),
+            hint: "",
+        })
+        .collect::<Vec<_>>();
+    prompt_select(label, default, &options)
+}
+
 fn prompt_bool(label: &str, default: bool) -> LoomResult<bool> {
-    let default_rendered = if default { "yes" } else { "no" };
+    let suffix = if default { "[Y/n]" } else { "[y/N]" };
     loop {
-        let value = prompt_text(&format!("{} (yes/no)", label), default_rendered)?;
-        match parse_bool_flag(label, &value) {
+        print_human(&format!("{label} {suffix}\n"));
+        print!("> ");
+        io::stdout().flush().map_err(|error| error.to_string())?;
+        let mut input = String::new();
+        io::stdin()
+            .read_line(&mut input)
+            .map_err(|error| error.to_string())?;
+        let trimmed = input.trim();
+        if trimmed.is_empty() {
+            return Ok(default);
+        }
+        match parse_bool_flag(label, trimmed) {
             Ok(parsed) => return Ok(parsed),
             Err(error) => eprintln!("{}", error),
         }
+    }
+}
+
+fn choice_matches(option: &PromptSelectOption<'_>, raw: &str) -> bool {
+    normalize_choice_token(option.value) == normalize_choice_token(raw)
+        || normalize_choice_token(option.label) == normalize_choice_token(raw)
+}
+
+fn normalize_choice_token(raw: &str) -> String {
+    raw.trim()
+        .to_ascii_lowercase()
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { ' ' })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn humanize_choice_value<'a>(raw: &'a str) -> &'a str {
+    match raw {
+        "keep" => "Keep current setup",
+        "modify" => "Adjust current setup",
+        "reset" => "Reset and rebuild",
+        "quickstart" => "QuickStart",
+        "manual" => "Manual setup",
+        "loom_codex" => "Loom-managed Codex OAuth",
+        "local_ollama" => "Local Ollama",
+        "openai_compatible" => "OpenAI-compatible endpoint",
+        "custom_endpoint" => "Custom endpoint",
+        "local_only" => "Local-only for now",
+        "loopback" => "Loopback only",
+        "all" => "All interfaces",
+        "token" => "Token protected",
+        "none" => "No auth",
+        "off" => "Off",
+        "on" => "On",
+        "supervisor" => "Supervisor",
+        "npm" => "npm",
+        "pnpm" => "pnpm",
+        "bun" => "bun",
+        "loom" => "Loom-managed account",
+        "cli" => "Shared CLI account",
+        "path" => "Custom auth path",
+        "bearer_env" => "Bearer token from env",
+        "static_header_env" => "Static header from env",
+        _ => raw,
     }
 }
 
@@ -1577,7 +1907,11 @@ fn start_supervisor_daemon(root: &Path, kernel_path: Option<&str>) -> LoomResult
 }
 
 fn daemon_state_from_snapshot(snapshot: &Value) -> String {
-    if snapshot.get("running").and_then(Value::as_bool).unwrap_or(false) {
+    if snapshot
+        .get("running")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
         "running".to_string()
     } else {
         snapshot
