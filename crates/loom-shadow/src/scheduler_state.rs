@@ -44,7 +44,7 @@ impl JobStatus {
     }
 
     /// Returns the set of statuses this status is allowed to transition to.
-    fn valid_transitions(&self) -> &'static [JobStatus] {
+    pub fn valid_transitions(&self) -> &'static [JobStatus] {
         match self {
             JobStatus::Queued => &[JobStatus::Reserved, JobStatus::Cancelled],
             JobStatus::Reserved => &[

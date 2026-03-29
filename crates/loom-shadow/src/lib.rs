@@ -4088,6 +4088,111 @@ fn handle_runtime_service_request(
                 payload,
             })
         }
+        "cancel_job" => {
+            let job_id = {
+                let value = value_string(request_body.get("job_id"));
+                if value.is_empty() {
+                    extract_json_string(request_contents, "\"job_id\"")
+                        .unwrap_or_default()
+                } else {
+                    value
+                }
+            };
+            if job_id.is_empty() {
+                let payload = format!(
+                    "{{\"status\":\"rejected\",\"request_id\":{},\"note\":\"cancel_job requires job_id\"}}\n",
+                    json_string(&request_id),
+                );
+                return Ok(RuntimeServiceReply {
+                    status: "rejected".to_string(),
+                    transport: transport.to_string(),
+                    request_id,
+                    job_id: String::new(),
+                    note: "cancel_job requires job_id".to_string(),
+                    http_status_code: 400,
+                    payload,
+                });
+            }
+            let mut state = load_scheduler_state_or_default(root)?;
+            let cancel_result = match state.jobs.get(&job_id) {
+                None => {
+                    let payload = format!(
+                        "{{\"status\":\"not_found\",\"job_id\":{},\"request_id\":{},\"note\":\"job not found in scheduler\"}}\n",
+                        json_string(&job_id),
+                        json_string(&request_id),
+                    );
+                    return Ok(RuntimeServiceReply {
+                        status: "not_found".to_string(),
+                        transport: transport.to_string(),
+                        request_id,
+                        job_id: job_id.clone(),
+                        note: "job not found in scheduler".to_string(),
+                        http_status_code: 404,
+                        payload,
+                    });
+                }
+                Some(job) => {
+                    let current = job.status.as_str().to_string();
+                    let allowed = job.status.valid_transitions();
+                    if allowed.contains(&JobStatus::Cancelled) {
+                        Ok(current)
+                    } else {
+                        Err(current)
+                    }
+                }
+            };
+            match cancel_result {
+                Ok(previous_status) => {
+                    transition_job(&mut state, &job_id, JobStatus::Cancelled)
+                        .map_err(|e| format!("cancel transition failed: {}", e))?;
+                    update_job_metadata(
+                        &mut state,
+                        &job_id,
+                        None,
+                        None,
+                        Some(Some("cancelled via service cancel request")),
+                    ).ok();
+                    save_scheduler_state_checked(root, &state)?;
+                    let payload = format!(
+                        "{{\"status\":\"cancelled\",\"job_id\":{},\"request_id\":{},\"previous_status\":{},\"note\":\"job cancelled successfully\"}}\n",
+                        json_string(&job_id),
+                        json_string(&request_id),
+                        json_string(&previous_status),
+                    );
+                    Ok(RuntimeServiceReply {
+                        status: "cancelled".to_string(),
+                        transport: transport.to_string(),
+                        request_id,
+                        job_id: job_id.clone(),
+                        note: "job cancelled successfully".to_string(),
+                        http_status_code: 200,
+                        payload,
+                    })
+                }
+                Err(current_status) => {
+                    let note = format!(
+                        "job {} cannot be cancelled from status '{}'",
+                        job_id, current_status
+                    );
+                    let payload = format!(
+                        "{{\"status\":\"not_cancelable\",\"job_id\":{},\"request_id\":{},\"current_status\":{},\"note\":{}}}\n",
+                        json_string(&job_id),
+                        json_string(&request_id),
+                        json_string(&current_status),
+                        json_string(&note),
+                    );
+                    Ok(RuntimeServiceReply {
+                        status: "not_cancelable".to_string(),
+                        transport: transport.to_string(),
+                        request_id,
+                        job_id: job_id.clone(),
+                        note,
+                        http_status_code: 409,
+                        payload,
+                    })
+                }
+            }
+        }
         "stop" => {
             let stop_request_path = service_stop_request_path(root)?;
             fs::write(
@@ -4408,6 +4513,40 @@ fn handle_runtime_service_http_request(
                 http_status_code: 202,
                 payload: render_runtime_service_import_json(&import),
             })
+        }
+        ("POST", "/cancel") => {
+            let content_type = request
+                .content_type
+                .as_deref()
+                .unwrap_or("")
+                .split(';')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_ascii_lowercase();
+            if content_type != "application/json" {
+                return Ok(RuntimeServiceReply::unsupported_media_type(
+                    "http",
+                    "POST /cancel requires Content-Type: application/json".to_string(),
+                ));
+            }
+            let body = match serde_json::from_str::<Value>(&request.body) {
+                Ok(body) => body,
+                Err(error) => return Ok(RuntimeServiceReply::bad_request("http", error.to_string())),
+            };
+            let payload = format!(
+                "{{\"request_type\":{},\"request_id\":{},\"job_id\":{}}}\n",
+                json_string("cancel_job"),
+                json_string(&value_string(body.get("request_id"))),
+                json_string(&value_string(body.get("job_id"))),
+            );
+            handle_runtime_service_request(
+                root,
+                override_kernel_path,
+                http_address,
+                "http",
+                &payload,
+            )
         }
         ("POST", "/stop") => handle_runtime_service_request(
             root,
