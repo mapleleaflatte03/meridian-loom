@@ -3683,19 +3683,14 @@ pub fn submit_runtime_service_action(
     );
 
     let service_snapshot = runtime_service_status(root, socket_override)?;
-    if !service_snapshot.available || !service_snapshot.running {
-        return Err("runtime service is not running; start it with `loom service start` first".to_string());
-    }
+    let service_running = service_snapshot.available && service_snapshot.running;
     let explicit_http_url = http_url
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
-    let fallback_http_url = if service_snapshot.http_address.trim().is_empty() {
-        None
-    } else {
-        Some(format!("http://{}", service_snapshot.http_address))
-    };
-
     if let Some(http_url) = explicit_http_url.as_deref() {
+        if !service_running {
+            return Err("runtime service is not running; start it with `loom service start` first".to_string());
+        }
         let reply = send_runtime_service_http_request(
             http_url,
             "POST",
@@ -3731,7 +3726,7 @@ pub fn submit_runtime_service_action(
             accepted_at: extract_json_string(&body, "\"accepted_at\"").unwrap_or_default(),
             note: extract_json_string(&body, "\"note\"").unwrap_or_default(),
         });
-    } else if socket_path.exists() && !socket_path.is_dir() {
+    } else if service_running && socket_path.exists() && !socket_path.is_dir() {
         if let Ok(reply) = send_runtime_service_request(&socket_path, &request) {
             let status = extract_json_string(&reply, "\"status\"").unwrap_or_else(|| "unknown".to_string());
             if status != "accepted" {

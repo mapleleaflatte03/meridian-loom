@@ -31,7 +31,7 @@ The tarball produced by `scripts/package_release.sh` contains:
 
 ## Publish a tagged release
 
-Create and push a tag like `v0.1.1`. The GitHub release workflow builds the package archive for the host runner, attaches:
+Create and push a tag like `v0.1.2`. The GitHub release workflow builds the package archive for the host runner, attaches:
 
 - `meridian-loom-<version>-<os>-<arch>.tar.gz`
 - `meridian-loom-<version>-<os>-<arch>.tar.gz.sha256`
