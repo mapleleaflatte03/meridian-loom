@@ -49,7 +49,7 @@ USAGE: loom session <COMMAND> [OPTIONS]
 
 COMMANDS:
   status                              Show session provenance overview
-  list [--limit N] [--include-archived]
+  list [--limit N] [--include-archived] [--archived-only]
                                       List active sessions, optionally including archived legacy sessions
   show --session-key KEY              Show session details + override + send policy
   route --session-key KEY             Update route/provenance facts for a session
@@ -110,9 +110,10 @@ fn handle_session_list(args: &[String]) -> LoomResult<()> {
     let limit = take_value(args, "--limit")
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(20);
+    let archived_only = has_flag(args, "--archived-only");
     let include_archived = has_flag(args, "--include-archived");
-    let records = if include_archived {
-        list_session_provenance_with_options(&root, limit, true)?
+    let records = if include_archived || archived_only {
+        list_session_provenance_with_options(&root, limit, true, archived_only)?
     } else {
         list_session_provenance(&root, limit)?
     };

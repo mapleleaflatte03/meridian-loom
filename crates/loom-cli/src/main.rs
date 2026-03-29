@@ -299,7 +299,7 @@ Bootstrap\n\
   loom channel status [--root PATH] [--format human|json]\n\
   loom channel sync [--root PATH] [--format human|json]\n\
   loom channel send --channel ID --recipient ID [--text TEXT|--file PATH] [--allow-receipt-hashes] [--allow-operator-diagnostics] [--root PATH] [--format human|json]\n\
-  loom channel deliveries [--root PATH] [--limit N] [--format human|json]\n\
+  loom channel deliveries [--root PATH] [--limit N] [--include-archived|--archived-only] [--format human|json]\n\
   loom ingress status [--root PATH] [--format human|json]\n\
   loom ingress list [--root PATH] [--limit N] [--format human|json]\n\
   loom ingress show --request-id ID [--root PATH] [--format human|json]\n\

@@ -147,7 +147,7 @@ pub fn load_channels(root: &Path) -> LoomResult<Vec<ChannelRecord>> {
 pub fn channel_overview(root: &Path) -> LoomResult<ChannelRuntimeOverview> {
     let records = load_channels(root)?;
     let ingress_count = list_channel_ingress(root, 0)?.len();
-    let deliveries = list_channel_deliveries_with_options(root, 0, true)?;
+    let deliveries = list_channel_deliveries_with_options(root, 0, true, false)?;
     let now = now_unix_ms();
     let archived_delivery_count = deliveries
         .iter()
@@ -299,13 +299,14 @@ pub fn update_channel_delivery(
 }
 
 pub fn list_channel_deliveries(root: &Path, limit: usize) -> LoomResult<Vec<ChannelDeliveryRecord>> {
-    list_channel_deliveries_with_options(root, limit, false)
+    list_channel_deliveries_with_options(root, limit, false, false)
 }
 
 pub fn list_channel_deliveries_with_options(
     root: &Path,
     limit: usize,
     include_archived: bool,
+    archived_only: bool,
 ) -> LoomResult<Vec<ChannelDeliveryRecord>> {
     ensure_channel_runtime_scaffold(root)?;
     let mut records = Vec::new();
@@ -327,7 +328,10 @@ pub fn list_channel_deliveries_with_options(
             .cmp(&left.submitted_at_unix_ms)
             .then_with(|| right.delivery_id.cmp(&left.delivery_id))
     });
-    if !include_archived {
+    if archived_only {
+        let now = now_unix_ms();
+        records.retain(|record| channel_delivery_is_archived(record, now));
+    } else if !include_archived {
         let now = now_unix_ms();
         records.retain(|record| !channel_delivery_is_archived(record, now));
     }
@@ -1042,8 +1046,12 @@ mod tests {
         assert_eq!(visible.len(), 1);
         assert_eq!(visible[0].delivery_id, active.delivery_id);
 
-        let all = list_channel_deliveries_with_options(&root, 10, true).expect("list all");
+        let all = list_channel_deliveries_with_options(&root, 10, true, false).expect("list all");
         assert_eq!(all.len(), 2);
+
+        let archived_only = list_channel_deliveries_with_options(&root, 10, true, true).expect("list archived");
+        assert_eq!(archived_only.len(), 1);
+        assert_eq!(archived_only[0].delivery_id, archived.delivery_id);
     }
 
     #[test]

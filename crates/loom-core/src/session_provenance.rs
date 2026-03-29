@@ -220,17 +220,20 @@ pub fn list_session_provenance(
     root: &Path,
     limit: usize,
 ) -> LoomResult<Vec<SessionProvenanceRecord>> {
-    list_session_provenance_with_options(root, limit, false)
+    list_session_provenance_with_options(root, limit, false, false)
 }
 
 pub fn list_session_provenance_with_options(
     root: &Path,
     limit: usize,
     include_archived: bool,
+    archived_only: bool,
 ) -> LoomResult<Vec<SessionProvenanceRecord>> {
     let mut records = load_session_provenance_records(root)?;
     records.sort_by(|a, b| b.last_active_at.cmp(&a.last_active_at));
-    if !include_archived {
+    if archived_only {
+        records.retain(|record| session_provenance_state(record) == "legacy_archived");
+    } else if !include_archived {
         records.retain(|record| session_provenance_state(record) != "legacy_archived");
     }
     if limit > 0 && records.len() > limit {
@@ -671,6 +674,10 @@ mod tests {
         let visible = list_session_provenance(&root, 10).expect("visible");
         assert_eq!(visible.len(), 1);
         assert_eq!(visible[0].session_key, "telegram:active");
+
+        let archived = list_session_provenance_with_options(&root, 10, true, true).expect("archived");
+        assert_eq!(archived.len(), 1);
+        assert_eq!(archived[0].session_key, "telegram:archived");
 
         let overview = session_provenance_overview(&root).expect("overview");
         assert_eq!(overview.total_count, 2);

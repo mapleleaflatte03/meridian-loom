@@ -12,6 +12,10 @@ use loom_core::channels::{
 };
 
 pub(crate) fn handle_channel(args: &[String]) -> LoomResult<()> {
+    if args.is_empty() || matches!(args.first().map(String::as_str), Some("help" | "--help" | "-h")) {
+        print_channel_help();
+        return Ok(());
+    }
     match args.first().map(String::as_str) {
         Some("status") => handle_channel_status(&args[1..]),
         Some("sync") => handle_channel_sync(&args[1..]),
@@ -24,7 +28,44 @@ pub(crate) fn handle_channel(args: &[String]) -> LoomResult<()> {
     }
 }
 
+fn print_channel_help() {
+    println!(
+        "Meridian Loom // CHANNEL
+
+Manage live channel ingress and delivery ledgers.
+
+USAGE: loom channel <COMMAND> [OPTIONS]
+
+COMMANDS:
+  status                              Show channel runtime overview
+  sync                                Sync channel registry from onboarding state
+  send --channel ID --recipient ID    Queue outbound delivery
+       [--text TEXT|--file PATH]
+       [--allow-receipt-hashes]
+       [--allow-operator-diagnostics]
+  deliveries [--limit N]              List active channel deliveries
+             [--include-archived]     Include active + archived historical records
+             [--archived-only]        Show only archived historical records
+  update --delivery-id ID --status STATUS
+         [--external-ref REF]
+         [--detail TEXT]
+  ingest --channel ID --peer ID       Materialize inbound channel message
+         [--thread ID]
+         [--agent-id ID]
+         [--text TEXT|--file PATH]
+  inbox [--limit N]                   List inbound channel records
+
+GLOBAL OPTIONS:
+  --root ROOT                         Workspace root path
+  --format human|json                 Output format (default: human)"
+    );
+}
+
 fn handle_channel_status(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_channel_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let format = take_value(args, "--format").unwrap_or_else(|| {
         if std::io::stdout().is_terminal() {
@@ -45,6 +86,10 @@ fn handle_channel_status(args: &[String]) -> LoomResult<()> {
 }
 
 fn handle_channel_sync(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_channel_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let format = take_value(args, "--format").unwrap_or_else(|| {
         if std::io::stdout().is_terminal() {
@@ -65,6 +110,10 @@ fn handle_channel_sync(args: &[String]) -> LoomResult<()> {
 }
 
 fn handle_channel_send(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_channel_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let channel_id = required_flag(args, "--channel")?;
     let recipient = required_flag(args, "--recipient")?;
@@ -101,10 +150,15 @@ fn handle_channel_send(args: &[String]) -> LoomResult<()> {
 }
 
 fn handle_channel_deliveries(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_channel_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let limit = take_value(args, "--limit")
         .and_then(|raw| raw.parse::<usize>().ok())
         .unwrap_or(20);
+    let archived_only = has_flag(args, "--archived-only");
     let include_archived = has_flag(args, "--include-archived");
     let format = take_value(args, "--format").unwrap_or_else(|| {
         if std::io::stdout().is_terminal() {
@@ -113,8 +167,8 @@ fn handle_channel_deliveries(args: &[String]) -> LoomResult<()> {
             "json".to_string()
         }
     });
-    let records = if include_archived {
-        list_channel_deliveries_with_options(&root, limit, true)?
+    let records = if include_archived || archived_only {
+        list_channel_deliveries_with_options(&root, limit, true, archived_only)?
     } else {
         list_channel_deliveries(&root, limit)?
     };
@@ -130,6 +184,10 @@ fn handle_channel_deliveries(args: &[String]) -> LoomResult<()> {
 
 
 fn handle_channel_update(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_channel_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let delivery_id = required_flag(args, "--delivery-id")?;
     let status = required_flag(args, "--status")?;
@@ -158,6 +216,10 @@ fn handle_channel_update(args: &[String]) -> LoomResult<()> {
 }
 
 fn handle_channel_ingest(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_channel_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let channel_id = required_flag(args, "--channel")?;
     let peer_id = required_flag(args, "--peer")?;
@@ -194,6 +256,10 @@ fn handle_channel_ingest(args: &[String]) -> LoomResult<()> {
 }
 
 fn handle_channel_inbox(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_channel_help();
+        return Ok(());
+    }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let limit = take_value(args, "--limit")
         .and_then(|raw| raw.parse::<usize>().ok())
