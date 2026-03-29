@@ -169,6 +169,7 @@ pub fn execute_pipeline_step(
         &transport_kind,
         &auth_mode,
         &execution_owner,
+        "",
     );
 
     // Step 5: Determine send policy
@@ -338,6 +339,7 @@ pub fn record_pipeline_from_ingress(
         &transport_kind,
         &auth_mode,
         &execution_owner,
+        "",
     );
 
     // Get send policy

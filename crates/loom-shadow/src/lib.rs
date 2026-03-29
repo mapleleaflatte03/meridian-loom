@@ -43,7 +43,7 @@ use proof_views::render_proof_first_status_human;
 use serde_json::Value;
 use std::fs;
 use std::io::{self, ErrorKind, Read, Write};
-use std::net::{Shutdown, TcpListener, TcpStream};
+use std::net::{Shutdown, TcpListener, TcpStream, ToSocketAddrs};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -3533,11 +3533,14 @@ pub fn runtime_service_status(
         .map(|value| value as u32)
         .unwrap_or(0);
     let running_flag = extract_json_bool(&contents, "\"running\"").unwrap_or(false);
-    let alive = if pid > 0 {
+    let http_address = extract_optional_string(&contents, "\"http_address\"").unwrap_or_default();
+    let http_token_required = extract_json_bool(&contents, "\"http_token_required\"").unwrap_or(false);
+    let proc_visible = if pid > 0 {
         PathBuf::from(format!("/proc/{}", pid)).exists()
     } else {
         false
     };
+    let alive = runtime_service_control_plane_alive(pid, proc_visible, &socket_path, &http_address);
     let recorded_status =
         extract_json_string(&contents, "\"status\"").unwrap_or_else(|| "unknown".to_string());
     let derived_status = if running_flag && !alive {
@@ -3551,6 +3554,11 @@ pub fn runtime_service_status(
             "runtime service state claims pid {} is running, but the process is gone; clean stale state before reusing the root",
             pid
         )
+    } else if running_flag && alive && pid > 0 && !proc_visible {
+        format!(
+            "runtime service control plane is reachable, but pid {} is not visible from this context; using socket/http liveness",
+            pid
+        )
     } else {
         recorded_note
     };
@@ -3562,8 +3570,8 @@ pub fn runtime_service_status(
         metrics_path,
         config_path,
         socket_path,
-        http_address: extract_optional_string(&contents, "\"http_address\"").unwrap_or_default(),
-        http_token_required: extract_json_bool(&contents, "\"http_token_required\"").unwrap_or(false),
+        http_address,
+        http_token_required,
         runtime_state_path,
         stop_request_path,
         stdout_log_path,
@@ -3620,6 +3628,54 @@ pub fn runtime_service_status(
         last_job_id: extract_json_string(&contents, "\"last_job_id\"").unwrap_or_default(),
         note: derived_note,
     })
+}
+
+fn runtime_service_control_plane_alive(
+    pid: u32,
+    proc_visible: bool,
+    socket_path: &Path,
+    http_address: &str,
+) -> bool {
+    if pid > 0 && proc_visible {
+        return true;
+    }
+    if runtime_service_tcp_reachable(http_address) {
+        return true;
+    }
+    runtime_service_socket_reachable(socket_path)
+}
+
+fn runtime_service_tcp_reachable(http_address: &str) -> bool {
+    let target = http_address.trim();
+    if target.is_empty() {
+        return false;
+    }
+    let timeout = Duration::from_millis(250);
+    match target.to_socket_addrs() {
+        Ok(addrs) => {
+            for addr in addrs {
+                if let Ok(stream) = TcpStream::connect_timeout(&addr, timeout) {
+                    let _ = stream.shutdown(Shutdown::Both);
+                    return true;
+                }
+            }
+            false
+        }
+        Err(_) => false,
+    }
+}
+
+fn runtime_service_socket_reachable(socket_path: &Path) -> bool {
+    if !socket_path.exists() || socket_path.is_dir() {
+        return false;
+    }
+    match UnixStream::connect(socket_path) {
+        Ok(stream) => {
+            let _ = stream.shutdown(Shutdown::Both);
+            true
+        }
+        Err(_) => false,
+    }
 }
 
 pub fn request_runtime_service_stop(
@@ -11127,7 +11183,7 @@ if __name__ == '__main__':
             &runtime_state_path,
             &metrics_path,
             &socket_path,
-            Some("127.0.0.1:18910"),
+            Some("127.0.0.1:1"),
             true,
             "service-dead",
             999_999,
@@ -11160,6 +11216,57 @@ if __name__ == '__main__':
         assert_eq!(snapshot.status, "crashed");
         let health = render_runtime_service_health_json(&snapshot);
         assert!(health.contains("\"status\": \"crashed\""));
+    }
+
+    #[test]
+    fn runtime_service_status_accepts_live_http_control_plane_when_pid_is_hidden() {
+        let root = temp_path("loom-shadow-service-status-http-live");
+        init_workspace(&root, "embedded", None, "org_demo").expect("init workspace");
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind http listener");
+        let http_address = listener.local_addr().expect("listener addr").to_string();
+
+        let runtime_state_path = runtime_service_state_path(&root).expect("runtime state path");
+        let metrics_path = service_metrics_path(&root).expect("metrics path");
+        let socket_path = service_socket_path(&root, None).expect("socket path");
+        write_runtime_service_state(
+            &runtime_state_path,
+            &metrics_path,
+            &socket_path,
+            Some(&http_address),
+            true,
+            "service-http-live",
+            999_999,
+            true,
+            "running",
+            "100",
+            "",
+            1,
+            1,
+            100,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            "",
+            "",
+            "simulated hidden pid".to_string(),
+        )
+        .expect("write runtime state");
+
+        let snapshot = runtime_service_status(&root, None).expect("status");
+        assert!(snapshot.available);
+        assert!(snapshot.running);
+        assert_eq!(snapshot.status, "running");
+        assert!(snapshot.note.contains("control plane is reachable"));
+
+        drop(listener);
     }
 
     fn scaffold_queue_kernel(kernel_root: &Path, note: &str, treasury_limit: f64) {

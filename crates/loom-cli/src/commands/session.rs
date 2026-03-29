@@ -55,6 +55,7 @@ COMMANDS:
   route --session-key KEY             Update route/provenance facts for a session
         [--channel-id CHANNEL]
         [--peer-id PEER]
+        [--org-id ORG]
         [--binding-id BINDING]
         [--agent-id AGENT]
         [--provider-profile PROFILE]
@@ -191,6 +192,7 @@ fn handle_session_route(args: &[String]) -> LoomResult<()> {
             format!("binding-{}", channel_id)
         }
     });
+    let org_id = take_value(args, "--org-id").unwrap_or_default();
     let agent_id = take_value(args, "--agent-id").unwrap_or_default();
     let provider_profile = take_value(args, "--provider-profile").unwrap_or_default();
     let model = take_value(args, "--model").unwrap_or_default();
@@ -228,6 +230,7 @@ fn handle_session_route(args: &[String]) -> LoomResult<()> {
         &transport_kind,
         &auth_mode,
         &execution_owner,
+        &org_id,
     )?;
     if ingress_request_id.is_some() || job_id.is_some() || delivery_id.is_some() {
         update_session_provenance_job(

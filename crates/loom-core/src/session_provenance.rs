@@ -15,6 +15,7 @@ pub struct SessionProvenanceRecord {
     pub session_key: String,
     pub channel_id: String,
     pub peer_id: String,
+    pub org_id: String,
     pub agent_id: String,
     pub binding_id: String,
     pub provider_profile: String,
@@ -104,6 +105,7 @@ pub fn open_session_provenance(
         session_key: session_key.to_string(),
         channel_id: channel_id.to_string(),
         peer_id: peer_id.to_string(),
+        org_id: infer_session_org_id(session_key, peer_id, ""),
         agent_id: agent_id.to_string(),
         binding_id: binding_id.to_string(),
         provider_profile: String::new(),
@@ -132,7 +134,7 @@ pub fn update_session_provenance_route(
     model: &str,
     override_source: &str,
 ) -> LoomResult<()> {
-    update_session_provenance_route_full(root, session_key, provider_profile, model, override_source, "", "", "")
+    update_session_provenance_route_full(root, session_key, provider_profile, model, override_source, "", "", "", "")
 }
 
 pub fn update_session_provenance_route_full(
@@ -144,10 +146,15 @@ pub fn update_session_provenance_route_full(
     transport_kind: &str,
     auth_mode: &str,
     execution_owner: &str,
+    org_id: &str,
 ) -> LoomResult<()> {
     let ts = timestamp_now();
     let mut records = load_session_provenance_records(root)?;
     if let Some(record) = records.iter_mut().find(|r| r.session_key == session_key) {
+        let resolved_org_id = infer_session_org_id(session_key, &record.peer_id, org_id);
+        if !resolved_org_id.is_empty() {
+            record.org_id = resolved_org_id;
+        }
         if !provider_profile.is_empty() {
             record.provider_profile = provider_profile.to_string();
         }
@@ -300,11 +307,12 @@ pub fn render_session_provenance_overview_json(overview: &SessionProvenanceOverv
 
 pub fn render_session_provenance_human(record: &SessionProvenanceRecord) -> String {
     format!(
-        "session_key:          {}\nprovenance_state:     {}\nchannel_id:           {}\npeer_id:              {}\nagent_id:             {}\nbinding_id:           {}\nprovider_profile:     {}\nmodel:                {}\ntransport_kind:       {}\nauth_mode:            {}\nexecution_owner:      {}\ningress_request_id:   {}\njob_id:               {}\ndelivery_id:          {}\noverride_source:      {}\nsend_policy:          {}\nopened_at:            {}\nlast_active_at:       {}\n",
+        "session_key:          {}\nprovenance_state:     {}\nchannel_id:           {}\npeer_id:              {}\norg_id:               {}\nagent_id:             {}\nbinding_id:           {}\nprovider_profile:     {}\nmodel:                {}\ntransport_kind:       {}\nauth_mode:            {}\nexecution_owner:      {}\ningress_request_id:   {}\njob_id:               {}\ndelivery_id:          {}\noverride_source:      {}\nsend_policy:          {}\nopened_at:            {}\nlast_active_at:       {}\n",
         record.session_key,
         session_provenance_state(record),
         record.channel_id,
         record.peer_id,
+        if record.org_id.is_empty() { "(none)" } else { &record.org_id },
         record.agent_id,
         record.binding_id,
         if record.provider_profile.is_empty() { "(none)" } else { &record.provider_profile },
@@ -398,6 +406,11 @@ fn parse_session_provenance_record(value: &Value) -> LoomResult<SessionProvenanc
         session_key: value_string(value.get("session_key"), "session_key")?,
         channel_id: value_string_or(value.get("channel_id"), ""),
         peer_id: value_string_or(value.get("peer_id"), ""),
+        org_id: infer_session_org_id(
+            &value_string_or(value.get("session_key"), ""),
+            &value_string_or(value.get("peer_id"), ""),
+            &value_string_or(value.get("org_id"), ""),
+        ),
         agent_id: value_string_or(value.get("agent_id"), ""),
         binding_id: value_string_or(value.get("binding_id"), ""),
         provider_profile: value_string_or(value.get("provider_profile"), ""),
@@ -421,6 +434,7 @@ fn session_provenance_record_json(record: &SessionProvenanceRecord) -> Value {
         "provenance_state": session_provenance_state(record),
         "channel_id": record.channel_id,
         "peer_id": record.peer_id,
+        "org_id": record.org_id,
         "agent_id": record.agent_id,
         "binding_id": record.binding_id,
         "provider_profile": record.provider_profile,
@@ -481,6 +495,24 @@ fn value_opt_string(value: Option<&Value>) -> Option<String> {
         .and_then(Value::as_str)
         .map(|raw| raw.trim().to_string())
         .filter(|raw| !raw.is_empty())
+}
+
+fn infer_session_org_id(session_key: &str, peer_id: &str, org_id: &str) -> String {
+    let explicit = org_id.trim();
+    if !explicit.is_empty() {
+        return explicit.to_string();
+    }
+    let peer = peer_id.trim();
+    if peer.starts_with("org_") {
+        return peer.to_string();
+    }
+    if let Some((_, suffix)) = session_key.split_once(':') {
+        let trimmed = suffix.trim();
+        if trimmed.starts_with("org_") {
+            return trimmed.to_string();
+        }
+    }
+    String::new()
 }
 
 #[cfg(test)]
@@ -591,6 +623,7 @@ mod tests {
             session_key: "telegram:legacy".to_string(),
             channel_id: "telegram".to_string(),
             peer_id: "legacy".to_string(),
+            org_id: String::new(),
             agent_id: "leviathann".to_string(),
             binding_id: "binding-telegram".to_string(),
             provider_profile: String::new(),
@@ -617,6 +650,7 @@ mod tests {
             session_key: "telegram:archived".to_string(),
             channel_id: "telegram".to_string(),
             peer_id: "archived".to_string(),
+            org_id: String::new(),
             agent_id: "leviathann".to_string(),
             binding_id: "binding-telegram".to_string(),
             provider_profile: String::new(),
@@ -654,6 +688,7 @@ mod tests {
             session_key: "telegram:archived".to_string(),
             channel_id: "telegram".to_string(),
             peer_id: "archived".to_string(),
+            org_id: String::new(),
             agent_id: "leviathann".to_string(),
             binding_id: "binding-telegram".to_string(),
             provider_profile: String::new(),
@@ -693,6 +728,7 @@ mod tests {
             session_key: "web_api:org_demo".to_string(),
             channel_id: "web_api".to_string(),
             peer_id: "org_demo".to_string(),
+            org_id: "org_demo".to_string(),
             agent_id: "leviathann".to_string(),
             binding_id: "binding-web_api".to_string(),
             provider_profile: "manager_frontier".to_string(),
