@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 output_dir="${OUTPUT_DIR:-${repo_root}/dist}"
 kernel_path="${KERNEL_PATH:-/opt/meridian-kernel}"
+build_target="${BUILD_TARGET:-}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -19,6 +20,10 @@ while [[ $# -gt 0 ]]; do
       version="$2"
       shift 2
       ;;
+    --target)
+      build_target="$2"
+      shift 2
+      ;;
     *)
       echo "unknown argument: $1" >&2
       exit 2
@@ -29,6 +34,28 @@ done
 version="${version:-$(git -C "$repo_root" describe --tags --always --dirty 2>/dev/null || date -u +%Y%m%d-%H%M%S)}"
 arch="$(uname -m)"
 os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+binary_path="$repo_root/target/release/loom"
+if [[ -n "$build_target" ]]; then
+  case "$build_target" in
+    x86_64-unknown-linux-musl|x86_64-unknown-linux-gnu)
+      os="linux"
+      arch="x86_64"
+      ;;
+    aarch64-unknown-linux-musl|aarch64-unknown-linux-gnu)
+      os="linux"
+      arch="aarch64"
+      ;;
+    x86_64-apple-darwin)
+      os="darwin"
+      arch="x86_64"
+      ;;
+    aarch64-apple-darwin)
+      os="darwin"
+      arch="aarch64"
+      ;;
+  esac
+  binary_path="$repo_root/target/${build_target}/release/loom"
+fi
 package_name="meridian-loom-${version}-${os}-${arch}"
 staging_dir="${output_dir}/${package_name}"
 tarball="${output_dir}/${package_name}.tar.gz"
@@ -37,10 +64,14 @@ mkdir -p "$output_dir" "$staging_dir/bin" "$staging_dir/config" "$staging_dir/do
 
 (
   cd "$repo_root"
-  cargo build --release --workspace --locked
+  if [[ -n "$build_target" ]]; then
+    cargo build --release --workspace --locked --target "$build_target"
+  else
+    cargo build --release --workspace --locked
+  fi
 )
 
-install -m 0755 "$repo_root/target/release/loom" "$staging_dir/bin/loom"
+install -m 0755 "$binary_path" "$staging_dir/bin/loom"
 install -m 0644 "$repo_root/loom.toml.example" "$staging_dir/config/loom.toml.example"
 
 for doc in INSTALL.md RUN_LOCAL.md SERVICE.md CONFIG.md OPERATIONS.md RELEASE.md ARCHITECTURE.md; do
@@ -67,6 +98,7 @@ version=${version}
 os=${os}
 arch=${arch}
 kernel_path_hint=${kernel_path}
+build_target=${build_target:-native}
 truth=local-first experimental runtime; hosted replacement not claimed
 layout=bin/loom config/loom.toml.example docs/ scripts/ deploy/systemd/ Dockerfile docker-compose.yml Makefile
 EOF
