@@ -229,32 +229,36 @@ PY2
 print_banner() {
   local icon
   icon="$(cat <<'BANNER'
-      /\      /\
-     /  \    /  \
-    / /\ \  / /\ \
-   / /  \ \/ /  \ \
-  /_/    \__/    \_\
-  \ \    /  \    / / /
-   \ \  / /\ \  / / /
-    \_\/_/  \_\/_/_/
+             /\             
+        /\  /  \  /\        
+       /  \/ /\ \/  \       
+      / /\  /  \  /\ \      
+     /_/ /_/ /\ \_\ \_\     
+     \ \ \ \/  \/ / / /     
+      \ \/  /\  \/ / /      
+       \___/  \___/ /       
 BANNER
 )"
   if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
-    printf '[1;92m%s[0m
+    printf '[38;5;81m%s[0m
 ' "$icon"
-    printf '[1;96m%s[0m
-' 'MERIDIAN LOOM'
-    printf '[37m%s[0m
+    printf '[1;97m%s[0m
+' 'MERIDIAN'
+    printf '[38;5;245m%s[0m
+' 'CONSTITUTIONAL OS'
+    printf '[38;5;153m%s[0m
 
-' 'A governed agent fabric for bounded autonomous work.'
+' 'Loom v0.1.0 - governed runtime for bounded autonomous work.'
   else
     printf '%s
 ' "$icon"
     printf '%s
-' 'MERIDIAN LOOM'
+' 'MERIDIAN'
+    printf '%s
+' 'CONSTITUTIONAL OS'
     printf '%s
 
-' 'A governed agent fabric for bounded autonomous work.'
+' 'Loom v0.1.0 - governed runtime for bounded autonomous work.'
   fi
 }
 
@@ -278,7 +282,9 @@ bootstrap_rust_toolchain() {
   ensure_command_or_package cc build-essential
   printf '==> Installing Rust toolchain via rustup\n'
   export CARGO_HOME RUSTUP_HOME HOME
-  curl --proto '=https' --tlsv1.2 -fsSL "$RUSTUP_INIT_URL" | sh -s -- -y --profile minimal --default-toolchain stable
+  export RUSTUP_INIT_SKIP_PATH_CHECK=yes
+  export RUSTUP_INIT_SKIP_SUDO_CHECK=yes
+  curl --proto '=https' --tlsv1.2 -fsSL "$RUSTUP_INIT_URL" | sh -s -- -y --profile minimal --default-toolchain stable --no-modify-path
   export PATH="${CARGO_HOME}/bin:${PATH}"
 }
 

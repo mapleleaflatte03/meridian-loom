@@ -535,8 +535,65 @@ Meridian will now confirm the local edge, daemon, and built-in runtime defaults 
     if !banner_rendered {
         print_startup_banner();
     }
-    print_human(&format!(
-        "Meridian Loom // ONBOARD
+    if config_status == "initialized" {
+        print_human(&format!(
+            "Meridian // RUNTIME READY
+=========================
+root:                {}
+mode:                {}
+org_id:              {}
+setup_state:         {}
+manager:             {} via {} ({})
+auth:                {} [{}]
+gateway:             {}
+telegram:            {}
+defaults seeded:     skills={} recurring={}
+runtime health:      {}
+
+Current state
+-------------
+{}
+
+Next
+----
+1. loom doctor --root {} --format human
+2. loom onboard --root {} --format human --config-action modify
+3. {}
+",
+            root.display(),
+            config.mode,
+            config.org_id,
+            setup_state_label(&setup_state),
+            manager_model,
+            manager_route
+                .as_ref()
+                .map(|route| route.profile_name.as_str())
+                .or_else(|| configured_manager_provider.as_ref().map(|route| route.profile_name.as_str()))
+                .unwrap_or("(pending provider setup)"),
+            manager_route
+                .as_ref()
+                .map(|route| route.transport_kind())
+                .or_else(|| configured_manager_provider.as_ref().map(|route| route.transport_kind.as_str()))
+                .unwrap_or("(pending provider setup)"),
+            manifest.codex_auth_source,
+            if codex_ready { "ready" } else { "action required" },
+            overview.gateway_summary,
+            overview.telegram_summary,
+            skill_summary.total_count,
+            schedule_sync.total_count,
+            health_summary,
+            onboard_path_hint(&setup_state),
+            root.display(),
+            root.display(),
+            if codex_ready {
+                "loom service status --root".to_string() + " " + &root.display().to_string()
+            } else {
+                "loom provider login --source loom --device-auth".to_string()
+            },
+        ));
+    } else {
+        print_human(&format!(
+            "Meridian Loom // ONBOARD
 =========================
 root:                {}
 setup_state:         {}
@@ -579,83 +636,84 @@ pulse_model:         {}
 manifest:            {}
 next_step:           loom doctor --root {} --format human
 ",
-        root.display(),
-        setup_state_label(&setup_state),
-        config_status,
-        config_action,
-        config.mode,
-        config.org_id,
-        provider_summary.profile_count,
-        provider_profiles_path.display(),
-        provider_auth_summary.profile_count,
-        provider_auth_summary.ready_count,
-        provider_auth_summary.last_good_count,
-        provider_auth_summary.usage_stats_count,
-        runtime_overview.profile_count,
-        overview.brain_summary,
-        manager_lane,
-        manager_route
-            .as_ref()
-            .map(|route| route.profile_name.as_str())
-            .or_else(|| configured_manager_provider.as_ref().map(|route| route.profile_name.as_str()))
-            .unwrap_or("(pending provider setup)"),
-        manager_route
-            .as_ref()
-            .map(|route| route.transport_kind())
-            .or_else(|| configured_manager_provider.as_ref().map(|route| route.transport_kind.as_str()))
-            .unwrap_or("(pending provider setup)"),
-        manager_model,
-        manifest.codex_auth_source,
-        if manifest.codex_auth_path.trim().is_empty() { "(none)" } else { manifest.codex_auth_path.as_str() },
-        if codex_ready { "yes" } else { "no" },
-        codex_path.as_deref().unwrap_or("(none)"),
-        codex_detail,
-        overview.gateway_summary,
-        overview.telegram_summary,
-        channel_summary.total_count,
-        channel_summary.enabled_count,
-        if channel_summary.channel_ids.is_empty() { "(none)".to_string() } else { channel_summary.channel_ids.join(",") },
-        gateway_runtime.endpoint,
-        gateway_runtime.auth_mode,
-        gateway_runtime.remote_mode,
-        gateway_runtime.daemon_summary,
-        gateway_runtime.enabled_channel_count,
-        gateway_runtime.total_channel_count,
-        service_runtime.service_health,
-        service_runtime.service_pending_jobs,
-        service_runtime.service_processed_jobs,
-        service_runtime.supervisor_health,
-        service_runtime.supervisor_pending_jobs,
-        service_runtime.supervisor_processed_jobs,
-        ingress_runtime.total_requests,
-        ingress_runtime.accepted_count,
-        ingress_runtime.pending_count,
-        if ingress_runtime.last_request_id.is_empty() { "(none)".to_string() } else { ingress_runtime.last_request_id.clone() },
-        if ingress_runtime.last_job_id.is_empty() { "(none)".to_string() } else { ingress_runtime.last_job_id.clone() },
-        binding_summary.total_count,
-        binding_summary.enabled_count,
-        if binding_summary.binding_ids.is_empty() { "(none)".to_string() } else { binding_summary.binding_ids.join(",") },
-        overview.skills_summary,
-        overview.recurring_summary,
-        skill_summary.total_count,
-        skill_summary.enabled_count,
-        skill_summary.default_count,
-        skill_summary.imported_count,
-        if skill_summary.skill_ids.is_empty() { "(none)".to_string() } else { skill_summary.skill_ids.join(",") },
-        schedule_sync.total_count,
-        schedule_sync.enabled_count,
-        schedule_runtime.due_count,
-        if schedule_sync.job_ids.is_empty() { "(none)".to_string() } else { schedule_sync.job_ids.join(",") },
-        daemon_summary,
-        health_summary,
-        manager_route_status,
-        manager_endpoint,
-        manager_route_model,
-        pulse_profile,
-        pulse_model,
-        manifest_path.display(),
-        root.display(),
-    ));
+            root.display(),
+            setup_state_label(&setup_state),
+            config_status,
+            config_action,
+            config.mode,
+            config.org_id,
+            provider_summary.profile_count,
+            provider_profiles_path.display(),
+            provider_auth_summary.profile_count,
+            provider_auth_summary.ready_count,
+            provider_auth_summary.last_good_count,
+            provider_auth_summary.usage_stats_count,
+            runtime_overview.profile_count,
+            overview.brain_summary,
+            manager_lane,
+            manager_route
+                .as_ref()
+                .map(|route| route.profile_name.as_str())
+                .or_else(|| configured_manager_provider.as_ref().map(|route| route.profile_name.as_str()))
+                .unwrap_or("(pending provider setup)"),
+            manager_route
+                .as_ref()
+                .map(|route| route.transport_kind())
+                .or_else(|| configured_manager_provider.as_ref().map(|route| route.transport_kind.as_str()))
+                .unwrap_or("(pending provider setup)"),
+            manager_model,
+            manifest.codex_auth_source,
+            if manifest.codex_auth_path.trim().is_empty() { "(none)" } else { manifest.codex_auth_path.as_str() },
+            if codex_ready { "yes" } else { "no" },
+            codex_path.as_deref().unwrap_or("(none)"),
+            codex_detail,
+            overview.gateway_summary,
+            overview.telegram_summary,
+            channel_summary.total_count,
+            channel_summary.enabled_count,
+            if channel_summary.channel_ids.is_empty() { "(none)".to_string() } else { channel_summary.channel_ids.join(",") },
+            gateway_runtime.endpoint,
+            gateway_runtime.auth_mode,
+            gateway_runtime.remote_mode,
+            gateway_runtime.daemon_summary,
+            gateway_runtime.enabled_channel_count,
+            gateway_runtime.total_channel_count,
+            service_runtime.service_health,
+            service_runtime.service_pending_jobs,
+            service_runtime.service_processed_jobs,
+            service_runtime.supervisor_health,
+            service_runtime.supervisor_pending_jobs,
+            service_runtime.supervisor_processed_jobs,
+            ingress_runtime.total_requests,
+            ingress_runtime.accepted_count,
+            ingress_runtime.pending_count,
+            if ingress_runtime.last_request_id.is_empty() { "(none)".to_string() } else { ingress_runtime.last_request_id.clone() },
+            if ingress_runtime.last_job_id.is_empty() { "(none)".to_string() } else { ingress_runtime.last_job_id.clone() },
+            binding_summary.total_count,
+            binding_summary.enabled_count,
+            if binding_summary.binding_ids.is_empty() { "(none)".to_string() } else { binding_summary.binding_ids.join(",") },
+            overview.skills_summary,
+            overview.recurring_summary,
+            skill_summary.total_count,
+            skill_summary.enabled_count,
+            skill_summary.default_count,
+            skill_summary.imported_count,
+            if skill_summary.skill_ids.is_empty() { "(none)".to_string() } else { skill_summary.skill_ids.join(",") },
+            schedule_sync.total_count,
+            schedule_sync.enabled_count,
+            schedule_runtime.due_count,
+            if schedule_sync.job_ids.is_empty() { "(none)".to_string() } else { schedule_sync.job_ids.join(",") },
+            daemon_summary,
+            health_summary,
+            manager_route_status,
+            manager_endpoint,
+            manager_route_model,
+            pulse_profile,
+            pulse_model,
+            manifest_path.display(),
+            root.display(),
+        ));
+    }
 
     Ok(())
 }

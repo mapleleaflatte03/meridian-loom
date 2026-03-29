@@ -398,24 +398,24 @@ Next\n\
 
 fn render_startup_banner(color: bool) -> String {
     let icon = [
-        r#"      /\      /\"#,
-        r#"     /  \    /  \"#,
-        r#"    / /\ \  / /\ \"#,
-        r#"   / /  \ \/ /  \ \"#,
-        r#"  /_/    \__/    \_\"#,
-        r#"  \ \    /  \    / / /"#,
-        r#"   \ \  / /\ \  / / /"#,
-        r#"    \_\/_/  \_\/_/_/"#,
+        r#"             /\             "#,
+        r#"        /\  /  \  /\        "#,
+        r#"       /  \/ /\ \/  \       "#,
+        r#"      / /\  /  \  /\ \      "#,
+        r#"     /_/ /_/ /\ \_\ \_\     "#,
+        r#"     \ \ \ \/  \/ / / /     "#,
+        r#"      \ \/  /\  \/ / /      "#,
+        r#"       \___/  \___/ /       "#,
     ]
     .join("\n");
     if color {
         format!(
-            "\x1b[1;92m{}\x1b[0m\n\x1b[1;96mMERIDIAN LOOM\x1b[0m\n\x1b[37mMeridian Loom v0.1.0 - A governed agent fabric for bounded autonomous work.\x1b[0m\n\n",
+            "\x1b[38;5;81m{}\x1b[0m\n\x1b[1;97mMERIDIAN\x1b[0m\n\x1b[38;5;245mCONSTITUTIONAL OS\x1b[0m\n\x1b[38;5;153mLoom v0.1.0 — governed runtime for bounded autonomous work.\x1b[0m\n\n",
             icon,
         )
     } else {
         format!(
-            "{}\nMERIDIAN LOOM\nMeridian Loom v0.1.0 - A governed agent fabric for bounded autonomous work.\n\n",
+            "{}\nMERIDIAN\nCONSTITUTIONAL OS\nLoom v0.1.0 — governed runtime for bounded autonomous work.\n\n",
             icon,
         )
     }
