@@ -388,9 +388,9 @@ Runtime rehearsal\n\
 \n\
 Next\n\
 ----\n\
-  1. loom init --mode embedded --root \"$HOME/.local/share/meridian-loom/runtime/default\" --kernel-path /tmp/meridian-kernel\n\
+  1. loom init --mode embedded --root \"$HOME/.local/share/meridian-loom/runtime/default\" --kernel-path /opt/meridian-kernel\n\
   2. export LOOM_SERVICE_TOKEN=loom-local-token\n\
-  3. loom start --root \"$HOME/.local/share/meridian-loom/runtime/default\" --kernel-path /tmp/meridian-kernel --http-address 127.0.0.1:18910 --service-token \"$LOOM_SERVICE_TOKEN\"\n\
+  3. loom start --root \"$HOME/.local/share/meridian-loom/runtime/default\" --kernel-path /opt/meridian-kernel --http-address 127.0.0.1:18910 --service-token \"$LOOM_SERVICE_TOKEN\"\n\
   4. curl -sS -H 'Authorization: Bearer loom-local-token' http://127.0.0.1:18910/status\n\
   5. loom logs --root \"$HOME/.local/share/meridian-loom/runtime/default\" --lines 50\n",
     );
