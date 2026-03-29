@@ -336,10 +336,18 @@ Meridian will now confirm the local edge, daemon, and built-in runtime defaults 
     )
     .ok();
     let configured_manager_provider = configured_manager_provider(&root).ok();
-    let codex_status = manager_route
+    let manager_profile_name = manager_route
         .as_ref()
-        .filter(|route| matches!(route.profile_kind, ProviderKind::OpenAiCodex))
-        .and_then(|route| provider_auth_status(Some(&root), Some(&route.profile_name)).ok());
+        .map(|route| route.profile_name.clone())
+        .or_else(|| configured_manager_provider.as_ref().map(|route| route.profile_name.clone()));
+    let manager_profile_kind = manager_route
+        .as_ref()
+        .map(|route| route.profile_kind.clone())
+        .or_else(|| configured_manager_provider.as_ref().map(|route| route.profile_kind.clone()));
+    let codex_status = manager_profile_kind
+        .as_ref()
+        .filter(|kind| matches!(kind, ProviderKind::OpenAiCodex))
+        .and_then(|_| provider_auth_status(Some(&root), manager_profile_name.as_deref()).ok());
     let pulse_route = resolve_provider_route(
         Some(&root),
         &ProviderRouteIntent::llm_inference("").with_agent_id("pulse"),
@@ -377,14 +385,8 @@ Meridian will now confirm the local edge, daemon, and built-in runtime defaults 
     let codex_path = codex_status.as_ref().and_then(|status| status.credential_path.clone());
     let codex_detail = if let Some(status) = codex_status.as_ref() {
         status.detail.clone()
-    } else if manager_route
-        .as_ref()
-        .map(|route| matches!(route.profile_kind, ProviderKind::OpenAiCodex))
-        .unwrap_or(false)
-    {
-        "Codex OAuth is not configured yet".to_string()
     } else {
-        "current manager provider does not use Codex OAuth".to_string()
+        codex_detail_for_manager(manager_profile_kind.as_ref())
     };
 
     if format == "json" {
@@ -1330,7 +1332,8 @@ fn normalize_codex_auth_selection(
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_codex_auth_selection;
+    use super::{codex_detail_for_manager, normalize_codex_auth_selection};
+    use loom_core::provider_router::ProviderKind;
 
     #[test]
     fn frontier_none_defaults_to_loom_managed_auth() {
@@ -1346,6 +1349,30 @@ mod tests {
             .expect("local lane should disable codex auth");
         assert_eq!(source, "none");
         assert!(path.is_none());
+    }
+
+    #[test]
+    fn codex_detail_defaults_to_auth_required_for_frontier_profiles() {
+        assert_eq!(
+            codex_detail_for_manager(Some(&ProviderKind::OpenAiCodex)),
+            "Codex OAuth is not configured yet"
+        );
+    }
+
+    #[test]
+    fn codex_detail_stays_disabled_for_local_profiles() {
+        assert_eq!(
+            codex_detail_for_manager(Some(&ProviderKind::LocalOllama)),
+            "current manager provider does not use Codex OAuth"
+        );
+    }
+}
+
+fn codex_detail_for_manager(manager_profile_kind: Option<&ProviderKind>) -> String {
+    if matches!(manager_profile_kind, Some(ProviderKind::OpenAiCodex)) {
+        "Codex OAuth is not configured yet".to_string()
+    } else {
+        "current manager provider does not use Codex OAuth".to_string()
     }
 }
 
