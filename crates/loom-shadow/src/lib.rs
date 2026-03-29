@@ -4195,6 +4195,22 @@ fn send_runtime_service_http_request(
     read_tcp_stream_string(&mut stream)
 }
 
+fn constant_time_eq(a: &str, b: &str) -> bool {
+    let a_bytes = a.as_bytes();
+    let b_bytes = b.as_bytes();
+
+    if a_bytes.len() != b_bytes.len() {
+        return false;
+    }
+
+    let mut result = 0;
+    for i in 0..a_bytes.len() {
+        result |= std::hint::black_box(a_bytes[i] ^ b_bytes[i]);
+    }
+
+    std::hint::black_box(result) == 0
+}
+
 fn handle_runtime_service_http_request(
     root: &Path,
     override_kernel_path: Option<&str>,
@@ -4214,7 +4230,7 @@ fn handle_runtime_service_http_request(
             .strip_prefix("Bearer ")
             .unwrap_or_default()
             .to_string();
-        if presented != expected {
+        if !constant_time_eq(&presented, expected) {
             let payload = "{\"status\":\"unauthorized\",\"note\":\"service token required for this HTTP surface\"}\n".to_string();
             return Ok(RuntimeServiceReply {
                 status: "unauthorized".to_string(),
