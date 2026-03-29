@@ -245,7 +245,7 @@ pub fn update_channel_delivery(
         return Err("status is required".to_string());
     }
     match status {
-        "queued" | "delivered" | "failed" | "blocked" => {}
+        "queued" | "delivered" | "failed" | "blocked" | "legacy_unclosed" => {}
         _ => return Err(format!("unsupported channel delivery status '{}'", status)),
     }
 
@@ -923,6 +923,38 @@ mod tests {
         let history = list_channel_deliveries(&root, 10).expect("list deliveries");
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].delivery_id, record.delivery_id);
+    }
+
+    #[test]
+    fn update_accepts_legacy_unclosed_without_completion_timestamp() {
+        let root = temp_path("loom-channel-legacy-unclosed");
+        init_workspace(&root, "embedded", Some("/tmp/meridian-kernel"), "org_demo")
+            .expect("init workspace");
+        ensure_channel_runtime_scaffold(&root).expect("channel scaffold");
+
+        let record = enqueue_channel_delivery(
+            &root,
+            &ChannelDeliveryRequest {
+                channel_id: "web_api".to_string(),
+                recipient: "founder".to_string(),
+                raw_text: "legacy response".to_string(),
+                allow_receipt_hashes: false,
+                allow_operator_diagnostics: false,
+            },
+        )
+        .expect("enqueue delivery");
+
+        let updated = update_channel_delivery(
+            &root,
+            &record.delivery_id,
+            "legacy_unclosed",
+            None,
+            Some("record predates completion tracking"),
+        )
+        .expect("update delivery");
+        assert_eq!(updated.status, "legacy_unclosed");
+        assert_eq!(updated.completed_at_unix_ms, 0);
+        assert_eq!(updated.status_detail, "record predates completion tracking");
     }
 
     #[test]
