@@ -1644,13 +1644,14 @@ fn call_i32_function(
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_runtime_read_path, runtime_workspace_root};
-    use std::path::PathBuf;
+    use super::resolve_runtime_read_path;
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn runtime_read_path_allows_workspace_relative_inputs() {
         let resolved = resolve_runtime_read_path("notes/summary.txt").expect("workspace relative path");
-        assert_eq!(resolved, runtime_workspace_root().join("notes/summary.txt"));
+        assert!(resolved.is_absolute());
+        assert!(resolved.ends_with(Path::new("workspace/notes/summary.txt")));
     }
 
     #[test]

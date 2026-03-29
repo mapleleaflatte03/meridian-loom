@@ -408,15 +408,21 @@ fn render_startup_banner(color: bool) -> String {
         r#"       \___/  \___/ /       "#,
     ]
     .join("\n");
+    let version_line = format!(
+        "Loom v{} — governed runtime for bounded autonomous work.",
+        env!("CARGO_PKG_VERSION")
+    );
     if color {
         format!(
-            "\x1b[38;5;81m{}\x1b[0m\n\x1b[1;97mMERIDIAN\x1b[0m\n\x1b[38;5;245mCONSTITUTIONAL OS\x1b[0m\n\x1b[38;5;153mLoom v0.1.0 — governed runtime for bounded autonomous work.\x1b[0m\n\n",
+            "\x1b[38;5;81m{}\x1b[0m\n\x1b[1;97mMERIDIAN\x1b[0m\n\x1b[38;5;245mCONSTITUTIONAL OS\x1b[0m\n\x1b[38;5;153m{}\x1b[0m\n\n",
             icon,
+            version_line,
         )
     } else {
         format!(
-            "{}\nMERIDIAN\nCONSTITUTIONAL OS\nLoom v0.1.0 — governed runtime for bounded autonomous work.\n\n",
+            "{}\nMERIDIAN\nCONSTITUTIONAL OS\n{}\n\n",
             icon,
+            version_line,
         )
     }
 }

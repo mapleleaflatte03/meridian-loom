@@ -397,7 +397,7 @@ BANNER
 ' 'CONSTITUTIONAL OS'
     printf '[38;5;153m%s[0m
 
-' 'Loom v0.1.2 - governed runtime for bounded autonomous work.'
+' 'Loom v0.1.3 - governed runtime for bounded autonomous work.'
   else
     printf '%s
 ' "$icon"
@@ -407,7 +407,7 @@ BANNER
 ' 'CONSTITUTIONAL OS'
     printf '%s
 
-' 'Loom v0.1.2 - governed runtime for bounded autonomous work.'
+' 'Loom v0.1.3 - governed runtime for bounded autonomous work.'
   fi
 }
 
