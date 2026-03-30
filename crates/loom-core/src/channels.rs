@@ -76,6 +76,7 @@ pub struct ChannelDeliveryRecord {
     pub deny_reason: String,
     pub redactions_applied: Vec<String>,
     pub detected_tokens: Vec<String>,
+    pub quarantined: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -201,6 +202,7 @@ pub fn enqueue_channel_delivery(root: &Path, request: &ChannelDeliveryRequest) -
             deny_reason: format!("channel '{}' is disabled", channel.channel_id),
             redactions_applied: Vec::new(),
             detected_tokens: Vec::new(),
+            quarantined: false,
         }
     } else {
         let guarded = guard_user_visible_output(
@@ -230,6 +232,7 @@ pub fn enqueue_channel_delivery(root: &Path, request: &ChannelDeliveryRequest) -
             deny_reason: guarded.deny_reason.unwrap_or_default(),
             redactions_applied: guarded.redactions_applied,
             detected_tokens: guarded.detected_tokens,
+            quarantined: false,
         }
     };
 
@@ -342,6 +345,9 @@ pub fn list_channel_deliveries_with_options(
 }
 
 fn channel_delivery_is_archived(record: &ChannelDeliveryRecord, now_unix_ms: u64) -> bool {
+    if record.quarantined {
+        return true;
+    }
     match record.status.as_str() {
         "legacy_unclosed" => true,
         "failed" | "blocked" => {
@@ -751,6 +757,7 @@ fn parse_delivery_record(raw: &str) -> LoomResult<ChannelDeliveryRecord> {
         deny_reason: value_string_or(value.get("deny_reason"), ""),
         redactions_applied: value_array_strings(value.get("redactions_applied")),
         detected_tokens: value_array_strings(value.get("detected_tokens")),
+        quarantined: value.get("quarantined").and_then(Value::as_bool).unwrap_or(false),
     })
 }
 
@@ -807,6 +814,7 @@ fn delivery_record_json(record: &ChannelDeliveryRecord) -> Value {
         "deny_reason": record.deny_reason,
         "redactions_applied": record.redactions_applied,
         "detected_tokens": record.detected_tokens,
+        "quarantined": record.quarantined,
     })
 }
 
