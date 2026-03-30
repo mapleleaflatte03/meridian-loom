@@ -1,0 +1,4 @@
+## 2025-03-30 - Constant-Time String Comparisons Pattern
+**Vulnerability:** Service token validation (`handle_runtime_service_http_request`) used `!=` for string comparison, creating a timing attack vulnerability that could leak the token length and contents to an attacker.
+**Learning:** For straightforward cryptographic algorithms like constant-time string comparisons, the Meridian Loom project prefers implementing simple inline helper functions (using bitwise XOR and `std::hint::black_box` to prevent compiler optimization) over adding external cryptographic dependencies (e.g., `subtle` crate).
+**Prevention:** When implementing token, password, or hash comparisons, always write or reuse a `constant_time_eq` helper wrapped in `black_box` instead of using the standard `==` or `!=` operators. Avoid pulling in external crates just for this.
