@@ -142,9 +142,7 @@ pub fn sync_provider_auth_store(root: &Path) -> LoomResult<ProviderAuthStoreOver
 
 pub fn load_provider_auth_store(root: &Path) -> LoomResult<ProviderAuthStore> {
     ensure_provider_auth_store_scaffold(root)?;
-    parse_provider_auth_store(
-        &fs::read_to_string(provider_auth_store_path(root)).map_err(io_err)?,
-    )
+    parse_provider_auth_store(&fs::read_to_string(provider_auth_store_path(root)).map_err(io_err)?)
 }
 
 pub fn provider_auth_store_overview(root: &Path) -> LoomResult<ProviderAuthStoreOverview> {
@@ -280,13 +278,8 @@ pub fn render_provider_auth_profiles_human(records: &[ProviderAuthProfileSnapsho
 }
 
 pub fn render_provider_auth_profiles_json(records: &[ProviderAuthProfileSnapshot]) -> String {
-    serde_json::to_string_pretty(
-        &records
-            .iter()
-            .map(snapshot_json)
-            .collect::<Vec<_>>(),
-    )
-    .unwrap_or_else(|_| "[]".to_string())
+    serde_json::to_string_pretty(&records.iter().map(snapshot_json).collect::<Vec<_>>())
+        .unwrap_or_else(|_| "[]".to_string())
         + "\n"
 }
 
@@ -323,9 +316,7 @@ pub fn render_provider_auth_profile_human(record: &ProviderAuthProfileSnapshot) 
 }
 
 pub fn render_provider_auth_profile_json(record: &ProviderAuthProfileSnapshot) -> String {
-    serde_json::to_string_pretty(&snapshot_json(record))
-        .unwrap_or_else(|_| "{}".to_string())
-        + "\n"
+    serde_json::to_string_pretty(&snapshot_json(record)).unwrap_or_else(|_| "{}".to_string()) + "\n"
 }
 
 fn read_existing_store(path: &Path) -> LoomResult<Option<ProviderAuthStore>> {
@@ -339,8 +330,8 @@ fn persist_provider_auth_store(path: &Path, store: &ProviderAuthStore) -> LoomRe
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(io_err)?;
     }
-    let mut rendered = serde_json::to_string_pretty(&store_json(store))
-        .map_err(|error| error.to_string())?;
+    let mut rendered =
+        serde_json::to_string_pretty(&store_json(store)).map_err(|error| error.to_string())?;
     rendered.push('\n');
     fs::write(path, rendered).map_err(io_err)
 }
@@ -364,7 +355,11 @@ fn parse_provider_auth_store(raw: &str) -> LoomResult<ProviderAuthStore> {
         .map(|entries| {
             entries
                 .iter()
-                .filter_map(|(key, value)| value.as_str().map(|profile_name| (key.clone(), profile_name.trim().to_string())))
+                .filter_map(|(key, value)| {
+                    value
+                        .as_str()
+                        .map(|profile_name| (key.clone(), profile_name.trim().to_string()))
+                })
                 .filter(|(_, profile_name)| !profile_name.is_empty())
                 .collect::<BTreeMap<_, _>>()
         })
@@ -383,15 +378,23 @@ fn parse_provider_auth_store(raw: &str) -> LoomResult<ProviderAuthStore> {
     })
 }
 
-fn parse_profiles_map(entries: &serde_json::Map<String, Value>) -> LoomResult<BTreeMap<String, ProviderAuthProfileRecord>> {
+fn parse_profiles_map(
+    entries: &serde_json::Map<String, Value>,
+) -> LoomResult<BTreeMap<String, ProviderAuthProfileRecord>> {
     let mut profiles = BTreeMap::new();
     for (profile_name, value) in entries {
-        profiles.insert(profile_name.clone(), parse_profile_record(profile_name, value)?);
+        profiles.insert(
+            profile_name.clone(),
+            parse_profile_record(profile_name, value)?,
+        );
     }
     Ok(profiles)
 }
 
-fn parse_profile_record(profile_name: &str, value: &Value) -> LoomResult<ProviderAuthProfileRecord> {
+fn parse_profile_record(
+    profile_name: &str,
+    value: &Value,
+) -> LoomResult<ProviderAuthProfileRecord> {
     Ok(ProviderAuthProfileRecord {
         profile_name: required_string(value.get("profile_name"), "profile_name")
             .unwrap_or_else(|_| profile_name.to_string()),
@@ -404,7 +407,9 @@ fn parse_profile_record(profile_name: &str, value: &Value) -> LoomResult<Provide
     })
 }
 
-fn parse_usage_stats_map(entries: &serde_json::Map<String, Value>) -> LoomResult<BTreeMap<String, ProviderAuthProfileUsageStats>> {
+fn parse_usage_stats_map(
+    entries: &serde_json::Map<String, Value>,
+) -> LoomResult<BTreeMap<String, ProviderAuthProfileUsageStats>> {
     let mut usage_stats = BTreeMap::new();
     for (profile_name, value) in entries {
         usage_stats.insert(profile_name.clone(), parse_usage_stats(value));
@@ -416,7 +421,10 @@ fn parse_usage_stats(value: &Value) -> ProviderAuthProfileUsageStats {
     ProviderAuthProfileUsageStats {
         last_used_at_ms: value.get("last_used_at_ms").and_then(Value::as_u64),
         last_failure_at_ms: value.get("last_failure_at_ms").and_then(Value::as_u64),
-        error_count: value.get("error_count").and_then(Value::as_u64).unwrap_or(0),
+        error_count: value
+            .get("error_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
         cooldown_until_ms: value.get("cooldown_until_ms").and_then(Value::as_u64),
         cooldown_reason: optional_string(value.get("cooldown_reason")),
     }
@@ -527,20 +535,32 @@ fn provider_auth_store_overview_from_store(
     ProviderAuthStoreOverview {
         store_path,
         profile_count: store.profiles.len(),
-        ready_count: store.profiles.values().filter(|record| record.ready).count(),
+        ready_count: store
+            .profiles
+            .values()
+            .filter(|record| record.ready)
+            .count(),
         last_good_count: store.last_good.len(),
         usage_stats_count: store.usage_stats.len(),
         profile_names: store.profiles.keys().cloned().collect(),
     }
 }
 
-fn required_profile_name<'a>(store: &'a ProviderAuthStore, profile_name: &'a str) -> LoomResult<&'a str> {
+fn required_profile_name<'a>(
+    store: &'a ProviderAuthStore,
+    profile_name: &'a str,
+) -> LoomResult<&'a str> {
     let normalized = profile_name.trim();
     if normalized.is_empty() {
         return Err("profile is required".to_string());
     }
     if !store.profiles.contains_key(normalized) {
-        let available = store.profiles.keys().cloned().collect::<Vec<_>>().join(", ");
+        let available = store
+            .profiles
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
         return Err(format!(
             "provider auth profile '{}' was not found (available: {})",
             normalized, available
@@ -574,8 +594,8 @@ fn now_unix_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider_router::configure_onboard_provider_routes;
     use crate::init_workspace;
+    use crate::provider_router::configure_onboard_provider_routes;
 
     fn temp_path(label: &str) -> PathBuf {
         let unique = SystemTime::now()
@@ -593,8 +613,13 @@ mod tests {
         let root = temp_path("loom-provider-auth-store");
         init_workspace(&root, "embedded", Some("/tmp/meridian-kernel"), "org_demo")
             .expect("init workspace");
-        configure_onboard_provider_routes(&root, "frontier", Some("gpt-5.4"), Some("/tmp/does-not-exist/auth.json"))
-            .expect("configure routes");
+        configure_onboard_provider_routes(
+            &root,
+            "frontier",
+            Some("gpt-5.4"),
+            Some("/tmp/does-not-exist/auth.json"),
+        )
+        .expect("configure routes");
 
         let overview = sync_provider_auth_store(&root).expect("sync auth store");
         assert!(overview.profile_count >= 1);
@@ -609,14 +634,22 @@ mod tests {
         init_workspace(&root, "embedded", Some("/tmp/meridian-kernel"), "org_demo")
             .expect("init workspace");
         sync_provider_auth_store(&root).expect("sync auth store");
-        let failed = mark_provider_auth_profile_failure(&root, "local_ollama", Some("rate_limit"), Some(5_000))
-            .expect("mark failure");
+        let failed = mark_provider_auth_profile_failure(
+            &root,
+            "local_ollama",
+            Some("rate_limit"),
+            Some(5_000),
+        )
+        .expect("mark failure");
         assert_eq!(failed.cooldown_reason.as_deref(), Some("rate_limit"));
         assert!(failed.cooldown_until_ms.is_some());
 
         let used = mark_provider_auth_profile_used(&root, "local_ollama").expect("mark used");
         assert!(used.last_used_at_ms.is_some());
         assert!(used.cooldown_until_ms.is_none());
-        assert!(used.last_good_for.iter().any(|value| value == "local_ollama"));
+        assert!(used
+            .last_good_for
+            .iter()
+            .any(|value| value == "local_ollama"));
     }
 }

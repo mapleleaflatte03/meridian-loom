@@ -24,7 +24,6 @@ pub(crate) fn handle_wasm_limits(args: &[String]) -> LoomResult<()> {
     Ok(())
 }
 
-
 pub(crate) fn handle_wasm_profile(args: &[String]) -> LoomResult<()> {
     if args.get(1).map(String::as_str) != Some("show") {
         return Err("wasm profile supports 'show'".to_string());
@@ -41,7 +40,6 @@ pub(crate) fn handle_wasm_profile(args: &[String]) -> LoomResult<()> {
     }
     Ok(())
 }
-
 
 pub(crate) fn handle_wasm_host(args: &[String]) -> LoomResult<()> {
     if args.get(1).map(String::as_str) != Some("show") {
@@ -90,7 +88,6 @@ pub(crate) fn handle_wasm_host(args: &[String]) -> LoomResult<()> {
     Ok(())
 }
 
-
 pub(crate) fn handle_wasm_run(args: &[String]) -> LoomResult<()> {
     let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
     let backend = match take_value(args, "--backend")
@@ -127,7 +124,8 @@ pub(crate) fn handle_wasm_run(args: &[String]) -> LoomResult<()> {
         .with_store_limits(limits)
         .build()
         .map_err(|errors| format!("invalid wasm host config: {}", errors.join("; ")))?;
-    let module_source = take_value(args, "--module").unwrap_or_else(|| "builtin:minimal".to_string());
+    let module_source =
+        take_value(args, "--module").unwrap_or_else(|| "builtin:minimal".to_string());
     let source = if module_source == "builtin:minimal" {
         WasmGuestSource::WasmBytes {
             name: "builtin:minimal".to_string(),
@@ -142,13 +140,18 @@ pub(crate) fn handle_wasm_run(args: &[String]) -> LoomResult<()> {
     };
     let entrypoint = take_value(args, "--entrypoint").unwrap_or_else(|| "run".to_string());
     let entrypoint_args = take_value(args, "--entrypoint-arg")
-        .map(|raw| raw.parse::<i32>().map(|value| vec![value]).map_err(|error| {
-            format!("invalid --entrypoint-arg '{}': {}", raw, error)
-        }))
+        .map(|raw| {
+            raw.parse::<i32>()
+                .map(|value| vec![value])
+                .map_err(|error| format!("invalid --entrypoint-arg '{}': {}", raw, error))
+        })
         .transpose()?
         .unwrap_or_default();
     let fuel_budget = take_value(args, "--fuel-budget")
-        .map(|raw| raw.parse::<u64>().map_err(|error| format!("invalid --fuel-budget '{}': {}", raw, error)))
+        .map(|raw| {
+            raw.parse::<u64>()
+                .map_err(|error| format!("invalid --fuel-budget '{}': {}", raw, error))
+        })
         .transpose()?
         .unwrap_or(100_000);
     let result = run_wasm_guest(&WasmExecutionRequest {
@@ -167,7 +170,6 @@ pub(crate) fn handle_wasm_run(args: &[String]) -> LoomResult<()> {
     Ok(())
 }
 
-
 pub(crate) fn handle_wasm(args: &[String]) -> LoomResult<()> {
     match args.first().map(String::as_str) {
         Some("limits") => handle_wasm_limits(args),
@@ -177,7 +179,6 @@ pub(crate) fn handle_wasm(args: &[String]) -> LoomResult<()> {
         _ => Err("wasm supports 'limits', 'profile show', 'host show', and 'run'".to_string()),
     }
 }
-
 
 pub(crate) fn render_wasm_run_human(result: &loom_core::wasm_host::WasmExecutionResult) -> String {
     let mut out = format!(
@@ -218,7 +219,6 @@ pub(crate) fn render_wasm_run_human(result: &loom_core::wasm_host::WasmExecution
     }
     out
 }
-
 
 pub(crate) fn render_wasm_run_json(result: &loom_core::wasm_host::WasmExecutionResult) -> String {
     let host_hints = result
@@ -264,11 +264,10 @@ pub(crate) fn render_wasm_run_json(result: &loom_core::wasm_host::WasmExecutionR
     )
 }
 
-
 pub(crate) fn builtin_minimal_wasm_module() -> Vec<u8> {
     vec![
-        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x05, 0x01, 0x60, 0x00, 0x01,
-        0x7f, 0x03, 0x02, 0x01, 0x00, 0x07, 0x07, 0x01, 0x03, 0x72, 0x75, 0x6e, 0x00, 0x00,
-        0x0a, 0x06, 0x01, 0x04, 0x00, 0x41, 0x07, 0x0b,
+        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x05, 0x01, 0x60, 0x00, 0x01, 0x7f,
+        0x03, 0x02, 0x01, 0x00, 0x07, 0x07, 0x01, 0x03, 0x72, 0x75, 0x6e, 0x00, 0x00, 0x0a, 0x06,
+        0x01, 0x04, 0x00, 0x41, 0x07, 0x0b,
     ]
 }

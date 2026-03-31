@@ -92,11 +92,17 @@ impl ProviderKind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProviderAuthMode {
     None,
-    BearerEnv { env_var: String },
-    StaticHeaderEnv { header_name: String, env_var: String },
-    CodexAuthJson { path: Option<String> },
+    BearerEnv {
+        env_var: String,
+    },
+    StaticHeaderEnv {
+        header_name: String,
+        env_var: String,
+    },
+    CodexAuthJson {
+        path: Option<String>,
+    },
 }
-
 
 impl ProviderAuthMode {
     pub fn label(&self) -> &'static str {
@@ -226,9 +232,15 @@ impl ResolvedProviderRoute {
                             self.profile_name, env_var
                         )
                     })?;
-                Ok(vec![("authorization".to_string(), format!("Bearer {value}"))])
+                Ok(vec![(
+                    "authorization".to_string(),
+                    format!("Bearer {value}"),
+                )])
             }
-            ProviderAuthMode::StaticHeaderEnv { header_name, env_var } => {
+            ProviderAuthMode::StaticHeaderEnv {
+                header_name,
+                env_var,
+            } => {
                 let value = std::env::var(env_var)
                     .ok()
                     .map(|raw| raw.trim().to_string())
@@ -243,7 +255,10 @@ impl ResolvedProviderRoute {
             }
             ProviderAuthMode::CodexAuthJson { path } => {
                 let material = read_codex_auth_material(path.as_deref())?;
-                let mut headers = vec![("authorization".to_string(), format!("Bearer {}", material.access_token))];
+                let mut headers = vec![(
+                    "authorization".to_string(),
+                    format!("Bearer {}", material.access_token),
+                )];
                 if let Some(account_id) = material.account_id.as_deref() {
                     headers.push(("ChatGPT-Account-Id".to_string(), account_id.to_string()));
                 }
@@ -292,7 +307,6 @@ pub struct OnboardProviderRouteConfig {
     pub make_default: bool,
 }
 
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProviderAuthStatus {
     pub profile_name: String,
@@ -333,24 +347,21 @@ pub fn configure_onboard_provider_routes(
 ) -> LoomResult<PathBuf> {
     ensure_provider_profiles_scaffold(root)?;
     let mut profiles = load_provider_profiles(Some(root))?;
-    let resolved_manager_model = manager_model.and_then(trim_to_option)
-        .unwrap_or_else(|| match manager_lane.trim().to_ascii_lowercase().as_str() {
+    let resolved_manager_model = manager_model.and_then(trim_to_option).unwrap_or_else(|| {
+        match manager_lane.trim().to_ascii_lowercase().as_str() {
             "local" => DEFAULT_MODEL_ALIAS.to_string(),
             _ => DEFAULT_CODEX_MODEL_ALIAS.to_string(),
-        });
+        }
+    });
     let resolved_frontier_auth_path = if matches!(
         manager_lane.trim().to_ascii_lowercase().as_str(),
         "" | "frontier" | "codex"
     ) {
-        Some(
-            codex_auth_path
-                .and_then(trim_to_option)
-                .unwrap_or_else(|| {
-                    default_codex_auth_path_hint()
-                        .map(|path| path.display().to_string())
-                        .unwrap_or_else(|_| DEFAULT_LOOM_CODEX_AUTH_PATH.to_string())
-                }),
-        )
+        Some(codex_auth_path.and_then(trim_to_option).unwrap_or_else(|| {
+            default_codex_auth_path_hint()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|_| DEFAULT_LOOM_CODEX_AUTH_PATH.to_string())
+        }))
     } else {
         codex_auth_path.and_then(trim_to_option)
     };
@@ -391,12 +402,11 @@ pub fn configure_onboard_provider_profile(
 ) -> LoomResult<PathBuf> {
     ensure_provider_profiles_scaffold(root)?;
     let mut profiles = load_provider_profiles(Some(root))?;
-    let route_model = trim_to_option(&config.default_model)
-        .unwrap_or_else(|| match config.kind {
-            ProviderKind::OpenAiCodex => DEFAULT_CODEX_MODEL_ALIAS.to_string(),
-            ProviderKind::LocalOllama => DEFAULT_MODEL_ALIAS.to_string(),
-            _ => DEFAULT_CODEX_MODEL_ALIAS.to_string(),
-        });
+    let route_model = trim_to_option(&config.default_model).unwrap_or_else(|| match config.kind {
+        ProviderKind::OpenAiCodex => DEFAULT_CODEX_MODEL_ALIAS.to_string(),
+        ProviderKind::LocalOllama => DEFAULT_MODEL_ALIAS.to_string(),
+        _ => DEFAULT_CODEX_MODEL_ALIAS.to_string(),
+    });
 
     upsert_provider_profile(
         &mut profiles,
@@ -449,8 +459,10 @@ pub fn provider_plane_summary(root: Option<&Path>) -> LoomResult<ProviderPlaneSu
     })
 }
 
-
-pub fn provider_auth_status(root: Option<&Path>, profile_name: Option<&str>) -> LoomResult<ProviderAuthStatus> {
+pub fn provider_auth_status(
+    root: Option<&Path>,
+    profile_name: Option<&str>,
+) -> LoomResult<ProviderAuthStatus> {
     let profiles = load_provider_profiles(root)?;
     let selected_profile_name = profile_name
         .and_then(trim_to_option)
@@ -493,7 +505,10 @@ pub fn provider_auth_status(root: Option<&Path>, profile_name: Option<&str>) -> 
                 },
             )
         }
-        ProviderAuthMode::StaticHeaderEnv { header_name, env_var } => {
+        ProviderAuthMode::StaticHeaderEnv {
+            header_name,
+            env_var,
+        } => {
             let ready = env_trimmed(env_var).is_some();
             (
                 Some(env_var.clone()),
@@ -507,7 +522,8 @@ pub fn provider_auth_status(root: Option<&Path>, profile_name: Option<&str>) -> 
                 },
             )
         }
-        ProviderAuthMode::CodexAuthJson { path } => match read_codex_auth_material(path.as_deref()) {
+        ProviderAuthMode::CodexAuthJson { path } => match read_codex_auth_material(path.as_deref())
+        {
             Ok(material) => (
                 None,
                 Some("authorization".to_string()),
@@ -560,7 +576,10 @@ pub fn load_provider_profiles(root: Option<&Path>) -> LoomResult<ProviderProfile
     augment_provider_profiles(&root, env_default_provider_profiles())
 }
 
-pub fn resolve_provider_route(root: Option<&Path>, intent: &ProviderRouteIntent) -> LoomResult<ResolvedProviderRoute> {
+pub fn resolve_provider_route(
+    root: Option<&Path>,
+    intent: &ProviderRouteIntent,
+) -> LoomResult<ResolvedProviderRoute> {
     let root = resolve_runtime_root(root)?;
     let profiles = load_provider_profiles(Some(&root))?;
     let agent_policy = intent
@@ -574,7 +593,8 @@ pub fn resolve_provider_route(root: Option<&Path>, intent: &ProviderRouteIntent)
         .and_then(|agent_id| agent_runtime::agent_provider_profile(&root, agent_id).ok());
     let explicit_profile = intent.preferred_profile_name.clone();
     let agent_policy_profile = agent_policy.and_then(|policy| policy.profile_name.clone());
-    let capability_policy_profile = capability_policy.and_then(|policy| policy.profile_name.clone());
+    let capability_policy_profile =
+        capability_policy.and_then(|policy| policy.profile_name.clone());
     let profile_name = explicit_profile
         .clone()
         .or_else(|| agent_policy_profile.clone())
@@ -635,7 +655,10 @@ pub fn resolve_provider_route(root: Option<&Path>, intent: &ProviderRouteIntent)
     } else if agent_runtime_profile.is_some() {
         profile.default_model.clone()
     } else if let Some(policy) = capability_policy {
-        policy.default_model.clone().unwrap_or_else(|| profile.default_model.clone())
+        policy
+            .default_model
+            .clone()
+            .unwrap_or_else(|| profile.default_model.clone())
     } else {
         profile.default_model.clone()
     };
@@ -643,13 +666,22 @@ pub fn resolve_provider_route(root: Option<&Path>, intent: &ProviderRouteIntent)
         "explicit_profile" => "resolved from explicit provider profile override".to_string(),
         "default_profile" => "resolved from runtime default provider profile".to_string(),
         _ if matched_rule.starts_with("agent:") => {
-            format!("resolved from agent-scoped provider routing rule ({})", matched_rule)
+            format!(
+                "resolved from agent-scoped provider routing rule ({})",
+                matched_rule
+            )
         }
         _ if matched_rule.starts_with("agent_runtime:") => {
-            format!("resolved from agent runtime provider profile ({})", matched_rule)
+            format!(
+                "resolved from agent runtime provider profile ({})",
+                matched_rule
+            )
         }
         _ if matched_rule.starts_with("capability:") => {
-            format!("resolved from capability-scoped provider routing rule ({})", matched_rule)
+            format!(
+                "resolved from capability-scoped provider routing rule ({})",
+                matched_rule
+            )
         }
         _ => profile.note.clone(),
     };
@@ -668,7 +700,10 @@ pub fn resolve_provider_route(root: Option<&Path>, intent: &ProviderRouteIntent)
     })
 }
 
-pub fn resolve_llm_route(root: Option<&Path>, intent: &ProviderRouteIntent) -> LoomResult<ResolvedProviderRoute> {
+pub fn resolve_llm_route(
+    root: Option<&Path>,
+    intent: &ProviderRouteIntent,
+) -> LoomResult<ResolvedProviderRoute> {
     resolve_provider_route(root, intent)
 }
 
@@ -750,7 +785,6 @@ pub fn render_provider_auth_json(status: &ProviderAuthStatus) -> String {
         json_string(&status.detail),
     )
 }
-
 
 pub fn render_provider_route_human(route: &ResolvedProviderRoute) -> String {
     format!(
@@ -837,12 +871,10 @@ fn default_app_home() -> LoomResult<PathBuf> {
     if let Ok(value) = std::env::var("XDG_DATA_HOME") {
         let trimmed = value.trim();
         if !trimmed.is_empty() {
-            return Ok(
-                PathBuf::from(trimmed)
-                    .join("meridian-loom")
-                    .join("runtime")
-                    .join("default"),
-            );
+            return Ok(PathBuf::from(trimmed)
+                .join("meridian-loom")
+                .join("runtime")
+                .join("default"));
         }
     }
     let home = std::env::var("HOME")
@@ -869,8 +901,7 @@ fn render_default_provider_profiles() -> String {
             base_url: DEFAULT_LOCAL_OLLAMA_ENDPOINT.to_string(),
             default_model: DEFAULT_MODEL_ALIAS.to_string(),
             auth: ProviderAuthMode::None,
-            note: "seeded Meridian local inference route for the bounded LLM host call"
-                .to_string(),
+            note: "seeded Meridian local inference route for the bounded LLM host call".to_string(),
         }],
         routing: ProviderRoutingTable {
             capabilities: BTreeMap::from([(
@@ -891,7 +922,8 @@ fn render_default_provider_profiles() -> String {
 fn parse_provider_profiles_json(raw: &str) -> LoomResult<ProviderProfileSet> {
     let value: Value = serde_json::from_str(raw)
         .map_err(|error| format!("invalid provider profiles json: {error}"))?;
-    let default_profile_name = value_string_or(value.get("default_profile"), DEFAULT_LOCAL_PROFILE_NAME);
+    let default_profile_name =
+        value_string_or(value.get("default_profile"), DEFAULT_LOCAL_PROFILE_NAME);
     let profiles = value
         .get("profiles")
         .and_then(Value::as_array)
@@ -996,9 +1028,13 @@ fn parse_provider_auth(value: Option<&Value>) -> LoomResult<ProviderAuthMode> {
             Ok(ProviderAuthMode::BearerEnv { env_var })
         }
         "static_header_env" | "static-header-env" => {
-            let header_name = value_string(value.get("header_name"), "static_header_env.header_name")?;
+            let header_name =
+                value_string(value.get("header_name"), "static_header_env.header_name")?;
             let env_var = value_string(value.get("env_var"), "static_header_env.env_var")?;
-            Ok(ProviderAuthMode::StaticHeaderEnv { header_name, env_var })
+            Ok(ProviderAuthMode::StaticHeaderEnv {
+                header_name,
+                env_var,
+            })
         }
         "codex_auth_json" | "codex-auth-json" | "oauth" => Ok(ProviderAuthMode::CodexAuthJson {
             path: value
@@ -1013,19 +1049,23 @@ fn parse_provider_auth(value: Option<&Value>) -> LoomResult<ProviderAuthMode> {
 
 fn env_default_provider_profiles() -> ProviderProfileSet {
     let explicit_base_url = env_trimmed(ENV_LLM_BASE_URL);
-    let explicit_model = env_trimmed(ENV_LLM_MODEL).unwrap_or_else(|| DEFAULT_MODEL_ALIAS.to_string());
+    let explicit_model =
+        env_trimmed(ENV_LLM_MODEL).unwrap_or_else(|| DEFAULT_MODEL_ALIAS.to_string());
     if let Some(base_url) = explicit_base_url {
-        let inferred_kind = ProviderKind::from_str(
-            &env_trimmed(ENV_PROVIDER_KIND)
-                .unwrap_or_else(|| infer_provider_kind_from_base_url(&base_url).label().to_string()),
-        )
-        .unwrap_or_else(|| infer_provider_kind_from_base_url(&base_url));
-        let profile_name = env_trimmed(ENV_PROVIDER_PROFILE).unwrap_or_else(|| match inferred_kind {
-            ProviderKind::LocalOllama => DEFAULT_LOCAL_PROFILE_NAME.to_string(),
-            ProviderKind::OpenAiCompatible => DEFAULT_OPENAI_PROFILE_NAME.to_string(),
-            ProviderKind::OpenAiCodex => "openai_codex_default".to_string(),
-            ProviderKind::CustomEndpoint => DEFAULT_CUSTOM_PROFILE_NAME.to_string(),
-        });
+        let inferred_kind =
+            ProviderKind::from_str(&env_trimmed(ENV_PROVIDER_KIND).unwrap_or_else(|| {
+                infer_provider_kind_from_base_url(&base_url)
+                    .label()
+                    .to_string()
+            }))
+            .unwrap_or_else(|| infer_provider_kind_from_base_url(&base_url));
+        let profile_name =
+            env_trimmed(ENV_PROVIDER_PROFILE).unwrap_or_else(|| match inferred_kind {
+                ProviderKind::LocalOllama => DEFAULT_LOCAL_PROFILE_NAME.to_string(),
+                ProviderKind::OpenAiCompatible => DEFAULT_OPENAI_PROFILE_NAME.to_string(),
+                ProviderKind::OpenAiCodex => "openai_codex_default".to_string(),
+                ProviderKind::CustomEndpoint => DEFAULT_CUSTOM_PROFILE_NAME.to_string(),
+            });
         let auth = env_default_auth_mode(&base_url, &inferred_kind);
         return ProviderProfileSet {
             default_profile_name: profile_name.clone(),
@@ -1131,8 +1171,8 @@ fn env_default_auth_mode(base_url: &str, kind: &ProviderKind) -> ProviderAuthMod
 }
 
 fn normalize_endpoint_url(kind: &ProviderKind, raw: &str) -> LoomResult<Url> {
-    let mut url = Url::parse(raw.trim())
-        .map_err(|error| format!("provider base_url is invalid: {error}"))?;
+    let mut url =
+        Url::parse(raw.trim()).map_err(|error| format!("provider base_url is invalid: {error}"))?;
     let normalized_path = match kind {
         ProviderKind::OpenAiCodex => normalize_path(url.path(), "/responses"),
         _ => normalize_path(url.path(), "/v1/chat/completions"),
@@ -1172,14 +1212,21 @@ fn build_frontier_profile(name: &str, note: &str) -> ProviderProfile {
     }
 }
 
-fn augment_provider_profiles(_root: &Path, mut profiles: ProviderProfileSet) -> LoomResult<ProviderProfileSet> {
+fn augment_provider_profiles(
+    _root: &Path,
+    mut profiles: ProviderProfileSet,
+) -> LoomResult<ProviderProfileSet> {
     ensure_frontier_profiles(&mut profiles);
     Ok(profiles)
 }
 
 fn ensure_frontier_profiles(profiles: &mut ProviderProfileSet) {
     for (name, note) in FRONTIER_PROFILE_SPECS {
-        if !profiles.profiles.iter().any(|profile| profile.name == *name) {
+        if !profiles
+            .profiles
+            .iter()
+            .any(|profile| profile.name == *name)
+        {
             profiles.profiles.push(build_frontier_profile(name, note));
         }
     }
@@ -1202,7 +1249,9 @@ fn apply_frontier_profile_defaults(
     explicit_path: Option<&str>,
     explicit_model: Option<&str>,
 ) {
-    let path = explicit_path.and_then(trim_to_option).map(|value| value.to_string());
+    let path = explicit_path
+        .and_then(trim_to_option)
+        .map(|value| value.to_string());
     let model = explicit_model
         .and_then(trim_to_option)
         .map(|value| value.to_string());
@@ -1322,8 +1371,9 @@ fn resolve_codex_auth_path(explicit_path: Option<&str>) -> LoomResult<PathBuf> {
 }
 
 fn resolve_loom_codex_auth_path(explicit_path: Option<&str>) -> LoomResult<PathBuf> {
-    let home = std::env::var("HOME")
-        .map_err(|_| "HOME is not set and Loom Codex auth.json could not be resolved".to_string())?;
+    let home = std::env::var("HOME").map_err(|_| {
+        "HOME is not set and Loom Codex auth.json could not be resolved".to_string()
+    })?;
     let path = explicit_path
         .map(str::trim)
         .filter(|raw| !raw.is_empty())
@@ -1338,16 +1388,31 @@ fn resolve_loom_codex_auth_path(explicit_path: Option<&str>) -> LoomResult<PathB
 
 fn read_codex_auth_material(explicit_path: Option<&str>) -> LoomResult<CodexAuthMaterial> {
     let auth_path = resolve_codex_auth_path(explicit_path)?;
-    let raw = fs::read_to_string(&auth_path)
-        .map_err(|error| format!("failed to read Codex auth.json at {}: {}", auth_path.display(), error))?;
-    let value: Value = serde_json::from_str(&raw)
-        .map_err(|error| format!("invalid Codex auth.json at {}: {}", auth_path.display(), error))?;
+    let raw = fs::read_to_string(&auth_path).map_err(|error| {
+        format!(
+            "failed to read Codex auth.json at {}: {}",
+            auth_path.display(),
+            error
+        )
+    })?;
+    let value: Value = serde_json::from_str(&raw).map_err(|error| {
+        format!(
+            "invalid Codex auth.json at {}: {}",
+            auth_path.display(),
+            error
+        )
+    })?;
     let access_token = value
         .pointer("/tokens/access_token")
         .and_then(Value::as_str)
         .map(|raw| raw.trim().to_string())
         .filter(|raw| !raw.is_empty())
-        .ok_or_else(|| format!("Codex auth.json at {} does not contain tokens.access_token", auth_path.display()))?;
+        .ok_or_else(|| {
+            format!(
+                "Codex auth.json at {} does not contain tokens.access_token",
+                auth_path.display()
+            )
+        })?;
     let refresh_token = value
         .pointer("/tokens/refresh_token")
         .and_then(Value::as_str)
@@ -1444,7 +1509,12 @@ fn codex_identity_from_value(value: &Value) -> CodexIdentityFingerprint {
         .map(str::trim)
         .filter(|raw| !raw.is_empty())
         .map(ToOwned::to_owned);
-    CodexIdentityFingerprint { account_id, subject_id, email, name }
+    CodexIdentityFingerprint {
+        account_id,
+        subject_id,
+        email,
+        name,
+    }
 }
 
 fn decode_jwt_payload_json(token: &str) -> Option<Value> {
@@ -1484,7 +1554,10 @@ fn decode_base64_url(raw: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
-fn codex_principal_matches(left: &CodexIdentityFingerprint, right: &CodexIdentityFingerprint) -> bool {
+fn codex_principal_matches(
+    left: &CodexIdentityFingerprint,
+    right: &CodexIdentityFingerprint,
+) -> bool {
     if let (Some(left), Some(right)) = (left.subject_id.as_deref(), right.subject_id.as_deref()) {
         return left == right;
     }
@@ -1501,8 +1574,14 @@ fn describe_codex_identity(identity: &CodexIdentityFingerprint) -> String {
     match (
         identity.name.as_deref().filter(|value| !value.is_empty()),
         identity.email.as_deref().filter(|value| !value.is_empty()),
-        identity.subject_id.as_deref().filter(|value| !value.is_empty()),
-        identity.account_id.as_deref().filter(|value| !value.is_empty()),
+        identity
+            .subject_id
+            .as_deref()
+            .filter(|value| !value.is_empty()),
+        identity
+            .account_id
+            .as_deref()
+            .filter(|value| !value.is_empty()),
     ) {
         (Some(name), Some(email), _, _) => format!("{} <{}>", name, email),
         (Some(name), None, Some(subject), _) => format!("{} [{}]", name, subject),
@@ -1522,7 +1601,11 @@ fn normalize_path(current: &str, required_suffix: &str) -> String {
     if trimmed.ends_with(required_suffix) {
         return trimmed.to_string();
     }
-    format!("{}/{}", trimmed.trim_end_matches('/'), required_suffix.trim_start_matches('/'))
+    format!(
+        "{}/{}",
+        trimmed.trim_end_matches('/'),
+        required_suffix.trim_start_matches('/')
+    )
 }
 
 fn env_trimmed(name: &str) -> Option<String> {
@@ -1589,7 +1672,9 @@ mod tests {
 
     fn home_env_guard() -> MutexGuard<'static, ()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(())).lock().expect("lock HOME env")
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("lock HOME env")
     }
 
     #[test]
@@ -1614,7 +1699,8 @@ mod tests {
         assert!(profiles
             .profiles
             .iter()
-            .any(|profile| profile.name == "manager_frontier" && profile.kind == ProviderKind::OpenAiCodex));
+            .any(|profile| profile.name == "manager_frontier"
+                && profile.kind == ProviderKind::OpenAiCodex));
         assert_eq!(profiles.routing.capabilities.len(), 1);
     }
 
@@ -1798,7 +1884,6 @@ mod tests {
         assert_eq!(route.org_id.as_deref(), Some("org_demo"));
     }
 
-
     #[test]
     fn parser_supports_codex_auth_json_mode() {
         let auth = parse_provider_auth(Some(&json!({
@@ -1857,7 +1942,8 @@ mod tests {
             .expect("encode provider json"),
         )
         .expect("write provider profiles");
-        let status = provider_auth_status(Some(&root), Some("manager_frontier")).expect("provider auth status");
+        let status = provider_auth_status(Some(&root), Some("manager_frontier"))
+            .expect("provider auth status");
         if let Some(home) = previous_home {
             std::env::set_var("HOME", home);
         } else {
@@ -1911,7 +1997,10 @@ mod tests {
         assert_eq!(route.profile_name, "manager_frontier");
         assert_eq!(route.profile_kind, ProviderKind::OpenAiCodex);
         assert_eq!(route.model, DEFAULT_CODEX_MODEL_ALIAS);
-        assert_eq!(route.endpoint_url.as_str(), "https://chatgpt.com/backend-api/responses");
+        assert_eq!(
+            route.endpoint_url.as_str(),
+            "https://chatgpt.com/backend-api/responses"
+        );
         assert_eq!(route.matched_rule, "agent_runtime:leviathann");
     }
 
@@ -1938,8 +2027,9 @@ mod tests {
         let previous_home = std::env::var("HOME").ok();
         std::env::set_var("HOME", &fake_home);
         ensure_provider_profiles_scaffold(&root).expect("scaffold provider profiles");
-        let path = configure_onboard_provider_routes(&root, "frontier", Some("gpt-5.3-codex"), None)
-            .expect("configure routes");
+        let path =
+            configure_onboard_provider_routes(&root, "frontier", Some("gpt-5.3-codex"), None)
+                .expect("configure routes");
         assert!(path.exists());
         let profiles = load_provider_profiles(Some(&root)).expect("load provider profiles");
         let manager = profiles
@@ -1949,7 +2039,10 @@ mod tests {
             .expect("manager frontier profile");
         match &manager.auth {
             ProviderAuthMode::CodexAuthJson { path } => {
-                assert!(path.as_deref().unwrap_or("").ends_with(".meridian/auth/codex/auth.json"));
+                assert!(path
+                    .as_deref()
+                    .unwrap_or("")
+                    .ends_with(".meridian/auth/codex/auth.json"));
             }
             other => panic!("unexpected auth mode: {:?}", other),
         }
@@ -2021,8 +2114,13 @@ mod tests {
             }
         }))
         .expect("encode auth json");
-        fs::write(fake_home.join(".codex/auth.json"), &auth_payload).expect("write shared auth json");
-        fs::write(fake_home.join(".meridian/auth/codex/auth.json"), &auth_payload).expect("write loom auth json");
+        fs::write(fake_home.join(".codex/auth.json"), &auth_payload)
+            .expect("write shared auth json");
+        fs::write(
+            fake_home.join(".meridian/auth/codex/auth.json"),
+            &auth_payload,
+        )
+        .expect("write loom auth json");
         let _home_guard = home_env_guard();
         let previous_home = std::env::var("HOME").ok();
         std::env::set_var("HOME", &fake_home);
@@ -2047,7 +2145,8 @@ mod tests {
             .expect("encode provider json"),
         )
         .expect("write provider profiles");
-        let status = provider_auth_status(Some(&root), Some("manager_frontier")).expect("provider auth status");
+        let status = provider_auth_status(Some(&root), Some("manager_frontier"))
+            .expect("provider auth status");
         let route_error = resolve_provider_route(
             Some(&root),
             &ProviderRouteIntent::llm_inference("").with_agent_id("leviathann"),
@@ -2091,8 +2190,13 @@ mod tests {
             }
         }))
         .expect("encode loom auth json");
-        fs::write(fake_home.join(".codex/auth.json"), &shared_payload).expect("write shared auth json");
-        fs::write(fake_home.join(".meridian/auth/codex/auth.json"), &loom_payload).expect("write loom auth json");
+        fs::write(fake_home.join(".codex/auth.json"), &shared_payload)
+            .expect("write shared auth json");
+        fs::write(
+            fake_home.join(".meridian/auth/codex/auth.json"),
+            &loom_payload,
+        )
+        .expect("write loom auth json");
         let _home_guard = home_env_guard();
         let previous_home = std::env::var("HOME").ok();
         std::env::set_var("HOME", &fake_home);
@@ -2117,7 +2221,8 @@ mod tests {
             .expect("encode provider json"),
         )
         .expect("write provider profiles");
-        let status = provider_auth_status(Some(&root), Some("manager_frontier")).expect("provider auth status");
+        let status = provider_auth_status(Some(&root), Some("manager_frontier"))
+            .expect("provider auth status");
         let route = resolve_provider_route(
             Some(&root),
             &ProviderRouteIntent::llm_inference("").with_agent_id("leviathann"),
@@ -2171,11 +2276,11 @@ mod tests {
             .expect("render provider json"),
         )
         .expect("write provider profiles");
-        let status = provider_auth_status(Some(&root), Some("remote")).expect("provider auth status");
+        let status =
+            provider_auth_status(Some(&root), Some("remote")).expect("provider auth status");
         assert_eq!(status.profile_name, "remote");
         assert!(!status.ready);
         assert_eq!(status.env_var.as_deref(), Some(env_var));
         assert_eq!(status.auth_mode, "bearer_env");
     }
-
 }

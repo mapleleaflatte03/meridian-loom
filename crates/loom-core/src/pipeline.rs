@@ -84,37 +84,42 @@ pub fn execute_pipeline_step(
     let channel_id = normalize_ingress_channel(&ingress.ingress_target, &ingress.transport);
     let peer_id = infer_peer_from_ingress(ingress);
 
-    let (binding_id, agent_id, session_key) = match resolve_binding(root, &channel_id, &peer_id, None, None) {
-        Ok(resolution) => (resolution.binding_id, resolution.agent_id, resolution.session_key),
-        Err(err) => {
-            // Cannot resolve binding; record failed pipeline step
-            let run = PipelineRunRecord {
-                pipeline_id: pipeline_id.clone(),
-                ingress_request_id: ingress.request_id.clone(),
-                channel_id: channel_id.clone(),
-                peer_id: peer_id.clone(),
-                session_key: String::new(),
-                binding_id: String::new(),
-                agent_id: ingress.agent_id.clone(),
-                provider_profile: String::new(),
-                model: String::new(),
-                transport_kind: String::new(),
-                auth_mode: String::new(),
-                execution_owner: String::new(),
-                job_id: None,
-                delivery_id: None,
-                status: "failed".to_string(),
-                started_at: now.clone(),
-                completed_at: Some(timestamp_now()),
-                override_applied: false,
-                send_policy: "deliver".to_string(),
-                output_guard_class: None,
-                last_error: Some(format!("binding resolution failed: {}", err)),
-            };
-            persist_pipeline_run(root, &run)?;
-            return Ok(run);
-        }
-    };
+    let (binding_id, agent_id, session_key) =
+        match resolve_binding(root, &channel_id, &peer_id, None, None) {
+            Ok(resolution) => (
+                resolution.binding_id,
+                resolution.agent_id,
+                resolution.session_key,
+            ),
+            Err(err) => {
+                // Cannot resolve binding; record failed pipeline step
+                let run = PipelineRunRecord {
+                    pipeline_id: pipeline_id.clone(),
+                    ingress_request_id: ingress.request_id.clone(),
+                    channel_id: channel_id.clone(),
+                    peer_id: peer_id.clone(),
+                    session_key: String::new(),
+                    binding_id: String::new(),
+                    agent_id: ingress.agent_id.clone(),
+                    provider_profile: String::new(),
+                    model: String::new(),
+                    transport_kind: String::new(),
+                    auth_mode: String::new(),
+                    execution_owner: String::new(),
+                    job_id: None,
+                    delivery_id: None,
+                    status: "failed".to_string(),
+                    started_at: now.clone(),
+                    completed_at: Some(timestamp_now()),
+                    override_applied: false,
+                    send_policy: "deliver".to_string(),
+                    output_guard_class: None,
+                    last_error: Some(format!("binding resolution failed: {}", err)),
+                };
+                persist_pipeline_run(root, &run)?;
+                return Ok(run);
+            }
+        };
 
     // Step 2: Session provenance is already opened by resolve_binding -> open_session_provenance
     // Step 3: Apply session-level overrides
@@ -207,7 +212,8 @@ pub fn execute_pipeline_step(
     index_pipeline_run(root, &ingress.request_id, &pipeline_id)?;
 
     // Step 6: Dispatch the job if service is running
-    let output_text = attempt_pipeline_dispatch(root, ingress, &agent_id, &provider_profile, &model);
+    let output_text =
+        attempt_pipeline_dispatch(root, ingress, &agent_id, &provider_profile, &model);
 
     // Step 7: Guard output
     let guard_class = if let Some(ref text) = output_text {
@@ -288,7 +294,11 @@ pub fn record_pipeline_from_ingress(
     let (binding_id, resolved_agent, session_key) =
         match resolve_binding(root, &channel_id, &peer_id, None, None) {
             Ok(r) => (r.binding_id, r.agent_id, r.session_key),
-            Err(_) => (String::new(), agent_id.to_string(), format!("{}:{}", channel_id, peer_id)),
+            Err(_) => (
+                String::new(),
+                agent_id.to_string(),
+                format!("{}:{}", channel_id, peer_id),
+            ),
         };
 
     // Apply session overrides
@@ -297,7 +307,11 @@ pub fn record_pipeline_from_ingress(
     let override_applied = override_profile.is_some() || override_model.is_some();
 
     // Resolve provider route with overrides
-    let cap = if capability_name.is_empty() { "loom.llm.inference.v1" } else { capability_name };
+    let cap = if capability_name.is_empty() {
+        "loom.llm.inference.v1"
+    } else {
+        capability_name
+    };
     let mut intent = ProviderRouteIntent::for_capability(cap, "");
     intent.agent_id = Some(resolved_agent.clone());
     if let Some(ref profile) = override_profile {
@@ -353,7 +367,11 @@ pub fn record_pipeline_from_ingress(
     let _ = update_session_provenance_job(
         root,
         &session_key,
-        if job_id.is_empty() { None } else { Some(job_id) },
+        if job_id.is_empty() {
+            None
+        } else {
+            Some(job_id)
+        },
         None,
         Some(request_id),
     );
@@ -371,7 +389,11 @@ pub fn record_pipeline_from_ingress(
         transport_kind,
         auth_mode,
         execution_owner,
-        job_id: if job_id.is_empty() { None } else { Some(job_id.to_string()) },
+        job_id: if job_id.is_empty() {
+            None
+        } else {
+            Some(job_id.to_string())
+        },
         delivery_id: None,
         status: "accepted".to_string(),
         started_at: now,
@@ -474,8 +496,7 @@ pub fn render_pipeline_run_human(run: &PipelineRunRecord) -> String {
 }
 
 pub fn render_pipeline_run_json(run: &PipelineRunRecord) -> String {
-    serde_json::to_string_pretty(&pipeline_run_json(run))
-        .unwrap_or_else(|_| "{}".to_string())
+    serde_json::to_string_pretty(&pipeline_run_json(run)).unwrap_or_else(|_| "{}".to_string())
         + "\n"
 }
 
@@ -524,10 +545,9 @@ pub fn render_pipeline_overview_json(overview: &PipelineOverview) -> String {
 // --- internal ---
 
 fn persist_pipeline_run(root: &Path, run: &PipelineRunRecord) -> LoomResult<()> {
-    let path =
-        pipeline_runs_dir(root).join(format!("{}.json", safe_filename(&run.pipeline_id)));
-    let mut rendered = serde_json::to_string_pretty(&pipeline_run_json(run))
-        .map_err(|e| e.to_string())?;
+    let path = pipeline_runs_dir(root).join(format!("{}.json", safe_filename(&run.pipeline_id)));
+    let mut rendered =
+        serde_json::to_string_pretty(&pipeline_run_json(run)).map_err(|e| e.to_string())?;
     rendered.push('\n');
     fs::write(path, rendered).map_err(io_err)
 }
@@ -539,12 +559,14 @@ fn index_pipeline_run(root: &Path, ingress_id: &str, pipeline_id: &str) -> LoomR
     } else {
         "{\"index\":{}}".to_string()
     };
-    let mut value: Value =
-        serde_json::from_str(&raw).unwrap_or_else(|_| json!({"index": {}}));
+    let mut value: Value = serde_json::from_str(&raw).unwrap_or_else(|_| json!({"index": {}}));
     if let Some(obj) = value.as_object_mut() {
         let index = obj.entry("index").or_insert_with(|| json!({}));
         if let Some(map) = index.as_object_mut() {
-            map.insert(ingress_id.to_string(), Value::String(pipeline_id.to_string()));
+            map.insert(
+                ingress_id.to_string(),
+                Value::String(pipeline_id.to_string()),
+            );
         }
     }
     let mut rendered = serde_json::to_string_pretty(&value).unwrap_or_default();
@@ -584,7 +606,10 @@ fn normalize_ingress_channel(ingress_target: &str, transport: &str) -> String {
     let transport_lower = transport.trim().to_ascii_lowercase();
 
     // Recognized Loom channel IDs pass through unchanged
-    if matches!(target, "web_api" | "telegram" | "discord" | "slack" | "email" | "matrix") {
+    if matches!(
+        target,
+        "web_api" | "telegram" | "discord" | "slack" | "email" | "matrix"
+    ) {
         return target.to_string();
     }
 
@@ -594,7 +619,9 @@ fn normalize_ingress_channel(ingress_target: &str, transport: &str) -> String {
     }
 
     // Transport-level targets (socket paths, HTTP addresses, file paths) -> web_api
-    if target.contains('/') || target.contains(':') || target.contains(".sock")
+    if target.contains('/')
+        || target.contains(':')
+        || target.contains(".sock")
         || target.is_empty()
         || transport_lower == "socket"
         || transport_lower == "http"
@@ -619,8 +646,8 @@ fn infer_peer_from_ingress(ingress: &ServiceIngressRecord) -> String {
 }
 
 fn parse_pipeline_run(raw: &str) -> LoomResult<PipelineRunRecord> {
-    let v: Value = serde_json::from_str(raw)
-        .map_err(|e| format!("invalid pipeline run json: {e}"))?;
+    let v: Value =
+        serde_json::from_str(raw).map_err(|e| format!("invalid pipeline run json: {e}"))?;
     Ok(PipelineRunRecord {
         pipeline_id: value_string(v.get("pipeline_id"), "pipeline_id")?,
         ingress_request_id: value_string_or(v.get("ingress_request_id"), ""),
@@ -639,7 +666,10 @@ fn parse_pipeline_run(raw: &str) -> LoomResult<PipelineRunRecord> {
         status: value_string_or(v.get("status"), "unknown"),
         started_at: value_string_or(v.get("started_at"), ""),
         completed_at: value_opt_string(v.get("completed_at")),
-        override_applied: v.get("override_applied").and_then(Value::as_bool).unwrap_or(false),
+        override_applied: v
+            .get("override_applied")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
         send_policy: value_string_or(v.get("send_policy"), "deliver"),
         output_guard_class: value_opt_string(v.get("output_guard_class")),
         last_error: value_opt_string(v.get("last_error")),
@@ -733,7 +763,11 @@ trait IntoOption {
 
 impl IntoOption for String {
     fn if_not_empty(self) -> Option<String> {
-        if self.is_empty() { None } else { Some(self) }
+        if self.is_empty() {
+            None
+        } else {
+            Some(self)
+        }
     }
 }
 

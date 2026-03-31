@@ -13,7 +13,11 @@ pub(crate) fn handle_job(args: &[String]) -> LoomResult<()> {
             if format == "json" {
                 print!("{}", render_job_list_json(&jobs));
             } else {
-                print_human(&render_job_list_human(&root, &jobs, status_filter.as_deref()));
+                print_human(&render_job_list_human(
+                    &root,
+                    &jobs,
+                    status_filter.as_deref(),
+                ));
             }
             Ok(())
         }

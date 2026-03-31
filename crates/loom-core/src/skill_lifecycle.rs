@@ -109,9 +109,17 @@ pub fn install_skill(
             existing.description = Some(desc);
         }
         persist_install_record(root, &existing)?;
-        append_receipt(root, &make_receipt("install", &skill_id, true, "updated existing install"))?;
+        append_receipt(
+            root,
+            &make_receipt("install", &skill_id, true, "updated existing install"),
+        )?;
         let _ = sync_skill_registry(root);
-        return Ok(make_receipt("install", &skill_id, true, "updated existing install"));
+        return Ok(make_receipt(
+            "install",
+            &skill_id,
+            true,
+            "updated existing install",
+        ));
     }
 
     let record = SkillInstallRecord {
@@ -128,12 +136,20 @@ pub fn install_skill(
     };
 
     persist_install_record(root, &record)?;
-    append_receipt(root, &make_receipt("install", &skill_id, true, "installed from source"))?;
+    append_receipt(
+        root,
+        &make_receipt("install", &skill_id, true, "installed from source"),
+    )?;
 
     // Rebuild skill registry to include this install
     let _ = sync_skill_registry(root);
 
-    Ok(make_receipt("install", &skill_id, true, "installed from source"))
+    Ok(make_receipt(
+        "install",
+        &skill_id,
+        true,
+        "installed from source",
+    ))
 }
 
 pub fn remove_skill(root: &Path, skill_id: &str, force: bool) -> LoomResult<SkillLifecycleReceipt> {
@@ -151,13 +167,25 @@ pub fn remove_skill(root: &Path, skill_id: &str, force: bool) -> LoomResult<Skil
     // Check lock
     let record = load_install_record(root, skill_id)?;
     if record.locked && !force {
-        return receipt_err("remove", skill_id, "skill is locked; use --force to override");
+        return receipt_err(
+            "remove",
+            skill_id,
+            "skill is locked; use --force to override",
+        );
     }
 
     fs::remove_file(&install_path).map_err(io_err)?;
-    append_receipt(root, &make_receipt("remove", skill_id, true, "removed install record"))?;
+    append_receipt(
+        root,
+        &make_receipt("remove", skill_id, true, "removed install record"),
+    )?;
     let _ = sync_skill_registry(root);
-    Ok(make_receipt("remove", skill_id, true, "removed install record"))
+    Ok(make_receipt(
+        "remove",
+        skill_id,
+        true,
+        "removed install record",
+    ))
 }
 
 pub fn enable_skill(root: &Path, skill_id: &str) -> LoomResult<SkillLifecycleReceipt> {
@@ -195,7 +223,10 @@ pub fn update_skill_metadata(
         record.version = Some(ver.to_string());
     }
     persist_install_record(root, &record)?;
-    append_receipt(root, &make_receipt("update", skill_id, true, "metadata updated"))?;
+    append_receipt(
+        root,
+        &make_receipt("update", skill_id, true, "metadata updated"),
+    )?;
     let _ = sync_skill_registry(root);
     Ok(make_receipt("update", skill_id, true, "metadata updated"))
 }
@@ -236,7 +267,10 @@ pub fn unlock_skill(root: &Path, skill_id: &str) -> LoomResult<SkillLifecycleRec
     let mut locks = load_skill_locks(root)?;
     locks.retain(|l| l.skill_id != skill_id);
     persist_skill_locks(root, &locks)?;
-    append_receipt(root, &make_receipt("unlock", skill_id, true, "skill unlocked"))?;
+    append_receipt(
+        root,
+        &make_receipt("unlock", skill_id, true, "skill unlocked"),
+    )?;
     Ok(make_receipt("unlock", skill_id, true, "skill unlocked"))
 }
 
@@ -302,8 +336,7 @@ pub fn render_skill_install_human(record: &SkillInstallRecord) -> String {
 }
 
 pub fn render_skill_install_json(record: &SkillInstallRecord) -> String {
-    serde_json::to_string_pretty(&install_record_json(record))
-        .unwrap_or_else(|_| "{}".to_string())
+    serde_json::to_string_pretty(&install_record_json(record)).unwrap_or_else(|_| "{}".to_string())
         + "\n"
 }
 
@@ -386,8 +419,8 @@ where
 fn persist_install_record(root: &Path, record: &SkillInstallRecord) -> LoomResult<()> {
     ensure_skill_lifecycle_scaffold(root)?;
     let path = skill_install_record_path(root, &record.skill_id);
-    let mut rendered = serde_json::to_string_pretty(&install_record_json(record))
-        .map_err(|e| e.to_string())?;
+    let mut rendered =
+        serde_json::to_string_pretty(&install_record_json(record)).map_err(|e| e.to_string())?;
     rendered.push('\n');
     fs::write(path, rendered).map_err(io_err)
 }
@@ -398,8 +431,8 @@ fn load_skill_locks(root: &Path) -> LoomResult<Vec<SkillLockEntry>> {
         return Ok(Vec::new());
     }
     let raw = fs::read_to_string(&locks_path).map_err(io_err)?;
-    let value: Value = serde_json::from_str(&raw)
-        .map_err(|e| format!("invalid locks json: {e}"))?;
+    let value: Value =
+        serde_json::from_str(&raw).map_err(|e| format!("invalid locks json: {e}"))?;
     let items = value
         .get("locks")
         .and_then(Value::as_array)
@@ -457,7 +490,9 @@ fn append_receipt(root: &Path, receipt: &SkillLifecycleReceipt) -> LoomResult<()
     let content = if receipts_path.exists() {
         format!(
             "{}\n{}\n",
-            fs::read_to_string(&receipts_path).unwrap_or_default().trim_end(),
+            fs::read_to_string(&receipts_path)
+                .unwrap_or_default()
+                .trim_end(),
             line
         )
     } else {
@@ -479,7 +514,13 @@ fn detect_skill_manifest(source_root: &Path) -> Option<PathBuf> {
 fn read_skill_manifest(
     source_root: &Path,
     manifest_path: Option<&Path>,
-) -> (Option<String>, Option<String>, Option<String>, Vec<String>, Option<String>) {
+) -> (
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Vec<String>,
+    Option<String>,
+) {
     let Some(path) = manifest_path else {
         return (None, None, None, Vec::new(), None);
     };
@@ -531,14 +572,20 @@ fn read_skill_manifest(
 }
 
 fn parse_install_record(raw: &str) -> LoomResult<SkillInstallRecord> {
-    let value: Value = serde_json::from_str(raw)
-        .map_err(|e| format!("invalid install record json: {e}"))?;
+    let value: Value =
+        serde_json::from_str(raw).map_err(|e| format!("invalid install record json: {e}"))?;
     Ok(SkillInstallRecord {
         skill_id: value_string(value.get("skill_id"), "skill_id")?,
         source_path: value_string_or(value.get("source_path"), ""),
         installed_at: value_string_or(value.get("installed_at"), ""),
-        enabled: value.get("enabled").and_then(Value::as_bool).unwrap_or(true),
-        locked: value.get("locked").and_then(Value::as_bool).unwrap_or(false),
+        enabled: value
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+        locked: value
+            .get("locked")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
         skill_type: value_string_or(value.get("skill_type"), "imported"),
         display_name: value_opt_string(value.get("display_name")),
         description: value_opt_string(value.get("description")),
@@ -571,7 +618,12 @@ fn install_record_json(record: &SkillInstallRecord) -> Value {
     })
 }
 
-fn make_receipt(action: &str, skill_id: &str, success: bool, message: &str) -> SkillLifecycleReceipt {
+fn make_receipt(
+    action: &str,
+    skill_id: &str,
+    success: bool,
+    message: &str,
+) -> SkillLifecycleReceipt {
     SkillLifecycleReceipt {
         action: action.to_string(),
         skill_id: skill_id.to_string(),
@@ -582,7 +634,10 @@ fn make_receipt(action: &str, skill_id: &str, success: bool, message: &str) -> S
 }
 
 fn receipt_err(action: &str, skill_id: &str, message: &str) -> LoomResult<SkillLifecycleReceipt> {
-    Err(format!("skill lifecycle {} '{}': {}", action, skill_id, message))
+    Err(format!(
+        "skill lifecycle {} '{}': {}",
+        action, skill_id, message
+    ))
 }
 
 fn safe_filename(input: &str) -> String {

@@ -151,7 +151,10 @@ pub fn heartbeat_summary(root: &Path, heartbeat_id: &str) -> LoomResult<Heartbea
         .ok_or_else(|| format!("heartbeat '{}' was not found", heartbeat_id))
 }
 
-pub fn schedule_heartbeat(root: &Path, request: &HeartbeatScheduleRequest) -> LoomResult<HeartbeatMutationResult> {
+pub fn schedule_heartbeat(
+    root: &Path,
+    request: &HeartbeatScheduleRequest,
+) -> LoomResult<HeartbeatMutationResult> {
     validate_schedule_request(request)?;
     let mut records = load_heartbeats(root)?;
     let heartbeat_id = request
@@ -161,7 +164,10 @@ pub fn schedule_heartbeat(root: &Path, request: &HeartbeatScheduleRequest) -> Lo
         .filter(|value| !value.is_empty())
         .map(str::to_string)
         .unwrap_or_else(|| format!("heartbeat-{}", unique_token()));
-    if records.iter().any(|record| record.heartbeat_id == heartbeat_id) {
+    if records
+        .iter()
+        .any(|record| record.heartbeat_id == heartbeat_id)
+    {
         return Err(format!("heartbeat '{}' already exists", heartbeat_id));
     }
     let next_fire_at_unix_ms = initial_next_fire_at(request, now_unix_ms());
@@ -207,7 +213,11 @@ pub fn cancel_heartbeat(root: &Path, heartbeat_id: &str) -> LoomResult<Heartbeat
     })
 }
 
-pub fn run_due_heartbeats(root: &Path, now_unix_ms: u64, limit: usize) -> LoomResult<HeartbeatRunSummary> {
+pub fn run_due_heartbeats(
+    root: &Path,
+    now_unix_ms: u64,
+    limit: usize,
+) -> LoomResult<HeartbeatRunSummary> {
     let mut records = load_heartbeats(root)?;
     let effective_limit = if limit == 0 { usize::MAX } else { limit };
     let mut run_records = Vec::new();
@@ -405,7 +415,11 @@ pub fn render_heartbeat_run_summary_json(summary: &HeartbeatRunSummary) -> Strin
         + "\n"
 }
 
-fn mutate_heartbeat<F>(root: &Path, heartbeat_id: &str, mutator: F) -> LoomResult<HeartbeatMutationResult>
+fn mutate_heartbeat<F>(
+    root: &Path,
+    heartbeat_id: &str,
+    mutator: F,
+) -> LoomResult<HeartbeatMutationResult>
 where
     F: FnOnce(&mut HeartbeatRecord),
 {
@@ -414,7 +428,10 @@ where
     if heartbeat_id.is_empty() {
         return Err("heartbeat_id is required".to_string());
     }
-    let Some(record) = records.iter_mut().find(|record| record.heartbeat_id == heartbeat_id) else {
+    let Some(record) = records
+        .iter_mut()
+        .find(|record| record.heartbeat_id == heartbeat_id)
+    else {
         return Err(format!("heartbeat '{}' was not found", heartbeat_id));
     };
     mutator(record);
@@ -457,7 +474,10 @@ fn parse_heartbeat_record(value: &Value) -> LoomResult<HeartbeatRecord> {
             .and_then(|entry| if entry.is_null() { None } else { Some(entry) })
             .map(parse_delivery_target)
             .transpose()?,
-        enabled: value.get("enabled").and_then(Value::as_bool).unwrap_or(true),
+        enabled: value
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
         status: value_string_or(value.get("status"), "scheduled"),
         max_attempts: value_u64(value.get("max_attempts")).unwrap_or(1) as u32,
         run_count: value_u64(value.get("run_count")).unwrap_or(0) as u32,
@@ -495,7 +515,8 @@ fn persist_heartbeat_registry(root: &Path, records: &[HeartbeatRecord]) -> LoomR
 }
 
 fn persist_run_record(root: &Path, run_record: &HeartbeatRunRecord) -> LoomResult<()> {
-    let path = heartbeat_runs_path(root).join(format!("{}.json", safe_file_token(&run_record.run_id)));
+    let path =
+        heartbeat_runs_path(root).join(format!("{}.json", safe_file_token(&run_record.run_id)));
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(io_err)?;
     }
@@ -618,7 +639,11 @@ fn delivery_text_from_payload(payload_json: &str) -> Option<String> {
     match serde_json::from_str::<Value>(trimmed) {
         Ok(Value::String(value)) => {
             let value = value.trim().to_string();
-            if value.is_empty() { None } else { Some(value) }
+            if value.is_empty() {
+                None
+            } else {
+                Some(value)
+            }
         }
         Ok(Value::Object(map)) => {
             for key in ["message", "text", "content", "final_answer"] {
@@ -682,7 +707,13 @@ fn unique_token() -> String {
 fn safe_file_token(input: &str) -> String {
     input
         .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() { ch.to_ascii_lowercase() } else { '-' })
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
         .collect::<String>()
         .trim_matches('-')
         .to_string()
@@ -696,7 +727,10 @@ fn io_err(error: std::io::Error) -> String {
 mod tests {
     use super::*;
     use crate::channels::list_channel_deliveries;
-    use crate::{init_workspace, onboarding::{load_onboard_manifest, write_onboard_manifest}};
+    use crate::{
+        init_workspace,
+        onboarding::{load_onboard_manifest, write_onboard_manifest},
+    };
 
     fn temp_path(label: &str) -> PathBuf {
         let unique = SystemTime::now()
@@ -828,11 +862,18 @@ mod tests {
         assert_eq!(summary.delivery_queued_count, 1);
         assert_eq!(summary.delivery_blocked_count, 0);
         assert_eq!(summary.run_records[0].status, "delivery_queued");
-        assert_eq!(summary.run_records[0].delivery_channel_id.as_deref(), Some("telegram"));
+        assert_eq!(
+            summary.run_records[0].delivery_channel_id.as_deref(),
+            Some("telegram")
+        );
         let deliveries = list_channel_deliveries(&root, 10).expect("list deliveries");
         assert_eq!(deliveries.len(), 1);
-        assert!(deliveries[0].display_text.contains("Meridian proactive brief ready"));
-        assert!(deliveries[0].display_text.contains("[PoGE Receipt] 0xabc123"));
+        assert!(deliveries[0]
+            .display_text
+            .contains("Meridian proactive brief ready"));
+        assert!(deliveries[0]
+            .display_text
+            .contains("[PoGE Receipt] 0xabc123"));
     }
 
     #[test]

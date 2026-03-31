@@ -133,14 +133,12 @@ impl MemoryRepo {
         if !index_path.exists() {
             return Ok(Vec::new());
         }
-        let raw = fs::read_to_string(&index_path)
-            .map_err(|e| format!("memory read: {}", e))?;
+        let raw = fs::read_to_string(&index_path).map_err(|e| format!("memory read: {}", e))?;
         let raw = raw.trim();
         if raw.is_empty() {
             return Ok(Vec::new());
         }
-        let value: Value = serde_json::from_str(raw)
-            .map_err(|e| format!("memory parse: {}", e))?;
+        let value: Value = serde_json::from_str(raw).map_err(|e| format!("memory parse: {}", e))?;
         let entries_val = value.get("entries").and_then(|v| v.as_array());
         match entries_val {
             Some(arr) => arr.iter().map(MemoryEntry::from_json).collect(),
@@ -159,8 +157,8 @@ impl MemoryRepo {
             "entry_count": entries.len(),
             "entries": entries_json,
         });
-        let text = serde_json::to_string_pretty(&doc)
-            .map_err(|e| format!("memory serialize: {}", e))?;
+        let text =
+            serde_json::to_string_pretty(&doc).map_err(|e| format!("memory serialize: {}", e))?;
         fs::write(&index_path, text).map_err(|e| format!("memory write: {}", e))?;
         Ok(index_path)
     }
@@ -264,7 +262,10 @@ impl MemoryService {
         }
 
         // Upsert by key
-        if let Some(existing) = entries.iter_mut().find(|e| e.key == key && e.category == category) {
+        if let Some(existing) = entries
+            .iter_mut()
+            .find(|e| e.key == key && e.category == category)
+        {
             existing.content = entry.content.clone();
             existing.updated_at = now;
             existing.source = entry.source.clone();
@@ -464,7 +465,8 @@ mod tests {
 
     fn temp_root() -> PathBuf {
         let n = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
-        let dir = std::env::temp_dir().join(format!("loom_memory_test_{}_{}", std::process::id(), n));
+        let dir =
+            std::env::temp_dir().join(format!("loom_memory_test_{}_{}", std::process::id(), n));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
@@ -519,9 +521,12 @@ mod tests {
     fn test_service_write_and_search() {
         let root = temp_root();
         let svc = MemoryService::with_defaults(&root);
-        svc.write("atlas", "knowledge", "weather", "sunny", "user").unwrap();
-        svc.write("atlas", "knowledge", "location", "home", "user").unwrap();
-        svc.write("atlas", "preferences", "lang", "en", "user").unwrap();
+        svc.write("atlas", "knowledge", "weather", "sunny", "user")
+            .unwrap();
+        svc.write("atlas", "knowledge", "location", "home", "user")
+            .unwrap();
+        svc.write("atlas", "preferences", "lang", "en", "user")
+            .unwrap();
 
         let all = svc.search("atlas", None, None).unwrap();
         assert_eq!(all.len(), 3);
@@ -529,7 +534,9 @@ mod tests {
         let knowledge = svc.search("atlas", Some("knowledge"), None).unwrap();
         assert_eq!(knowledge.len(), 2);
 
-        let weather = svc.search("atlas", Some("knowledge"), Some("weather")).unwrap();
+        let weather = svc
+            .search("atlas", Some("knowledge"), Some("weather"))
+            .unwrap();
         assert_eq!(weather.len(), 1);
         assert_eq!(weather[0].content, "sunny");
         cleanup(&root);
@@ -568,7 +575,13 @@ mod tests {
             ..Default::default()
         };
         let svc = MemoryService::new(&root, policy);
-        let result = svc.write("atlas", "facts", "k1", "this is way too long content", "test");
+        let result = svc.write(
+            "atlas",
+            "facts",
+            "k1",
+            "this is way too long content",
+            "test",
+        );
         assert!(result.is_err());
         cleanup(&root);
     }
@@ -590,8 +603,10 @@ mod tests {
     fn test_agent_isolation() {
         let root = temp_root();
         let svc = MemoryService::with_defaults(&root);
-        svc.write("atlas", "facts", "shared_key", "atlas_data", "test").unwrap();
-        svc.write("sentinel", "facts", "shared_key", "sentinel_data", "test").unwrap();
+        svc.write("atlas", "facts", "shared_key", "atlas_data", "test")
+            .unwrap();
+        svc.write("sentinel", "facts", "shared_key", "sentinel_data", "test")
+            .unwrap();
 
         let atlas_entries = svc.search("atlas", None, None).unwrap();
         assert_eq!(atlas_entries.len(), 1);

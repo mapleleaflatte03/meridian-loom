@@ -113,7 +113,13 @@ fn handle_binding_resolve(args: &[String]) -> LoomResult<()> {
             "json".to_string()
         }
     });
-    let resolution = resolve_binding(&root, &channel_id, &peer_id, thread_id.as_deref(), agent_id.as_deref())?;
+    let resolution = resolve_binding(
+        &root,
+        &channel_id,
+        &peer_id,
+        thread_id.as_deref(),
+        agent_id.as_deref(),
+    )?;
     match format.as_str() {
         "human" => {
             print_startup_banner();

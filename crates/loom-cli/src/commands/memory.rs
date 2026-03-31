@@ -13,7 +13,10 @@ pub(crate) fn handle_memory(args: &[String]) -> LoomResult<()> {
         Some("write") => handle_memory_write(&args[1..]),
         Some("remove") => handle_memory_remove(&args[1..]),
         Some("prune") => handle_memory_prune(&args[1..]),
-        _ => Err("memory supports 'status', 'overview', 'search', 'write', 'remove', and 'prune'".to_string()),
+        _ => Err(
+            "memory supports 'status', 'overview', 'search', 'write', 'remove', and 'prune'"
+                .to_string(),
+        ),
     }
 }
 
@@ -47,7 +50,11 @@ fn handle_memory_search(args: &[String]) -> LoomResult<()> {
     let agent_id = required_flag(args, "--agent-id")?;
     let category = take_value(args, "--category");
     let key_prefix = take_value(args, "--key-prefix");
-    let entries = MemoryService::with_defaults(&root).search(&agent_id, category.as_deref(), key_prefix.as_deref())?;
+    let entries = MemoryService::with_defaults(&root).search(
+        &agent_id,
+        category.as_deref(),
+        key_prefix.as_deref(),
+    )?;
     match format.as_str() {
         "human" => {
             print_startup_banner();
@@ -66,7 +73,8 @@ fn handle_memory_write(args: &[String]) -> LoomResult<()> {
     let key = required_flag(args, "--key")?;
     let content = required_flag(args, "--content")?;
     let source = take_value(args, "--source").unwrap_or_else(|| "operator".to_string());
-    let entry = MemoryService::with_defaults(&root).write(&agent_id, &category, &key, &content, &source)?;
+    let entry =
+        MemoryService::with_defaults(&root).write(&agent_id, &category, &key, &content, &source)?;
     match format.as_str() {
         "human" => {
             print_startup_banner();
@@ -101,7 +109,10 @@ fn handle_memory_remove(args: &[String]) -> LoomResult<()> {
                 payload["removed"].as_bool().unwrap_or(false),
             ));
         }
-        _ => print!("{}\n", serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?),
+        _ => print!(
+            "{}\n",
+            serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?
+        ),
     }
     Ok(())
 }
@@ -116,7 +127,10 @@ fn handle_memory_prune(args: &[String]) -> LoomResult<()> {
             print_startup_banner();
             print_human(&format!("pruned_entries:   {}\n", pruned));
         }
-        _ => print!("{}\n", serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?),
+        _ => print!(
+            "{}\n",
+            serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?
+        ),
     }
     Ok(())
 }

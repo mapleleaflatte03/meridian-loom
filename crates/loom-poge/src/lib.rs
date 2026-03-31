@@ -880,8 +880,7 @@ mod tests {
     #[test]
     fn merkle_leaf_count_is_power_of_two() {
         for n in [1usize, 2, 3, 5, 7, 8, 9, 15, 16] {
-            let receipts: Vec<HostCallReceipt> =
-                (0..n).map(|i| make_receipt(i as u8)).collect();
+            let receipts: Vec<HostCallReceipt> = (0..n).map(|i| make_receipt(i as u8)).collect();
             let tree = PoGEMerkleTree::build(&receipts);
             assert!(
                 tree.leaf_count.is_power_of_two(),
@@ -911,8 +910,7 @@ mod tests {
     fn interceptor_single_event_produces_audit_root() {
         let w = sequential_warrant();
         let module_digest = [0xBE; 32];
-        let mut interceptor =
-            PoGEInterceptor::new(w.clone(), module_digest, "session-alpha");
+        let mut interceptor = PoGEInterceptor::new(w.clone(), module_digest, "session-alpha");
 
         let receipt = interceptor
             .record_event(

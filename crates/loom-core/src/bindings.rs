@@ -5,9 +5,9 @@ use serde_json::{json, Value};
 
 use crate::agent_runtime::load_agent_runtime_registry;
 use crate::channels::load_channels;
+use crate::io_err;
 use crate::onboarding::load_onboard_manifest;
 use crate::session_provenance::open_session_provenance;
-use crate::io_err;
 
 pub type LoomResult<T> = Result<T, String>;
 
@@ -79,14 +79,19 @@ pub fn sync_binding_registry(root: &Path) -> LoomResult<BindingSyncResult> {
         .unwrap_or_else(|| "leviathann".to_string());
     let records = channels
         .iter()
-        .map(|channel| default_binding_record(channel, &manifest.session_dm_scope, &default_agent_id))
+        .map(|channel| {
+            default_binding_record(channel, &manifest.session_dm_scope, &default_agent_id)
+        })
         .collect::<Vec<_>>();
     persist_binding_registry(root, &records)?;
     Ok(BindingSyncResult {
         registry_path: binding_registry_path(root),
         total_count: records.len(),
         enabled_count: records.iter().filter(|record| record.enabled).count(),
-        binding_ids: records.iter().map(|record| record.binding_id.clone()).collect(),
+        binding_ids: records
+            .iter()
+            .map(|record| record.binding_id.clone())
+            .collect(),
     })
 }
 
@@ -102,7 +107,10 @@ pub fn binding_overview(root: &Path) -> LoomResult<BindingRuntimeOverview> {
         registry_path: binding_registry_path(root),
         total_count: records.len(),
         enabled_count: records.iter().filter(|record| record.enabled).count(),
-        binding_ids: records.iter().map(|record| record.binding_id.clone()).collect(),
+        binding_ids: records
+            .iter()
+            .map(|record| record.binding_id.clone())
+            .collect(),
     })
 }
 
@@ -244,8 +252,7 @@ pub fn render_binding_human(record: &BindingRecord) -> String {
 }
 
 pub fn render_binding_json(record: &BindingRecord) -> String {
-    serde_json::to_string_pretty(&binding_record_json(record))
-        .unwrap_or_else(|_| "{}".to_string())
+    serde_json::to_string_pretty(&binding_record_json(record)).unwrap_or_else(|_| "{}".to_string())
         + "\n"
 }
 
@@ -302,7 +309,11 @@ pub fn render_binding_resolution_json(resolution: &BindingResolution) -> String 
         + "\n"
 }
 
-fn default_binding_record(channel: &crate::channels::ChannelRecord, session_scope: &str, default_agent_id: &str) -> BindingRecord {
+fn default_binding_record(
+    channel: &crate::channels::ChannelRecord,
+    session_scope: &str,
+    default_agent_id: &str,
+) -> BindingRecord {
     BindingRecord {
         binding_id: format!("binding-{}", channel.channel_id),
         channel_id: channel.channel_id.clone(),
@@ -344,7 +355,10 @@ fn parse_binding_record(value: &Value) -> LoomResult<BindingRecord> {
         agent_id: value_string(value.get("agent_id"), "agent_id")?,
         session_scope: value_string_or(value.get("session_scope"), "per-channel-peer"),
         route_kind: value_string_or(value.get("route_kind"), "default_manager"),
-        enabled: value.get("enabled").and_then(Value::as_bool).unwrap_or(true),
+        enabled: value
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
         note: value_string_or(value.get("note"), ""),
     })
 }
@@ -393,8 +407,8 @@ fn value_string_or(value: Option<&Value>, fallback: &str) -> String {
 mod tests {
     use super::*;
     use crate::channels::sync_channel_registry;
-    use crate::onboarding::{load_onboard_manifest, write_onboard_manifest};
     use crate::init_workspace;
+    use crate::onboarding::{load_onboard_manifest, write_onboard_manifest};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -427,8 +441,8 @@ mod tests {
         sync_channel_registry(&root).expect("sync channels");
         sync_binding_registry(&root).expect("sync bindings");
 
-        let resolution = resolve_binding(&root, "telegram", "founder", None, None)
-            .expect("resolve binding");
+        let resolution =
+            resolve_binding(&root, "telegram", "founder", None, None).expect("resolve binding");
         assert_eq!(resolution.agent_id, "leviathann");
         assert_eq!(resolution.session_key, "telegram:founder");
     }

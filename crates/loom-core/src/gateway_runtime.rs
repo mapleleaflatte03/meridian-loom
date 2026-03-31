@@ -191,7 +191,10 @@ fn parse_gateway_runtime(raw: &str) -> LoomResult<GatewayRuntimeRecord> {
         credential_ref: value_string(gateway.get("credential_ref"), "LOOM_SERVICE_TOKEN"),
         tailscale_mode: value_string(gateway.get("tailscale_mode"), "off"),
         remote_mode: value_string(gateway.get("remote_mode"), "local"),
-        daemon_enabled: gateway.get("daemon_enabled").and_then(Value::as_bool).unwrap_or(false),
+        daemon_enabled: gateway
+            .get("daemon_enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
         daemon_manager: value_string(gateway.get("daemon_manager"), "supervisor"),
         daemon_state: value_string(gateway.get("daemon_state"), "configured"),
         channel_ids: gateway
@@ -206,8 +209,14 @@ fn parse_gateway_runtime(raw: &str) -> LoomResult<GatewayRuntimeRecord> {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default(),
-        total_channel_count: gateway.get("total_channel_count").and_then(Value::as_u64).unwrap_or(0) as usize,
-        enabled_channel_count: gateway.get("enabled_channel_count").and_then(Value::as_u64).unwrap_or(0) as usize,
+        total_channel_count: gateway
+            .get("total_channel_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize,
+        enabled_channel_count: gateway
+            .get("enabled_channel_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize,
         note: value_string(gateway.get("note"), ""),
     })
 }

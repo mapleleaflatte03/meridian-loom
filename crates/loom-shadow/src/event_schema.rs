@@ -104,7 +104,12 @@ pub fn canonical_event_id(
     ])
 }
 
-pub fn canonical_envelope_id(org_id: &str, agent_id: &str, action_type: &str, input_hash: &str) -> String {
+pub fn canonical_envelope_id(
+    org_id: &str,
+    agent_id: &str,
+    action_type: &str,
+    input_hash: &str,
+) -> String {
     canonical_join(&["envelope", org_id, agent_id, action_type, input_hash])
 }
 
@@ -117,7 +122,12 @@ pub fn canonical_artifact_id(
     canonical_join(&["artifact", artifact_kind, job_id, execution_id, label])
 }
 
-pub fn canonical_job_id(org_id: &str, agent_id: &str, action_type: &str, input_hash: &str) -> String {
+pub fn canonical_job_id(
+    org_id: &str,
+    agent_id: &str,
+    action_type: &str,
+    input_hash: &str,
+) -> String {
     canonical_join(&["job", org_id, agent_id, action_type, input_hash])
 }
 
@@ -204,7 +214,10 @@ impl RuntimeEventSpec {
             self.audit_id,
             self.truth_class,
             self.note,
-            self.artifact_refs.into_iter().map(ArtifactRefSpec::into_ref).collect(),
+            self.artifact_refs
+                .into_iter()
+                .map(ArtifactRefSpec::into_ref)
+                .collect(),
         )
     }
 }
@@ -333,13 +346,7 @@ impl RuntimeEventV1 {
             } else {
                 ","
             };
-            let _ = writeln!(
-                out,
-                "  \"{}\": \"{}\"{}",
-                key,
-                json_escape(value),
-                suffix
-            );
+            let _ = writeln!(out, "  \"{}\": \"{}\"{}", key, json_escape(value), suffix);
         }
         out.push_str("  \"artifact_refs\": [");
         if self.artifact_refs.is_empty() {
@@ -347,7 +354,11 @@ impl RuntimeEventV1 {
         } else {
             out.push('\n');
             for (idx, artifact) in self.artifact_refs.iter().enumerate() {
-                let suffix = if idx + 1 == self.artifact_refs.len() { "" } else { "," };
+                let suffix = if idx + 1 == self.artifact_refs.len() {
+                    ""
+                } else {
+                    ","
+                };
                 let _ = writeln!(
                     out,
                     "    {{\"artifact_id\":\"{}\",\"artifact_kind\":\"{}\",\"label\":\"{}\",\"path\":\"{}\",\"source_event_id\":\"{}\",\"job_id\":\"{}\",\"execution_id\":\"{}\",\"content_sha256\":\"{}\",\"note\":\"{}\"}}{}",
@@ -565,6 +576,8 @@ mod tests {
         assert_eq!(event.schema_version, EVENT_SCHEMA_VERSION);
         assert_eq!(event.artifact_refs.len(), 1);
         assert!(render_artifact_refs_json(&event.artifact_refs).contains("execution_receipt"));
-        assert!(event.render_json_line().contains("\"schema_version\":\"loom.runtime.v1\""));
+        assert!(event
+            .render_json_line()
+            .contains("\"schema_version\":\"loom.runtime.v1\""));
     }
 }

@@ -8,11 +8,17 @@ use loom_core::schedules::{
     add_schedule, cancel_schedule, load_schedules, pause_schedule, render_schedule_overview_human,
     render_schedule_overview_json, render_schedule_record_human, render_schedule_record_json,
     render_schedule_run_summary_human, render_schedule_run_summary_json, run_due_schedules,
-    schedule_overview, schedule_summary, ScheduleDeliveryTarget, ScheduleRequest, ScheduledJobRecord,
+    schedule_overview, schedule_summary, ScheduleDeliveryTarget, ScheduleRequest,
+    ScheduledJobRecord,
 };
 
 pub(crate) fn handle_schedule(args: &[String]) -> LoomResult<()> {
-    if args.is_empty() || matches!(args.first().map(String::as_str), Some("help" | "--help" | "-h")) {
+    if args.is_empty()
+        || matches!(
+            args.first().map(String::as_str),
+            Some("help" | "--help" | "-h")
+        )
+    {
         print_schedule_help();
         return Ok(());
     }
@@ -25,7 +31,9 @@ pub(crate) fn handle_schedule(args: &[String]) -> LoomResult<()> {
         Some("cancel") => handle_schedule_cancel(&args[1..]),
         Some("run-due") => handle_schedule_run_due(&args[1..]),
         Some("run") => handle_schedule_run(&args[1..]),
-        _ => Err("schedule supports: status, list, show, add, pause, cancel, run-due, run".to_string()),
+        _ => Err(
+            "schedule supports: status, list, show, add, pause, cancel, run-due, run".to_string(),
+        ),
     }
 }
 
@@ -153,11 +161,14 @@ fn handle_schedule_add(args: &[String]) -> LoomResult<()> {
         not_before_unix_ms: take_value(args, "--not-before-unix-ms")
             .and_then(|raw| raw.parse::<u64>().ok()),
         payload_json: take_value(args, "--payload-json").unwrap_or_else(|| "{}".to_string()),
-        delivery_target: take_value(args, "--delivery-channel").map(|channel_id| ScheduleDeliveryTarget {
-            channel_id,
-            recipient: required_flag(args, "--delivery-recipient").unwrap_or_else(|_| "".to_string()),
-            allow_receipt_hashes: has_flag(args, "--delivery-allow-receipt-hashes"),
-            allow_operator_diagnostics: has_flag(args, "--delivery-allow-operator-diagnostics"),
+        delivery_target: take_value(args, "--delivery-channel").map(|channel_id| {
+            ScheduleDeliveryTarget {
+                channel_id,
+                recipient: required_flag(args, "--delivery-recipient")
+                    .unwrap_or_else(|_| "".to_string()),
+                allow_receipt_hashes: has_flag(args, "--delivery-allow-receipt-hashes"),
+                allow_operator_diagnostics: has_flag(args, "--delivery-allow-operator-diagnostics"),
+            }
         }),
         max_attempts: take_value(args, "--max-attempts")
             .and_then(|raw| raw.parse::<u32>().ok())
@@ -266,15 +277,17 @@ fn render_schedule_list_json(records: &[ScheduledJobRecord]) -> String {
     let rendered = serde_json::to_string_pretty(
         &records
             .iter()
-            .map(|record| serde_json::json!({
-                "job_id": record.job_id,
-                "agent_id": record.agent_id,
-                "job_kind": record.job_kind,
-                "schedule_kind": record.schedule_kind,
-                "enabled": record.enabled,
-                "status": record.status,
-                "next_fire_at_unix_ms": record.next_fire_at_unix_ms,
-            }))
+            .map(|record| {
+                serde_json::json!({
+                    "job_id": record.job_id,
+                    "agent_id": record.agent_id,
+                    "job_kind": record.job_kind,
+                    "schedule_kind": record.schedule_kind,
+                    "enabled": record.enabled,
+                    "status": record.status,
+                    "next_fire_at_unix_ms": record.next_fire_at_unix_ms,
+                })
+            })
             .collect::<Vec<_>>(),
     )
     .unwrap_or_else(|_| "[]".to_string());

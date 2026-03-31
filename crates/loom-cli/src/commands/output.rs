@@ -22,7 +22,8 @@ fn handle_output_inspect(args: &[String]) -> LoomResult<()> {
         }
     });
     let text = if let Some(path) = take_value(args, "--file") {
-        std::fs::read_to_string(&path).map_err(|error| format!("failed to read {}: {}", path, error))?
+        std::fs::read_to_string(&path)
+            .map_err(|error| format!("failed to read {}: {}", path, error))?
     } else {
         required_flag(args, "--text")?
     };

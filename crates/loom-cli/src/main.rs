@@ -1,56 +1,67 @@
 use loom_core::{
-    build_action_envelope, build_action_envelope_with_options, capsule_inspect, contract_show, contract_verify, doctor, health,
-    init_workspace, kernel_path_for, read_config, render_capsule_human, render_contract_human,
-    render_config_human, render_contract_json, render_contract_verify_human,
-    render_contract_verify_json, render_doctor_human, render_doctor_json,
-    render_envelope_human, render_envelope_json, render_health_human, render_identity_human,
-    render_identity_json, resolve_agent_identity, root_from, status_human,
-    evaluate_reference_gates, Config, LoomResult, capability_shims::{generate_shim, render_shim_human, render_shim_json, validate_shim, LegacyToolSpec},
+    build_action_envelope, build_action_envelope_with_options,
     capabilities::{
-        find_capability_by_name, forge_capability, import_workspace_skill, load_capability_registry, promote_capability,
-        load_capability_gap, capability_gap_replay_request, record_capability_gap, import_legacy_v1_plugin_skill_subset,
-        render_capability_forge_human, render_capability_forge_json,
-        render_capability_gap_human, render_capability_gap_json,
-        render_capability_human, render_capability_import_human, render_capability_import_json,
-        render_legacy_v1_plugin_import_human, render_legacy_v1_plugin_import_json,
-        render_capability_json, render_capability_registry_human, render_capability_registry_json,
-        render_capability_state_update_human, render_capability_state_update_json,
-        scaffold_capability, timestamp_now as capability_timestamp_now,
-        update_capability_gap_forge, update_capability_gap_promotion, update_capability_gap_verification,
-        update_capability_verification, CapabilityForgeRequest, CapabilityGapRequest, CapabilityScaffoldRequest,
+        capability_gap_replay_request, find_capability_by_name, forge_capability,
+        import_legacy_v1_plugin_skill_subset, import_workspace_skill, load_capability_gap,
+        load_capability_registry, promote_capability, record_capability_gap,
+        render_capability_forge_human, render_capability_forge_json, render_capability_gap_human,
+        render_capability_gap_json, render_capability_human, render_capability_import_human,
+        render_capability_import_json, render_capability_json, render_capability_registry_human,
+        render_capability_registry_json, render_capability_state_update_human,
+        render_capability_state_update_json, render_legacy_v1_plugin_import_human,
+        render_legacy_v1_plugin_import_json, scaffold_capability,
+        timestamp_now as capability_timestamp_now, update_capability_gap_forge,
+        update_capability_gap_promotion, update_capability_gap_verification,
+        update_capability_verification, CapabilityForgeRequest, CapabilityGapRequest,
+        CapabilityScaffoldRequest,
     },
+    capability_shims::{
+        generate_shim, render_shim_human, render_shim_json, validate_shim, LegacyToolSpec,
+    },
+    capsule_inspect, contract_show, contract_verify, doctor, evaluate_reference_gates, health,
+    init_workspace, kernel_path_for, read_config, render_capsule_human, render_config_human,
+    render_contract_human, render_contract_json, render_contract_verify_human,
+    render_contract_verify_json, render_doctor_human, render_doctor_json, render_envelope_human,
+    render_envelope_json, render_health_human, render_identity_human, render_identity_json,
+    resolve_agent_identity, root_from, status_human,
     wasm_host::{
         render_host_config_human, render_host_config_json, run_wasm_guest, HostBackend,
         WasmExecutionRequest, WasmGuestSource, WasmHostBuilder,
     },
-    wasm_limits::{default_limits, from_toml as parse_wasm_limits_toml, render_limits_human, render_limits_json, validate_limits},
-    wasm_profiles::{profile_defaults_map, render_pooling_config_human, render_pooling_config_json, PoolingProfile},
+    wasm_limits::{
+        default_limits, from_toml as parse_wasm_limits_toml, render_limits_human,
+        render_limits_json, validate_limits,
+    },
+    wasm_profiles::{
+        profile_defaults_map, render_pooling_config_human, render_pooling_config_json,
+        PoolingProfile,
+    },
+    Config, LoomResult,
 };
 use loom_shadow::{
-    ack_queue_job, approve_job, consume_pending_queue, capture_decision, capture_preflight, capture_runtime_execution, compare_logs,
-    decision_exit_code, enqueue_action, inspect_job, inspect_pending_queue, list_jobs, render_compare_human,
-    render_compare_json, render_decision_human, render_decision_json,
-    render_enqueued_action_human, render_enqueued_action_json, render_job_inspect_human,
-    render_job_inspect_json, render_job_list_human, render_job_list_json, render_parity_report,
-    render_queue_ack_human, render_queue_ack_json, render_queue_consume_human,
-    render_queue_consume_json, render_queue_inspect_human, render_queue_inspect_json,
-    render_queue_run_once_human, render_queue_run_once_json,
-    render_queue_run_until_empty_human, render_queue_run_until_empty_json,
-    render_queue_status_human, render_queue_status_json, queue_status,
-    render_supervisor_lanes_human, render_supervisor_lanes_json,
-    render_preflight_human, render_preflight_json, render_runtime_execution_human,
-    render_runtime_execution_json, render_supervisor_daemon_human,
-    render_supervisor_daemon_json, render_runtime_service_human,
+    ack_queue_job, approve_job, capture_decision, capture_preflight, capture_runtime_execution,
+    compare_logs, consume_pending_queue, decision_exit_code, enqueue_action,
+    import_commitment_execution_requests, inspect_job, inspect_pending_queue, list_jobs,
+    queue_status, render_compare_human, render_compare_json, render_decision_human,
+    render_decision_json, render_enqueued_action_human, render_enqueued_action_json,
+    render_job_inspect_human, render_job_inspect_json, render_job_list_human, render_job_list_json,
+    render_parity_report, render_preflight_human, render_preflight_json, render_queue_ack_human,
+    render_queue_ack_json, render_queue_consume_human, render_queue_consume_json,
+    render_queue_inspect_human, render_queue_inspect_json, render_queue_run_once_human,
+    render_queue_run_once_json, render_queue_run_until_empty_human,
+    render_queue_run_until_empty_json, render_queue_status_human, render_queue_status_json,
+    render_runtime_execution_human, render_runtime_execution_json,
     render_runtime_service_cancel_human, render_runtime_service_cancel_json,
-    render_runtime_service_import_human, render_runtime_service_import_json,
-    render_runtime_service_json, render_runtime_service_submit_human,
-    render_runtime_service_submit_json, render_shadow_report, render_supervisor_run_human,
-    render_supervisor_run_json, render_supervisor_status_human, render_supervisor_status_json,
-    render_supervisor_watch_human, render_supervisor_watch_json, run_queue_once, run_queue_until_empty, run_supervisor,
-    import_commitment_execution_requests,
-    run_supervisor_daemon_loop, request_runtime_service_cancel, request_runtime_service_stop, request_supervisor_daemon_stop,
-    run_runtime_service_loop, runtime_service_status, submit_runtime_service_action,
-    supervisor_daemon_status, supervisor_status, watch_supervisor,
+    render_runtime_service_human, render_runtime_service_import_human,
+    render_runtime_service_import_json, render_runtime_service_json,
+    render_runtime_service_submit_human, render_runtime_service_submit_json, render_shadow_report,
+    render_supervisor_daemon_human, render_supervisor_daemon_json, render_supervisor_lanes_human,
+    render_supervisor_lanes_json, render_supervisor_run_human, render_supervisor_run_json,
+    render_supervisor_status_human, render_supervisor_status_json, render_supervisor_watch_human,
+    render_supervisor_watch_json, request_runtime_service_cancel, request_runtime_service_stop,
+    request_supervisor_daemon_stop, run_queue_once, run_queue_until_empty,
+    run_runtime_service_loop, run_supervisor, run_supervisor_daemon_loop, runtime_service_status,
+    submit_runtime_service_action, supervisor_daemon_status, supervisor_status, watch_supervisor,
 };
 use serde_json::Value;
 use std::env;
@@ -173,7 +184,13 @@ fn chrono_like_timestamp() -> String {
 fn sanitize_token(input: &str) -> String {
     input
         .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() { ch.to_ascii_lowercase() } else { '-' })
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
         .collect::<String>()
         .trim_matches('-')
         .to_string()
@@ -246,7 +263,9 @@ fn json_string(input: &str) -> String {
 fn set_private_permissions_if_supported(path: &std::path::Path, mode: u32) -> LoomResult<()> {
     use std::os::unix::fs::PermissionsExt;
 
-    let mut permissions = std::fs::metadata(path).map_err(|e| e.to_string())?.permissions();
+    let mut permissions = std::fs::metadata(path)
+        .map_err(|e| e.to_string())?
+        .permissions();
     permissions.set_mode(mode);
     match std::fs::set_permissions(path, permissions) {
         Ok(()) => Ok(()),
@@ -421,8 +440,7 @@ fn render_startup_banner(color: bool) -> String {
     } else {
         format!(
             "{}\nMERIDIAN\nCONSTITUTIONAL OS\n{}\n\n",
-            icon,
-            version_line,
+            icon, version_line,
         )
     }
 }
@@ -508,12 +526,12 @@ fn style_human_line(line: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use loom_core::capabilities::ensure_capability_registry_scaffold;
     use serde_json::json;
     use std::fs;
     use std::path::Path;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
-    use loom_core::capabilities::ensure_capability_registry_scaffold;
 
     fn temp_path(label: &str) -> PathBuf {
         let unique = SystemTime::now()
@@ -593,7 +611,9 @@ mod tests {
         )
         .expect("verify expectations");
         assert_eq!(failures.len(), 2);
-        assert!(failures.iter().any(|item| item.contains("summary missing fragment")));
+        assert!(failures
+            .iter()
+            .any(|item| item.contains("summary missing fragment")));
         assert!(failures.iter().any(|item| item.contains("artifact_exists")));
     }
 
@@ -611,7 +631,8 @@ mod tests {
             None,
             &[
                 "skill_output.blocked.0.url=http://127.0.0.1/".to_string(),
-                "skill_output.blocked.0.reason=host resolves to non-public address: 127.0.0.1".to_string(),
+                "skill_output.blocked.0.reason=host resolves to non-public address: 127.0.0.1"
+                    .to_string(),
             ],
         )
         .expect("verify expectations");
@@ -641,7 +662,10 @@ mod tests {
 
         let job_id = "job::reject";
         let execution_id = "execution::reject";
-        let job_path = root.join("state/runtime/jobs").join(job_id).join("job.json");
+        let job_path = root
+            .join("state/runtime/jobs")
+            .join(job_id)
+            .join("job.json");
         write_job_snapshot(
             &root,
             job_id,
@@ -694,15 +718,22 @@ mod tests {
             .expect("resolve capability")
             .expect("capability present");
 
-        let json_output = commands::capability::render_capability_show_json(&root, &capability).expect("render json");
+        let json_output = commands::capability::render_capability_show_json(&root, &capability)
+            .expect("render json");
         let value: Value = serde_json::from_str(&json_output).expect("parse show json");
         let evidence = value
             .get("verification_evidence")
             .and_then(Value::as_object)
             .expect("verification evidence");
 
-        assert_eq!(evidence.get("job_status").and_then(Value::as_str), Some("failed"));
-        assert_eq!(evidence.get("job_stage").and_then(Value::as_str), Some("rejected"));
+        assert_eq!(
+            evidence.get("job_status").and_then(Value::as_str),
+            Some("failed")
+        );
+        assert_eq!(
+            evidence.get("job_stage").and_then(Value::as_str),
+            Some("rejected")
+        );
         assert_eq!(
             evidence.get("expectation_summary").and_then(Value::as_str),
             Some("runtime_outcome=worker_rejected | expectation_failures=summary missing fragment: suspicious.exe")
@@ -721,5 +752,4 @@ mod tests {
         assert!(human.contains("failure_reason:    policy reject: missing fixture set"));
         assert!(human.contains("job_note:          reject reason: missing fixture set"));
     }
-
 }

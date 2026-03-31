@@ -70,7 +70,6 @@ pub(crate) fn handle_supervisor(args: &[String]) -> LoomResult<()> {
     }
 }
 
-
 pub(crate) fn handle_supervisor_daemon_start(args: &[String]) -> LoomResult<()> {
     let root = root_from(take_value(args, "--root").as_deref())?;
     let kernel_path = take_value(args, "--kernel-path");
@@ -129,35 +128,33 @@ pub(crate) fn handle_supervisor_daemon_start(args: &[String]) -> LoomResult<()> 
         std::thread::sleep(std::time::Duration::from_millis(100));
         snapshot_result = supervisor_daemon_status(&root);
     }
-    let snapshot = snapshot_result.unwrap_or_else(|_| {
-        loom_shadow::SupervisorDaemonSnapshot {
-            root: root.clone(),
-            supervisor_dir,
-            runtime_state_path: root.join(".loom/runtime/supervisor/runtime_state.json"),
-            stop_request_path: root.join(".loom/runtime/supervisor/stop.requested"),
-            stdout_log_path,
-            available: true,
-            session_id: session_id.clone(),
-            pid: child.id(),
-            running: true,
-            status: "starting".to_string(),
-            updated_at: String::new(),
-            booted_at: String::new(),
-            stopped_at: String::new(),
-            poll_seconds,
-            max_jobs,
-            max_iterations: iterations,
-            iterations_completed: 0,
-            processed: 0,
-            allowed: 0,
-            denied: 0,
-            failed: 0,
-            pending_jobs: 0,
-            processed_jobs: 0,
-            failed_jobs: 0,
-            heartbeat_entries: 0,
-            note: fallback_note,
-        }
+    let snapshot = snapshot_result.unwrap_or_else(|_| loom_shadow::SupervisorDaemonSnapshot {
+        root: root.clone(),
+        supervisor_dir,
+        runtime_state_path: root.join(".loom/runtime/supervisor/runtime_state.json"),
+        stop_request_path: root.join(".loom/runtime/supervisor/stop.requested"),
+        stdout_log_path,
+        available: true,
+        session_id: session_id.clone(),
+        pid: child.id(),
+        running: true,
+        status: "starting".to_string(),
+        updated_at: String::new(),
+        booted_at: String::new(),
+        stopped_at: String::new(),
+        poll_seconds,
+        max_jobs,
+        max_iterations: iterations,
+        iterations_completed: 0,
+        processed: 0,
+        allowed: 0,
+        denied: 0,
+        failed: 0,
+        pending_jobs: 0,
+        processed_jobs: 0,
+        failed_jobs: 0,
+        heartbeat_entries: 0,
+        note: fallback_note,
     });
     if format == "json" {
         print!("{}", render_supervisor_daemon_json(&snapshot));
@@ -171,7 +168,6 @@ pub(crate) fn handle_supervisor_daemon_start(args: &[String]) -> LoomResult<()> 
     Ok(())
 }
 
-
 pub(crate) fn handle_supervisor_daemon_loop(args: &[String]) -> LoomResult<()> {
     let root = root_from(take_value(args, "--root").as_deref())?;
     let kernel_path = take_value(args, "--kernel-path");
@@ -184,8 +180,8 @@ pub(crate) fn handle_supervisor_daemon_loop(args: &[String]) -> LoomResult<()> {
     let iterations = take_value(args, "--iterations")
         .and_then(|raw| raw.parse::<usize>().ok())
         .unwrap_or(60);
-    let session_id =
-        take_value(args, "--session-id").unwrap_or_else(|| format!("daemon-{}", chrono_like_timestamp()));
+    let session_id = take_value(args, "--session-id")
+        .unwrap_or_else(|| format!("daemon-{}", chrono_like_timestamp()));
     let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
     let snapshot = run_supervisor_daemon_loop(
         &root,
@@ -203,7 +199,6 @@ pub(crate) fn handle_supervisor_daemon_loop(args: &[String]) -> LoomResult<()> {
     Ok(())
 }
 
-
 pub(crate) fn handle_supervisor_daemon_status(args: &[String]) -> LoomResult<()> {
     let root = root_from(take_value(args, "--root").as_deref())?;
     let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
@@ -216,7 +211,6 @@ pub(crate) fn handle_supervisor_daemon_status(args: &[String]) -> LoomResult<()>
     Ok(())
 }
 
-
 pub(crate) fn handle_supervisor_daemon_stop(args: &[String]) -> LoomResult<()> {
     let root = root_from(take_value(args, "--root").as_deref())?;
     let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
@@ -228,7 +222,6 @@ pub(crate) fn handle_supervisor_daemon_stop(args: &[String]) -> LoomResult<()> {
     }
     Ok(())
 }
-
 
 pub(crate) fn handle_supervisor_daemon(args: &[String]) -> LoomResult<()> {
     match args.first().map(String::as_str) {

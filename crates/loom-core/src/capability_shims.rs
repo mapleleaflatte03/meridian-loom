@@ -36,23 +36,19 @@ pub struct CapabilityShim {
 /// default governance metadata (capability world, cost class, isolation tier)
 /// based on the tool's characteristics.
 pub fn generate_shim(spec: &LegacyToolSpec) -> CapabilityShim {
-    let tool_version = spec
-        .version
-        .as_deref()
-        .unwrap_or("0.0.0");
+    let tool_version = spec.version.as_deref().unwrap_or("0.0.0");
 
     let shim_version = format!("shim-{}", tool_version);
 
     // Derive cost class from output schema heuristics
-    let cost_class = if spec.output_schema.contains("stream")
-        || spec.output_schema.contains("continuous")
-    {
-        "metered".to_string()
-    } else if spec.input_schema.contains("large") || spec.input_schema.contains("batch") {
-        "batch".to_string()
-    } else {
-        "per_call".to_string()
-    };
+    let cost_class =
+        if spec.output_schema.contains("stream") || spec.output_schema.contains("continuous") {
+            "metered".to_string()
+        } else if spec.input_schema.contains("large") || spec.input_schema.contains("batch") {
+            "batch".to_string()
+        } else {
+            "per_call".to_string()
+        };
 
     // Derive isolation tier from input schema heuristics
     let isolation_tier = if spec.input_schema.contains("exec")
@@ -247,7 +243,11 @@ mod tests {
         let valid_cost_classes = ["per_call", "metered", "batch", "free"];
         for cost_class in valid_cost_classes {
             shim.cost_class = cost_class.to_string();
-            assert!(validate_shim(&shim).is_ok(), "failed on valid cost_class: {}", cost_class);
+            assert!(
+                validate_shim(&shim).is_ok(),
+                "failed on valid cost_class: {}",
+                cost_class
+            );
         }
     }
 

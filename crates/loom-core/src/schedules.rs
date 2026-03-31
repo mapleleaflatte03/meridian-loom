@@ -169,7 +169,10 @@ pub fn schedule_overview(root: &Path, now_unix_ms: u64) -> LoomResult<ScheduleRu
         runs_path: schedule_runs_path(root),
         total_count: records.len(),
         enabled_count: records.iter().filter(|record| record.enabled).count(),
-        due_count: records.iter().filter(|record| schedule_is_due(record, now_unix_ms)).count(),
+        due_count: records
+            .iter()
+            .filter(|record| schedule_is_due(record, now_unix_ms))
+            .count(),
         job_ids: records.iter().map(|record| record.job_id.clone()).collect(),
     })
 }
@@ -240,7 +243,11 @@ pub fn cancel_schedule(root: &Path, job_id: &str) -> LoomResult<ScheduleMutation
     })
 }
 
-pub fn run_due_schedules(root: &Path, now_unix_ms: u64, limit: usize) -> LoomResult<ScheduleRunSummary> {
+pub fn run_due_schedules(
+    root: &Path,
+    now_unix_ms: u64,
+    limit: usize,
+) -> LoomResult<ScheduleRunSummary> {
     let mut records = load_schedules(root)?;
     let effective_limit = if limit == 0 { usize::MAX } else { limit };
     let mut run_records = Vec::new();
@@ -317,7 +324,8 @@ pub fn run_due_schedules(root: &Path, now_unix_ms: u64, limit: usize) -> LoomRes
             }
             "daily" => {
                 record.status = "scheduled".to_string();
-                record.next_fire_at_unix_ms = next_daily_fire_at(&record.schedule_expression, now_unix_ms);
+                record.next_fire_at_unix_ms =
+                    next_daily_fire_at(&record.schedule_expression, now_unix_ms);
             }
             _ => {}
         }
@@ -393,8 +401,7 @@ pub fn render_schedule_record_human(record: &ScheduledJobRecord) -> String {
 }
 
 pub fn render_schedule_record_json(record: &ScheduledJobRecord) -> String {
-    serde_json::to_string_pretty(&schedule_record_json(record))
-        .unwrap_or_else(|_| "{}".to_string())
+    serde_json::to_string_pretty(&schedule_record_json(record)).unwrap_or_else(|_| "{}".to_string())
         + "\n"
 }
 
@@ -490,7 +497,10 @@ fn parse_schedule_record(value: &Value) -> LoomResult<ScheduledJobRecord> {
             .map(parse_delivery_target)
             .transpose()?,
         source_kind: value_string_or(value.get("source_kind"), "manual"),
-        enabled: value.get("enabled").and_then(Value::as_bool).unwrap_or(true),
+        enabled: value
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
         status: value_string_or(value.get("status"), "scheduled"),
         max_attempts: value_u64(value.get("max_attempts")).unwrap_or(1) as u32,
         run_count: value_u64(value.get("run_count")).unwrap_or(0) as u32,
@@ -528,7 +538,8 @@ fn persist_schedule_registry(root: &Path, records: &[ScheduledJobRecord]) -> Loo
 }
 
 fn persist_run_record(root: &Path, run_record: &ScheduledJobRunRecord) -> LoomResult<()> {
-    let path = schedule_runs_path(root).join(format!("{}.json", safe_file_token(&run_record.run_id)));
+    let path =
+        schedule_runs_path(root).join(format!("{}.json", safe_file_token(&run_record.run_id)));
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(io_err)?;
     }
@@ -740,7 +751,11 @@ fn delivery_text_from_payload(payload_json: &str) -> Option<String> {
     match serde_json::from_str::<Value>(trimmed) {
         Ok(Value::String(value)) => {
             let value = value.trim().to_string();
-            if value.is_empty() { None } else { Some(value) }
+            if value.is_empty() {
+                None
+            } else {
+                Some(value)
+            }
         }
         Ok(Value::Object(map)) => {
             for key in ["message", "text", "content", "final_answer"] {
@@ -804,7 +819,13 @@ fn unique_token() -> String {
 fn safe_file_token(input: &str) -> String {
     input
         .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() { ch.to_ascii_lowercase() } else { '-' })
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
         .collect::<String>()
         .trim_matches('-')
         .to_string()
@@ -814,8 +835,8 @@ fn safe_file_token(input: &str) -> String {
 mod tests {
     use super::*;
     use crate::channels::list_channel_deliveries;
-    use crate::onboarding::{load_onboard_manifest, write_onboard_manifest};
     use crate::init_workspace;
+    use crate::onboarding::{load_onboard_manifest, write_onboard_manifest};
 
     fn temp_path(label: &str) -> PathBuf {
         let unique = SystemTime::now()
@@ -897,7 +918,9 @@ mod tests {
         assert_eq!(summary.delivery_queued_count, 1);
         let deliveries = list_channel_deliveries(&root, 10).expect("list deliveries");
         assert_eq!(deliveries.len(), 1);
-        assert!(deliveries[0].display_text.contains("Meridian morning brief ready"));
+        assert!(deliveries[0]
+            .display_text
+            .contains("Meridian morning brief ready"));
         assert!(deliveries[0].display_text.contains("[PoGE Receipt] 0xbeef"));
     }
 

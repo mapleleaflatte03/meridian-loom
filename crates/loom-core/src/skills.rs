@@ -92,7 +92,10 @@ pub fn sync_skill_registry(root: &Path) -> LoomResult<SkillSyncResult> {
             .iter()
             .filter(|record| record.install_state == "imported")
             .count(),
-        skill_ids: records.iter().map(|record| record.skill_id.clone()).collect(),
+        skill_ids: records
+            .iter()
+            .map(|record| record.skill_id.clone())
+            .collect(),
     })
 }
 
@@ -128,7 +131,10 @@ pub fn skill_overview(root: &Path) -> LoomResult<SkillRuntimeOverview> {
             .iter()
             .filter(|record| record.install_state == "imported")
             .count(),
-        skill_ids: records.iter().map(|record| record.skill_id.clone()).collect(),
+        skill_ids: records
+            .iter()
+            .map(|record| record.skill_id.clone())
+            .collect(),
     })
 }
 
@@ -212,8 +218,7 @@ pub fn render_skill_human(record: &SkillRecord) -> String {
 }
 
 pub fn render_skill_json(record: &SkillRecord) -> String {
-    serde_json::to_string_pretty(&skill_record_json(record))
-        .unwrap_or_else(|_| "{}".to_string())
+    serde_json::to_string_pretty(&skill_record_json(record)).unwrap_or_else(|_| "{}".to_string())
         + "\n"
 }
 
@@ -362,9 +367,20 @@ fn lifecycle_install_records(root: &Path) -> Vec<SkillRecord> {
             Some(id) if !id.is_empty() => id.to_string(),
             _ => continue,
         };
-        let enabled = value.get("enabled").and_then(Value::as_bool).unwrap_or(true);
-        let source_ref = value.get("source_path").and_then(Value::as_str).unwrap_or("").to_string();
-        let note = value.get("description").and_then(Value::as_str).unwrap_or("lifecycle install").to_string();
+        let enabled = value
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+        let source_ref = value
+            .get("source_path")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let note = value
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or("lifecycle install")
+            .to_string();
         records.push(SkillRecord {
             skill_id,
             kind: "lifecycle_install".to_string(),
@@ -398,7 +414,10 @@ fn parse_skill_record(value: &Value) -> LoomResult<SkillRecord> {
     Ok(SkillRecord {
         skill_id: value_string(value.get("skill_id"), "skill_id")?,
         kind: value_string_or(value.get("kind"), "runtime_default"),
-        enabled: value.get("enabled").and_then(Value::as_bool).unwrap_or(true),
+        enabled: value
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
         install_state: value_string_or(value.get("install_state"), "default"),
         node_manager: value_string_or(value.get("node_manager"), "npm"),
         source_kind: value_string_or(value.get("source_kind"), "onboard_manifest"),
@@ -524,7 +543,10 @@ parser.add_argument("--out")
         let records = load_skills(&root).expect("load skills");
         assert!(records.iter().any(|record| {
             record.install_state == "imported"
-                && record.runtime_refs.iter().any(|item| item.contains("capability:loomskill.sample-triage.v0"))
+                && record
+                    .runtime_refs
+                    .iter()
+                    .any(|item| item.contains("capability:loomskill.sample-triage.v0"))
         }));
     }
 

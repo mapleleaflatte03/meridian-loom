@@ -585,7 +585,9 @@ pub fn load_capability_registry(root: &Path, config: &Config) -> LoomResult<Capa
             upsert_capability(&mut registry.capabilities, descriptor);
         }
     }
-    registry.capabilities.sort_by(|left, right| left.name.cmp(&right.name));
+    registry
+        .capabilities
+        .sort_by(|left, right| left.name.cmp(&right.name));
     Ok(registry)
 }
 
@@ -640,10 +642,8 @@ pub fn scaffold_capability(
     }
 
     ensure_capability_registry_scaffold(root, config)?;
-    let manifest_path = capability_custom_dir(root, config).join(format!(
-        "{}.json",
-        sanitize_name(&request.name)
-    ));
+    let manifest_path =
+        capability_custom_dir(root, config).join(format!("{}.json", sanitize_name(&request.name)));
     let mut worker_path = None;
     let worker_entry = if request.worker_kind == "python" {
         let relative = if request.worker_entry.trim().is_empty() {
@@ -717,9 +717,7 @@ pub fn import_workspace_skill(
     explicit_entrypoint: Option<&str>,
     capability_name_override: Option<&str>,
 ) -> LoomResult<CapabilityImportResult> {
-    let skill_root = skill_root
-        .canonicalize()
-        .map_err(io_err)?;
+    let skill_root = skill_root.canonicalize().map_err(io_err)?;
     let import_spec = load_clawfamily_import_spec(&skill_root, explicit_entrypoint)?;
 
     ensure_capability_registry_scaffold(root, config)?;
@@ -778,15 +776,14 @@ pub fn import_workspace_skill(
         last_verified_at: String::new(),
         last_verification_job_id: String::new(),
         last_verification_execution_id: String::new(),
-        verification_note: "imported clawfamily skill has not been verified by Loom yet".to_string(),
+        verification_note: "imported clawfamily skill has not been verified by Loom yet"
+            .to_string(),
         promotion_state: "candidate".to_string(),
         promoted_at: String::new(),
         enabled: true,
     };
-    let manifest_path = capability_custom_dir(root, config).join(format!(
-        "{}.json",
-        sanitize_name(&capability_name)
-    ));
+    let manifest_path = capability_custom_dir(root, config)
+        .join(format!("{}.json", sanitize_name(&capability_name)));
     fs::write(&manifest_path, descriptor_json(&capability)).map_err(io_err)?;
     Ok(CapabilityImportResult {
         manifest_path,
@@ -805,9 +802,7 @@ pub fn import_legacy_v1_plugin_skill_subset(
     config: &Config,
     plugin_root: &Path,
 ) -> LoomResult<LegacyV1PluginImportResult> {
-    let plugin_root = plugin_root
-        .canonicalize()
-        .map_err(io_err)?;
+    let plugin_root = plugin_root.canonicalize().map_err(io_err)?;
     let plugin_spec = load_legacy_v1_plugin_manifest_spec(&plugin_root)?;
     ensure_capability_registry_scaffold(root, config)?;
 
@@ -879,21 +874,22 @@ pub fn import_legacy_v1_plugin_skill_subset(
         });
     }
 
-    let resolved_skill_root = match resolve_legacy_v1_plugin_skill_root(&plugin_root, &skill_root_spec.raw_path) {
-        Ok(path) => path,
-        Err(item) => {
-            unsupported_items.push(item);
-            return Ok(LegacyV1PluginImportResult {
-                manifest_path: plugin_spec.manifest_path,
-                plugin_root,
-                plugin_id: plugin_spec.plugin_id,
-                config_schema_json: plugin_spec.config_schema_json,
-                skills_roots,
-                imported_skills,
-                unsupported_items,
-            });
-        }
-    };
+    let resolved_skill_root =
+        match resolve_legacy_v1_plugin_skill_root(&plugin_root, &skill_root_spec.raw_path) {
+            Ok(path) => path,
+            Err(item) => {
+                unsupported_items.push(item);
+                return Ok(LegacyV1PluginImportResult {
+                    manifest_path: plugin_spec.manifest_path,
+                    plugin_root,
+                    plugin_id: plugin_spec.plugin_id,
+                    config_schema_json: plugin_spec.config_schema_json,
+                    skills_roots,
+                    imported_skills,
+                    unsupported_items,
+                });
+            }
+        };
     if !resolved_skill_root.exists() {
         unsupported_items.push(LegacyV1PluginUnsupportedItem {
             path: resolved_skill_root.display().to_string(),
@@ -947,17 +943,18 @@ pub fn import_legacy_v1_plugin_skill_subset(
         if !skill_doc.exists() {
             continue;
         }
-        let (skill_name, skill_description, _) = match parse_workspace_skill_front_matter(&skill_doc) {
-            Ok(values) => values,
-            Err(error) => {
-                unsupported_items.push(LegacyV1PluginUnsupportedItem {
-                    path: skill_doc.display().to_string(),
-                    reason: "invalid_skill_front_matter".to_string(),
-                    detail: error,
-                });
-                continue;
-            }
-        };
+        let (skill_name, skill_description, _) =
+            match parse_workspace_skill_front_matter(&skill_doc) {
+                Ok(values) => values,
+                Err(error) => {
+                    unsupported_items.push(LegacyV1PluginUnsupportedItem {
+                        path: skill_doc.display().to_string(),
+                        reason: "invalid_skill_front_matter".to_string(),
+                        detail: error,
+                    });
+                    continue;
+                }
+            };
         if skill_description.trim().is_empty() {
             unsupported_items.push(LegacyV1PluginUnsupportedItem {
                 path: skill_doc.display().to_string(),
@@ -966,15 +963,15 @@ pub fn import_legacy_v1_plugin_skill_subset(
             });
             continue;
         }
-        let capability_name = legacy_v1_plugin_skill_capability_name(&plugin_spec.plugin_id, &skill_name);
+        let capability_name =
+            legacy_v1_plugin_skill_capability_name(&plugin_spec.plugin_id, &skill_name);
         if !discovered_skill_names.insert(capability_name.clone()) {
             unsupported_items.push(LegacyV1PluginUnsupportedItem {
                 path: skill_doc.display().to_string(),
                 reason: "duplicate_skill_name".to_string(),
                 detail: format!(
                     "skill {} would materialize more than once under plugin {}",
-                    skill_name,
-                    plugin_spec.plugin_id
+                    skill_name, plugin_spec.plugin_id
                 ),
             });
             continue;
@@ -998,10 +995,8 @@ pub fn import_legacy_v1_plugin_skill_subset(
             fs::set_permissions(&worker_path, permissions).map_err(io_err)?;
         }
 
-        let manifest_path = capability_custom_dir(root, config).join(format!(
-            "{}.json",
-            sanitize_name(&capability_name)
-        ));
+        let manifest_path = capability_custom_dir(root, config)
+            .join(format!("{}.json", sanitize_name(&capability_name)));
         let capability = CapabilityDescriptor {
             name: capability_name.clone(),
             description: skill_description.clone(),
@@ -1020,7 +1015,9 @@ pub fn import_legacy_v1_plugin_skill_subset(
             last_verified_at: String::new(),
             last_verification_job_id: String::new(),
             last_verification_execution_id: String::new(),
-            verification_note: "imported legacy v1 plugin skill subset has not been verified by Loom yet".to_string(),
+            verification_note:
+                "imported legacy v1 plugin skill subset has not been verified by Loom yet"
+                    .to_string(),
             promotion_state: "candidate".to_string(),
             promoted_at: String::new(),
             enabled: true,
@@ -1042,7 +1039,8 @@ pub fn import_legacy_v1_plugin_skill_subset(
                 capability_name,
                 source_kind: "legacy_v1_plugin_skill".to_string(),
                 source_manifest: plugin_spec.manifest_path.display().to_string(),
-                import_provenance: "legacy_v1_plugin_contract_v0/immediate_child_skill_dir".to_string(),
+                import_provenance: "legacy_v1_plugin_contract_v0/immediate_child_skill_dir"
+                    .to_string(),
                 import_scope: "immediate_child_skill_dir".to_string(),
             },
         });
@@ -1145,15 +1143,16 @@ pub fn forge_capability(
         last_verified_at: String::new(),
         last_verification_job_id: String::new(),
         last_verification_execution_id: String::new(),
-        verification_note: format!("forged candidate from template {} has not been verified yet", template),
+        verification_note: format!(
+            "forged candidate from template {} has not been verified yet",
+            template
+        ),
         promotion_state: "candidate".to_string(),
         promoted_at: String::new(),
         enabled: true,
     };
-    let manifest_path = capability_custom_dir(root, config).join(format!(
-        "{}.json",
-        sanitize_name(&request.name)
-    ));
+    let manifest_path =
+        capability_custom_dir(root, config).join(format!("{}.json", sanitize_name(&request.name)));
     fs::write(&manifest_path, descriptor_json(&capability)).map_err(io_err)?;
     Ok(CapabilityForgeResult {
         manifest_path,
@@ -1391,10 +1390,14 @@ pub fn render_capability_import_json(result: &CapabilityImportResult) -> String 
 
 pub fn render_legacy_v1_plugin_import_human(result: &LegacyV1PluginImportResult) -> String {
     let mut out = String::new();
-    out.push_str(r#"Meridian Loom // LEGACY V1 PLUGIN IMPORT
-"#);
-    out.push_str(r#"======================================
-"#);
+    out.push_str(
+        r#"Meridian Loom // LEGACY V1 PLUGIN IMPORT
+"#,
+    );
+    out.push_str(
+        r#"======================================
+"#,
+    );
     out.push_str(&format!(
         r#"plugin_root:      {}
 plugin_id:        {}
@@ -1463,11 +1466,16 @@ unsupported_items:  {}
         ));
     }
     if !result.unsupported_items.is_empty() {
-        out.push_str(r#"unsupported:
-"#);
+        out.push_str(
+            r#"unsupported:
+"#,
+        );
         for item in &result.unsupported_items {
-            out.push_str(&format!(r#"- {} | {} | {}
-"#, item.path, item.reason, item.detail));
+            out.push_str(&format!(
+                r#"- {} | {} | {}
+"#,
+                item.path, item.reason, item.detail
+            ));
         }
     }
     out
@@ -1510,23 +1518,22 @@ pub fn render_legacy_v1_plugin_import_json(result: &LegacyV1PluginImportResult) 
             })
         })
         .collect::<Vec<_>>();
-    format!(r#"{}
-"#, json!({
-        "manifest_path": result.manifest_path.display().to_string(),
-        "plugin_root": result.plugin_root.display().to_string(),
-        "plugin_id": result.plugin_id,
-        "config_schema_json": result.config_schema_json,
-        "skills_roots": result.skills_roots.iter().map(|path| path.display().to_string()).collect::<Vec<_>>(),
-        "imported_skills": imported_skills,
-        "unsupported_items": unsupported_items,
-    }))
+    format!(
+        r#"{}
+"#,
+        json!({
+            "manifest_path": result.manifest_path.display().to_string(),
+            "plugin_root": result.plugin_root.display().to_string(),
+            "plugin_id": result.plugin_id,
+            "config_schema_json": result.config_schema_json,
+            "skills_roots": result.skills_roots.iter().map(|path| path.display().to_string()).collect::<Vec<_>>(),
+            "imported_skills": imported_skills,
+            "unsupported_items": unsupported_items,
+        })
+    )
 }
 
 pub fn render_capability_forge_human(result: &CapabilityForgeResult) -> String {
-
-
-
-
     format!(
         "Meridian Loom // CAPABILITY FORGE\n=================================\nname:              {}\nmanifest:          {}\nworker_path:       {}\ntemplate:          {}\nsource_kind:       {}\nadapter_kind:      {}\naction_type:       {}\nresource:          {}\nnote:              candidate capability forged into Loom runtime and ready for verify/promote\n",
         result.capability.name,
@@ -1677,7 +1684,10 @@ fn parse_capability_registry(raw: &str) -> LoomResult<CapabilityRegistry> {
         .iter()
         .map(parse_capability_descriptor_value)
         .collect::<LoomResult<Vec<_>>>()?;
-    Ok(CapabilityRegistry { version, capabilities })
+    Ok(CapabilityRegistry {
+        version,
+        capabilities,
+    })
 }
 
 fn parse_capability_descriptor_json(raw: &str) -> LoomResult<CapabilityDescriptor> {
@@ -1707,16 +1717,52 @@ fn parse_capability_gap_json(raw: &str) -> LoomResult<CapabilityGapRecord> {
         requested_via: required_string(&value, "requested_via")?,
         capability_name: required_string(&value, "capability_name")?,
         gap_class: required_string(&value, "gap_class")?,
-        goal: value.get("goal").and_then(Value::as_str).unwrap_or("").to_string(),
+        goal: value
+            .get("goal")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
         proposed_capability_name: required_string(&value, "proposed_capability_name")?,
-        agent_id: value.get("agent_id").and_then(Value::as_str).unwrap_or("").to_string(),
-        org_id: value.get("org_id").and_then(Value::as_str).unwrap_or("").to_string(),
-        kernel_path: value.get("kernel_path").and_then(Value::as_str).unwrap_or("").to_string(),
-        action_type: value.get("action_type").and_then(Value::as_str).unwrap_or("").to_string(),
-        resource: value.get("resource").and_then(Value::as_str).unwrap_or("").to_string(),
-        payload_json: value.get("payload_json").and_then(Value::as_str).unwrap_or("").to_string(),
-        run_id: value.get("run_id").and_then(Value::as_str).unwrap_or("").to_string(),
-        session_id: value.get("session_id").and_then(Value::as_str).unwrap_or("").to_string(),
+        agent_id: value
+            .get("agent_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        org_id: value
+            .get("org_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        kernel_path: value
+            .get("kernel_path")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        action_type: value
+            .get("action_type")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        resource: value
+            .get("resource")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        payload_json: value
+            .get("payload_json")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        run_id: value
+            .get("run_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        session_id: value
+            .get("session_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
         original_request_json: value
             .get("original_request_json")
             .and_then(Value::as_str)
@@ -1772,7 +1818,11 @@ fn parse_capability_gap_json(raw: &str) -> LoomResult<CapabilityGapRecord> {
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string(),
-        last_note: value.get("last_note").and_then(Value::as_str).unwrap_or("").to_string(),
+        last_note: value
+            .get("last_note")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
     })
 }
 
@@ -1862,11 +1912,16 @@ fn parse_capability_descriptor_value(value: &Value) -> LoomResult<CapabilityDesc
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string(),
-        enabled: value.get("enabled").and_then(Value::as_bool).unwrap_or(true),
+        enabled: value
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
     })
 }
 
-fn parse_workspace_skill_front_matter(skill_doc: &Path) -> LoomResult<(String, String, Option<String>)> {
+fn parse_workspace_skill_front_matter(
+    skill_doc: &Path,
+) -> LoomResult<(String, String, Option<String>)> {
     let raw = fs::read_to_string(skill_doc).map_err(io_err)?;
     let mut lines = raw.lines();
     if lines.next().map(str::trim) != Some("---") {
@@ -1999,13 +2054,13 @@ fn resolve_workspace_skill_entrypoint(skill_root: &Path, entrypoint: &str) -> Lo
     Ok(full_path)
 }
 
-fn load_bundle_skill_spec(skill_root: &Path, bundle_manifest: &Path) -> LoomResult<ClawfamilyImportSpec> {
+fn load_bundle_skill_spec(
+    skill_root: &Path,
+    bundle_manifest: &Path,
+) -> LoomResult<ClawfamilyImportSpec> {
     let raw = fs::read_to_string(bundle_manifest).map_err(io_err)?;
     let value: Value = serde_json::from_str(&raw).map_err(io_err)?;
-    let version = value
-        .get("version")
-        .and_then(Value::as_str)
-        .unwrap_or("");
+    let version = value.get("version").and_then(Value::as_str).unwrap_or("");
     if version != "clawfamily_skill_contract_v0" {
         return Err(format!(
             "unsupported clawskill bundle version '{}' in {}",
@@ -2047,7 +2102,8 @@ fn load_bundle_skill_spec(skill_root: &Path, bundle_manifest: &Path) -> LoomResu
         .map(ToString::to_string)
         .unwrap_or_else(|| {
             let script_text = fs::read_to_string(&skill_script).unwrap_or_default();
-            detect_workspace_skill_signature(&script_text).unwrap_or_else(|_| "custom_bundle_v0".to_string())
+            detect_workspace_skill_signature(&script_text)
+                .unwrap_or_else(|_| "custom_bundle_v0".to_string())
         });
     if !matches!(
         adapter_kind.as_str(),
@@ -2085,7 +2141,9 @@ fn load_bundle_skill_spec(skill_root: &Path, bundle_manifest: &Path) -> LoomResu
     })
 }
 
-fn load_legacy_v1_plugin_manifest_spec(plugin_root: &Path) -> LoomResult<LegacyV1PluginManifestSpec> {
+fn load_legacy_v1_plugin_manifest_spec(
+    plugin_root: &Path,
+) -> LoomResult<LegacyV1PluginManifestSpec> {
     let manifest_path = plugin_root.join("legacy_v1.plugin.json");
     if !manifest_path.exists() {
         return Err(format!(
@@ -2101,7 +2159,8 @@ fn load_legacy_v1_plugin_manifest_spec(plugin_root: &Path) -> LoomResult<LegacyV
         .get("configSchema")
         .map(|schema| serde_json::to_string(schema).unwrap_or_else(|_| schema.to_string()))
         .unwrap_or_default();
-    let (skill_roots, unsupported_items) = parse_legacy_v1_plugin_skill_roots(&value, &manifest_path);
+    let (skill_roots, unsupported_items) =
+        parse_legacy_v1_plugin_skill_roots(&value, &manifest_path);
     Ok(LegacyV1PluginManifestSpec {
         manifest_path,
         plugin_id,
@@ -2114,7 +2173,10 @@ fn load_legacy_v1_plugin_manifest_spec(plugin_root: &Path) -> LoomResult<LegacyV
 fn parse_legacy_v1_plugin_skill_roots(
     value: &Value,
     manifest_path: &Path,
-) -> (Vec<LegacyV1PluginSkillRootSpec>, Vec<LegacyV1PluginUnsupportedItem>) {
+) -> (
+    Vec<LegacyV1PluginSkillRootSpec>,
+    Vec<LegacyV1PluginUnsupportedItem>,
+) {
     let mut unsupported_items = Vec::new();
     let Some(raw_skills) = value.get("skills") else {
         unsupported_items.push(LegacyV1PluginUnsupportedItem {
@@ -2132,7 +2194,9 @@ fn parse_legacy_v1_plugin_skill_roots(
             unsupported_items.push(LegacyV1PluginUnsupportedItem {
                 path: manifest_path.display().to_string(),
                 reason: "invalid_skills_field_shape".to_string(),
-                detail: "legacy_v1.plugin.json skills must be a string path or an array of path entries".to_string(),
+                detail:
+                    "legacy_v1.plugin.json skills must be a string path or an array of path entries"
+                        .to_string(),
             });
             return (Vec::new(), unsupported_items);
         }
@@ -2208,17 +2272,51 @@ fn parse_legacy_v1_plugin_skill_root_entry(
     }
 }
 
-fn collect_legacy_v1_plugin_surface_unsupported_items(plugin_root: &Path) -> Vec<LegacyV1PluginUnsupportedItem> {
+fn collect_legacy_v1_plugin_surface_unsupported_items(
+    plugin_root: &Path,
+) -> Vec<LegacyV1PluginUnsupportedItem> {
     let mut unsupported_items = Vec::new();
     let checks = [
-        ("package.json", "package_json_not_supported", "package.json is not supported for this bounded plugin skill import"),
-        ("providers", "providers_not_supported", "providers are not supported for this bounded plugin skill import"),
-        ("channels", "channels_not_supported", "channels are not supported for this bounded plugin skill import"),
-        ("hooks", "hooks_not_supported", "hooks are not supported for this bounded plugin skill import"),
-        ("commands", "commands_not_supported", "commands are not supported for this bounded plugin skill import"),
-        ("src", "runtime_modules_not_supported", "runtime modules are not supported for this bounded plugin skill import"),
-        ("lib", "runtime_modules_not_supported", "runtime modules are not supported for this bounded plugin skill import"),
-        ("dist", "runtime_modules_not_supported", "runtime modules are not supported for this bounded plugin skill import"),
+        (
+            "package.json",
+            "package_json_not_supported",
+            "package.json is not supported for this bounded plugin skill import",
+        ),
+        (
+            "providers",
+            "providers_not_supported",
+            "providers are not supported for this bounded plugin skill import",
+        ),
+        (
+            "channels",
+            "channels_not_supported",
+            "channels are not supported for this bounded plugin skill import",
+        ),
+        (
+            "hooks",
+            "hooks_not_supported",
+            "hooks are not supported for this bounded plugin skill import",
+        ),
+        (
+            "commands",
+            "commands_not_supported",
+            "commands are not supported for this bounded plugin skill import",
+        ),
+        (
+            "src",
+            "runtime_modules_not_supported",
+            "runtime modules are not supported for this bounded plugin skill import",
+        ),
+        (
+            "lib",
+            "runtime_modules_not_supported",
+            "runtime modules are not supported for this bounded plugin skill import",
+        ),
+        (
+            "dist",
+            "runtime_modules_not_supported",
+            "runtime modules are not supported for this bounded plugin skill import",
+        ),
     ];
     for (relative, reason, detail) in checks {
         let path = plugin_root.join(relative);
@@ -2250,14 +2348,19 @@ fn resolve_legacy_v1_plugin_skill_root(
         return Err(LegacyV1PluginUnsupportedItem {
             path: candidate.display().to_string(),
             reason: "absolute_skills_root_path_not_supported".to_string(),
-            detail: "legacy_v1.plugin.json skills roots must be relative to the plugin root".to_string(),
+            detail: "legacy_v1.plugin.json skills roots must be relative to the plugin root"
+                .to_string(),
         });
     }
-    if candidate.components().any(|component| matches!(component, std::path::Component::ParentDir)) {
+    if candidate
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
         return Err(LegacyV1PluginUnsupportedItem {
             path: candidate.display().to_string(),
             reason: "escaping_skills_root_path_not_supported".to_string(),
-            detail: "legacy_v1.plugin.json skills roots must stay under the plugin root".to_string(),
+            detail: "legacy_v1.plugin.json skills roots must stay under the plugin root"
+                .to_string(),
         });
     }
     Ok(plugin_root.join(candidate))
@@ -2505,7 +2608,9 @@ pub fn load_capability_gap(
     parse_capability_gap_json(&raw)
 }
 
-pub fn capability_gap_replay_request(gap: &CapabilityGapRecord) -> LoomResult<CapabilityGapRequest> {
+pub fn capability_gap_replay_request(
+    gap: &CapabilityGapRecord,
+) -> LoomResult<CapabilityGapRequest> {
     match gap.requested_via.trim() {
         "action_execute" => Ok(CapabilityGapRequest {
             request_id: gap.request_id.clone(),
@@ -2629,31 +2734,95 @@ replay_request:      {}
 last_note:           {}
 ",
         result.gap.gap_id,
-        if result.gap.request_id.is_empty() { "(none)" } else { &result.gap.request_id },
+        if result.gap.request_id.is_empty() {
+            "(none)"
+        } else {
+            &result.gap.request_id
+        },
         result.gap_path.display(),
         result.gap.requested_via,
         result.gap.capability_name,
         result.gap.gap_class,
-        if result.gap.goal.is_empty() { "(none)" } else { &result.gap.goal },
+        if result.gap.goal.is_empty() {
+            "(none)"
+        } else {
+            &result.gap.goal
+        },
         result.gap.proposed_capability_name,
-        if result.gap.agent_id.is_empty() { "(none)" } else { &result.gap.agent_id },
-        if result.gap.org_id.is_empty() { "(none)" } else { &result.gap.org_id },
-        if result.gap.kernel_path.is_empty() { "(none)" } else { &result.gap.kernel_path },
-        if result.gap.action_type.is_empty() { "(none)" } else { &result.gap.action_type },
-        if result.gap.resource.is_empty() { "(none)" } else { &result.gap.resource },
-        if result.gap.original_request_json.is_empty() { "(none)" } else { &result.gap.original_request_json },
+        if result.gap.agent_id.is_empty() {
+            "(none)"
+        } else {
+            &result.gap.agent_id
+        },
+        if result.gap.org_id.is_empty() {
+            "(none)"
+        } else {
+            &result.gap.org_id
+        },
+        if result.gap.kernel_path.is_empty() {
+            "(none)"
+        } else {
+            &result.gap.kernel_path
+        },
+        if result.gap.action_type.is_empty() {
+            "(none)"
+        } else {
+            &result.gap.action_type
+        },
+        if result.gap.resource.is_empty() {
+            "(none)"
+        } else {
+            &result.gap.resource
+        },
+        if result.gap.original_request_json.is_empty() {
+            "(none)"
+        } else {
+            &result.gap.original_request_json
+        },
         result.gap.forge_status,
         result.gap.verification_status,
         result.gap.promotion_status,
-        if result.gap.verified_at.is_empty() { "(never)" } else { &result.gap.verified_at },
-        if result.gap.verification_note.is_empty() { "(none)" } else { &result.gap.verification_note },
-        if result.gap.promoted_at.is_empty() { "(never)" } else { &result.gap.promoted_at },
-        if result.gap.promotion_note.is_empty() { "(none)" } else { &result.gap.promotion_note },
-        if result.gap.candidate_manifest_path.is_empty() { "(none)" } else { &result.gap.candidate_manifest_path },
-        if result.gap.verification_job_id.is_empty() { "(none)" } else { &result.gap.verification_job_id },
-        if result.gap.verification_execution_id.is_empty() { "(none)" } else { &result.gap.verification_execution_id },
+        if result.gap.verified_at.is_empty() {
+            "(never)"
+        } else {
+            &result.gap.verified_at
+        },
+        if result.gap.verification_note.is_empty() {
+            "(none)"
+        } else {
+            &result.gap.verification_note
+        },
+        if result.gap.promoted_at.is_empty() {
+            "(never)"
+        } else {
+            &result.gap.promoted_at
+        },
+        if result.gap.promotion_note.is_empty() {
+            "(none)"
+        } else {
+            &result.gap.promotion_note
+        },
+        if result.gap.candidate_manifest_path.is_empty() {
+            "(none)"
+        } else {
+            &result.gap.candidate_manifest_path
+        },
+        if result.gap.verification_job_id.is_empty() {
+            "(none)"
+        } else {
+            &result.gap.verification_job_id
+        },
+        if result.gap.verification_execution_id.is_empty() {
+            "(none)"
+        } else {
+            &result.gap.verification_execution_id
+        },
         replay_request_status,
-        if result.gap.last_note.is_empty() { "(none)" } else { &result.gap.last_note },
+        if result.gap.last_note.is_empty() {
+            "(none)"
+        } else {
+            &result.gap.last_note
+        },
     )
 }
 
@@ -2688,7 +2857,10 @@ fn normalize_forge_template(template: &str) -> LoomResult<&'static str> {
         FORGE_TEMPLATE_URL_BUNDLE => Ok(FORGE_TEMPLATE_URL_BUNDLE),
         other => Err(format!(
             "unsupported forge template '{}'; supported: {}, {}, {}",
-            other, FORGE_TEMPLATE_ECHO_JSON, FORGE_TEMPLATE_ARTIFACT_INSPECT, FORGE_TEMPLATE_URL_BUNDLE
+            other,
+            FORGE_TEMPLATE_ECHO_JSON,
+            FORGE_TEMPLATE_ARTIFACT_INSPECT,
+            FORGE_TEMPLATE_URL_BUNDLE
         )),
     }
 }
@@ -2724,10 +2896,18 @@ fn default_forge_description(template: &str, goal: &str) -> String {
 pub fn capability_runtime_lane(capability: &CapabilityDescriptor) -> &'static str {
     match capability.worker_kind.as_str() {
         "wasm" => "wasmtime_local_guest",
-        "python" if capability.source_kind == "legacy_v1_workspace_skill" => "python_host_process/imported_workspace_skill",
-        "python" if capability.source_kind == "clawfamily_skill_bundle" => "python_host_process/imported_skill_bundle",
-        "python" if capability.source_kind == "legacy_v1_plugin_skill" => "python_host_process/imported_legacy_v1_plugin_skill",
-        "python" if capability.source_kind == "loom_forge_candidate" => "python_host_process/forged_candidate",
+        "python" if capability.source_kind == "legacy_v1_workspace_skill" => {
+            "python_host_process/imported_workspace_skill"
+        }
+        "python" if capability.source_kind == "clawfamily_skill_bundle" => {
+            "python_host_process/imported_skill_bundle"
+        }
+        "python" if capability.source_kind == "legacy_v1_plugin_skill" => {
+            "python_host_process/imported_legacy_v1_plugin_skill"
+        }
+        "python" if capability.source_kind == "loom_forge_candidate" => {
+            "python_host_process/forged_candidate"
+        }
         "python" => "python_host_process",
         _ => "unknown",
     }
@@ -2896,7 +3076,10 @@ fn render_forged_capability_worker(capability_name: &str, template: &str) -> Loo
         _ => {
             return Err(format!(
                 "unsupported forge template '{}'; expected {}, {}, or {}",
-                template, FORGE_TEMPLATE_ECHO_JSON, FORGE_TEMPLATE_ARTIFACT_INSPECT, FORGE_TEMPLATE_URL_BUNDLE
+                template,
+                FORGE_TEMPLATE_ECHO_JSON,
+                FORGE_TEMPLATE_ARTIFACT_INSPECT,
+                FORGE_TEMPLATE_URL_BUNDLE
             ))
         }
     };
@@ -2966,7 +3149,8 @@ fn render_workspace_skill_wrapper(
     let capability_name = serde_json::to_string(capability_name).map_err(io_err)?;
     let skill_name = serde_json::to_string(skill_name).map_err(io_err)?;
     let skill_root = serde_json::to_string(&skill_root.display().to_string()).map_err(io_err)?;
-    let skill_script = serde_json::to_string(&skill_script.display().to_string()).map_err(io_err)?;
+    let skill_script =
+        serde_json::to_string(&skill_script.display().to_string()).map_err(io_err)?;
     let detected_signature = serde_json::to_string(detected_signature).map_err(io_err)?;
     let source_kind = serde_json::to_string(source_kind).map_err(io_err)?;
     Ok(format!(
@@ -3118,16 +3302,27 @@ fn required_string(value: &Value, key: &str) -> LoomResult<String> {
         .ok_or_else(|| format!("capability manifest missing {}", key))
 }
 
-fn upsert_capability(capabilities: &mut Vec<CapabilityDescriptor>, capability: CapabilityDescriptor) {
-    if let Some(existing) = capabilities.iter_mut().find(|item| item.name == capability.name) {
+fn upsert_capability(
+    capabilities: &mut Vec<CapabilityDescriptor>,
+    capability: CapabilityDescriptor,
+) {
+    if let Some(existing) = capabilities
+        .iter_mut()
+        .find(|item| item.name == capability.name)
+    {
         *existing = capability;
     } else {
         capabilities.push(capability);
     }
 }
 
-fn custom_capability_manifest_path(root: &Path, config: &Config, name: &str) -> LoomResult<PathBuf> {
-    let manifest_path = capability_custom_dir(root, config).join(format!("{}.json", sanitize_name(name)));
+fn custom_capability_manifest_path(
+    root: &Path,
+    config: &Config,
+    name: &str,
+) -> LoomResult<PathBuf> {
+    let manifest_path =
+        capability_custom_dir(root, config).join(format!("{}.json", sanitize_name(name)));
     if !manifest_path.exists() {
         return Err(format!(
             "capability '{}' does not have a writable custom manifest at {}",
@@ -3159,7 +3354,8 @@ fn save_capability_registry(registry: &CapabilityRegistry, path: &Path) -> LoomR
 }
 
 fn sanitize_name(input: &str) -> String {
-    input.chars()
+    input
+        .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
         .collect::<String>()
         .trim_matches('-')
@@ -3278,14 +3474,38 @@ description: {}
         let path = ensure_capability_registry_scaffold(&root, &config).expect("registry scaffold");
         assert!(path.exists());
         let registry = load_capability_registry(&root, &config).expect("registry load");
-        assert!(registry.capabilities.iter().any(|item| item.name == "loom.echo.v1"));
-        assert!(registry.capabilities.iter().any(|item| item.name == "loom.wasm.minimal.v1"));
-        assert!(registry.capabilities.iter().any(|item| item.name == "loom.browser.navigate.v1"));
-        assert!(registry.capabilities.iter().any(|item| item.name == "loom.fs.read.v1"));
-        assert!(registry.capabilities.iter().any(|item| item.name == "loom.fs.write.v1"));
-        assert!(registry.capabilities.iter().any(|item| item.name == "loom.llm.inference.v1"));
-        assert!(registry.capabilities.iter().any(|item| item.name == "loom.kv.get.v1"));
-        assert!(registry.capabilities.iter().any(|item| item.name == "loom.kv.set.v1"));
+        assert!(registry
+            .capabilities
+            .iter()
+            .any(|item| item.name == "loom.echo.v1"));
+        assert!(registry
+            .capabilities
+            .iter()
+            .any(|item| item.name == "loom.wasm.minimal.v1"));
+        assert!(registry
+            .capabilities
+            .iter()
+            .any(|item| item.name == "loom.browser.navigate.v1"));
+        assert!(registry
+            .capabilities
+            .iter()
+            .any(|item| item.name == "loom.fs.read.v1"));
+        assert!(registry
+            .capabilities
+            .iter()
+            .any(|item| item.name == "loom.fs.write.v1"));
+        assert!(registry
+            .capabilities
+            .iter()
+            .any(|item| item.name == "loom.llm.inference.v1"));
+        assert!(registry
+            .capabilities
+            .iter()
+            .any(|item| item.name == "loom.kv.get.v1"));
+        assert!(registry
+            .capabilities
+            .iter()
+            .any(|item| item.name == "loom.kv.set.v1"));
     }
 
     #[test]
@@ -3321,22 +3541,41 @@ description: {}
         let root = temp_path("loom-cap-resolve");
         let config = sample_config();
         ensure_capability_registry_scaffold(&root, &config).expect("registry scaffold");
-        let by_name = resolve_capability_for_request(&root, &config, Some("loom.echo.v1"), "ignored", "ignored")
-            .expect("resolve by name")
-            .expect("capability by name");
+        let by_name = resolve_capability_for_request(
+            &root,
+            &config,
+            Some("loom.echo.v1"),
+            "ignored",
+            "ignored",
+        )
+        .expect("resolve by name")
+        .expect("capability by name");
         assert_eq!(by_name.resource, "capability:loom.echo.v1");
-        let by_request = resolve_capability_for_request(&root, &config, None, "compute", "capability:loom.wasm.minimal.v1")
-            .expect("resolve by request")
-            .expect("capability by request");
+        let by_request = resolve_capability_for_request(
+            &root,
+            &config,
+            None,
+            "compute",
+            "capability:loom.wasm.minimal.v1",
+        )
+        .expect("resolve by request")
+        .expect("capability by request");
         assert_eq!(by_request.worker_kind, "wasm");
-        let browser = resolve_capability_for_request(&root, &config, None, "browse", "capability:loom.browser.navigate.v1")
-            .expect("resolve browser capability")
-            .expect("browser capability by request");
+        let browser = resolve_capability_for_request(
+            &root,
+            &config,
+            None,
+            "browse",
+            "capability:loom.browser.navigate.v1",
+        )
+        .expect("resolve browser capability")
+        .expect("browser capability by request");
         assert_eq!(browser.wasm_module, "builtin:browser.navigate");
     }
 
     #[test]
-    fn import_legacy_v1_plugin_skill_subset_imports_immediate_child_skills_and_tracks_unsupported_items() {
+    fn import_legacy_v1_plugin_skill_subset_imports_immediate_child_skills_and_tracks_unsupported_items(
+    ) {
         let root = temp_path("loom-legacy_v1-import-root");
         let config = sample_config();
         ensure_capability_registry_scaffold(&root, &config).expect("registry scaffold");
@@ -3388,18 +3627,32 @@ name: beta-review
             .all(|item| !item.path.contains("nested")));
 
         let imported = &result.imported_skills[0];
-        assert_eq!(imported.capability.name, "loomskill.acme-plugin.alpha-review.v0");
+        assert_eq!(
+            imported.capability.name,
+            "loomskill.acme-plugin.alpha-review.v0"
+        );
         assert_eq!(imported.capability.description, "Alpha review skill");
         assert_eq!(imported.normalized_metadata.plugin_id, "acme-plugin");
         assert_eq!(imported.normalized_metadata.skill_name, "alpha-review");
-        assert_eq!(imported.normalized_metadata.skill_description, "Alpha review skill");
-        assert_eq!(imported.normalized_metadata.import_scope, "immediate_child_skill_dir");
-        assert_eq!(imported.normalized_metadata.capability_name, "loomskill.acme-plugin.alpha-review.v0");
+        assert_eq!(
+            imported.normalized_metadata.skill_description,
+            "Alpha review skill"
+        );
+        assert_eq!(
+            imported.normalized_metadata.import_scope,
+            "immediate_child_skill_dir"
+        );
+        assert_eq!(
+            imported.normalized_metadata.capability_name,
+            "loomskill.acme-plugin.alpha-review.v0"
+        );
         assert!(imported.manifest_path.exists());
         assert!(imported.worker_path.exists());
         let human = render_legacy_v1_plugin_import_human(&result);
         assert!(human.contains("worker_kind: python"));
-        assert!(human.contains("worker_entry: workers/python/imported-loomskill-acme-plugin-alpha-review-v0.py"));
+        assert!(human.contains(
+            "worker_entry: workers/python/imported-loomskill-acme-plugin-alpha-review-v0.py"
+        ));
         assert!(human.contains("payload_mode: json"));
         assert!(human.contains("runtime_lane: python_host_process/imported_legacy_v1_plugin_skill"));
         assert!(human.contains("dependency: plugin_host_python"));
@@ -3416,7 +3669,11 @@ name: beta-review
         fs::create_dir_all(plugin_root.join("skills-one/alpha")).expect("create skills one");
         fs::create_dir_all(plugin_root.join("skills-two/beta")).expect("create skills two");
         write_legacy_v1_plugin_manifest(&plugin_root, r#"["skills-one", "skills-two"]"#);
-        write_skill_doc(&plugin_root.join("skills-one/alpha"), "alpha", "Alpha skill");
+        write_skill_doc(
+            &plugin_root.join("skills-one/alpha"),
+            "alpha",
+            "Alpha skill",
+        );
         write_skill_doc(&plugin_root.join("skills-two/beta"), "beta", "Beta skill");
 
         let result = import_legacy_v1_plugin_skill_subset(&root, &config, &plugin_root)
@@ -3436,10 +3693,7 @@ name: beta-review
 
         let plugin_root = temp_path("loom-legacy_v1-plugin-config-gated");
         fs::create_dir_all(plugin_root.join("skills/alpha")).expect("create skills");
-        write_legacy_v1_plugin_manifest(
-            &plugin_root,
-            r#"[{"path": "skills", "when": "beta"}]"#,
-        );
+        write_legacy_v1_plugin_manifest(&plugin_root, r#"[{"path": "skills", "when": "beta"}]"#);
         write_skill_doc(&plugin_root.join("skills/alpha"), "alpha", "Alpha skill");
 
         let result = import_legacy_v1_plugin_skill_subset(&root, &config, &plugin_root)
@@ -3482,16 +3736,23 @@ parser.add_argument("--skip-container", action="store_true")
         )
         .expect("write skill script");
 
-        let result = import_workspace_skill(&root, &config, &skill_root, None, None).expect("import workspace skill");
+        let result = import_workspace_skill(&root, &config, &skill_root, None, None)
+            .expect("import workspace skill");
         assert!(result.manifest_path.exists());
         assert!(result.worker_path.exists());
         assert_eq!(result.detected_signature, "artifact_report_v0");
         assert_eq!(result.capability.source_kind, "legacy_v1_workspace_skill");
         assert_eq!(result.skill_shape, "workspace_python_entrypoint");
         assert_eq!(result.capability.adapter_kind, "artifact_report_v0");
-        assert!(result.capability.import_provenance.contains("workspace_python_entrypoint"));
+        assert!(result
+            .capability
+            .import_provenance
+            .contains("workspace_python_entrypoint"));
         assert_eq!(result.capability.action_type, "skill_exec");
-        assert_eq!(result.capability.resource, "capability:loomskill.malware-triage.v0");
+        assert_eq!(
+            result.capability.resource,
+            "capability:loomskill.malware-triage.v0"
+        );
 
         let registry = load_capability_registry(&root, &config).expect("load capability registry");
         let imported = registry
@@ -3503,7 +3764,8 @@ parser.add_argument("--skip-container", action="store_true")
         assert!(imported.source_path.contains("loom-cap-import-skill"));
         let human = render_capability_import_human(&result);
         assert!(human.contains("worker_kind:       python"));
-        assert!(human.contains("worker_entry:      workers/python/imported-loomskill-malware-triage-v0.py"));
+        assert!(human
+            .contains("worker_entry:      workers/python/imported-loomskill-malware-triage-v0.py"));
         assert!(human.contains("payload_mode:      json"));
         assert!(human.contains("runtime_lane:      python_host_process/imported_workspace_skill"));
         assert!(human.contains("dependency:        workspace_host_python"));
@@ -3529,11 +3791,8 @@ description: Imported malware triage skill
 "#,
         )
         .expect("write skill doc");
-        fs::write(
-            skill_root.join("scripts/helper.py"),
-            "import pathlib\n",
-        )
-        .expect("write helper script");
+        fs::write(skill_root.join("scripts/helper.py"), "import pathlib\n")
+            .expect("write helper script");
         fs::write(
             skill_root.join("scripts/triage_artifact.py"),
             r#"import argparse
@@ -3555,14 +3814,23 @@ parser.add_argument("--skip-container", action="store_true")
         .expect("import workspace skill");
         assert!(result.manifest_path.exists());
         assert!(result.worker_path.exists());
-        assert_eq!(result.skill_script, skill_root.join("scripts/triage_artifact.py"));
+        assert_eq!(
+            result.skill_script,
+            skill_root.join("scripts/triage_artifact.py")
+        );
         assert_eq!(result.detected_signature, "artifact_report_v0");
         assert_eq!(result.capability.source_kind, "legacy_v1_workspace_skill");
         assert_eq!(result.skill_shape, "workspace_python_entrypoint");
         assert_eq!(result.capability.adapter_kind, "artifact_report_v0");
-        assert!(result.capability.import_provenance.contains("workspace_python_entrypoint"));
+        assert!(result
+            .capability
+            .import_provenance
+            .contains("workspace_python_entrypoint"));
         assert_eq!(result.capability.action_type, "skill_exec");
-        assert_eq!(result.capability.resource, "capability:loomskill.malware-triage.v0");
+        assert_eq!(
+            result.capability.resource,
+            "capability:loomskill.malware-triage.v0"
+        );
     }
 
     #[test]
@@ -3599,14 +3867,21 @@ parser.add_argument("--out")
         )
         .expect("write bundle script");
 
-        let result = import_workspace_skill(&root, &config, &skill_root, None, None).expect("import bundle skill");
+        let result = import_workspace_skill(&root, &config, &skill_root, None, None)
+            .expect("import bundle skill");
         assert!(result.manifest_path.exists());
         assert!(result.worker_path.exists());
         assert_eq!(result.detected_signature, "url_report_v0");
         assert_eq!(result.skill_shape, "bundle_manifest");
         assert_eq!(result.capability.source_kind, "clawfamily_skill_bundle");
-        assert_eq!(result.capability.source_manifest, skill_root.join("clawskill.json").display().to_string());
-        assert!(result.capability.import_provenance.contains("bundle_manifest"));
+        assert_eq!(
+            result.capability.source_manifest,
+            skill_root.join("clawskill.json").display().to_string()
+        );
+        assert!(result
+            .capability
+            .import_provenance
+            .contains("bundle_manifest"));
     }
 
     #[test]
@@ -3630,7 +3905,10 @@ parser.add_argument("--out")
         assert!(result.manifest_path.exists());
         assert!(result.worker_path.exists());
         assert_eq!(result.capability.source_kind, "loom_forge_candidate");
-        assert_eq!(result.capability.adapter_kind, "loom_forge_template/artifact_inspect_v0");
+        assert_eq!(
+            result.capability.adapter_kind,
+            "loom_forge_template/artifact_inspect_v0"
+        );
 
         let resolved = find_capability_by_name(&root, &config, "loomforge.artifact.inspect.v0")
             .expect("resolve capability")
@@ -3657,7 +3935,10 @@ parser.add_argument("--out")
         )
         .expect("forge from gap class");
         assert_eq!(result.template, FORGE_TEMPLATE_URL_BUNDLE);
-        assert!(result.capability.description.contains("goal: collect domains from urls"));
+        assert!(result
+            .capability
+            .description
+            .contains("goal: collect domains from urls"));
     }
 
     #[test]
@@ -3751,7 +4032,10 @@ parser.add_argument("--out")
         )
         .expect("update verify");
         assert_eq!(verified.gap.verification_status, "verified");
-        assert_eq!(verified.gap.verification_note, "verification matched expectations");
+        assert_eq!(
+            verified.gap.verification_note,
+            "verification matched expectations"
+        );
         assert!(!verified.gap.verified_at.is_empty());
 
         let promoted = update_capability_gap_promotion(
@@ -3823,7 +4107,10 @@ parser.add_argument("--out")
 
         let persisted = load_capability_gap(&root, &config, &gap.gap.gap_id).expect("reload gap");
         assert_eq!(persisted.verification_status, "verified");
-        assert_eq!(persisted.verification_note, "verification matched expectations");
+        assert_eq!(
+            persisted.verification_note,
+            "verification matched expectations"
+        );
         assert_eq!(persisted.verified_at, verified.gap.verified_at);
         assert_eq!(persisted.promotion_status, "promoted");
         assert_eq!(persisted.promotion_note, "promotion succeeded");
@@ -3868,14 +4155,38 @@ parser.add_argument("--out")
             .and_then(Value::as_object)
             .expect("replay request");
 
-        assert_eq!(replay.get("request_id").and_then(Value::as_str), Some("request::replay::demo"));
-        assert_eq!(replay.get("requested_via").and_then(Value::as_str), Some("action_execute"));
-        assert_eq!(replay.get("capability_name").and_then(Value::as_str), Some("loomforge.artifact-triage.demo.v0"));
-        assert_eq!(replay.get("gap_class").and_then(Value::as_str), Some("artifact_triage"));
-        assert_eq!(replay.get("goal").and_then(Value::as_str), Some("suspicious artifact triage"));
-        assert_eq!(replay.get("payload_json").and_then(Value::as_str), Some(r#"{"artifact_path":"/tmp/sample.bin"}"#));
-        assert_eq!(replay.get("run_id").and_then(Value::as_str), Some("run::replay::demo"));
-        assert_eq!(replay.get("session_id").and_then(Value::as_str), Some("session::replay::demo"));
+        assert_eq!(
+            replay.get("request_id").and_then(Value::as_str),
+            Some("request::replay::demo")
+        );
+        assert_eq!(
+            replay.get("requested_via").and_then(Value::as_str),
+            Some("action_execute")
+        );
+        assert_eq!(
+            replay.get("capability_name").and_then(Value::as_str),
+            Some("loomforge.artifact-triage.demo.v0")
+        );
+        assert_eq!(
+            replay.get("gap_class").and_then(Value::as_str),
+            Some("artifact_triage")
+        );
+        assert_eq!(
+            replay.get("goal").and_then(Value::as_str),
+            Some("suspicious artifact triage")
+        );
+        assert_eq!(
+            replay.get("payload_json").and_then(Value::as_str),
+            Some(r#"{"artifact_path":"/tmp/sample.bin"}"#)
+        );
+        assert_eq!(
+            replay.get("run_id").and_then(Value::as_str),
+            Some("run::replay::demo")
+        );
+        assert_eq!(
+            replay.get("session_id").and_then(Value::as_str),
+            Some("session::replay::demo")
+        );
         assert!(value
             .get("gap")
             .and_then(Value::as_object)
@@ -3921,8 +4232,14 @@ parser.add_argument("--out")
         assert_eq!(replay.requested_via, "action_execute");
         assert_eq!(replay.capability_name, "loomforge.artifact-triage.demo.v0");
         assert_eq!(replay.action_type, "artifact_inspect");
-        assert_eq!(replay.resource, "capability:loomforge.artifact-triage.demo.v0");
-        assert_eq!(replay.payload_json, r#"{"artifact_path":"/tmp/sample.bin"}"#);
+        assert_eq!(
+            replay.resource,
+            "capability:loomforge.artifact-triage.demo.v0"
+        );
+        assert_eq!(
+            replay.payload_json,
+            r#"{"artifact_path":"/tmp/sample.bin"}"#
+        );
         assert_eq!(replay.original_request_json, gap.gap.original_request_json);
     }
 

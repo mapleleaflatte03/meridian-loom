@@ -7,9 +7,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub mod advanced_primitives;
 pub mod agent_runtime;
 pub mod bindings;
-pub mod channels;
-pub mod capability_shims;
 pub mod capabilities;
+pub mod capability_shims;
+pub mod channels;
 pub mod context_engine;
 pub mod gateway_runtime;
 pub mod memory_service;
@@ -407,46 +407,34 @@ pub fn read_config(root: &Path) -> LoomResult<Config> {
             .get("org_id")
             .cloned()
             .unwrap_or_else(|| "local_foundry".to_string()),
-        state_dir: values
-            .get("state_dir")
-            .cloned()
-            .unwrap_or_else(|| {
-                if legacy_layout {
-                    ".loom".to_string()
-                } else {
-                    DEFAULT_STATE_DIR.to_string()
-                }
-            }),
-        run_dir: values
-            .get("run_dir")
-            .cloned()
-            .unwrap_or_else(|| {
-                if legacy_layout {
-                    ".loom/runtime".to_string()
-                } else {
-                    DEFAULT_RUN_DIR.to_string()
-                }
-            }),
-        log_dir: values
-            .get("log_dir")
-            .cloned()
-            .unwrap_or_else(|| {
-                if legacy_layout {
-                    ".loom/runtime/service".to_string()
-                } else {
-                    DEFAULT_LOG_DIR.to_string()
-                }
-            }),
-        artifact_dir: values
-            .get("artifact_dir")
-            .cloned()
-            .unwrap_or_else(|| {
-                if legacy_layout {
-                    ".loom".to_string()
-                } else {
-                    DEFAULT_ARTIFACT_DIR.to_string()
-                }
-            }),
+        state_dir: values.get("state_dir").cloned().unwrap_or_else(|| {
+            if legacy_layout {
+                ".loom".to_string()
+            } else {
+                DEFAULT_STATE_DIR.to_string()
+            }
+        }),
+        run_dir: values.get("run_dir").cloned().unwrap_or_else(|| {
+            if legacy_layout {
+                ".loom/runtime".to_string()
+            } else {
+                DEFAULT_RUN_DIR.to_string()
+            }
+        }),
+        log_dir: values.get("log_dir").cloned().unwrap_or_else(|| {
+            if legacy_layout {
+                ".loom/runtime/service".to_string()
+            } else {
+                DEFAULT_LOG_DIR.to_string()
+            }
+        }),
+        artifact_dir: values.get("artifact_dir").cloned().unwrap_or_else(|| {
+            if legacy_layout {
+                ".loom".to_string()
+            } else {
+                DEFAULT_ARTIFACT_DIR.to_string()
+            }
+        }),
         capabilities_dir: values
             .get("capabilities_dir")
             .cloned()
@@ -644,13 +632,14 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             label: "provider_auth",
             detail: format!(
                 "profile={} mode={} ready={} detail={}",
-                status.profile_name,
-                status.auth_mode,
-                status.ready,
-                status.detail
+                status.profile_name, status.auth_mode, status.ready, status.detail
             ),
             category: "provider",
-            remediation: if status.ready { "" } else { "loom provider login --source loom" },
+            remediation: if status.ready {
+                ""
+            } else {
+                "loom provider login --source loom"
+            },
         }),
         Err(error) => checks.push(Check {
             level: "WARN",
@@ -673,7 +662,11 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             );
             match provider_auth_store::sync_provider_auth_store(&root) {
                 Ok(summary) => checks.push(Check {
-                    level: if summary.ready_count > 0 { "OK" } else { "WARN" },
+                    level: if summary.ready_count > 0 {
+                        "OK"
+                    } else {
+                        "WARN"
+                    },
                     label: "provider_auth_runtime",
                     detail: format!(
                         "profiles={} ready={} last_good={} usage_stats={}",
@@ -683,7 +676,11 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                         summary.usage_stats_count
                     ),
                     category: "provider",
-                    remediation: if summary.ready_count > 0 { "" } else { "loom provider login --source loom" },
+                    remediation: if summary.ready_count > 0 {
+                        ""
+                    } else {
+                        "loom provider login --source loom"
+                    },
                 }),
                 Err(error) => checks.push(Check {
                     level: "WARN",
@@ -715,7 +712,11 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             );
             match gateway_runtime::gateway_runtime_overview(&root) {
                 Ok(summary) => checks.push(Check {
-                    level: if summary.enabled_channel_count > 0 { "OK" } else { "WARN" },
+                    level: if summary.enabled_channel_count > 0 {
+                        "OK"
+                    } else {
+                        "WARN"
+                    },
                     label: "gateway_runtime",
                     detail: format!(
                         "gateway={} endpoint={} auth={} remote={} channels={}/{} daemon={}",
@@ -728,7 +729,11 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                         summary.daemon_summary
                     ),
                     category: "gateway",
-                    remediation: if summary.enabled_channel_count > 0 { "" } else { "loom onboard --gateway-port 18910" },
+                    remediation: if summary.enabled_channel_count > 0 {
+                        ""
+                    } else {
+                        "loom onboard --gateway-port 18910"
+                    },
                 }),
                 Err(error) => checks.push(Check {
                     level: "WARN",
@@ -760,7 +765,13 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             );
             match service_runtime::sync_service_runtime(&root) {
                 Ok(summary) => checks.push(Check {
-                    level: if summary.service_health.starts_with("crashed") || summary.supervisor_health.starts_with("crashed") { "WARN" } else { "OK" },
+                    level: if summary.service_health.starts_with("crashed")
+                        || summary.supervisor_health.starts_with("crashed")
+                    {
+                        "WARN"
+                    } else {
+                        "OK"
+                    },
                     label: "service_runtime",
                     detail: format!(
                         "service={} pending={} processed={} supervisor={} pending={} processed={}",
@@ -772,7 +783,13 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                         summary.supervisor_processed_jobs,
                     ),
                     category: "service",
-                    remediation: if summary.service_health.starts_with("crashed") || summary.supervisor_health.starts_with("crashed") { "loom service start" } else { "" },
+                    remediation: if summary.service_health.starts_with("crashed")
+                        || summary.supervisor_health.starts_with("crashed")
+                    {
+                        "loom service start"
+                    } else {
+                        ""
+                    },
                 }),
                 Err(error) => checks.push(Check {
                     level: "WARN",
@@ -811,8 +828,16 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                         summary.total_requests,
                         summary.accepted_count,
                         summary.pending_count,
-                        if summary.last_request_id.is_empty() { "(none)" } else { summary.last_request_id.as_str() },
-                        if summary.last_job_id.is_empty() { "(none)" } else { summary.last_job_id.as_str() },
+                        if summary.last_request_id.is_empty() {
+                            "(none)"
+                        } else {
+                            summary.last_request_id.as_str()
+                        },
+                        if summary.last_job_id.is_empty() {
+                            "(none)"
+                        } else {
+                            summary.last_job_id.as_str()
+                        },
                     ),
                     category: "service",
                     remediation: "",
@@ -946,7 +971,11 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             );
             match context_engine::context_engine_overview(&root) {
                 Ok(summary) => checks.push(Check {
-                    level: if summary.layer_count > 0 { "OK" } else { "WARN" },
+                    level: if summary.layer_count > 0 {
+                        "OK"
+                    } else {
+                        "WARN"
+                    },
                     label: "context_engine",
                     detail: format!(
                         "layers={} sections={} mutable={} overlay_root={}",
@@ -956,7 +985,11 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                         summary.overlay_root.display()
                     ),
                     category: "context",
-                    remediation: if summary.layer_count > 0 { "" } else { "loom onboard" },
+                    remediation: if summary.layer_count > 0 {
+                        ""
+                    } else {
+                        "loom onboard"
+                    },
                 }),
                 Err(error) => checks.push(Check {
                     level: "WARN",
@@ -1042,7 +1075,11 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                     .as_millis() as u64,
             ) {
                 Ok(overview) => checks.push(Check {
-                    level: if overview.enabled_count > 0 || overview.total_count == 0 { "OK" } else { "WARN" },
+                    level: if overview.enabled_count > 0 || overview.total_count == 0 {
+                        "OK"
+                    } else {
+                        "WARN"
+                    },
                     label: "schedule_runtime",
                     detail: format!(
                         "total={} enabled={} due={} runs_path={} schedules={}",
@@ -1057,7 +1094,11 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                         }
                     ),
                     category: "lifecycle",
-                    remediation: if overview.enabled_count > 0 || overview.total_count == 0 { "" } else { "loom doctor" },
+                    remediation: if overview.enabled_count > 0 || overview.total_count == 0 {
+                        ""
+                    } else {
+                        "loom doctor"
+                    },
                 }),
                 Err(error) => checks.push(Check {
                     level: "WARN",
@@ -1139,7 +1180,11 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             );
             match bindings::binding_overview(&root) {
                 Ok(overview) => checks.push(Check {
-                    level: if overview.enabled_count > 0 || overview.total_count == 0 { "OK" } else { "WARN" },
+                    level: if overview.enabled_count > 0 || overview.total_count == 0 {
+                        "OK"
+                    } else {
+                        "WARN"
+                    },
                     label: "binding_runtime",
                     detail: format!(
                         "total={} enabled={} bindings={}",
@@ -1152,7 +1197,11 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                         }
                     ),
                     category: "channel",
-                    remediation: if overview.enabled_count > 0 || overview.total_count == 0 { "" } else { "loom onboard" },
+                    remediation: if overview.enabled_count > 0 || overview.total_count == 0 {
+                        ""
+                    } else {
+                        "loom onboard"
+                    },
                 }),
                 Err(error) => checks.push(Check {
                     level: "WARN",
@@ -1184,7 +1233,11 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
             );
             match skills::skill_overview(&root) {
                 Ok(overview) => checks.push(Check {
-                    level: if overview.enabled_count > 0 || overview.total_count == 0 { "OK" } else { "WARN" },
+                    level: if overview.enabled_count > 0 || overview.total_count == 0 {
+                        "OK"
+                    } else {
+                        "WARN"
+                    },
                     label: "skill_runtime",
                     detail: format!(
                         "total={} enabled={} defaults={} imported={} installs_path={} skills={}",
@@ -1200,7 +1253,11 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                         }
                     ),
                     category: "skills",
-                    remediation: if overview.enabled_count > 0 || overview.total_count == 0 { "" } else { "loom onboard" },
+                    remediation: if overview.enabled_count > 0 || overview.total_count == 0 {
+                        ""
+                    } else {
+                        "loom onboard"
+                    },
                 }),
                 Err(error) => checks.push(Check {
                     level: "WARN",
@@ -1372,9 +1429,7 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
                     label: "pipeline",
                     detail: format!(
                         "total={} completed={} failed={}",
-                        overview.total_count,
-                        overview.completed_count,
-                        overview.failed_count
+                        overview.total_count, overview.completed_count, overview.failed_count
                     ),
                     category: "pipeline",
                     remediation: "",
@@ -1498,7 +1553,8 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
         (false, None) => checks.push(Check {
             level: "WARN",
             label: "kernel_path",
-            detail: "embedded mode can run without kernel_path; contract inspection needs it".to_string(),
+            detail: "embedded mode can run without kernel_path; contract inspection needs it"
+                .to_string(),
             category: "kernel",
             remediation: "loom onboard",
         }),
@@ -1563,9 +1619,15 @@ pub fn render_doctor_human(checks: &[Check]) -> String {
         }
         out.push_str(&format!("[{}]\n", cat));
         for check in &cat_checks {
-            out.push_str(&format!("  [{:<8}] {:<30} {}\n", check.level, check.label, check.detail));
+            out.push_str(&format!(
+                "  [{:<8}] {:<30} {}\n",
+                check.level, check.label, check.detail
+            ));
             if !check.remediation.is_empty() && check.level != "OK" {
-                out.push_str(&format!("             remediation: {}\n", check.remediation));
+                out.push_str(&format!(
+                    "             remediation: {}\n",
+                    check.remediation
+                ));
             }
         }
         out.push('\n');
@@ -1574,7 +1636,13 @@ pub fn render_doctor_human(checks: &[Check]) -> String {
     let ok_count = checks.iter().filter(|c| c.level == "OK").count();
     let warn_count = checks.iter().filter(|c| c.level == "WARN").count();
     let crit_count = checks.iter().filter(|c| c.level == "CRITICAL").count();
-    out.push_str(&format!("Summary: {} checks — {} OK, {} WARN, {} CRITICAL\n", checks.len(), ok_count, warn_count, crit_count));
+    out.push_str(&format!(
+        "Summary: {} checks — {} OK, {} WARN, {} CRITICAL\n",
+        checks.len(),
+        ok_count,
+        warn_count,
+        crit_count
+    ));
     out
 }
 
@@ -1590,7 +1658,10 @@ pub fn render_doctor_json(checks: &[Check]) -> String {
                 json_string(check.category)
             );
             if !check.remediation.is_empty() {
-                s.push_str(&format!(",\"remediation\":{}", json_string(check.remediation)));
+                s.push_str(&format!(
+                    ",\"remediation\":{}",
+                    json_string(check.remediation)
+                ));
             }
             s.push('}');
             s
@@ -1752,7 +1823,10 @@ delivery_q:   {} (resolved: {})
     )
 }
 
-pub fn contract_show(root: &Path, override_kernel_path: Option<&str>) -> LoomResult<ContractSnapshot> {
+pub fn contract_show(
+    root: &Path,
+    override_kernel_path: Option<&str>,
+) -> LoomResult<ContractSnapshot> {
     let config = read_config(root)?;
     let kernel_path = resolve_kernel_path(root, override_kernel_path, Some(&config))?;
     let registry_path = kernel_path.join("kernel/runtimes.json");
@@ -1778,14 +1852,20 @@ pub fn contract_show(root: &Path, override_kernel_path: Option<&str>) -> LoomRes
         .iter()
         .map(|hook| {
             let key = format!("\"{}\"", hook);
-            let value = extract_json_literal(section, &key).unwrap_or_else(|| "unknown".to_string());
+            let value =
+                extract_json_literal(section, &key).unwrap_or_else(|| "unknown".to_string());
             ((*hook).to_string(), value)
         })
         .collect();
 
     let experimental_hooks = EXPERIMENTAL_PRELIGHT_HOOKS
         .iter()
-        .map(|hook| ((*hook).to_string(), "experimental_preflight_path".to_string()))
+        .map(|hook| {
+            (
+                (*hook).to_string(),
+                "experimental_preflight_path".to_string(),
+            )
+        })
         .collect();
 
     Ok(ContractSnapshot {
@@ -1855,7 +1935,8 @@ pub fn contract_verify(
     let mut hooks: Vec<HookVerification> = Vec::new();
 
     // Hook 1: agent_identity
-    let identity_result = resolve_agent_identity(root, override_kernel_path, agent_ref, Some(org_id));
+    let identity_result =
+        resolve_agent_identity(root, override_kernel_path, agent_ref, Some(org_id));
     let identity = match &identity_result {
         Ok(id) => {
             let artifact = evidence_dir.join("agent_identity.json");
@@ -1934,7 +2015,10 @@ pub fn contract_verify(
     // Hook 3: cost_attribution
     if let Some(ref env) = envelope {
         let artifact = evidence_dir.join("cost_attribution.json");
-        let has_budget = identity.as_ref().and_then(|id| id.max_per_run_usd).unwrap_or(0.0);
+        let has_budget = identity
+            .as_ref()
+            .and_then(|id| id.max_per_run_usd)
+            .unwrap_or(0.0);
         let body = format!(
             "{{\n  \"estimated_cost_usd\": {:.6},\n  \"agent_budget_limit_usd\": {:.6},\n  \"within_limit\": {},\n  \"source\": \"loom_contract_verify\"\n}}\n",
             env.estimated_cost_usd, has_budget,
@@ -2044,7 +2128,8 @@ pub fn contract_verify(
     // Hook 6: sanction_controls
     if let Some(ref id) = identity {
         let preview = preview_local_sanction_controls(id);
-        let ref_sanction = reference.as_ref()
+        let ref_sanction = reference
+            .as_ref()
             .map(|r| r.sanction_gate_decision.as_str())
             .unwrap_or("not_evaluated");
         let artifact = evidence_dir.join("sanction_controls.json");
@@ -2192,16 +2277,17 @@ pub fn resolve_agent_identity(
     let explicit_org_hint = org_hint
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
-    let stdout = run_agent_registry_lookup(&script, normalized_agent, explicit_org_hint.as_deref())?;
+    let stdout =
+        run_agent_registry_lookup(&script, normalized_agent, explicit_org_hint.as_deref())?;
 
     let runtime_binding = find_named_object(&stdout, "\"runtime_binding\"")
         .ok_or_else(|| "runtime_binding missing from agent record".to_string())?;
-    let agent_id = extract_json_string(&stdout, "\"id\"")
-        .ok_or_else(|| "agent id missing".to_string())?;
-    let agent_name = extract_json_string(&stdout, "\"name\"")
-        .ok_or_else(|| "agent name missing".to_string())?;
-    let org_id = extract_json_string(&stdout, "\"org_id\"")
-        .ok_or_else(|| "org_id missing".to_string())?;
+    let agent_id =
+        extract_json_string(&stdout, "\"id\"").ok_or_else(|| "agent id missing".to_string())?;
+    let agent_name =
+        extract_json_string(&stdout, "\"name\"").ok_or_else(|| "agent name missing".to_string())?;
+    let org_id =
+        extract_json_string(&stdout, "\"org_id\"").ok_or_else(|| "org_id missing".to_string())?;
     let role = extract_json_string(&stdout, "\"role\"").unwrap_or_default();
     let economy_key = extract_json_string(&stdout, "\"economy_key\"").unwrap_or_default();
     let approval_required = extract_json_bool(&stdout, "\"approval_required\"").unwrap_or(false);
@@ -2234,11 +2320,15 @@ pub fn resolve_agent_identity(
         sanction_decision,
         runtime_id: extract_json_string(&runtime_binding, "\"runtime_id\"")
             .ok_or_else(|| "runtime_id missing".to_string())?,
-        runtime_label: extract_json_string(&runtime_binding, "\"runtime_label\"").unwrap_or_default(),
+        runtime_label: extract_json_string(&runtime_binding, "\"runtime_label\"")
+            .unwrap_or_default(),
         bound_org_id: extract_json_string(&runtime_binding, "\"bound_org_id\"").unwrap_or_default(),
-        boundary_name: extract_json_string(&runtime_binding, "\"boundary_name\"").unwrap_or_default(),
-        identity_model: extract_json_string(&runtime_binding, "\"identity_model\"").unwrap_or_default(),
-        runtime_registered: extract_json_bool(&runtime_binding, "\"runtime_registered\"").unwrap_or(true),
+        boundary_name: extract_json_string(&runtime_binding, "\"boundary_name\"")
+            .unwrap_or_default(),
+        identity_model: extract_json_string(&runtime_binding, "\"identity_model\"")
+            .unwrap_or_default(),
+        runtime_registered: extract_json_bool(&runtime_binding, "\"runtime_registered\"")
+            .unwrap_or(true),
         registration_status: extract_json_string(&runtime_binding, "\"registration_status\"")
             .unwrap_or_else(|| "registered".to_string()),
         source: "kernel_agent_registry".to_string(),
@@ -2294,10 +2384,7 @@ for item in get_restrictions(agent_id, org_id=org_id) or []:
 "#;
 
     let mut cmd = Command::new("python3");
-    cmd.arg("-c")
-        .arg(script)
-        .arg(&kernel_dir)
-        .arg(agent_lookup);
+    cmd.arg("-c").arg(script).arg(&kernel_dir).arg(agent_lookup);
     if let Some(org_id) = org_hint {
         cmd.arg(org_id);
     }
@@ -2797,15 +2884,14 @@ fn default_app_home() -> LoomResult<PathBuf> {
     if let Ok(value) = std::env::var("XDG_DATA_HOME") {
         let trimmed = value.trim();
         if !trimmed.is_empty() {
-            return Ok(
-                PathBuf::from(trimmed)
-                    .join("meridian-loom")
-                    .join("runtime")
-                    .join("default"),
-            );
+            return Ok(PathBuf::from(trimmed)
+                .join("meridian-loom")
+                .join("runtime")
+                .join("default"));
         }
     }
-    let home = std::env::var("HOME").map_err(|_| "HOME is not set and --root was not provided".to_string())?;
+    let home = std::env::var("HOME")
+        .map_err(|_| "HOME is not set and --root was not provided".to_string())?;
     Ok(PathBuf::from(home)
         .join(".local/share/meridian-loom")
         .join("runtime")
@@ -3008,7 +3094,9 @@ mod tests {
         assert_eq!(loaded.org_id, "org_demo");
         assert_eq!(loaded.kernel_path, "/tmp/meridian-kernel");
         assert!(root.join("artifacts/shadow/events.jsonl").exists());
-        assert!(root.join(provider_router::DEFAULT_PROVIDER_PROFILES_PATH).exists());
+        assert!(root
+            .join(provider_router::DEFAULT_PROVIDER_PROFILES_PATH)
+            .exists());
     }
 
     #[test]
@@ -3030,10 +3118,7 @@ mod tests {
         let updated = fs::read_to_string(&config_path)
             .expect("read config")
             .replace("handoff_mode = \"off\"", "handoff_mode = \"dry_run\"")
-            .replace(
-                DEFAULT_DELIVERY_QUEUE,
-                "state/delivery-queue",
-            );
+            .replace(DEFAULT_DELIVERY_QUEUE, "state/delivery-queue");
         fs::write(&config_path, updated).expect("rewrite config");
         fs::create_dir_all(root.join("state/delivery-queue")).expect("queue dir");
 
@@ -3043,17 +3128,25 @@ mod tests {
             .find(|check| check.label == "delivery_queue")
             .expect("queue check present");
         assert_eq!(queue_check.level, "OK");
-        assert!(queue_check.detail.contains(&root.join("state/delivery-queue").display().to_string()));
+        assert!(queue_check
+            .detail
+            .contains(&root.join("state/delivery-queue").display().to_string()));
     }
 
     #[test]
     fn resolve_identity_and_build_envelope_against_fake_kernel() {
         let kernel = fake_kernel_root("atlas");
         let root = temp_path("loom-core-envelope");
-        init_workspace(&root, "shadow", Some(&kernel.display().to_string()), "org_demo")
-            .expect("init workspace");
+        init_workspace(
+            &root,
+            "shadow",
+            Some(&kernel.display().to_string()),
+            "org_demo",
+        )
+        .expect("init workspace");
 
-        let identity = resolve_agent_identity(&root, None, "atlas", None).expect("resolve identity");
+        let identity =
+            resolve_agent_identity(&root, None, "atlas", None).expect("resolve identity");
         assert_eq!(identity.agent_id, "agent_atlas");
         assert_eq!(identity.max_per_run_usd, Some(0.5));
         assert!(!identity.approval_required);
@@ -3082,11 +3175,20 @@ mod tests {
 
     #[test]
     fn resolve_identity_prefers_snapshot_restrictions_when_present() {
-        let kernel =
-            fake_kernel_root_with_snapshot("sanction", &["execute"], Some("restricted_execute"), &[]);
+        let kernel = fake_kernel_root_with_snapshot(
+            "sanction",
+            &["execute"],
+            Some("restricted_execute"),
+            &[],
+        );
         let root = temp_path("loom-core-snapshot");
-        init_workspace(&root, "shadow", Some(&kernel.display().to_string()), "org_demo")
-            .expect("init workspace");
+        init_workspace(
+            &root,
+            "shadow",
+            Some(&kernel.display().to_string()),
+            "org_demo",
+        )
+        .expect("init workspace");
 
         let identity =
             resolve_agent_identity(&root, None, "sanction", None).expect("resolve identity");
@@ -3102,8 +3204,13 @@ mod tests {
     fn evaluate_reference_gates_uses_kernel_reference_adapter() {
         let kernel = fake_kernel_root("atlas");
         let root = temp_path("loom-core-reference");
-        init_workspace(&root, "shadow", Some(&kernel.display().to_string()), "org_demo")
-            .expect("init workspace");
+        init_workspace(
+            &root,
+            "shadow",
+            Some(&kernel.display().to_string()),
+            "org_demo",
+        )
+        .expect("init workspace");
 
         let allowed = build_action_envelope(
             &root,
@@ -3149,8 +3256,13 @@ mod tests {
     fn build_envelope_rejects_negative_cost() {
         let kernel = fake_kernel_root("atlas");
         let root = temp_path("loom-core-envelope-negative");
-        init_workspace(&root, "shadow", Some(&kernel.display().to_string()), "org_demo")
-            .expect("init workspace");
+        init_workspace(
+            &root,
+            "shadow",
+            Some(&kernel.display().to_string()),
+            "org_demo",
+        )
+        .expect("init workspace");
         let error = build_action_envelope(
             &root,
             None,
@@ -3170,8 +3282,13 @@ mod tests {
     fn build_envelope_with_options_preserves_capability_and_payload() {
         let kernel = fake_kernel_root("atlas");
         let root = temp_path("loom-core-envelope-capability");
-        init_workspace(&root, "shadow", Some(&kernel.display().to_string()), "org_demo")
-            .expect("init workspace");
+        init_workspace(
+            &root,
+            "shadow",
+            Some(&kernel.display().to_string()),
+            "org_demo",
+        )
+        .expect("init workspace");
         let envelope = build_action_envelope_with_options(
             &root,
             None,
@@ -3197,10 +3314,16 @@ mod tests {
     fn resolve_identity_does_not_force_workspace_org_hint() {
         let kernel = fake_kernel_root("atlas");
         let root = temp_path("loom-core-org-fallback");
-        init_workspace(&root, "embedded", Some(&kernel.display().to_string()), "org_local")
-            .expect("init workspace");
+        init_workspace(
+            &root,
+            "embedded",
+            Some(&kernel.display().to_string()),
+            "org_local",
+        )
+        .expect("init workspace");
 
-        let identity = resolve_agent_identity(&root, None, "atlas", None).expect("resolve identity");
+        let identity =
+            resolve_agent_identity(&root, None, "atlas", None).expect("resolve identity");
         assert_eq!(identity.agent_id, "agent_atlas");
         assert_eq!(identity.org_id, "org_demo");
         assert_eq!(identity.max_per_run_usd, Some(0.5));

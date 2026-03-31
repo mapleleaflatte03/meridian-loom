@@ -30,7 +30,10 @@ pub(crate) fn run_action_execute_request(
         }
     }
     if action_type.trim().is_empty() || resource.trim().is_empty() {
-        return Err("action execute requires --action-type and --resource, or a resolvable --capability".to_string());
+        return Err(
+            "action execute requires --action-type and --resource, or a resolvable --capability"
+                .to_string(),
+        );
     }
 
     let envelope = build_action_envelope_with_options(
@@ -49,7 +52,13 @@ pub(crate) fn run_action_execute_request(
     let reference = evaluate_reference_gates(&root, kernel_path, &identity, &envelope)?;
     let decision = capture_decision(&root, &identity, &envelope, &reference)?;
     let effective_kernel_path = kernel_path_for(&root, kernel_path)?;
-    let capture = capture_runtime_execution(&root, &effective_kernel_path, &envelope, &reference, &decision)?;
+    let capture = capture_runtime_execution(
+        &root,
+        &effective_kernel_path,
+        &envelope,
+        &reference,
+        &decision,
+    )?;
     if format == "json" {
         print!("{}", render_runtime_execution_json(&capture));
     } else {
@@ -180,8 +189,12 @@ pub(crate) fn handle_action(args: &[String]) -> LoomResult<()> {
                 return Err("action execute requires --action-type and --resource, or a resolvable --capability".to_string());
             }
 
-            let identity =
-                resolve_agent_identity(&root, kernel_path.as_deref(), &agent_id, org_id.as_deref())?;
+            let identity = resolve_agent_identity(
+                &root,
+                kernel_path.as_deref(),
+                &agent_id,
+                org_id.as_deref(),
+            )?;
             let envelope = build_action_envelope_with_options(
                 &root,
                 kernel_path.as_deref(),

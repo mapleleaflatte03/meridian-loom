@@ -16,36 +16,35 @@ use wasmtime::{
     PoolingAllocationConfig, Store, StoreLimitsBuilder, Val,
 };
 
-#[cfg(not(test))]
-use crate::provider_router::{resolve_llm_route, ProviderKind, ProviderRouteIntent, ResolvedProviderRoute};
 #[cfg(test)]
-use super::provider_router::{resolve_llm_route, ProviderKind, ProviderRouteIntent, ResolvedProviderRoute};
+use super::provider_router::{
+    resolve_llm_route, ProviderKind, ProviderRouteIntent, ResolvedProviderRoute,
+};
+#[cfg(not(test))]
+use crate::provider_router::{
+    resolve_llm_route, ProviderKind, ProviderRouteIntent, ResolvedProviderRoute,
+};
 
 use super::{
     host_config_hints, parse_wasm_browser_navigate_request, parse_wasm_fs_read_request,
-    parse_wasm_fs_write_request, parse_wasm_heartbeat_schedule_request,
-    parse_wasm_kv_get_request, parse_wasm_kv_set_request,
-    parse_wasm_llm_inference_request, parse_wasm_system_info_request,
+    parse_wasm_fs_write_request, parse_wasm_heartbeat_schedule_request, parse_wasm_kv_get_request,
+    parse_wasm_kv_set_request, parse_wasm_llm_inference_request, parse_wasm_system_info_request,
     parse_wasm_terminal_exec_request, render_wasm_browser_navigate_response_json,
     render_wasm_fs_read_response_json, render_wasm_fs_write_response_json,
     render_wasm_heartbeat_schedule_response_json, render_wasm_kv_get_response_json,
     render_wasm_kv_set_response_json, render_wasm_llm_inference_response_json,
     render_wasm_system_info_response_json, render_wasm_terminal_exec_response_json,
     WasmBrowserNavigateResponse, WasmFsReadResponse, WasmFsWriteResponse,
-    WasmHeartbeatScheduleResponse, WasmHostCallDecision, WasmHostCallStatusCode,
-    WasmHostConfig, WasmKvGetResponse, WasmKvSetResponse, WasmLlmInferenceResponse,
-    WasmSystemInfoResponse, WasmTerminalExecResponse, HOST_BROWSER_NAVIGATE,
-    HOST_FS_READ, HOST_FS_WRITE, HOST_KV_GET, HOST_KV_SET, HOST_LLM_INFERENCE,
-    HOST_SCHEDULE_HEARTBEAT, HOST_SYSTEM_INFO, HOST_TERMINAL_EXEC,
+    WasmHeartbeatScheduleResponse, WasmHostCallDecision, WasmHostCallStatusCode, WasmHostConfig,
+    WasmKvGetResponse, WasmKvSetResponse, WasmLlmInferenceResponse, WasmSystemInfoResponse,
+    WasmTerminalExecResponse, HOST_BROWSER_NAVIGATE, HOST_FS_READ, HOST_FS_WRITE, HOST_KV_GET,
+    HOST_KV_SET, HOST_LLM_INFERENCE, HOST_SCHEDULE_HEARTBEAT, HOST_SYSTEM_INFO, HOST_TERMINAL_EXEC,
     WASM_HOST_CALL_NAMESPACE, WASM_HOST_RESULT_LEN_EXPORT, WASM_HOST_RESULT_PTR_EXPORT,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WasmGuestSource {
-    WasmBytes {
-        name: String,
-        bytes: Vec<u8>,
-    },
+    WasmBytes { name: String, bytes: Vec<u8> },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -99,8 +98,16 @@ pub fn build_wasmtime_config(host: &WasmHostConfig) -> Result<Config, Vec<String
     let mut pooling = PoolingAllocationConfig::default();
     pooling
         .total_core_instances(host.pooling.max_instances)
-        .total_memories(host.pooling.max_instances.saturating_mul(host.pooling.max_memories_per_instance))
-        .total_tables(host.pooling.max_instances.saturating_mul(host.pooling.max_tables_per_instance))
+        .total_memories(
+            host.pooling
+                .max_instances
+                .saturating_mul(host.pooling.max_memories_per_instance),
+        )
+        .total_tables(
+            host.pooling
+                .max_instances
+                .saturating_mul(host.pooling.max_tables_per_instance),
+        )
         .max_core_instances_per_component(host.pooling.max_instances)
         .max_core_instance_size(host.pooling.max_memory_pages as usize * 65_536)
         .max_memories_per_component(host.pooling.max_memories_per_instance)
@@ -116,7 +123,8 @@ pub fn build_wasmtime_config(host: &WasmHostConfig) -> Result<Config, Vec<String
 
 pub fn run_wasm_guest(request: &WasmExecutionRequest) -> Result<WasmExecutionResult, String> {
     let config = build_wasmtime_config(&request.host).map_err(|errors| errors.join("; "))?;
-    let engine = Engine::new(&config).map_err(|error| format!("failed to build engine: {error}"))?;
+    let engine =
+        Engine::new(&config).map_err(|error| format!("failed to build engine: {error}"))?;
     let wasm_bytes = match &request.source {
         WasmGuestSource::WasmBytes { bytes, .. } => bytes.clone(),
     };
@@ -155,8 +163,18 @@ pub fn run_wasm_guest(request: &WasmExecutionRequest) -> Result<WasmExecutionRes
         .func_wrap(
             WASM_HOST_CALL_NAMESPACE,
             HOST_BROWSER_NAVIGATE,
-            |caller: Caller<'_, RunnerState>, request_ptr: i32, request_len: i32, response_ptr: i32, response_capacity: i32| {
-                host_browser_navigate(caller, request_ptr, request_len, response_ptr, response_capacity)
+            |caller: Caller<'_, RunnerState>,
+             request_ptr: i32,
+             request_len: i32,
+             response_ptr: i32,
+             response_capacity: i32| {
+                host_browser_navigate(
+                    caller,
+                    request_ptr,
+                    request_len,
+                    response_ptr,
+                    response_capacity,
+                )
             },
         )
         .map_err(|error| format!("failed to define {HOST_BROWSER_NAVIGATE}: {error}"))?;
@@ -164,8 +182,18 @@ pub fn run_wasm_guest(request: &WasmExecutionRequest) -> Result<WasmExecutionRes
         .func_wrap(
             WASM_HOST_CALL_NAMESPACE,
             HOST_SCHEDULE_HEARTBEAT,
-            |caller: Caller<'_, RunnerState>, request_ptr: i32, request_len: i32, response_ptr: i32, response_capacity: i32| {
-                host_schedule_heartbeat(caller, request_ptr, request_len, response_ptr, response_capacity)
+            |caller: Caller<'_, RunnerState>,
+             request_ptr: i32,
+             request_len: i32,
+             response_ptr: i32,
+             response_capacity: i32| {
+                host_schedule_heartbeat(
+                    caller,
+                    request_ptr,
+                    request_len,
+                    response_ptr,
+                    response_capacity,
+                )
             },
         )
         .map_err(|error| format!("failed to define {HOST_SCHEDULE_HEARTBEAT}: {error}"))?;
@@ -173,8 +201,18 @@ pub fn run_wasm_guest(request: &WasmExecutionRequest) -> Result<WasmExecutionRes
         .func_wrap(
             WASM_HOST_CALL_NAMESPACE,
             HOST_TERMINAL_EXEC,
-            |caller: Caller<'_, RunnerState>, request_ptr: i32, request_len: i32, response_ptr: i32, response_capacity: i32| {
-                host_terminal_exec(caller, request_ptr, request_len, response_ptr, response_capacity)
+            |caller: Caller<'_, RunnerState>,
+             request_ptr: i32,
+             request_len: i32,
+             response_ptr: i32,
+             response_capacity: i32| {
+                host_terminal_exec(
+                    caller,
+                    request_ptr,
+                    request_len,
+                    response_ptr,
+                    response_capacity,
+                )
             },
         )
         .map_err(|error| format!("failed to define {HOST_TERMINAL_EXEC}: {error}"))?;
@@ -182,8 +220,18 @@ pub fn run_wasm_guest(request: &WasmExecutionRequest) -> Result<WasmExecutionRes
         .func_wrap(
             WASM_HOST_CALL_NAMESPACE,
             HOST_SYSTEM_INFO,
-            |caller: Caller<'_, RunnerState>, request_ptr: i32, request_len: i32, response_ptr: i32, response_capacity: i32| {
-                host_system_info(caller, request_ptr, request_len, response_ptr, response_capacity)
+            |caller: Caller<'_, RunnerState>,
+             request_ptr: i32,
+             request_len: i32,
+             response_ptr: i32,
+             response_capacity: i32| {
+                host_system_info(
+                    caller,
+                    request_ptr,
+                    request_len,
+                    response_ptr,
+                    response_capacity,
+                )
             },
         )
         .map_err(|error| format!("failed to define {HOST_SYSTEM_INFO}: {error}"))?;
@@ -191,8 +239,18 @@ pub fn run_wasm_guest(request: &WasmExecutionRequest) -> Result<WasmExecutionRes
         .func_wrap(
             WASM_HOST_CALL_NAMESPACE,
             HOST_FS_READ,
-            |caller: Caller<'_, RunnerState>, request_ptr: i32, request_len: i32, response_ptr: i32, response_capacity: i32| {
-                host_fs_read(caller, request_ptr, request_len, response_ptr, response_capacity)
+            |caller: Caller<'_, RunnerState>,
+             request_ptr: i32,
+             request_len: i32,
+             response_ptr: i32,
+             response_capacity: i32| {
+                host_fs_read(
+                    caller,
+                    request_ptr,
+                    request_len,
+                    response_ptr,
+                    response_capacity,
+                )
             },
         )
         .map_err(|error| format!("failed to define {HOST_FS_READ}: {error}"))?;
@@ -200,8 +258,18 @@ pub fn run_wasm_guest(request: &WasmExecutionRequest) -> Result<WasmExecutionRes
         .func_wrap(
             WASM_HOST_CALL_NAMESPACE,
             HOST_FS_WRITE,
-            |caller: Caller<'_, RunnerState>, request_ptr: i32, request_len: i32, response_ptr: i32, response_capacity: i32| {
-                host_fs_write(caller, request_ptr, request_len, response_ptr, response_capacity)
+            |caller: Caller<'_, RunnerState>,
+             request_ptr: i32,
+             request_len: i32,
+             response_ptr: i32,
+             response_capacity: i32| {
+                host_fs_write(
+                    caller,
+                    request_ptr,
+                    request_len,
+                    response_ptr,
+                    response_capacity,
+                )
             },
         )
         .map_err(|error| format!("failed to define {HOST_FS_WRITE}: {error}"))?;
@@ -209,8 +277,18 @@ pub fn run_wasm_guest(request: &WasmExecutionRequest) -> Result<WasmExecutionRes
         .func_wrap(
             WASM_HOST_CALL_NAMESPACE,
             HOST_LLM_INFERENCE,
-            |caller: Caller<'_, RunnerState>, request_ptr: i32, request_len: i32, response_ptr: i32, response_capacity: i32| {
-                host_llm_inference(caller, request_ptr, request_len, response_ptr, response_capacity)
+            |caller: Caller<'_, RunnerState>,
+             request_ptr: i32,
+             request_len: i32,
+             response_ptr: i32,
+             response_capacity: i32| {
+                host_llm_inference(
+                    caller,
+                    request_ptr,
+                    request_len,
+                    response_ptr,
+                    response_capacity,
+                )
             },
         )
         .map_err(|error| format!("failed to define {HOST_LLM_INFERENCE}: {error}"))?;
@@ -218,8 +296,18 @@ pub fn run_wasm_guest(request: &WasmExecutionRequest) -> Result<WasmExecutionRes
         .func_wrap(
             WASM_HOST_CALL_NAMESPACE,
             HOST_KV_GET,
-            |caller: Caller<'_, RunnerState>, request_ptr: i32, request_len: i32, response_ptr: i32, response_capacity: i32| {
-                host_kv_get(caller, request_ptr, request_len, response_ptr, response_capacity)
+            |caller: Caller<'_, RunnerState>,
+             request_ptr: i32,
+             request_len: i32,
+             response_ptr: i32,
+             response_capacity: i32| {
+                host_kv_get(
+                    caller,
+                    request_ptr,
+                    request_len,
+                    response_ptr,
+                    response_capacity,
+                )
             },
         )
         .map_err(|error| format!("failed to define {HOST_KV_GET}: {error}"))?;
@@ -227,8 +315,18 @@ pub fn run_wasm_guest(request: &WasmExecutionRequest) -> Result<WasmExecutionRes
         .func_wrap(
             WASM_HOST_CALL_NAMESPACE,
             HOST_KV_SET,
-            |caller: Caller<'_, RunnerState>, request_ptr: i32, request_len: i32, response_ptr: i32, response_capacity: i32| {
-                host_kv_set(caller, request_ptr, request_len, response_ptr, response_capacity)
+            |caller: Caller<'_, RunnerState>,
+             request_ptr: i32,
+             request_len: i32,
+             response_ptr: i32,
+             response_capacity: i32| {
+                host_kv_set(
+                    caller,
+                    request_ptr,
+                    request_len,
+                    response_ptr,
+                    response_capacity,
+                )
             },
         )
         .map_err(|error| format!("failed to define {HOST_KV_SET}: {error}"))?;
@@ -241,19 +339,20 @@ pub fn run_wasm_guest(request: &WasmExecutionRequest) -> Result<WasmExecutionRes
         .ok_or_else(|| format!("missing export '{}'", request.entrypoint))?;
     let entrypoint_result = call_i32_function(&mut store, &func, &request.entrypoint_args)?;
 
-    let (memory_probe_export, memory_probe_result, memory_pages_after) = if let Some(probe) = &request.memory_probe {
-        let probe_func = instance
-            .get_func(&mut store, &probe.export_name)
-            .ok_or_else(|| format!("missing memory probe export '{}'", probe.export_name))?;
-        let result = call_i32_function(&mut store, &probe_func, &[probe.pages_to_grow as i32])?;
-        let pages_after = instance
-            .get_export(&mut store, "memory")
-            .and_then(|export| export.into_memory())
-            .map(|memory| memory.size(&store) as u32);
-        (Some(probe.export_name.clone()), result, pages_after)
-    } else {
-        (None, None, None)
-    };
+    let (memory_probe_export, memory_probe_result, memory_pages_after) =
+        if let Some(probe) = &request.memory_probe {
+            let probe_func = instance
+                .get_func(&mut store, &probe.export_name)
+                .ok_or_else(|| format!("missing memory probe export '{}'", probe.export_name))?;
+            let result = call_i32_function(&mut store, &probe_func, &[probe.pages_to_grow as i32])?;
+            let pages_after = instance
+                .get_export(&mut store, "memory")
+                .and_then(|export| export.into_memory())
+                .map(|memory| memory.size(&store) as u32);
+            (Some(probe.export_name.clone()), result, pages_after)
+        } else {
+            (None, None, None)
+        };
 
     let host_response_json = capture_host_response_json(&mut store, &instance)?;
     let host_calls = store.data().host_calls.clone();
@@ -321,9 +420,18 @@ fn host_browser_navigate(
     response_ptr: i32,
     response_capacity: i32,
 ) -> i32 {
-    caller.data_mut().host_calls.push("browser.navigate".to_string());
+    caller
+        .data_mut()
+        .host_calls
+        .push("browser.navigate".to_string());
     let input = read_guest_bytes_for_poge(&mut caller, request_ptr, request_len);
-    let result = dispatch_browser_navigate(&mut caller, request_ptr, request_len, response_ptr, response_capacity);
+    let result = dispatch_browser_navigate(
+        &mut caller,
+        request_ptr,
+        request_len,
+        response_ptr,
+        response_capacity,
+    );
     let (return_val, is_error, out_len) = match result {
         Ok(n) => (n, false, n.max(0) as usize),
         Err(status) => (status.code(), true, 0usize),
@@ -348,8 +456,17 @@ fn host_schedule_heartbeat(
     response_ptr: i32,
     response_capacity: i32,
 ) -> i32 {
-    caller.data_mut().host_calls.push("heartbeat.schedule".to_string());
-    match dispatch_schedule_heartbeat(&mut caller, request_ptr, request_len, response_ptr, response_capacity) {
+    caller
+        .data_mut()
+        .host_calls
+        .push("heartbeat.schedule".to_string());
+    match dispatch_schedule_heartbeat(
+        &mut caller,
+        request_ptr,
+        request_len,
+        response_ptr,
+        response_capacity,
+    ) {
         Ok(bytes_written) => bytes_written,
         Err(status) => status.code(),
     }
@@ -362,8 +479,17 @@ fn host_terminal_exec(
     response_ptr: i32,
     response_capacity: i32,
 ) -> i32 {
-    caller.data_mut().host_calls.push("terminal.exec".to_string());
-    match dispatch_terminal_exec(&mut caller, request_ptr, request_len, response_ptr, response_capacity) {
+    caller
+        .data_mut()
+        .host_calls
+        .push("terminal.exec".to_string());
+    match dispatch_terminal_exec(
+        &mut caller,
+        request_ptr,
+        request_len,
+        response_ptr,
+        response_capacity,
+    ) {
         Ok(bytes_written) => bytes_written,
         Err(status) => status.code(),
     }
@@ -378,7 +504,13 @@ fn host_system_info(
 ) -> i32 {
     caller.data_mut().host_calls.push("system.info".to_string());
     let input = read_guest_bytes_for_poge(&mut caller, request_ptr, request_len);
-    let result = dispatch_system_info(&mut caller, request_ptr, request_len, response_ptr, response_capacity);
+    let result = dispatch_system_info(
+        &mut caller,
+        request_ptr,
+        request_len,
+        response_ptr,
+        response_capacity,
+    );
     let (return_val, is_error, out_len) = match result {
         Ok(n) => (n, false, n.max(0) as usize),
         Err(status) => (status.code(), true, 0usize),
@@ -391,7 +523,13 @@ fn host_system_info(
     let epoch_ms = epoch_ms_now();
     let data = caller.data_mut();
     if let Some(poge) = data.poge.as_mut() {
-        let _ = poge.record_event(HostCallKind::SystemInfo, epoch_ms, &input, &output, is_error);
+        let _ = poge.record_event(
+            HostCallKind::SystemInfo,
+            epoch_ms,
+            &input,
+            &output,
+            is_error,
+        );
     }
     return_val
 }
@@ -405,7 +543,13 @@ fn host_fs_read(
 ) -> i32 {
     caller.data_mut().host_calls.push("fs.read".to_string());
     let input = read_guest_bytes_for_poge(&mut caller, request_ptr, request_len);
-    let result = dispatch_fs_read(&mut caller, request_ptr, request_len, response_ptr, response_capacity);
+    let result = dispatch_fs_read(
+        &mut caller,
+        request_ptr,
+        request_len,
+        response_ptr,
+        response_capacity,
+    );
     let (return_val, is_error, out_len) = match result {
         Ok(n) => (n, false, n.max(0) as usize),
         Err(status) => (status.code(), true, 0usize),
@@ -432,7 +576,13 @@ fn host_fs_write(
 ) -> i32 {
     caller.data_mut().host_calls.push("fs.write".to_string());
     let input = read_guest_bytes_for_poge(&mut caller, request_ptr, request_len);
-    let result = dispatch_fs_write(&mut caller, request_ptr, request_len, response_ptr, response_capacity);
+    let result = dispatch_fs_write(
+        &mut caller,
+        request_ptr,
+        request_len,
+        response_ptr,
+        response_capacity,
+    );
     let (return_val, is_error, out_len) = match result {
         Ok(n) => (n, false, n.max(0) as usize),
         Err(status) => (status.code(), true, 0usize),
@@ -457,9 +607,18 @@ fn host_llm_inference(
     response_ptr: i32,
     response_capacity: i32,
 ) -> i32 {
-    caller.data_mut().host_calls.push("llm.inference".to_string());
+    caller
+        .data_mut()
+        .host_calls
+        .push("llm.inference".to_string());
     let input = read_guest_bytes_for_poge(&mut caller, request_ptr, request_len);
-    let result = dispatch_llm_inference(&mut caller, request_ptr, request_len, response_ptr, response_capacity);
+    let result = dispatch_llm_inference(
+        &mut caller,
+        request_ptr,
+        request_len,
+        response_ptr,
+        response_capacity,
+    );
     let (return_val, is_error, out_len) = match result {
         Ok(n) => (n, false, n.max(0) as usize),
         Err(status) => (status.code(), true, 0usize),
@@ -472,7 +631,13 @@ fn host_llm_inference(
     let epoch_ms = epoch_ms_now();
     let data = caller.data_mut();
     if let Some(poge) = data.poge.as_mut() {
-        let _ = poge.record_event(HostCallKind::LlmInference, epoch_ms, &input, &output, is_error);
+        let _ = poge.record_event(
+            HostCallKind::LlmInference,
+            epoch_ms,
+            &input,
+            &output,
+            is_error,
+        );
     }
     return_val
 }
@@ -485,7 +650,13 @@ fn host_kv_get(
     response_capacity: i32,
 ) -> i32 {
     caller.data_mut().host_calls.push("kv.get".to_string());
-    match dispatch_kv_get(&mut caller, request_ptr, request_len, response_ptr, response_capacity) {
+    match dispatch_kv_get(
+        &mut caller,
+        request_ptr,
+        request_len,
+        response_ptr,
+        response_capacity,
+    ) {
         Ok(bytes_written) => bytes_written,
         Err(status) => status.code(),
     }
@@ -499,7 +670,13 @@ fn host_kv_set(
     response_capacity: i32,
 ) -> i32 {
     caller.data_mut().host_calls.push("kv.set".to_string());
-    match dispatch_kv_set(&mut caller, request_ptr, request_len, response_ptr, response_capacity) {
+    match dispatch_kv_set(
+        &mut caller,
+        request_ptr,
+        request_len,
+        response_ptr,
+        response_capacity,
+    ) {
         Ok(bytes_written) => bytes_written,
         Err(status) => status.code(),
     }
@@ -530,7 +707,13 @@ fn dispatch_browser_navigate(
             semantic_snapshot_ref: String::new(),
             note: format!("unsupported scheme '{}'", url.scheme()),
         };
-        return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_browser_navigate_response_json(&response));
+        return write_guest_json_response(
+            &memory,
+            caller,
+            response_ptr,
+            response_capacity,
+            &render_wasm_browser_navigate_response_json(&response),
+        );
     }
 
     let host = url.host_str().unwrap_or_default().to_string();
@@ -551,11 +734,18 @@ fn dispatch_browser_navigate(
             semantic_snapshot_ref: String::new(),
             note: format!("host '{}' is outside the allowed host set", host),
         };
-        return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_browser_navigate_response_json(&response));
+        return write_guest_json_response(
+            &memory,
+            caller,
+            response_ptr,
+            response_capacity,
+            &render_wasm_browser_navigate_response_json(&response),
+        );
     }
 
     let timeout_ms = bounded_timeout_ms(request.timeout_ms, request.security.max_timeout_ms);
-    let max_response_bytes = bounded_response_bytes(request.security.max_response_bytes, response_capacity);
+    let max_response_bytes =
+        bounded_response_bytes(request.security.max_response_bytes, response_capacity);
     let mut response = match ureq::get(request.url.as_str())
         .config()
         .timeout_global(Some(Duration::from_millis(timeout_ms)))
@@ -576,7 +766,13 @@ fn dispatch_browser_navigate(
                 semantic_snapshot_ref: String::new(),
                 note: format!("http navigate failed: {error}"),
             };
-            return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_browser_navigate_response_json(&response));
+            return write_guest_json_response(
+                &memory,
+                caller,
+                response_ptr,
+                response_capacity,
+                &render_wasm_browser_navigate_response_json(&response),
+            );
         }
     };
 
@@ -613,9 +809,18 @@ fn dispatch_browser_navigate(
         } else {
             String::new()
         },
-        note: format!("bounded synchronous browser host call completed within {}ms", timeout_ms),
+        note: format!(
+            "bounded synchronous browser host call completed within {}ms",
+            timeout_ms
+        ),
     };
-    write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_browser_navigate_response_json(&response))
+    write_guest_json_response(
+        &memory,
+        caller,
+        response_ptr,
+        response_capacity,
+        &render_wasm_browser_navigate_response_json(&response),
+    )
 }
 
 fn dispatch_schedule_heartbeat(
@@ -636,7 +841,13 @@ fn dispatch_schedule_heartbeat(
         accepted_run_id: String::new(),
         note: "heartbeat scheduling remains a declared surface until a runtime service owns leases and acknowledgements".to_string(),
     };
-    write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_heartbeat_schedule_response_json(&response))
+    write_guest_json_response(
+        &memory,
+        caller,
+        response_ptr,
+        response_capacity,
+        &render_wasm_heartbeat_schedule_response_json(&response),
+    )
 }
 
 fn dispatch_terminal_exec(
@@ -661,10 +872,19 @@ fn dispatch_terminal_exec(
             truncated: false,
             note: "argv must contain at least one executable".to_string(),
         };
-        return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_terminal_exec_response_json(&response));
+        return write_guest_json_response(
+            &memory,
+            caller,
+            response_ptr,
+            response_capacity,
+            &render_wasm_terminal_exec_response_json(&response),
+        );
     }
 
-    let workdir = match resolve_allowed_workdir(&request.working_dir, &request.security.allowed_workdir_roots) {
+    let workdir = match resolve_allowed_workdir(
+        &request.working_dir,
+        &request.security.allowed_workdir_roots,
+    ) {
         Ok(path) => path,
         Err(error) => {
             let response = WasmTerminalExecResponse {
@@ -676,12 +896,23 @@ fn dispatch_terminal_exec(
                 truncated: false,
                 note: error,
             };
-            return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_terminal_exec_response_json(&response));
+            return write_guest_json_response(
+                &memory,
+                caller,
+                response_ptr,
+                response_capacity,
+                &render_wasm_terminal_exec_response_json(&response),
+            );
         }
     };
 
     let timeout_ms = bounded_timeout_ms(request.timeout_ms, request.security.max_timeout_ms);
-    let max_output_bytes = bounded_response_bytes(request.max_output_bytes.min(request.security.max_response_bytes), response_capacity);
+    let max_output_bytes = bounded_response_bytes(
+        request
+            .max_output_bytes
+            .min(request.security.max_response_bytes),
+        response_capacity,
+    );
     let mut command = Command::new(&request.argv[0]);
     command.args(&request.argv[1..]);
     command.current_dir(&workdir);
@@ -709,7 +940,13 @@ fn dispatch_terminal_exec(
                 truncated: false,
                 note: format!("failed to spawn '{}': {error}", request.argv[0]),
             };
-            return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_terminal_exec_response_json(&response));
+            return write_guest_json_response(
+                &memory,
+                caller,
+                response_ptr,
+                response_capacity,
+                &render_wasm_terminal_exec_response_json(&response),
+            );
         }
     };
 
@@ -744,9 +981,19 @@ fn dispatch_terminal_exec(
         stderr_utf8,
         timed_out,
         truncated: stdout_truncated || stderr_truncated,
-        note: format!("bounded terminal host call completed in {:?} inside {}", started_at.elapsed(), workdir.display()),
+        note: format!(
+            "bounded terminal host call completed in {:?} inside {}",
+            started_at.elapsed(),
+            workdir.display()
+        ),
     };
-    write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_terminal_exec_response_json(&response))
+    write_guest_json_response(
+        &memory,
+        caller,
+        response_ptr,
+        response_capacity,
+        &render_wasm_terminal_exec_response_json(&response),
+    )
 }
 
 fn dispatch_system_info(
@@ -760,7 +1007,8 @@ fn dispatch_system_info(
     let request_json = read_guest_utf8(&memory, caller, request_ptr, request_len)?;
     let request = parse_wasm_system_info_request(&request_json)
         .map_err(|_| WasmHostCallStatusCode::InvalidRequest)?;
-    let max_response_bytes = bounded_response_bytes(request.security.max_response_bytes, response_capacity);
+    let max_response_bytes =
+        bounded_response_bytes(request.security.max_response_bytes, response_capacity);
     let field_bytes = (max_response_bytes / 3).max(256);
     let (uname_utf8, uname_truncated, uname_note) = read_uname_excerpt(field_bytes);
     let (os_release_utf8, os_release_truncated, os_release_note) =
@@ -790,7 +1038,13 @@ fn dispatch_system_info(
             notes.join("; ")
         },
     };
-    write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_system_info_response_json(&response))
+    write_guest_json_response(
+        &memory,
+        caller,
+        response_ptr,
+        response_capacity,
+        &render_wasm_system_info_response_json(&response),
+    )
 }
 
 fn dispatch_fs_read(
@@ -813,7 +1067,13 @@ fn dispatch_fs_read(
             truncated: false,
             note: "path must not be empty".to_string(),
         };
-        return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_fs_read_response_json(&response));
+        return write_guest_json_response(
+            &memory,
+            caller,
+            response_ptr,
+            response_capacity,
+            &render_wasm_fs_read_response_json(&response),
+        );
     }
     let sandbox_path = match resolve_runtime_read_path(&request.path) {
         Ok(path) => path,
@@ -826,7 +1086,13 @@ fn dispatch_fs_read(
                 truncated: false,
                 note: error,
             };
-            return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_fs_read_response_json(&response));
+            return write_guest_json_response(
+                &memory,
+                caller,
+                response_ptr,
+                response_capacity,
+                &render_wasm_fs_read_response_json(&response),
+            );
         }
     };
     let bytes = match fs::read(&sandbox_path) {
@@ -840,10 +1106,19 @@ fn dispatch_fs_read(
                 truncated: false,
                 note: format!("failed to read '{}': {error}", sandbox_path.display()),
             };
-            return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_fs_read_response_json(&response));
+            return write_guest_json_response(
+                &memory,
+                caller,
+                response_ptr,
+                response_capacity,
+                &render_wasm_fs_read_response_json(&response),
+            );
         }
     };
-    let max_bytes = bounded_response_bytes(request.max_bytes.min(request.security.max_response_bytes), response_capacity);
+    let max_bytes = bounded_response_bytes(
+        request.max_bytes.min(request.security.max_response_bytes),
+        response_capacity,
+    );
     let (content_utf8, truncated) = truncate_lossy_utf8(&bytes, max_bytes);
     let response = WasmFsReadResponse {
         decision: WasmHostCallDecision::Allowed,
@@ -851,9 +1126,18 @@ fn dispatch_fs_read(
         bytes_read: content_utf8.as_bytes().len(),
         content_utf8,
         truncated,
-        note: format!("bounded fs read completed inside {}", runtime_workspace_root().display()),
+        note: format!(
+            "bounded fs read completed inside {}",
+            runtime_workspace_root().display()
+        ),
     };
-    write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_fs_read_response_json(&response))
+    write_guest_json_response(
+        &memory,
+        caller,
+        response_ptr,
+        response_capacity,
+        &render_wasm_fs_read_response_json(&response),
+    )
 }
 
 fn dispatch_fs_write(
@@ -875,7 +1159,13 @@ fn dispatch_fs_write(
             created_dirs: false,
             note: "path must not be empty".to_string(),
         };
-        return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_fs_write_response_json(&response));
+        return write_guest_json_response(
+            &memory,
+            caller,
+            response_ptr,
+            response_capacity,
+            &render_wasm_fs_write_response_json(&response),
+        );
     }
     let sandbox_path = match resolve_runtime_workspace_path(&request.path) {
         Ok(path) => path,
@@ -887,14 +1177,19 @@ fn dispatch_fs_write(
                 created_dirs: false,
                 note: error,
             };
-            return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_fs_write_response_json(&response));
+            return write_guest_json_response(
+                &memory,
+                caller,
+                response_ptr,
+                response_capacity,
+                &render_wasm_fs_write_response_json(&response),
+            );
         }
     };
     let mut created_dirs = false;
     if let Some(parent) = sandbox_path.parent() {
         if request.create_dirs {
-            fs::create_dir_all(parent)
-                .map_err(|_| WasmHostCallStatusCode::InternalError)?;
+            fs::create_dir_all(parent).map_err(|_| WasmHostCallStatusCode::InternalError)?;
             created_dirs = true;
         } else if !parent.exists() {
             let response = WasmFsWriteResponse {
@@ -904,7 +1199,13 @@ fn dispatch_fs_write(
                 created_dirs: false,
                 note: format!("parent directory '{}' is missing", parent.display()),
             };
-            return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_fs_write_response_json(&response));
+            return write_guest_json_response(
+                &memory,
+                caller,
+                response_ptr,
+                response_capacity,
+                &render_wasm_fs_write_response_json(&response),
+            );
         }
     }
     let content = request.content_utf8.as_bytes();
@@ -925,16 +1226,31 @@ fn dispatch_fs_write(
             created_dirs,
             note: format!("failed to write '{}': {error}", sandbox_path.display()),
         };
-        return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_fs_write_response_json(&response));
+        return write_guest_json_response(
+            &memory,
+            caller,
+            response_ptr,
+            response_capacity,
+            &render_wasm_fs_write_response_json(&response),
+        );
     }
     let response = WasmFsWriteResponse {
         decision: WasmHostCallDecision::Allowed,
         path: request.path,
         bytes_written: content.len(),
         created_dirs,
-        note: format!("bounded fs write completed inside {}", runtime_workspace_root().display()),
+        note: format!(
+            "bounded fs write completed inside {}",
+            runtime_workspace_root().display()
+        ),
     };
-    write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_fs_write_response_json(&response))
+    write_guest_json_response(
+        &memory,
+        caller,
+        response_ptr,
+        response_capacity,
+        &render_wasm_fs_write_response_json(&response),
+    )
 }
 
 fn dispatch_llm_inference(
@@ -968,7 +1284,13 @@ fn dispatch_llm_inference(
             total_tokens: None,
             note: "user_prompt must not be empty".to_string(),
         };
-        return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_llm_inference_response_json(&response));
+        return write_guest_json_response(
+            &memory,
+            caller,
+            response_ptr,
+            response_capacity,
+            &render_wasm_llm_inference_response_json(&response),
+        );
     }
     let route = match resolve_llm_route(None, &route_intent) {
         Ok(route) => route,
@@ -983,7 +1305,13 @@ fn dispatch_llm_inference(
                 total_tokens: None,
                 note: error,
             };
-            return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_llm_inference_response_json(&response));
+            return write_guest_json_response(
+                &memory,
+                caller,
+                response_ptr,
+                response_capacity,
+                &render_wasm_llm_inference_response_json(&response),
+            );
         }
     };
     let endpoint_url = route.endpoint_url.clone();
@@ -1000,7 +1328,13 @@ fn dispatch_llm_inference(
                 total_tokens: None,
                 note: error,
             };
-            return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_llm_inference_response_json(&response));
+            return write_guest_json_response(
+                &memory,
+                caller,
+                response_ptr,
+                response_capacity,
+                &render_wasm_llm_inference_response_json(&response),
+            );
         }
     };
     if route.model.trim().is_empty() {
@@ -1014,7 +1348,13 @@ fn dispatch_llm_inference(
             total_tokens: None,
             note: "resolved provider route did not provide a model".to_string(),
         };
-        return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_llm_inference_response_json(&response));
+        return write_guest_json_response(
+            &memory,
+            caller,
+            response_ptr,
+            response_capacity,
+            &render_wasm_llm_inference_response_json(&response),
+        );
     }
     let timeout_ms = request.security.max_timeout_ms.max(1);
     let response_limit = request.security.max_response_bytes.max(1_024).min(65_536);
@@ -1033,7 +1373,11 @@ fn dispatch_llm_inference(
         Err(error) => {
             let response = WasmLlmInferenceResponse {
                 decision: WasmHostCallDecision::Denied,
-                model: payload.get("model").and_then(Value::as_str).unwrap_or_default().to_string(),
+                model: payload
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
                 output_text: String::new(),
                 finish_reason: String::new(),
                 prompt_tokens: None,
@@ -1041,7 +1385,13 @@ fn dispatch_llm_inference(
                 total_tokens: None,
                 note: format!("LLM request failed: {error}"),
             };
-            return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_llm_inference_response_json(&response));
+            return write_guest_json_response(
+                &memory,
+                caller,
+                response_ptr,
+                response_capacity,
+                &render_wasm_llm_inference_response_json(&response),
+            );
         }
     };
     let status = response.status().as_u16();
@@ -1050,8 +1400,11 @@ fn dispatch_llm_inference(
         .with_config()
         .limit(response_limit as u64)
         .read_to_string()
-        .unwrap_or_else(|error| json!({"error": {"message": format!("failed to read body: {error}")}}).to_string());
-    let payload: Value = serde_json::from_str(&response_body).unwrap_or_else(|_| json!({"raw_body": response_body}));
+        .unwrap_or_else(|error| {
+            json!({"error": {"message": format!("failed to read body: {error}")}}).to_string()
+        });
+    let payload: Value =
+        serde_json::from_str(&response_body).unwrap_or_else(|_| json!({"raw_body": response_body}));
     let error_message = payload
         .get("error")
         .and_then(|value| value.get("message"))
@@ -1069,12 +1422,24 @@ fn dispatch_llm_inference(
             model: response_model,
             output_text: String::new(),
             finish_reason: String::new(),
-            prompt_tokens: payload.pointer("/usage/prompt_tokens").and_then(Value::as_u64),
-            completion_tokens: payload.pointer("/usage/completion_tokens").and_then(Value::as_u64),
-            total_tokens: payload.pointer("/usage/total_tokens").and_then(Value::as_u64),
+            prompt_tokens: payload
+                .pointer("/usage/prompt_tokens")
+                .and_then(Value::as_u64),
+            completion_tokens: payload
+                .pointer("/usage/completion_tokens")
+                .and_then(Value::as_u64),
+            total_tokens: payload
+                .pointer("/usage/total_tokens")
+                .and_then(Value::as_u64),
             note: format!("LLM endpoint returned HTTP {status}: {error_message}"),
         };
-        return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_llm_inference_response_json(&response));
+        return write_guest_json_response(
+            &memory,
+            caller,
+            response_ptr,
+            response_capacity,
+            &render_wasm_llm_inference_response_json(&response),
+        );
     }
     let response = WasmLlmInferenceResponse {
         decision: WasmHostCallDecision::Allowed,
@@ -1084,12 +1449,22 @@ fn dispatch_llm_inference(
         prompt_tokens: payload
             .pointer("/usage/input_tokens")
             .and_then(Value::as_u64)
-            .or_else(|| payload.pointer("/usage/prompt_tokens").and_then(Value::as_u64)),
+            .or_else(|| {
+                payload
+                    .pointer("/usage/prompt_tokens")
+                    .and_then(Value::as_u64)
+            }),
         completion_tokens: payload
             .pointer("/usage/output_tokens")
             .and_then(Value::as_u64)
-            .or_else(|| payload.pointer("/usage/completion_tokens").and_then(Value::as_u64)),
-        total_tokens: payload.pointer("/usage/total_tokens").and_then(Value::as_u64),
+            .or_else(|| {
+                payload
+                    .pointer("/usage/completion_tokens")
+                    .and_then(Value::as_u64)
+            }),
+        total_tokens: payload
+            .pointer("/usage/total_tokens")
+            .and_then(Value::as_u64),
         note: format!(
             "bounded llm host call completed against {} via provider profile {} ({})",
             endpoint_url,
@@ -1097,7 +1472,13 @@ fn dispatch_llm_inference(
             route.profile_kind.label()
         ),
     };
-    write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_llm_inference_response_json(&response))
+    write_guest_json_response(
+        &memory,
+        caller,
+        response_ptr,
+        response_capacity,
+        &render_wasm_llm_inference_response_json(&response),
+    )
 }
 
 fn dispatch_kv_get(
@@ -1120,19 +1501,35 @@ fn dispatch_kv_get(
             value_json: "null".to_string(),
             note: "key must not be empty".to_string(),
         };
-        return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_kv_get_response_json(&response));
+        return write_guest_json_response(
+            &memory,
+            caller,
+            response_ptr,
+            response_capacity,
+            &render_wasm_kv_get_response_json(&response),
+        );
     }
     let store = load_runtime_kv_store().map_err(|_| WasmHostCallStatusCode::InternalError)?;
-    let value = store.get(&request.namespace).and_then(|entries| entries.get(&request.key));
+    let value = store
+        .get(&request.namespace)
+        .and_then(|entries| entries.get(&request.key));
     let response = WasmKvGetResponse {
         decision: WasmHostCallDecision::Allowed,
         namespace: request.namespace,
         key: request.key,
         found: value.is_some(),
-        value_json: value.map(|value| value.to_string()).unwrap_or_else(|| "null".to_string()),
+        value_json: value
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "null".to_string()),
         note: "local runtime KV lookup completed".to_string(),
     };
-    write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_kv_get_response_json(&response))
+    write_guest_json_response(
+        &memory,
+        caller,
+        response_ptr,
+        response_capacity,
+        &render_wasm_kv_get_response_json(&response),
+    )
 }
 
 fn dispatch_kv_set(
@@ -1154,7 +1551,13 @@ fn dispatch_kv_set(
             stored: false,
             note: "key must not be empty".to_string(),
         };
-        return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_kv_set_response_json(&response));
+        return write_guest_json_response(
+            &memory,
+            caller,
+            response_ptr,
+            response_capacity,
+            &render_wasm_kv_set_response_json(&response),
+        );
     }
     let value: Value = match serde_json::from_str(&request.value_json) {
         Ok(value) => value,
@@ -1166,7 +1569,13 @@ fn dispatch_kv_set(
                 stored: false,
                 note: format!("value_json must be valid JSON: {error}"),
             };
-            return write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_kv_set_response_json(&response));
+            return write_guest_json_response(
+                &memory,
+                caller,
+                response_ptr,
+                response_capacity,
+                &render_wasm_kv_set_response_json(&response),
+            );
         }
     };
     let mut store = load_runtime_kv_store().map_err(|_| WasmHostCallStatusCode::InternalError)?;
@@ -1182,7 +1591,13 @@ fn dispatch_kv_set(
         stored: true,
         note: "local runtime KV write completed".to_string(),
     };
-    write_guest_json_response(&memory, caller, response_ptr, response_capacity, &render_wasm_kv_set_response_json(&response))
+    write_guest_json_response(
+        &memory,
+        caller,
+        response_ptr,
+        response_capacity,
+        &render_wasm_kv_set_response_json(&response),
+    )
 }
 
 fn capture_host_response_json(
@@ -1197,7 +1612,10 @@ fn capture_host_response_json(
     if result_len <= 0 || result_ptr < 0 {
         return Ok(None);
     }
-    let memory = match instance.get_export(&mut *store, "memory").and_then(|export| export.into_memory()) {
+    let memory = match instance
+        .get_export(&mut *store, "memory")
+        .and_then(|export| export.into_memory())
+    {
         Some(memory) => memory,
         None => return Ok(None),
     };
@@ -1208,15 +1626,23 @@ fn capture_host_response_json(
     Ok(String::from_utf8(bytes).ok())
 }
 
-fn read_exported_i32(store: &mut Store<RunnerState>, instance: &Instance, export_name: &str) -> Option<i32> {
-    let global = instance.get_export(&mut *store, export_name)?.into_global()?;
+fn read_exported_i32(
+    store: &mut Store<RunnerState>,
+    instance: &Instance,
+    export_name: &str,
+) -> Option<i32> {
+    let global = instance
+        .get_export(&mut *store, export_name)?
+        .into_global()?;
     match global.get(&mut *store) {
         Val::I32(value) => Some(value),
         _ => None,
     }
 }
 
-fn guest_memory(caller: &mut Caller<'_, RunnerState>) -> Result<wasmtime::Memory, WasmHostCallStatusCode> {
+fn guest_memory(
+    caller: &mut Caller<'_, RunnerState>,
+) -> Result<wasmtime::Memory, WasmHostCallStatusCode> {
     caller
         .get_export("memory")
         .and_then(|export| export.into_memory())
@@ -1283,7 +1709,8 @@ fn extract_html_title(body: &str) -> String {
 }
 
 fn resolve_allowed_workdir(working_dir: &str, allowed_roots: &[String]) -> Result<PathBuf, String> {
-    let current_dir = std::env::current_dir().map_err(|error| format!("failed to resolve current dir: {error}"))?;
+    let current_dir = std::env::current_dir()
+        .map_err(|error| format!("failed to resolve current dir: {error}"))?;
     let requested = if Path::new(working_dir).is_absolute() {
         PathBuf::from(working_dir)
     } else {
@@ -1323,7 +1750,6 @@ fn truncate_lossy_utf8(bytes: &[u8], max_bytes: usize) -> (String, bool) {
     (String::from_utf8_lossy(slice).into_owned(), truncated)
 }
 
-
 fn runtime_workspace_root() -> PathBuf {
     if let Some(root) = std::env::var_os("LOOM_RUNTIME_ROOT")
         .or_else(|| std::env::var_os("MERIDIAN_LOOM_RUNTIME_ROOT"))
@@ -1331,8 +1757,7 @@ fn runtime_workspace_root() -> PathBuf {
         return PathBuf::from(root).join("workspace");
     }
     if let Some(home) = std::env::var_os("HOME") {
-        return PathBuf::from(home)
-            .join(".local/share/meridian-loom/runtime/default/workspace");
+        return PathBuf::from(home).join(".local/share/meridian-loom/runtime/default/workspace");
     }
     std::env::temp_dir()
         .join("meridian-loom")
@@ -1355,8 +1780,12 @@ fn normalize_guest_requested_path(raw: &str) -> Result<PathBuf, String> {
         match component {
             Component::Normal(segment) => normalized.push(segment),
             Component::CurDir | Component::RootDir => {}
-            Component::ParentDir => return Err(format!("path '{}' escapes the allowed read roots", raw)),
-            Component::Prefix(_) => return Err(format!("path '{}' contains an unsupported prefix", raw)),
+            Component::ParentDir => {
+                return Err(format!("path '{}' escapes the allowed read roots", raw))
+            }
+            Component::Prefix(_) => {
+                return Err(format!("path '{}' contains an unsupported prefix", raw))
+            }
         }
     }
     let is_root_only = absolute && normalized == Path::new("/");
@@ -1386,7 +1815,12 @@ fn resolve_runtime_read_path(raw: &str) -> Result<PathBuf, String> {
         ));
     }
     let root = runtime_workspace_root();
-    fs::create_dir_all(&root).map_err(|error| format!("failed to create runtime workspace root '{}': {error}", root.display()))?;
+    fs::create_dir_all(&root).map_err(|error| {
+        format!(
+            "failed to create runtime workspace root '{}': {error}",
+            root.display()
+        )
+    })?;
     Ok(root.join(normalized))
 }
 
@@ -1396,7 +1830,12 @@ fn resolve_runtime_workspace_path(raw: &str) -> Result<PathBuf, String> {
         return Err(format!("absolute path '{}' is not allowed", raw));
     }
     let root = runtime_workspace_root();
-    fs::create_dir_all(&root).map_err(|error| format!("failed to create runtime workspace root '{}': {error}", root.display()))?;
+    fs::create_dir_all(&root).map_err(|error| {
+        format!(
+            "failed to create runtime workspace root '{}': {error}",
+            root.display()
+        )
+    })?;
     Ok(root.join(normalized))
 }
 
@@ -1441,7 +1880,9 @@ fn read_uname_excerpt(max_bytes: usize) -> (String, bool, Option<String>) {
 type RuntimeKvStore = BTreeMap<String, BTreeMap<String, Value>>;
 
 fn runtime_kv_store_path() -> PathBuf {
-    PathBuf::from("/home/ubuntu/.local/share/meridian-loom/runtime/default/state/runtime/kv_memory.json")
+    PathBuf::from(
+        "/home/ubuntu/.local/share/meridian-loom/runtime/default/state/runtime/kv_memory.json",
+    )
 }
 
 fn load_runtime_kv_store() -> Result<RuntimeKvStore, String> {
@@ -1461,8 +1902,12 @@ fn load_runtime_kv_store() -> Result<RuntimeKvStore, String> {
 fn save_runtime_kv_store(store: &RuntimeKvStore) -> Result<(), String> {
     let path = runtime_kv_store_path();
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("failed to create kv store directory '{}': {error}", parent.display()))?;
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "failed to create kv store directory '{}': {error}",
+                parent.display()
+            )
+        })?;
     }
     let raw = serde_json::to_string_pretty(store)
         .map_err(|error| format!("failed to serialize kv store: {error}"))?;
@@ -1499,11 +1944,7 @@ fn epoch_ms_now() -> u64 {
 ///
 /// Returns an empty Vec on any error (invalid pointer, OOB, no memory export).
 /// The 4 KiB cap keeps per-call overhead constant regardless of payload size.
-fn read_guest_bytes_for_poge(
-    caller: &mut Caller<'_, RunnerState>,
-    ptr: i32,
-    len: i32,
-) -> Vec<u8> {
+fn read_guest_bytes_for_poge(caller: &mut Caller<'_, RunnerState>, ptr: i32, len: i32) -> Vec<u8> {
     const MAX_POGE_BYTES: usize = 4096;
     if ptr < 0 || len <= 0 {
         return Vec::new();
@@ -1522,7 +1963,10 @@ fn read_guest_bytes_for_poge(
     buf
 }
 
-fn build_llm_request_payload(route: &ResolvedProviderRoute, request: &super::WasmLlmInferenceRequest) -> Value {
+fn build_llm_request_payload(
+    route: &ResolvedProviderRoute,
+    request: &super::WasmLlmInferenceRequest,
+) -> Value {
     match route.profile_kind {
         ProviderKind::OpenAiCodex => {
             let mut input = Vec::new();
@@ -1579,7 +2023,12 @@ fn extract_openai_output_text(payload: &Value) -> String {
     if let Some(items) = payload.get("output").and_then(Value::as_array) {
         let collected = items
             .iter()
-            .flat_map(|item| item.get("content").and_then(Value::as_array).into_iter().flatten())
+            .flat_map(|item| {
+                item.get("content")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+            })
             .filter_map(|part| {
                 part.get("text")
                     .and_then(Value::as_str)
@@ -1623,7 +2072,9 @@ fn call_i32_function(
     args: &[i32],
 ) -> Result<Option<i32>, String> {
     if args.len() > 1 {
-        return Err("experimental local Wasm lane supports at most one i32 argument for now".to_string());
+        return Err(
+            "experimental local Wasm lane supports at most one i32 argument for now".to_string(),
+        );
     }
     let mut results = vec![Val::I32(0); func.ty(&*store).results().len()];
     match args.len() {
@@ -1641,7 +2092,6 @@ fn call_i32_function(
     })
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::resolve_runtime_read_path;
@@ -1649,7 +2099,8 @@ mod tests {
 
     #[test]
     fn runtime_read_path_allows_workspace_relative_inputs() {
-        let resolved = resolve_runtime_read_path("notes/summary.txt").expect("workspace relative path");
+        let resolved =
+            resolve_runtime_read_path("notes/summary.txt").expect("workspace relative path");
         assert!(resolved.is_absolute());
         assert!(resolved.ends_with(Path::new("workspace/notes/summary.txt")));
     }

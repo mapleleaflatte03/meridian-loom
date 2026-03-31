@@ -122,7 +122,10 @@ pub fn render_queue_depths_human(queue: &PolicyQueue) -> String {
     for (label, depth) in &depths {
         out.push_str(&format!("{:<22} {}\n", label, depth));
     }
-    out.push_str(&format!("total                  {}\n", queue.total_pending()));
+    out.push_str(&format!(
+        "total                  {}\n",
+        queue.total_pending()
+    ));
     out
 }
 
@@ -145,22 +148,34 @@ mod tests {
 
     #[test]
     fn test_classify_standard() {
-        assert_eq!(classify_action("research", 0.25, false), PolicyClass::Standard);
+        assert_eq!(
+            classify_action("research", 0.25, false),
+            PolicyClass::Standard
+        );
     }
 
     #[test]
     fn test_classify_budget_heavy() {
-        assert_eq!(classify_action("research", 5.0, false), PolicyClass::BudgetHeavy);
+        assert_eq!(
+            classify_action("research", 5.0, false),
+            PolicyClass::BudgetHeavy
+        );
     }
 
     #[test]
     fn test_classify_sanctioned() {
-        assert_eq!(classify_action("research", 0.1, true), PolicyClass::SanctionSensitive);
+        assert_eq!(
+            classify_action("research", 0.1, true),
+            PolicyClass::SanctionSensitive
+        );
     }
 
     #[test]
     fn test_classify_privileged() {
-        assert_eq!(classify_action("admin", 0.1, false), PolicyClass::Privileged);
+        assert_eq!(
+            classify_action("admin", 0.1, false),
+            PolicyClass::Privileged
+        );
     }
 
     #[test]

@@ -74,7 +74,11 @@ pub fn from_toml(value: &str) -> Result<WasmStoreLimits, String> {
         }
         let parts: Vec<&str> = line.splitn(2, '=').collect();
         if parts.len() != 2 {
-            return Err(format!("line {}: expected key = value, got: {}", line_no + 1, line));
+            return Err(format!(
+                "line {}: expected key = value, got: {}",
+                line_no + 1,
+                line
+            ));
         }
         let key = parts[0].trim();
         let val = parts[1].trim().trim_matches('"');
@@ -330,7 +334,9 @@ max_memory_bytes = 16777216\n";
         let mut limits = default_limits();
         limits.max_memory_bytes = 0;
         let errs = validate_limits(&limits).unwrap_err();
-        assert!(errs.iter().any(|e| e.contains("max_memory_bytes must be > 0")));
+        assert!(errs
+            .iter()
+            .any(|e| e.contains("max_memory_bytes must be > 0")));
     }
 
     #[test]
@@ -346,7 +352,9 @@ max_memory_bytes = 16777216\n";
         let mut limits = default_limits();
         limits.fuel_limit = Some(0);
         let errs = validate_limits(&limits).unwrap_err();
-        assert!(errs.iter().any(|e| e.contains("fuel_limit when set must be > 0")));
+        assert!(errs
+            .iter()
+            .any(|e| e.contains("fuel_limit when set must be > 0")));
     }
 
     #[test]
@@ -436,6 +444,8 @@ unknown_future_key = 42\n";
         let mut limits = default_limits();
         limits.max_instances = MAX_INSTANCES_CEILING + 1;
         let errs = validate_limits(&limits).unwrap_err();
-        assert!(errs.iter().any(|e| e.contains("max_instances") && e.contains("exceeds ceiling")));
+        assert!(errs
+            .iter()
+            .any(|e| e.contains("max_instances") && e.contains("exceeds ceiling")));
     }
 }

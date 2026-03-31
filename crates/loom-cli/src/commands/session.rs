@@ -2,9 +2,8 @@ use std::io::IsTerminal;
 
 use crate::*;
 use loom_core::session_policy::{
-    clear_session_override, get_session_override,
-    get_session_send_policy, list_session_overrides, list_session_send_policies,
-    render_session_override_human, render_session_override_json,
+    clear_session_override, get_session_override, get_session_send_policy, list_session_overrides,
+    list_session_send_policies, render_session_override_human, render_session_override_json,
     render_session_overrides_list_human, render_session_send_policies_list_human,
     render_session_send_policy_human, render_session_send_policy_json, set_session_override,
     set_session_send_policy,
@@ -13,12 +12,18 @@ use loom_core::session_provenance::{
     find_session_provenance, list_session_provenance, list_session_provenance_with_options,
     open_session_provenance, render_session_provenance_human, render_session_provenance_json,
     render_session_provenance_list_human, render_session_provenance_list_json,
-    render_session_provenance_overview_human, render_session_provenance_overview_json, session_provenance_overview,
-    update_session_provenance_job, update_session_provenance_route_full,
+    render_session_provenance_overview_human, render_session_provenance_overview_json,
+    session_provenance_overview, update_session_provenance_job,
+    update_session_provenance_route_full,
 };
 
 pub(crate) fn handle_session(args: &[String]) -> LoomResult<()> {
-    if args.is_empty() || matches!(args.first().map(String::as_str), Some("help" | "--help" | "-h")) {
+    if args.is_empty()
+        || matches!(
+            args.first().map(String::as_str),
+            Some("help" | "--help" | "-h")
+        )
+    {
         print_session_help();
         return Ok(());
     }
@@ -160,7 +165,10 @@ fn handle_session_show(args: &[String]) -> LoomResult<()> {
                 "override": override_rec.as_ref().map(|ov| serde_json::from_str::<serde_json::Value>(&render_session_override_json(ov)).unwrap_or_default()),
                 "send_policy": send_policy_rec.as_ref().map(|sp| serde_json::from_str::<serde_json::Value>(&render_session_send_policy_json(sp)).unwrap_or_default()),
             });
-            print!("{}\n", serde_json::to_string_pretty(&output).unwrap_or_default());
+            print!(
+                "{}\n",
+                serde_json::to_string_pretty(&output).unwrap_or_default()
+            );
         }
     }
     Ok(())
@@ -196,7 +204,8 @@ fn handle_session_route(args: &[String]) -> LoomResult<()> {
     let agent_id = take_value(args, "--agent-id").unwrap_or_default();
     let provider_profile = take_value(args, "--provider-profile").unwrap_or_default();
     let model = take_value(args, "--model").unwrap_or_default();
-    let override_source = take_value(args, "--override-source").unwrap_or_else(|| "default".to_string());
+    let override_source =
+        take_value(args, "--override-source").unwrap_or_else(|| "default".to_string());
     let transport_kind = take_value(args, "--transport-kind").unwrap_or_default();
     let auth_mode = take_value(args, "--auth-mode").unwrap_or_default();
     let execution_owner = take_value(args, "--execution-owner").unwrap_or_default();
@@ -316,12 +325,7 @@ fn handle_session_send_policy(args: &[String]) -> LoomResult<()> {
     let mode = required_flag(args, "--mode")?;
     let channel_target = take_value(args, "--channel-target");
     let format = format_flag(args);
-    let record = set_session_send_policy(
-        &root,
-        &session_key,
-        &mode,
-        channel_target.as_deref(),
-    )?;
+    let record = set_session_send_policy(&root, &session_key, &mode, channel_target.as_deref())?;
     match format.as_str() {
         "human" => {
             print_startup_banner();
@@ -347,8 +351,17 @@ fn handle_session_overrides_list(args: &[String]) -> LoomResult<()> {
         }
         _ => {
             use serde_json::json;
-            let out = json!(records.iter().map(|r| serde_json::from_str::<serde_json::Value>(&render_session_override_json(r)).unwrap_or_default()).collect::<Vec<_>>());
-            print!("{}\n", serde_json::to_string_pretty(&out).unwrap_or_default());
+            let out = json!(records
+                .iter()
+                .map(
+                    |r| serde_json::from_str::<serde_json::Value>(&render_session_override_json(r))
+                        .unwrap_or_default()
+                )
+                .collect::<Vec<_>>());
+            print!(
+                "{}\n",
+                serde_json::to_string_pretty(&out).unwrap_or_default()
+            );
         }
     }
     Ok(())
@@ -369,8 +382,17 @@ fn handle_session_policies_list(args: &[String]) -> LoomResult<()> {
         }
         _ => {
             use serde_json::json;
-            let out = json!(records.iter().map(|r| serde_json::from_str::<serde_json::Value>(&render_session_send_policy_json(r)).unwrap_or_default()).collect::<Vec<_>>());
-            print!("{}\n", serde_json::to_string_pretty(&out).unwrap_or_default());
+            let out = json!(records
+                .iter()
+                .map(|r| serde_json::from_str::<serde_json::Value>(
+                    &render_session_send_policy_json(r)
+                )
+                .unwrap_or_default())
+                .collect::<Vec<_>>());
+            print!(
+                "{}\n",
+                serde_json::to_string_pretty(&out).unwrap_or_default()
+            );
         }
     }
     Ok(())

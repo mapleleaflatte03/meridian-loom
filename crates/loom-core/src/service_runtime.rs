@@ -181,7 +181,11 @@ pub fn service_runtime_overview(root: &Path) -> LoomResult<ServiceRuntimeOvervie
         service_health: format!(
             "{} {}",
             record.service_status,
-            if record.service_running { "running" } else { "idle" }
+            if record.service_running {
+                "running"
+            } else {
+                "idle"
+            }
         ),
         service_session_id: record.service_session_id,
         service_pid: record.service_pid,
@@ -191,7 +195,11 @@ pub fn service_runtime_overview(root: &Path) -> LoomResult<ServiceRuntimeOvervie
         supervisor_health: format!(
             "{} {}",
             record.supervisor_status,
-            if record.supervisor_running { "running" } else { "idle" }
+            if record.supervisor_running {
+                "running"
+            } else {
+                "idle"
+            }
         ),
         supervisor_session_id: record.supervisor_session_id,
         supervisor_pid: record.supervisor_pid,
@@ -271,10 +279,26 @@ fn parse_service_runtime(raw: &str) -> LoomResult<ServiceRuntimeRecord> {
         .and_then(Value::as_object)
         .ok_or_else(|| "service runtime missing runtime object".to_string())?;
     Ok(ServiceRuntimeRecord {
-        service_state_path: PathBuf::from(value_string_object(runtime, "service_state_path", "state/service-runtime/missing-service-state")),
-        service_log_path: PathBuf::from(value_string_object(runtime, "service_log_path", "logs/service.log")),
-        service_socket_path: PathBuf::from(value_string_object(runtime, "service_socket_path", "run/service/runtime.sock")),
-        service_http_address: value_string_object(runtime, "service_http_address", "127.0.0.1:18910"),
+        service_state_path: PathBuf::from(value_string_object(
+            runtime,
+            "service_state_path",
+            "state/service-runtime/missing-service-state",
+        )),
+        service_log_path: PathBuf::from(value_string_object(
+            runtime,
+            "service_log_path",
+            "logs/service.log",
+        )),
+        service_socket_path: PathBuf::from(value_string_object(
+            runtime,
+            "service_socket_path",
+            "run/service/runtime.sock",
+        )),
+        service_http_address: value_string_object(
+            runtime,
+            "service_http_address",
+            "127.0.0.1:18910",
+        ),
         service_token_required: value_bool_object(runtime, "service_token_required"),
         service_available: value_bool_object(runtime, "service_available"),
         service_running: value_bool_object(runtime, "service_running"),
@@ -283,8 +307,16 @@ fn parse_service_runtime(raw: &str) -> LoomResult<ServiceRuntimeRecord> {
         service_pid: value_u32_object(runtime, "service_pid"),
         service_pending_jobs: value_usize_object(runtime, "service_pending_jobs"),
         service_processed_jobs: value_usize_object(runtime, "service_processed_jobs"),
-        supervisor_state_path: PathBuf::from(value_string_object(runtime, "supervisor_state_path", "state/runtime/supervisor/runtime_state.json")),
-        supervisor_log_path: PathBuf::from(value_string_object(runtime, "supervisor_log_path", "state/runtime/supervisor/daemon.log")),
+        supervisor_state_path: PathBuf::from(value_string_object(
+            runtime,
+            "supervisor_state_path",
+            "state/runtime/supervisor/runtime_state.json",
+        )),
+        supervisor_log_path: PathBuf::from(value_string_object(
+            runtime,
+            "supervisor_log_path",
+            "state/runtime/supervisor/daemon.log",
+        )),
         supervisor_available: value_bool_object(runtime, "supervisor_available"),
         supervisor_running: value_bool_object(runtime, "supervisor_running"),
         supervisor_status: value_string_object(runtime, "supervisor_status", "not_started"),
@@ -357,7 +389,11 @@ fn value_u32(value: Option<&Value>, key: &str) -> u32 {
         .unwrap_or(0) as u32
 }
 
-fn value_string_object(object: &serde_json::Map<String, Value>, key: &str, default: &str) -> String {
+fn value_string_object(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+    default: &str,
+) -> String {
     object
         .get(key)
         .and_then(Value::as_str)
@@ -433,7 +469,8 @@ mod tests {
         let service_state = root.join("run/service/runtime_state.json");
         let supervisor_state = root.join("state/runtime/supervisor/runtime_state.json");
         fs::create_dir_all(service_state.parent().expect("service parent")).expect("service dir");
-        fs::create_dir_all(supervisor_state.parent().expect("supervisor parent")).expect("supervisor dir");
+        fs::create_dir_all(supervisor_state.parent().expect("supervisor parent"))
+            .expect("supervisor dir");
         fs::write(
             &service_state,
             serde_json::to_string_pretty(&json!({

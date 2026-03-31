@@ -261,7 +261,10 @@ fn persist_session_overrides(root: &Path, records: &[SessionOverrideRecord]) -> 
     fs::write(path, rendered).map_err(io_err)
 }
 
-fn persist_session_send_policies(root: &Path, records: &[SessionSendPolicyRecord]) -> LoomResult<()> {
+fn persist_session_send_policies(
+    root: &Path,
+    records: &[SessionSendPolicyRecord],
+) -> LoomResult<()> {
     let path = session_send_policies_path(root);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(io_err)?;
@@ -275,8 +278,8 @@ fn persist_session_send_policies(root: &Path, records: &[SessionSendPolicyRecord
 }
 
 fn parse_session_overrides(raw: &str) -> LoomResult<Vec<SessionOverrideRecord>> {
-    let value: Value = serde_json::from_str(raw)
-        .map_err(|e| format!("invalid session overrides json: {e}"))?;
+    let value: Value =
+        serde_json::from_str(raw).map_err(|e| format!("invalid session overrides json: {e}"))?;
     let items = value
         .get("overrides")
         .and_then(Value::as_array)
@@ -423,9 +426,8 @@ mod tests {
     fn set_and_get_send_policy() {
         let root = temp_path("loom-session-policy-send");
         init_workspace(&root, "embedded", None, "org_demo").expect("init");
-        let record =
-            set_session_send_policy(&root, "telegram:founder", "echo", Some("telegram"))
-                .expect("set policy");
+        let record = set_session_send_policy(&root, "telegram:founder", "echo", Some("telegram"))
+            .expect("set policy");
         assert_eq!(record.mode, "echo");
 
         let loaded = get_session_send_policy(&root, "telegram:founder")

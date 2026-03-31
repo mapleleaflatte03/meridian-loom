@@ -4,12 +4,14 @@ use std::io::IsTerminal;
 
 use crate::*;
 use loom_core::agent_runtime::{
-    agent_memory_summary, agent_runtime_summary, agent_session_summary,
-    commit_agent_session, open_agent_session, render_agent_memory_human, render_agent_memory_json,
+    agent_memory_summary, agent_runtime_summary, agent_session_summary, commit_agent_session,
+    open_agent_session, render_agent_memory_human, render_agent_memory_json,
     render_agent_runtime_human, render_agent_runtime_json, render_agent_session_human,
     render_agent_session_json, write_agent_memory_snapshot,
 };
-use loom_core::context_engine::{context_bundle, render_context_bundle_human, render_context_bundle_json};
+use loom_core::context_engine::{
+    context_bundle, render_context_bundle_human, render_context_bundle_json,
+};
 use loom_core::{
     bindings, channels, gateway_runtime, onboarding, pipeline, provider_auth_store,
     provider_router, recurring, recurring_executor, schedules, service_ingress_runtime,
@@ -33,7 +35,6 @@ pub(crate) fn handle_init(args: &[String]) -> LoomResult<()> {
     ));
     Ok(())
 }
-
 
 pub(crate) fn handle_doctor(args: &[String]) -> LoomResult<()> {
     if has_flag(args, "--help") || has_flag(args, "-h") {
@@ -79,7 +80,10 @@ pub(crate) fn handle_doctor(args: &[String]) -> LoomResult<()> {
                 let trimmed = checks_json.trim_end();
                 if trimmed.ends_with(']') {
                     // Wrap in object with fix_results
-                    print!("{{\"checks\":{},\"fix_results\":{:?}}}\n", trimmed, fix_results);
+                    print!(
+                        "{{\"checks\":{},\"fix_results\":{:?}}}\n",
+                        trimmed, fix_results
+                    );
                 } else {
                     print!("{}", checks_json);
                     for msg in &fix_results {
@@ -149,7 +153,6 @@ fn apply_safe_doctor_fixes(root: &std::path::Path) -> LoomResult<Vec<String>> {
     Ok(results)
 }
 
-
 pub(crate) fn handle_runtime_info(args: &[String]) -> LoomResult<()> {
     let root = root_from(take_value(args, "--root").as_deref())?;
     let config = read_config(&root)?;
@@ -169,11 +172,13 @@ pub(crate) fn handle_runtime_info(args: &[String]) -> LoomResult<()> {
         "state_dir": root.join(&config.state_dir).display().to_string(),
         "log_dir": root.join(&config.log_dir).display().to_string(),
     });
-    print!("{}", serde_json::to_string_pretty(&info).map_err(|e| e.to_string())?);
+    print!(
+        "{}",
+        serde_json::to_string_pretty(&info).map_err(|e| e.to_string())?
+    );
     println!();
     Ok(())
 }
-
 
 pub(crate) fn handle_health(args: &[String]) -> LoomResult<()> {
     let root = root_from(take_value(args, "--root").as_deref())?;
@@ -187,7 +192,6 @@ pub(crate) fn handle_health(args: &[String]) -> LoomResult<()> {
     Ok(())
 }
 
-
 pub(crate) fn handle_status(args: &[String]) -> LoomResult<()> {
     let root = root_from(take_value(args, "--root").as_deref())?;
     let base = status_human(&root)?;
@@ -196,7 +200,6 @@ pub(crate) fn handle_status(args: &[String]) -> LoomResult<()> {
     print_human_block(&[base, render_runtime_service_human(&service)]);
     Ok(())
 }
-
 
 pub(crate) fn handle_config(args: &[String]) -> LoomResult<()> {
     if args.first().map(String::as_str) != Some("show") {
@@ -207,7 +210,6 @@ pub(crate) fn handle_config(args: &[String]) -> LoomResult<()> {
     print_human(&render_config_human(&config, &root));
     Ok(())
 }
-
 
 pub(crate) fn handle_contract(args: &[String]) -> LoomResult<()> {
     match args.first().map(String::as_str) {
@@ -226,16 +228,12 @@ pub(crate) fn handle_contract(args: &[String]) -> LoomResult<()> {
         Some("verify") => {
             let root = root_from(take_value(args, "--root").as_deref())?;
             let kernel_path = take_value(args, "--kernel-path");
-            let agent_id = take_value(args, "--agent-id")
-                .unwrap_or_else(|| "agent_tutorial".to_string());
+            let agent_id =
+                take_value(args, "--agent-id").unwrap_or_else(|| "agent_tutorial".to_string());
             let org_id = take_value(args, "--org-id");
             let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
-            let result = contract_verify(
-                &root,
-                kernel_path.as_deref(),
-                &agent_id,
-                org_id.as_deref(),
-            )?;
+            let result =
+                contract_verify(&root, kernel_path.as_deref(), &agent_id, org_id.as_deref())?;
             if format == "json" {
                 print!("{}", render_contract_verify_json(&result));
             } else {
@@ -250,7 +248,6 @@ pub(crate) fn handle_contract(args: &[String]) -> LoomResult<()> {
     }
 }
 
-
 pub(crate) fn handle_capsule(args: &[String]) -> LoomResult<()> {
     if args.first().map(String::as_str) != Some("inspect") {
         return Err("capsule only supports 'inspect' in this scaffold".to_string());
@@ -261,7 +258,6 @@ pub(crate) fn handle_capsule(args: &[String]) -> LoomResult<()> {
     Ok(())
 }
 
-
 pub(crate) fn handle_agent(args: &[String]) -> LoomResult<()> {
     match args.first().map(String::as_str) {
         Some("resolve") => {
@@ -270,7 +266,12 @@ pub(crate) fn handle_agent(args: &[String]) -> LoomResult<()> {
             let kernel_path = take_value(args, "--kernel-path");
             let org_id = take_value(args, "--org-id");
             let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
-            let identity = resolve_agent_identity(&root, kernel_path.as_deref(), &agent_id, org_id.as_deref())?;
+            let identity = resolve_agent_identity(
+                &root,
+                kernel_path.as_deref(),
+                &agent_id,
+                org_id.as_deref(),
+            )?;
             if format == "json" {
                 print!("{}", render_identity_json(&identity));
             } else {
@@ -358,10 +359,11 @@ pub(crate) fn handle_agent(args: &[String]) -> LoomResult<()> {
             }
             Ok(())
         }
-        _ => Err("agent supports 'resolve', 'runtime', 'session', 'memory', and 'context'".to_string()),
+        _ => Err(
+            "agent supports 'resolve', 'runtime', 'session', 'memory', and 'context'".to_string(),
+        ),
     }
 }
-
 
 pub(crate) fn handle_envelope(args: &[String]) -> LoomResult<()> {
     if args.first().map(String::as_str) != Some("build") {
@@ -397,7 +399,6 @@ pub(crate) fn handle_envelope(args: &[String]) -> LoomResult<()> {
     Ok(())
 }
 
-
 pub(crate) fn handle_shadow(args: &[String]) -> LoomResult<()> {
     match args.first().map(String::as_str) {
         Some("report") => {
@@ -417,7 +418,12 @@ pub(crate) fn handle_shadow(args: &[String]) -> LoomResult<()> {
             let session_id = take_value(args, "--session-id");
             let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
 
-            let identity = resolve_agent_identity(&root, kernel_path.as_deref(), &agent_id, org_id.as_deref())?;
+            let identity = resolve_agent_identity(
+                &root,
+                kernel_path.as_deref(),
+                &agent_id,
+                org_id.as_deref(),
+            )?;
             let envelope = build_action_envelope(
                 &root,
                 kernel_path.as_deref(),
@@ -432,8 +438,13 @@ pub(crate) fn handle_shadow(args: &[String]) -> LoomResult<()> {
             let reference =
                 evaluate_reference_gates(&root, kernel_path.as_deref(), &identity, &envelope)?;
             let effective_kernel_path = kernel_path_for(&root, kernel_path.as_deref())?;
-            let capture =
-                capture_preflight(&root, &effective_kernel_path, &identity, &envelope, &reference)?;
+            let capture = capture_preflight(
+                &root,
+                &effective_kernel_path,
+                &identity,
+                &envelope,
+                &reference,
+            )?;
             if format == "json" {
                 print!("{}", render_preflight_json(&capture));
             } else {
@@ -457,8 +468,12 @@ pub(crate) fn handle_shadow(args: &[String]) -> LoomResult<()> {
             let session_id = take_value(args, "--session-id");
             let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
 
-            let identity =
-                resolve_agent_identity(&root, kernel_path.as_deref(), &agent_id, org_id.as_deref())?;
+            let identity = resolve_agent_identity(
+                &root,
+                kernel_path.as_deref(),
+                &agent_id,
+                org_id.as_deref(),
+            )?;
             let envelope = build_action_envelope(
                 &root,
                 kernel_path.as_deref(),
@@ -492,8 +507,12 @@ pub(crate) fn handle_shadow(args: &[String]) -> LoomResult<()> {
             let session_id = take_value(args, "--session-id");
             let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
 
-            let identity =
-                resolve_agent_identity(&root, kernel_path.as_deref(), &agent_id, org_id.as_deref())?;
+            let identity = resolve_agent_identity(
+                &root,
+                kernel_path.as_deref(),
+                &agent_id,
+                org_id.as_deref(),
+            )?;
             let envelope = build_action_envelope(
                 &root,
                 kernel_path.as_deref(),
@@ -531,11 +550,11 @@ pub(crate) fn handle_shadow(args: &[String]) -> LoomResult<()> {
             }
             Ok(())
         }
-        _ => Err("shadow supports 'preflight', 'decide', 'enforce', 'compare', and 'report'".to_string()),
+        _ => Err(
+            "shadow supports 'preflight', 'decide', 'enforce', 'compare', and 'report'".to_string(),
+        ),
     }
 }
-
-
 
 pub(crate) fn handle_parity(args: &[String]) -> LoomResult<()> {
     match args.first().map(String::as_str) {

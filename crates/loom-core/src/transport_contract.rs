@@ -53,7 +53,7 @@ impl TransportProtocol {
     pub fn is_remote(&self) -> bool {
         match self {
             Self::OllamaLocal => false,
-            Self::Mcp => false,  // MCP can be local stdio
+            Self::Mcp => false, // MCP can be local stdio
             _ => true,
         }
     }
@@ -201,8 +201,7 @@ impl Default for TransportPolicy {
 impl TransportPolicy {
     /// Check a binding against this policy.
     pub fn check_binding(&self, binding: &TransportBinding) -> LoomResult<()> {
-        if !self.allowed_protocols.is_empty()
-            && !self.allowed_protocols.contains(&binding.protocol)
+        if !self.allowed_protocols.is_empty() && !self.allowed_protocols.contains(&binding.protocol)
         {
             return Err(format!(
                 "transport protocol {} not in allowed list",

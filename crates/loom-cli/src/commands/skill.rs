@@ -5,8 +5,7 @@ use crate::*;
 use loom_core::skill_lifecycle::{
     disable_skill, enable_skill, install_skill, list_skill_installs, list_skill_locks,
     remove_skill, render_skill_installs_list_human, render_skill_lifecycle_receipt_human,
-    render_skill_lifecycle_receipt_json, render_skill_locks_human,
-    update_skill_metadata,
+    render_skill_lifecycle_receipt_json, render_skill_locks_human, update_skill_metadata,
 };
 use loom_core::skills::{
     find_skill, load_skills, render_skill_human, render_skill_json, render_skill_list_human,
@@ -15,7 +14,12 @@ use loom_core::skills::{
 };
 
 pub(crate) fn handle_skill(args: &[String]) -> LoomResult<()> {
-    if args.is_empty() || matches!(args.first().map(String::as_str), Some("help" | "--help" | "-h")) {
+    if args.is_empty()
+        || matches!(
+            args.first().map(String::as_str),
+            Some("help" | "--help" | "-h")
+        )
+    {
         print_skill_help();
         return Ok(());
     }
@@ -287,7 +291,10 @@ fn handle_skill_locks(args: &[String]) -> LoomResult<()> {
         _ => {
             use serde_json::json;
             let out = json!(locks.iter().map(|l| json!({"skill_id": l.skill_id, "locked_by": l.locked_by, "locked_at": l.locked_at})).collect::<Vec<_>>());
-            print!("{}\n", serde_json::to_string_pretty(&out).unwrap_or_default());
+            print!(
+                "{}\n",
+                serde_json::to_string_pretty(&out).unwrap_or_default()
+            );
         }
     }
     Ok(())
@@ -309,7 +316,10 @@ fn handle_skill_installs(args: &[String]) -> LoomResult<()> {
         _ => {
             use serde_json::json;
             let out = json!(installs.iter().map(|r| json!({"skill_id": r.skill_id, "enabled": r.enabled, "locked": r.locked, "skill_type": r.skill_type})).collect::<Vec<_>>());
-            print!("{}\n", serde_json::to_string_pretty(&out).unwrap_or_default());
+            print!(
+                "{}\n",
+                serde_json::to_string_pretty(&out).unwrap_or_default()
+            );
         }
     }
     Ok(())

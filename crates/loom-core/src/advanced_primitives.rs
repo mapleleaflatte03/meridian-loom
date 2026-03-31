@@ -321,15 +321,28 @@ pub struct MemoryStateEntry {
 pub trait MemoryStore {
     fn append_memory(&self, record: &MemoryRecord) -> LoomResult<String>;
     fn search_memory(&self, query: &MemoryQuery) -> LoomResult<MemorySearchResult>;
-    fn load_state(&self, agent_id: &str, scope: &str, key: &str) -> LoomResult<Option<MemoryStateEntry>>;
+    fn load_state(
+        &self,
+        agent_id: &str,
+        scope: &str,
+        key: &str,
+    ) -> LoomResult<Option<MemoryStateEntry>>;
     fn save_state(&self, write: &MemoryStateWrite) -> LoomResult<MemoryStateEntry>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HeartbeatSchedule {
-    Once { not_before_unix_ms: u64 },
-    Interval { every_seconds: u64, jitter_seconds: u64 },
-    Cron { expression: String, timezone: String },
+    Once {
+        not_before_unix_ms: u64,
+    },
+    Interval {
+        every_seconds: u64,
+        jitter_seconds: u64,
+    },
+    Cron {
+        expression: String,
+        timezone: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -414,7 +427,12 @@ pub trait HeartbeatScheduler {
     fn pause(&self, heartbeat_id: &str) -> LoomResult<HeartbeatReceipt>;
     fn cancel(&self, heartbeat_id: &str) -> LoomResult<HeartbeatReceipt>;
     fn lease_due(&self, request: &HeartbeatLeaseRequest) -> LoomResult<Vec<HeartbeatDispatch>>;
-    fn acknowledge(&self, heartbeat_id: &str, lease_id: &str, status: HeartbeatStatus) -> LoomResult<HeartbeatReceipt>;
+    fn acknowledge(
+        &self,
+        heartbeat_id: &str,
+        lease_id: &str,
+        status: HeartbeatStatus,
+    ) -> LoomResult<HeartbeatReceipt>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -535,7 +553,10 @@ mod tests {
             })
         }
 
-        fn write_file(&self, request: &BoundedFileWriteRequest) -> LoomResult<BoundedFileWriteResult> {
+        fn write_file(
+            &self,
+            request: &BoundedFileWriteRequest,
+        ) -> LoomResult<BoundedFileWriteResult> {
             Ok(BoundedFileWriteResult {
                 canonical_path: request.path.clone(),
                 bytes_written: request.content_utf8.len(),
@@ -566,7 +587,10 @@ mod tests {
             })
         }
 
-        fn interact(&self, request: &BrowserDomActionRequest) -> LoomResult<BrowserDomActionResult> {
+        fn interact(
+            &self,
+            request: &BrowserDomActionRequest,
+        ) -> LoomResult<BrowserDomActionResult> {
             Ok(BrowserDomActionResult {
                 session_id: request.session_id.clone(),
                 matched_nodes: 1,
@@ -575,7 +599,10 @@ mod tests {
             })
         }
 
-        fn semantic_snapshot(&self, request: &SemanticSnapshotRequest) -> LoomResult<SemanticSnapshot> {
+        fn semantic_snapshot(
+            &self,
+            request: &SemanticSnapshotRequest,
+        ) -> LoomResult<SemanticSnapshot> {
             Ok(SemanticSnapshot {
                 session_id: request.session_id.clone(),
                 format: request.format.clone(),
@@ -599,7 +626,12 @@ mod tests {
             })
         }
 
-        fn load_state(&self, _agent_id: &str, _scope: &str, _key: &str) -> LoomResult<Option<MemoryStateEntry>> {
+        fn load_state(
+            &self,
+            _agent_id: &str,
+            _scope: &str,
+            _key: &str,
+        ) -> LoomResult<Option<MemoryStateEntry>> {
             Ok(None)
         }
 
@@ -643,11 +675,19 @@ mod tests {
             })
         }
 
-        fn lease_due(&self, _request: &HeartbeatLeaseRequest) -> LoomResult<Vec<HeartbeatDispatch>> {
+        fn lease_due(
+            &self,
+            _request: &HeartbeatLeaseRequest,
+        ) -> LoomResult<Vec<HeartbeatDispatch>> {
             Ok(Vec::new())
         }
 
-        fn acknowledge(&self, heartbeat_id: &str, _lease_id: &str, status: HeartbeatStatus) -> LoomResult<HeartbeatReceipt> {
+        fn acknowledge(
+            &self,
+            heartbeat_id: &str,
+            _lease_id: &str,
+            status: HeartbeatStatus,
+        ) -> LoomResult<HeartbeatReceipt> {
             Ok(HeartbeatReceipt {
                 heartbeat_id: heartbeat_id.to_string(),
                 status,
@@ -676,7 +716,11 @@ mod tests {
             Ok(Vec::new())
         }
 
-        fn acknowledge(&self, gateway_id: &str, message_id: &str) -> LoomResult<OmniDeliveryReceipt> {
+        fn acknowledge(
+            &self,
+            gateway_id: &str,
+            message_id: &str,
+        ) -> LoomResult<OmniDeliveryReceipt> {
             Ok(OmniDeliveryReceipt {
                 gateway_id: gateway_id.to_string(),
                 message_id: message_id.to_string(),
@@ -695,7 +739,10 @@ mod tests {
         assert_eq!(MemoryQuery::default().limit, 10);
         assert_eq!(OmniWebSocketBinding::default().heartbeat_seconds, 30);
         match HeartbeatRegistration::default().schedule {
-            HeartbeatSchedule::Interval { every_seconds, jitter_seconds } => {
+            HeartbeatSchedule::Interval {
+                every_seconds,
+                jitter_seconds,
+            } => {
                 assert_eq!(every_seconds, 300);
                 assert_eq!(jitter_seconds, 15);
             }

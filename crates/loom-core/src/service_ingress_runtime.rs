@@ -73,7 +73,10 @@ pub fn sync_service_ingress_runtime(root: &Path) -> LoomResult<ServiceIngressOve
     fs::create_dir_all(&receipt_dir).map_err(io_err)?;
 
     let records = collect_service_ingress_records(root)?;
-    let accepted_count = records.iter().filter(|record| !record.accepted_at.is_empty()).count();
+    let accepted_count = records
+        .iter()
+        .filter(|record| !record.accepted_at.is_empty())
+        .count();
     let pending_count = records.len().saturating_sub(accepted_count);
     let last_request_id = records
         .first()
@@ -116,9 +119,21 @@ pub fn service_ingress_overview(root: &Path) -> LoomResult<ServiceIngressOvervie
         .ok_or_else(|| "service ingress registry missing runtime object".to_string())?;
     Ok(ServiceIngressOverview {
         registry_path: service_ingress_registry_path(root),
-        request_dir: PathBuf::from(value_string_object(runtime, "request_dir", &ingress_root.join("requests").display().to_string())),
-        receipt_dir: PathBuf::from(value_string_object(runtime, "receipt_dir", &ingress_root.join("receipts").display().to_string())),
-        stream_path: PathBuf::from(value_string_object(runtime, "stream_path", &ingress_root.join("stream.jsonl").display().to_string())),
+        request_dir: PathBuf::from(value_string_object(
+            runtime,
+            "request_dir",
+            &ingress_root.join("requests").display().to_string(),
+        )),
+        receipt_dir: PathBuf::from(value_string_object(
+            runtime,
+            "receipt_dir",
+            &ingress_root.join("receipts").display().to_string(),
+        )),
+        stream_path: PathBuf::from(value_string_object(
+            runtime,
+            "stream_path",
+            &ingress_root.join("stream.jsonl").display().to_string(),
+        )),
         total_requests: value_usize_object(runtime, "total_requests"),
         accepted_count: value_usize_object(runtime, "accepted_count"),
         pending_count: value_usize_object(runtime, "pending_count"),
@@ -218,19 +233,44 @@ pub fn render_service_ingress_list_human(records: &[ServiceIngressRecord]) -> St
             "\n- {} status={} transport={} job_id={} agent={} resource={} received_at={}\n",
             record.request_id,
             record.status,
-            if record.transport.is_empty() { "(none)" } else { record.transport.as_str() },
-            if record.job_id.is_empty() { "(none)" } else { record.job_id.as_str() },
-            if record.agent_id.is_empty() { "(none)" } else { record.agent_id.as_str() },
-            if record.resource.is_empty() { "(none)" } else { record.resource.as_str() },
-            if record.received_at.is_empty() { "(none)" } else { record.received_at.as_str() },
+            if record.transport.is_empty() {
+                "(none)"
+            } else {
+                record.transport.as_str()
+            },
+            if record.job_id.is_empty() {
+                "(none)"
+            } else {
+                record.job_id.as_str()
+            },
+            if record.agent_id.is_empty() {
+                "(none)"
+            } else {
+                record.agent_id.as_str()
+            },
+            if record.resource.is_empty() {
+                "(none)"
+            } else {
+                record.resource.as_str()
+            },
+            if record.received_at.is_empty() {
+                "(none)"
+            } else {
+                record.received_at.as_str()
+            },
         ));
     }
     rendered
 }
 
 pub fn render_service_ingress_list_json(records: &[ServiceIngressRecord]) -> String {
-    serde_json::to_string_pretty(&records.iter().map(service_ingress_record_json).collect::<Vec<_>>())
-        .unwrap_or_else(|_| "[]".to_string())
+    serde_json::to_string_pretty(
+        &records
+            .iter()
+            .map(service_ingress_record_json)
+            .collect::<Vec<_>>(),
+    )
+    .unwrap_or_else(|_| "[]".to_string())
         + "\n"
 }
 
@@ -265,7 +305,11 @@ fn collect_service_ingress_records(root: &Path) -> LoomResult<Vec<ServiceIngress
             None
         };
         let status = if receipt.is_some() {
-            value_string(receipt.as_ref(), "status", value_string_value(&request, "status", "received").as_str())
+            value_string(
+                receipt.as_ref(),
+                "status",
+                value_string_value(&request, "status", "received").as_str(),
+            )
         } else {
             value_string_value(&request, "status", "received")
         };
@@ -274,18 +318,29 @@ fn collect_service_ingress_records(root: &Path) -> LoomResult<Vec<ServiceIngress
             request_type: value_string_value(&request, "request_type", ""),
             status,
             transport: if receipt.is_some() {
-                value_string(receipt.as_ref(), "transport", value_string_value(&request, "transport", "" ).as_str())
+                value_string(
+                    receipt.as_ref(),
+                    "transport",
+                    value_string_value(&request, "transport", "").as_str(),
+                )
             } else {
                 value_string_value(&request, "transport", "")
             },
-            ingress_target: value_string_value(&request, "ingress_target", value_string(receipt.as_ref(), "service_target", "").as_str()),
+            ingress_target: value_string_value(
+                &request,
+                "ingress_target",
+                value_string(receipt.as_ref(), "service_target", "").as_str(),
+            ),
             agent_id: value_string_value(&request, "agent_id", ""),
             org_id: value_string_value(&request, "org_id", ""),
             action_type: value_string_value(&request, "action_type", ""),
             resource: value_string_value(&request, "resource", ""),
             capability_name: value_string_value(&request, "capability_name", ""),
             payload_json: value_string_value(&request, "payload_json", ""),
-            estimated_cost_usd: request.get("estimated_cost_usd").and_then(Value::as_f64).unwrap_or(0.0),
+            estimated_cost_usd: request
+                .get("estimated_cost_usd")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0),
             received_at: value_string_value(&request, "received_at", ""),
             accepted_at: value_string(receipt.as_ref(), "accepted_at", ""),
             job_id: value_string(receipt.as_ref(), "job_id", ""),
@@ -348,7 +403,11 @@ fn value_string_value(object: &Value, key: &str, default: &str) -> String {
         .to_string()
 }
 
-fn value_string_object(object: &serde_json::Map<String, Value>, key: &str, default: &str) -> String {
+fn value_string_object(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+    default: &str,
+) -> String {
     object
         .get(key)
         .and_then(Value::as_str)
@@ -418,8 +477,10 @@ mod tests {
                 "capability_name": "loom.browser.navigate.v1",
                 "payload_json": "{}",
                 "estimated_cost_usd": 0.05
-            })).expect("render request"),
-        ).expect("write request");
+            }))
+            .expect("render request"),
+        )
+        .expect("write request");
         fs::write(
             receipt_dir.join("req_demo.json"),
             serde_json::to_string_pretty(&json!({
@@ -431,8 +492,10 @@ mod tests {
                 "job_id": "job_demo",
                 "policy_class": "standard",
                 "queue_path": "/tmp/queue/job_demo.json"
-            })).expect("render receipt"),
-        ).expect("write receipt");
+            }))
+            .expect("render receipt"),
+        )
+        .expect("write receipt");
 
         let summary = sync_service_ingress_runtime(&root).expect("sync service ingress");
         assert_eq!(summary.total_requests, 1);

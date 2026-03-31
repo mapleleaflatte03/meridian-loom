@@ -415,8 +415,11 @@ pub(crate) fn handle_capability(args: &[String]) -> LoomResult<()> {
     }
 }
 
-
-pub(crate) fn forge_name_from_args(args: &[String], gap_class: &str, goal: &str) -> LoomResult<String> {
+pub(crate) fn forge_name_from_args(
+    args: &[String],
+    gap_class: &str,
+    goal: &str,
+) -> LoomResult<String> {
     if let Some(name) = take_value(args, "--name") {
         return Ok(name);
     }
@@ -434,7 +437,6 @@ pub(crate) fn forge_name_from_args(args: &[String], gap_class: &str, goal: &str)
         goal_token
     ))
 }
-
 
 pub(crate) fn read_runtime_event_execution_id(path: &PathBuf) -> LoomResult<String> {
     let raw = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
@@ -458,12 +460,10 @@ pub(crate) fn read_runtime_event_execution_id(path: &PathBuf) -> LoomResult<Stri
     Ok(execution_id)
 }
 
-
 pub(crate) fn read_json_file(path: &PathBuf) -> LoomResult<Value> {
     let raw = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
     serde_json::from_str(&raw).map_err(|e| format!("failed to parse {}: {}", path.display(), e))
 }
-
 
 pub(crate) fn render_capability_evidence_human(
     root: &std::path::Path,
@@ -550,7 +550,6 @@ pub(crate) fn render_capability_evidence_human(
     }
 }
 
-
 pub(crate) fn capability_verification_evidence_value(
     root: &std::path::Path,
     capability: &loom_core::capabilities::CapabilityDescriptor,
@@ -635,7 +634,6 @@ pub(crate) fn capability_verification_evidence_value(
     }
 }
 
-
 pub(crate) fn render_capability_show_json(
     root: &std::path::Path,
     capability: &loom_core::capabilities::CapabilityDescriptor,
@@ -649,10 +647,7 @@ pub(crate) fn render_capability_show_json(
     Ok(format!("{}\n", value))
 }
 
-
 pub(crate) fn verify_capability_expectations(
-
-
     worker_result: Option<&Value>,
     expect_summary_contains: Option<&str>,
     expect_result_fields: &[String],
@@ -661,7 +656,9 @@ pub(crate) fn verify_capability_expectations(
         return Ok(Vec::new());
     }
     let Some(worker_result) = worker_result else {
-        return Ok(vec!["worker result missing while expectations were requested".to_string()]);
+        return Ok(vec![
+            "worker result missing while expectations were requested".to_string(),
+        ]);
     };
     let mut failures = Vec::new();
     if let Some(fragment) = expect_summary_contains {
@@ -700,7 +697,6 @@ pub(crate) fn verify_capability_expectations(
     Ok(failures)
 }
 
-
 pub(crate) fn lookup_json_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
     let mut current = value;
     for segment in path.split('.') {
@@ -720,7 +716,6 @@ pub(crate) fn lookup_json_path<'a>(value: &'a Value, path: &str) -> Option<&'a V
     Some(current)
 }
 
-
 pub(crate) fn json_value_matches(actual: &Value, expected_raw: &str) -> bool {
     if let Ok(expected_json) = serde_json::from_str::<Value>(expected_raw) {
         return actual == &expected_json;
@@ -728,14 +723,12 @@ pub(crate) fn json_value_matches(actual: &Value, expected_raw: &str) -> bool {
     json_value_to_string(actual) == expected_raw
 }
 
-
 pub(crate) fn json_value_to_string(value: &Value) -> String {
     match value {
         Value::String(raw) => raw.clone(),
         _ => value.to_string(),
     }
 }
-
 
 pub(crate) fn print_capability_help() {
     print_human(

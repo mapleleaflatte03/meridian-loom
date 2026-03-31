@@ -6,8 +6,7 @@ use serde_json::{json, Value};
 
 pub type LoomResult<T> = Result<T, String>;
 
-pub const DEFAULT_SESSION_PROVENANCE_REGISTRY_PATH: &str =
-    "state/session-provenance/registry.json";
+pub const DEFAULT_SESSION_PROVENANCE_REGISTRY_PATH: &str = "state/session-provenance/registry.json";
 pub const LEGACY_SESSION_ARCHIVE_AFTER_SECS: u64 = 6 * 60 * 60;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -42,7 +41,10 @@ pub struct SessionProvenanceOverview {
     pub archived_session_keys: Vec<String>,
 }
 
-fn session_provenance_state_with_now(record: &SessionProvenanceRecord, now_secs: u64) -> &'static str {
+fn session_provenance_state_with_now(
+    record: &SessionProvenanceRecord,
+    now_secs: u64,
+) -> &'static str {
     if !record.provider_profile.is_empty()
         && !record.model.is_empty()
         && !record.transport_kind.is_empty()
@@ -50,7 +52,10 @@ fn session_provenance_state_with_now(record: &SessionProvenanceRecord, now_secs:
         && !record.execution_owner.is_empty()
     {
         "complete"
-    } else if record.ingress_request_id.is_some() || record.job_id.is_some() || record.delivery_id.is_some() {
+    } else if record.ingress_request_id.is_some()
+        || record.job_id.is_some()
+        || record.delivery_id.is_some()
+    {
         "partial"
     } else if last_activity_unix_secs(record)
         .map(|last| now_secs.saturating_sub(last) >= LEGACY_SESSION_ARCHIVE_AFTER_SECS)
@@ -134,7 +139,17 @@ pub fn update_session_provenance_route(
     model: &str,
     override_source: &str,
 ) -> LoomResult<()> {
-    update_session_provenance_route_full(root, session_key, provider_profile, model, override_source, "", "", "", "")
+    update_session_provenance_route_full(
+        root,
+        session_key,
+        provider_profile,
+        model,
+        override_source,
+        "",
+        "",
+        "",
+        "",
+    )
 }
 
 pub fn update_session_provenance_route_full(
@@ -365,8 +380,7 @@ pub fn render_session_provenance_list_json(records: &[SessionProvenanceRecord]) 
 
 fn load_session_provenance_records(root: &Path) -> LoomResult<Vec<SessionProvenanceRecord>> {
     ensure_session_provenance_scaffold(root)?;
-    let raw =
-        fs::read_to_string(session_provenance_registry_path(root)).map_err(io_err)?;
+    let raw = fs::read_to_string(session_provenance_registry_path(root)).map_err(io_err)?;
     parse_session_provenance_registry(&raw)
 }
 
@@ -381,8 +395,7 @@ fn persist_session_provenance_registry(
     let value = json!({
         "sessions": records.iter().map(session_provenance_record_json).collect::<Vec<_>>()
     });
-    let mut rendered =
-        serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?;
+    let mut rendered = serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?;
     rendered.push('\n');
     fs::write(registry_path, rendered).map_err(io_err)
 }
@@ -710,7 +723,8 @@ mod tests {
         assert_eq!(visible.len(), 1);
         assert_eq!(visible[0].session_key, "telegram:active");
 
-        let archived = list_session_provenance_with_options(&root, 10, true, true).expect("archived");
+        let archived =
+            list_session_provenance_with_options(&root, 10, true, true).expect("archived");
         assert_eq!(archived.len(), 1);
         assert_eq!(archived[0].session_key, "telegram:archived");
 
@@ -719,7 +733,10 @@ mod tests {
         assert_eq!(overview.active_count, 1);
         assert_eq!(overview.archived_count, 1);
         assert_eq!(overview.session_keys, vec!["telegram:active".to_string()]);
-        assert_eq!(overview.archived_session_keys, vec!["telegram:archived".to_string()]);
+        assert_eq!(
+            overview.archived_session_keys,
+            vec!["telegram:archived".to_string()]
+        );
     }
 
     #[test]

@@ -1700,8 +1700,7 @@ mod tests {
         auth_paths_match, build_next_steps, choice_matches, codex_detail_for_manager,
         manager_current_state_hint, normalize_choice_token, normalize_codex_auth_selection,
         panel_tone, provider_branch_story, provider_selection_details, render_stage_progress,
-        PanelTone, PromptSelectOption,
-        ProviderSetupSelection, SetupState,
+        PanelTone, PromptSelectOption, ProviderSetupSelection, SetupState,
     };
     use loom_core::provider_router::{
         OnboardProviderRouteConfig, ProviderAuthMode, ProviderAuthStatus, ProviderKind,
@@ -1889,7 +1888,10 @@ mod tests {
     #[test]
     fn panel_tone_marks_action_required_surfaces_as_warning() {
         assert_eq!(
-            panel_tone("Current state", "Auth is action required before doctor turns green"),
+            panel_tone(
+                "Current state",
+                "Auth is action required before doctor turns green"
+            ),
             PanelTone::Warning
         );
         assert_eq!(
@@ -2047,11 +2049,7 @@ fn print_setup_note(title: &str, body: &str) {
     let mut block = Vec::new();
     block.push(style_panel_border(&border, tone));
     block.push(style_panel_title_line(
-        &format!(
-        "| {:width$} |",
-        title,
-        width = width
-    ),
+        &format!("| {:width$} |", title, width = width),
         tone,
     ));
     block.push(style_panel_border(
@@ -2060,11 +2058,7 @@ fn print_setup_note(title: &str, body: &str) {
     ));
     for line in lines {
         block.push(style_panel_body_line(
-            &format!(
-            "| {:width$} |",
-            line,
-            width = width
-        ),
+            &format!("| {:width$} |", line, width = width),
             tone,
         ));
     }
@@ -2082,7 +2076,12 @@ fn print_progress_status(marker: &str, title: &str, detail: Option<&str>) {
     print_human("\n");
 }
 
-fn run_with_spinner<T, F>(mode: ProgressRenderMode, title: &str, detail: Option<&str>, action: F) -> LoomResult<T>
+fn run_with_spinner<T, F>(
+    mode: ProgressRenderMode,
+    title: &str,
+    detail: Option<&str>,
+    action: F,
+) -> LoomResult<T>
 where
     F: FnOnce() -> LoomResult<T>,
 {
@@ -2177,7 +2176,8 @@ fn dedupe_steps(steps: Vec<String>) -> Vec<String> {
 }
 
 fn print_provider_branch_card(provider_choice: &str, detailed_flow: bool) {
-    let (best_for, meridian_path, operator_step, after_write) = provider_branch_story(provider_choice);
+    let (best_for, meridian_path, operator_step, after_write) =
+        provider_branch_story(provider_choice);
     let title = if detailed_flow {
         "Manual provider branch"
     } else {
@@ -2247,7 +2247,12 @@ fn provider_branch_story(
 fn panel_tone(title: &str, body: &str) -> PanelTone {
     let title = title.to_ascii_lowercase();
     let body = body.to_ascii_lowercase();
-    if title.contains("security") || body.contains("action required") || body.contains("not ready") || body.contains("failed") || body.contains("attention") {
+    if title.contains("security")
+        || body.contains("action required")
+        || body.contains("not ready")
+        || body.contains("failed")
+        || body.contains("attention")
+    {
         PanelTone::Warning
     } else if title.contains("finish line") || title.contains("ready to launch") {
         PanelTone::Success

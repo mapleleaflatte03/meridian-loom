@@ -7,16 +7,17 @@ use crate::*;
 use loom_core::onboarding::{load_onboard_manifest, write_onboard_manifest};
 use loom_core::provider_auth_store::{
     list_provider_auth_profiles, mark_provider_auth_profile_failure,
-    mark_provider_auth_profile_used, render_provider_auth_profile_human,
-    render_provider_auth_profile_json, render_provider_auth_profiles_human,
-    render_provider_auth_profiles_json, render_provider_auth_store_human,
-    render_provider_auth_store_json, provider_auth_store_overview, sync_provider_auth_store,
+    mark_provider_auth_profile_used, provider_auth_store_overview,
+    render_provider_auth_profile_human, render_provider_auth_profile_json,
+    render_provider_auth_profiles_human, render_provider_auth_profiles_json,
+    render_provider_auth_store_human, render_provider_auth_store_json, sync_provider_auth_store,
 };
 use loom_core::provider_router::{
-    configure_onboard_provider_routes, default_codex_auth_path_hint, provider_auth_status, provider_plane_summary,
-    read_codex_identity_fingerprint, render_provider_auth_human, render_provider_auth_json, render_provider_plane_human,
-    render_provider_plane_json, render_provider_route_human, render_provider_route_json,
-    resolve_provider_route, shared_codex_auth_path_hint, CodexIdentityFingerprint, ProviderRouteIntent,
+    configure_onboard_provider_routes, default_codex_auth_path_hint, provider_auth_status,
+    provider_plane_summary, read_codex_identity_fingerprint, render_provider_auth_human,
+    render_provider_auth_json, render_provider_plane_human, render_provider_plane_json,
+    render_provider_route_human, render_provider_route_json, resolve_provider_route,
+    shared_codex_auth_path_hint, CodexIdentityFingerprint, ProviderRouteIntent,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -87,7 +88,8 @@ fn handle_provider_status(args: &[String]) -> LoomResult<()> {
 fn handle_provider_route(args: &[String]) -> LoomResult<()> {
     let root = root_from(take_value(args, "--root").as_deref())?;
     let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
-    let capability = take_value(args, "--capability").unwrap_or_else(|| "loom.llm.inference.v1".to_string());
+    let capability =
+        take_value(args, "--capability").unwrap_or_else(|| "loom.llm.inference.v1".to_string());
     let requested_model = take_value(args, "--model").unwrap_or_default();
     let mut intent = ProviderRouteIntent::for_capability(&capability, &requested_model);
     if let Some(agent_id) = take_value(args, "--agent-id") {
@@ -126,7 +128,10 @@ fn handle_provider_auth(args: &[String]) -> LoomResult<()> {
         }
         _ => {
             if let Some(relation) = codex_relation.as_ref() {
-                print!("{}", render_provider_auth_with_relation_json(&status, relation));
+                print!(
+                    "{}",
+                    render_provider_auth_with_relation_json(&status, relation)
+                );
             } else {
                 print!("{}", render_provider_auth_json(&status));
             }
@@ -143,10 +148,10 @@ fn handle_provider_login(args: &[String]) -> LoomResult<()> {
     }
     let root = root_from(take_value(args, "--root").as_deref())?;
     let format = output_format(args);
-    let requested_source = take_value(args, "--source")
-        .or_else(|| take_value(args, "--codex-auth-source"));
-    let requested_auth_path = take_value(args, "--auth-path")
-        .or_else(|| take_value(args, "--codex-auth-path"));
+    let requested_source =
+        take_value(args, "--source").or_else(|| take_value(args, "--codex-auth-source"));
+    let requested_auth_path =
+        take_value(args, "--auth-path").or_else(|| take_value(args, "--codex-auth-path"));
     let (configured_source, configured_auth_path) = configured_codex_selection(&root);
     let source = requested_source
         .or(configured_source)
@@ -162,7 +167,8 @@ fn handle_provider_login(args: &[String]) -> LoomResult<()> {
     let device_auth = has_flag(args, "--device-auth");
     let with_api_key = has_flag(args, "--with-api-key");
     run_codex_login(&source, login_home.as_deref(), device_auth, with_api_key)?;
-    let staged_auth_path = staged_auth_path_for_source(&source, login_home.as_deref(), &target_auth_path)?;
+    let staged_auth_path =
+        staged_auth_path_for_source(&source, login_home.as_deref(), &target_auth_path)?;
     if source != "cli" {
         sync_auth_material(&staged_auth_path, &target_auth_path)?;
     }
@@ -173,7 +179,11 @@ fn handle_provider_login(args: &[String]) -> LoomResult<()> {
     let detail = if status.ready {
         login_detail(&source, device_auth, with_api_key)
     } else {
-        format!("{}; {}", login_detail(&source, device_auth, with_api_key), status.detail)
+        format!(
+            "{}; {}",
+            login_detail(&source, device_auth, with_api_key),
+            status.detail
+        )
     };
     let summary = ProviderLoginSummary {
         source: source.clone(),
@@ -196,7 +206,9 @@ fn handle_provider_login(args: &[String]) -> LoomResult<()> {
     Ok(())
 }
 
-fn codex_identity_relation(status: &loom_core::provider_router::ProviderAuthStatus) -> Option<CodexIdentityRelation> {
+fn codex_identity_relation(
+    status: &loom_core::provider_router::ProviderAuthStatus,
+) -> Option<CodexIdentityRelation> {
     if status.auth_mode != "codex_auth_json" {
         return None;
     }
@@ -225,18 +237,29 @@ fn codex_identity_relation(status: &loom_core::provider_router::ProviderAuthStat
     };
     Some(CodexIdentityRelation {
         configured_auth_path: configured_auth_path.display().to_string(),
-        configured_account_id: configured_identity.as_ref().and_then(|identity| identity.account_id.clone()),
-        configured_subject_id: configured_identity.as_ref().and_then(|identity| identity.subject_id.clone()),
+        configured_account_id: configured_identity
+            .as_ref()
+            .and_then(|identity| identity.account_id.clone()),
+        configured_subject_id: configured_identity
+            .as_ref()
+            .and_then(|identity| identity.subject_id.clone()),
         configured_identity_label: configured_identity.as_ref().map(describe_identity_label),
         shared_cli_auth_path: shared_cli_auth_path.display().to_string(),
-        shared_cli_account_id: shared_cli_identity.as_ref().and_then(|identity| identity.account_id.clone()),
-        shared_cli_subject_id: shared_cli_identity.as_ref().and_then(|identity| identity.subject_id.clone()),
+        shared_cli_account_id: shared_cli_identity
+            .as_ref()
+            .and_then(|identity| identity.account_id.clone()),
+        shared_cli_subject_id: shared_cli_identity
+            .as_ref()
+            .and_then(|identity| identity.subject_id.clone()),
         shared_cli_identity_label: shared_cli_identity.as_ref().map(describe_identity_label),
         relation,
     })
 }
 
-fn codex_principal_matches(left: &CodexIdentityFingerprint, right: &CodexIdentityFingerprint) -> bool {
+fn codex_principal_matches(
+    left: &CodexIdentityFingerprint,
+    right: &CodexIdentityFingerprint,
+) -> bool {
     if let (Some(left), Some(right)) = (left.subject_id.as_deref(), right.subject_id.as_deref()) {
         return left == right;
     }
@@ -253,8 +276,14 @@ fn describe_identity_label(identity: &CodexIdentityFingerprint) -> String {
     match (
         identity.name.as_deref().filter(|value| !value.is_empty()),
         identity.email.as_deref().filter(|value| !value.is_empty()),
-        identity.subject_id.as_deref().filter(|value| !value.is_empty()),
-        identity.account_id.as_deref().filter(|value| !value.is_empty()),
+        identity
+            .subject_id
+            .as_deref()
+            .filter(|value| !value.is_empty()),
+        identity
+            .account_id
+            .as_deref()
+            .filter(|value| !value.is_empty()),
     ) {
         (Some(name), Some(email), _, _) => format!("{} <{}>", name, email),
         (Some(name), None, Some(subject), _) => format!("{} [{}]", name, subject),
@@ -310,7 +339,8 @@ fn render_provider_auth_with_relation_json(
     status: &loom_core::provider_router::ProviderAuthStatus,
     relation: &CodexIdentityRelation,
 ) -> String {
-    let mut value = serde_json::from_str::<serde_json::Value>(&render_provider_auth_json(status)).unwrap_or_default();
+    let mut value = serde_json::from_str::<serde_json::Value>(&render_provider_auth_json(status))
+        .unwrap_or_default();
     if let Some(object) = value.as_object_mut() {
         object.insert(
             "identity_scope".to_string(),
@@ -407,7 +437,10 @@ fn handle_provider_profiles(args: &[String]) -> LoomResult<()> {
                 "store": serde_json::from_str::<serde_json::Value>(&render_provider_auth_store_json(&store)).unwrap_or_else(|_| serde_json::json!({})),
                 "profiles": serde_json::from_str::<serde_json::Value>(&render_provider_auth_profiles_json(&records)).unwrap_or_else(|_| serde_json::json!([])),
             });
-            print!("{}\n", serde_json::to_string_pretty(&json).map_err(|error| error.to_string())?);
+            print!(
+                "{}\n",
+                serde_json::to_string_pretty(&json).map_err(|error| error.to_string())?
+            );
         }
     }
     Ok(())
@@ -433,11 +466,14 @@ fn handle_provider_mark_failure(args: &[String]) -> LoomResult<()> {
     let profile = required_flag(args, "--profile")?;
     let format = output_format(args);
     let reason = take_value(args, "--reason");
-    let cooldown_ms = take_value(args, "--cooldown-ms").map(|raw| {
-        raw.parse::<u64>()
-            .map_err(|_| format!("invalid --cooldown-ms '{}'", raw))
-    }).transpose()?;
-    let record = mark_provider_auth_profile_failure(&root, &profile, reason.as_deref(), cooldown_ms)?;
+    let cooldown_ms = take_value(args, "--cooldown-ms")
+        .map(|raw| {
+            raw.parse::<u64>()
+                .map_err(|_| format!("invalid --cooldown-ms '{}'", raw))
+        })
+        .transpose()?;
+    let record =
+        mark_provider_auth_profile_failure(&root, &profile, reason.as_deref(), cooldown_ms)?;
     match format.as_str() {
         "human" => {
             print_startup_banner();
@@ -481,16 +517,22 @@ fn resolve_login_target_auth_path(
                 .ok_or_else(|| "--source path requires --auth-path or an onboard manifest with a configured custom auth path".to_string())?;
             expand_auth_path(raw)
         }
-        other => Err(format!("unsupported provider login source '{}' (expected loom, cli, or path)", other)),
+        other => Err(format!(
+            "unsupported provider login source '{}' (expected loom, cli, or path)",
+            other
+        )),
     }
 }
 
 fn login_home_for_source(source: &str, target_auth_path: &Path) -> LoomResult<Option<PathBuf>> {
     match source {
         "loom" | "path" => {
-            let parent = target_auth_path
-                .parent()
-                .ok_or_else(|| format!("auth path {} has no parent directory", target_auth_path.display()))?;
+            let parent = target_auth_path.parent().ok_or_else(|| {
+                format!(
+                    "auth path {} has no parent directory",
+                    target_auth_path.display()
+                )
+            })?;
             let home = parent.join("login-home");
             fs::create_dir_all(&home).map_err(|error| error.to_string())?;
             Ok(Some(home))
@@ -507,7 +549,8 @@ fn staged_auth_path_for_source(
 ) -> LoomResult<PathBuf> {
     match source {
         "loom" | "path" => {
-            let home = login_home.ok_or_else(|| "dedicated provider login requires a Codex home".to_string())?;
+            let home = login_home
+                .ok_or_else(|| "dedicated provider login requires a Codex home".to_string())?;
             Ok(home.join(".codex/auth.json"))
         }
         "cli" => Ok(target_auth_path.to_path_buf()),
@@ -530,7 +573,8 @@ fn run_codex_login(
         command.arg("--with-api-key");
     }
     if matches!(source, "loom" | "path") {
-        let home = login_home.ok_or_else(|| "dedicated provider login requires a Codex home".to_string())?;
+        let home = login_home
+            .ok_or_else(|| "dedicated provider login requires a Codex home".to_string())?;
         fs::create_dir_all(home.join(".codex")).map_err(|error| error.to_string())?;
         command.env("HOME", home);
         command.env_remove("CODEX_HOME");
@@ -614,9 +658,18 @@ fn login_detail(source: &str, device_auth: bool, with_api_key: bool) -> String {
         "interactive"
     };
     match source {
-        "loom" => format!("dedicated Loom Codex login captured via {} and synced into Loom-managed auth storage", method),
-        "cli" => format!("shared Codex CLI login completed via {} in the operator home", method),
-        "path" => format!("dedicated Codex login captured via {} and synced into the configured auth path", method),
+        "loom" => format!(
+            "dedicated Loom Codex login captured via {} and synced into Loom-managed auth storage",
+            method
+        ),
+        "cli" => format!(
+            "shared Codex CLI login completed via {} in the operator home",
+            method
+        ),
+        "path" => format!(
+            "dedicated Codex login captured via {} and synced into the configured auth path",
+            method
+        ),
         _ => format!("Codex login completed via {}", method),
     }
 }
@@ -645,7 +698,6 @@ fn render_provider_login_json(summary: &ProviderLoginSummary) -> String {
     }))
     .unwrap_or_else(|_| "{}".to_string())
 }
-
 
 fn provider_help_text() -> &'static str {
     "Meridian Loom // PROVIDER HELP

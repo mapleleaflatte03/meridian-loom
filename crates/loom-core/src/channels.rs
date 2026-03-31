@@ -135,7 +135,10 @@ pub fn sync_channel_registry(root: &Path) -> LoomResult<ChannelSyncResult> {
         registry_path: channel_registry_path(root),
         total_count: records.len(),
         enabled_count: records.iter().filter(|record| record.enabled).count(),
-        channel_ids: records.iter().map(|record| record.channel_id.clone()).collect(),
+        channel_ids: records
+            .iter()
+            .map(|record| record.channel_id.clone())
+            .collect(),
     })
 }
 
@@ -163,11 +166,17 @@ pub fn channel_overview(root: &Path) -> LoomResult<ChannelRuntimeOverview> {
         ingress_count,
         active_delivery_count: deliveries.len().saturating_sub(archived_delivery_count),
         archived_delivery_count,
-        channel_ids: records.iter().map(|record| record.channel_id.clone()).collect(),
+        channel_ids: records
+            .iter()
+            .map(|record| record.channel_id.clone())
+            .collect(),
     })
 }
 
-pub fn enqueue_channel_delivery(root: &Path, request: &ChannelDeliveryRequest) -> LoomResult<ChannelDeliveryRecord> {
+pub fn enqueue_channel_delivery(
+    root: &Path,
+    request: &ChannelDeliveryRequest,
+) -> LoomResult<ChannelDeliveryRecord> {
     let channel_id = request.channel_id.trim();
     if channel_id.is_empty() {
         return Err("channel_id is required".to_string());
@@ -241,7 +250,6 @@ pub fn enqueue_channel_delivery(root: &Path, request: &ChannelDeliveryRequest) -
     Ok(delivery)
 }
 
-
 pub fn update_channel_delivery(
     root: &Path,
     delivery_id: &str,
@@ -301,7 +309,10 @@ pub fn update_channel_delivery(
     Ok(record)
 }
 
-pub fn list_channel_deliveries(root: &Path, limit: usize) -> LoomResult<Vec<ChannelDeliveryRecord>> {
+pub fn list_channel_deliveries(
+    root: &Path,
+    limit: usize,
+) -> LoomResult<Vec<ChannelDeliveryRecord>> {
     list_channel_deliveries_with_options(root, limit, false, false)
 }
 
@@ -362,7 +373,10 @@ fn channel_delivery_is_archived(record: &ChannelDeliveryRecord, now_unix_ms: u64
     }
 }
 
-pub fn ingest_channel_message(root: &Path, request: &ChannelIngressRequest) -> LoomResult<ChannelIngressRecord> {
+pub fn ingest_channel_message(
+    root: &Path,
+    request: &ChannelIngressRequest,
+) -> LoomResult<ChannelIngressRecord> {
     let channel_id = request.channel_id.trim();
     if channel_id.is_empty() {
         return Err("channel_id is required".to_string());
@@ -523,14 +537,30 @@ output:
         record.channel_id,
         record.recipient,
         record.submitted_at_unix_ms,
-        if record.completed_at_unix_ms == 0 { "(pending)".to_string() } else { record.completed_at_unix_ms.to_string() },
+        if record.completed_at_unix_ms == 0 {
+            "(pending)".to_string()
+        } else {
+            record.completed_at_unix_ms.to_string()
+        },
         record.allowed,
         record.status,
-        if record.external_ref.is_empty() { "(none)".to_string() } else { record.external_ref.clone() },
-        if record.status_detail.is_empty() { "(none)".to_string() } else { record.status_detail.clone() },
+        if record.external_ref.is_empty() {
+            "(none)".to_string()
+        } else {
+            record.external_ref.clone()
+        },
+        if record.status_detail.is_empty() {
+            "(none)".to_string()
+        } else {
+            record.status_detail.clone()
+        },
         record.source_class,
         record.final_class,
-        if record.deny_reason.is_empty() { "(none)" } else { &record.deny_reason },
+        if record.deny_reason.is_empty() {
+            "(none)"
+        } else {
+            &record.deny_reason
+        },
         if record.redactions_applied.is_empty() {
             "(none)".to_string()
         } else {
@@ -550,8 +580,7 @@ output:
 }
 
 pub fn render_channel_delivery_json(record: &ChannelDeliveryRecord) -> String {
-    serde_json::to_string_pretty(&delivery_record_json(record))
-        .unwrap_or_else(|_| "{}".to_string())
+    serde_json::to_string_pretty(&delivery_record_json(record)).unwrap_or_else(|_| "{}".to_string())
         + "\n"
 }
 
@@ -597,8 +626,7 @@ pub fn render_channel_ingress_human(record: &ChannelIngressRecord) -> String {
 }
 
 pub fn render_channel_ingress_json(record: &ChannelIngressRecord) -> String {
-    serde_json::to_string_pretty(&ingress_record_json(record))
-        .unwrap_or_else(|_| "{}".to_string())
+    serde_json::to_string_pretty(&ingress_record_json(record)).unwrap_or_else(|_| "{}".to_string())
         + "\n"
 }
 
@@ -643,7 +671,10 @@ fn channel_records_from_manifest(manifest: &OnboardManifest) -> Vec<ChannelRecor
             dm_policy: manifest.session_dm_scope.clone(),
             group_policy: String::new(),
             streaming: "sync".to_string(),
-            note: format!("gateway={} remote={}", manifest.gateway_bind, manifest.remote_mode),
+            note: format!(
+                "gateway={} remote={}",
+                manifest.gateway_bind, manifest.remote_mode
+            ),
         },
         ChannelRecord {
             channel_id: "telegram".to_string(),
@@ -655,7 +686,10 @@ fn channel_records_from_manifest(manifest: &OnboardManifest) -> Vec<ChannelRecor
             dm_policy: manifest.telegram_dm_policy.clone(),
             group_policy: manifest.telegram_group_policy.clone(),
             streaming: manifest.telegram_streaming.clone(),
-            note: format!("dm={} group={}", manifest.telegram_dm_policy, manifest.telegram_group_policy),
+            note: format!(
+                "dm={} group={}",
+                manifest.telegram_dm_policy, manifest.telegram_group_policy
+            ),
         },
     ]
 }
@@ -678,7 +712,10 @@ fn parse_channel_record(value: &Value) -> LoomResult<ChannelRecord> {
     Ok(ChannelRecord {
         channel_id: value_string(value.get("channel_id"), "channel_id")?,
         kind: value_string(value.get("kind"), "kind")?,
-        enabled: value.get("enabled").and_then(Value::as_bool).unwrap_or(true),
+        enabled: value
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
         endpoint: value_string_or(value.get("endpoint"), ""),
         auth_mode: value_string_or(value.get("auth_mode"), "none"),
         credential_ref: value_string_or(value.get("credential_ref"), ""),
@@ -748,7 +785,10 @@ fn parse_delivery_record(raw: &str) -> LoomResult<ChannelDeliveryRecord> {
         submitted_at_unix_ms: value_u64(value.get("submitted_at_unix_ms")).unwrap_or(0),
         source_class: value_string_or(value.get("source_class"), "user_visible"),
         final_class: value_string_or(value.get("final_class"), "user_visible"),
-        allowed: value.get("allowed").and_then(Value::as_bool).unwrap_or(false),
+        allowed: value
+            .get("allowed")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
         status: value_string_or(value.get("status"), "queued"),
         completed_at_unix_ms: value_u64(value.get("completed_at_unix_ms")).unwrap_or(0),
         external_ref: value_string_or(value.get("external_ref"), ""),
@@ -757,7 +797,10 @@ fn parse_delivery_record(raw: &str) -> LoomResult<ChannelDeliveryRecord> {
         deny_reason: value_string_or(value.get("deny_reason"), ""),
         redactions_applied: value_array_strings(value.get("redactions_applied")),
         detected_tokens: value_array_strings(value.get("detected_tokens")),
-        quarantined: value.get("quarantined").and_then(Value::as_bool).unwrap_or(false),
+        quarantined: value
+            .get("quarantined")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
     })
 }
 
@@ -868,7 +911,13 @@ fn value_u64(value: Option<&Value>) -> Option<u64> {
 fn safe_file_token(input: &str) -> String {
     input
         .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() { ch.to_ascii_lowercase() } else { '-' })
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
         .collect::<String>()
         .trim_matches('-')
         .to_string()
@@ -896,7 +945,9 @@ fn io_err(error: std::io::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{bindings::sync_binding_registry, init_workspace, onboarding::write_onboard_manifest};
+    use crate::{
+        bindings::sync_binding_registry, init_workspace, onboarding::write_onboard_manifest,
+    };
 
     fn temp_path(label: &str) -> PathBuf {
         let unique = SystemTime::now()
@@ -1057,7 +1108,8 @@ mod tests {
         let all = list_channel_deliveries_with_options(&root, 10, true, false).expect("list all");
         assert_eq!(all.len(), 2);
 
-        let archived_only = list_channel_deliveries_with_options(&root, 10, true, true).expect("list archived");
+        let archived_only =
+            list_channel_deliveries_with_options(&root, 10, true, true).expect("list archived");
         assert_eq!(archived_only.len(), 1);
         assert_eq!(archived_only[0].delivery_id, archived.delivery_id);
     }
@@ -1080,8 +1132,14 @@ mod tests {
             },
         )
         .expect("enqueue active");
-        update_channel_delivery(&root, &active.delivery_id, "delivered", Some("http_response"), None)
-            .expect("mark delivered");
+        update_channel_delivery(
+            &root,
+            &active.delivery_id,
+            "delivered",
+            Some("http_response"),
+            None,
+        )
+        .expect("mark delivered");
 
         let archived = enqueue_channel_delivery(
             &root,

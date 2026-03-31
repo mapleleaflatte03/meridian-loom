@@ -4,7 +4,9 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
-use crate::agent_runtime::{ensure_agent_runtime_scaffold, load_agent_runtime_registry, AgentRuntimeProfile};
+use crate::agent_runtime::{
+    ensure_agent_runtime_scaffold, load_agent_runtime_registry, AgentRuntimeProfile,
+};
 use crate::LoomResult;
 
 pub const DEFAULT_CONTEXT_ENGINE_REGISTRY_PATH: &str = "state/context-engine/registry.json";
@@ -100,7 +102,8 @@ pub fn sync_context_registry(root: &Path) -> LoomResult<ContextEngineOverview> {
         "version": 1,
         "layers": layers.iter().map(layer_json).collect::<Vec<_>>(),
     }))
-    .map_err(|error| error.to_string())? + "\n";
+    .map_err(|error| error.to_string())?
+        + "\n";
     fs::write(&registry_path, rendered).map_err(io_err)?;
 
     context_engine_overview(root)
@@ -123,14 +126,23 @@ pub fn context_engine_overview(root: &Path) -> LoomResult<ContextEngineOverview>
     })
 }
 
-pub fn context_bundle(root: &Path, agent_id: &str, session_id: Option<&str>) -> LoomResult<ContextBundle> {
+pub fn context_bundle(
+    root: &Path,
+    agent_id: &str,
+    session_id: Option<&str>,
+) -> LoomResult<ContextBundle> {
     ensure_context_engine_scaffold(root)?;
     let profile = resolve_agent_profile(root, agent_id)?;
     let layers = load_context_layers(root)?;
     let mut grouped: BTreeMap<String, Vec<ContextLayerRecord>> = BTreeMap::new();
     for layer in layers {
-        if layer.scope_kind == "global" || layer.agent_id.as_deref() == Some(profile.agent_id.as_str()) {
-            grouped.entry(layer.section.clone()).or_default().push(layer);
+        if layer.scope_kind == "global"
+            || layer.agent_id.as_deref() == Some(profile.agent_id.as_str())
+        {
+            grouped
+                .entry(layer.section.clone())
+                .or_default()
+                .push(layer);
         }
     }
 
@@ -168,7 +180,11 @@ pub fn context_bundle(root: &Path, agent_id: &str, session_id: Option<&str>) -> 
                         rendered.push_str("\n\n");
                     }
                     rendered.push_str(raw.trim());
-                    sources.push(format!("{}#precedence={}", overlay_path.display(), SESSION_OVERLAY_PRECEDENCE));
+                    sources.push(format!(
+                        "{}#precedence={}",
+                        overlay_path.display(),
+                        SESSION_OVERLAY_PRECEDENCE
+                    ));
                     merged_layer_count += 1;
                 }
             }
@@ -197,7 +213,8 @@ pub fn write_context_overlay(
     content: &str,
 ) -> LoomResult<ContextOverlayWriteResult> {
     let profile = resolve_agent_profile(root, agent_id)?;
-    let session_id = trim_to_option(Some(session_id)).ok_or_else(|| "session_id is required".to_string())?;
+    let session_id =
+        trim_to_option(Some(session_id)).ok_or_else(|| "session_id is required".to_string())?;
     let section = normalize_section(section)?;
     let overlay_path = context_overlay_path(root, &profile.agent_id, &session_id, &section);
     if let Some(parent) = overlay_path.parent() {
@@ -242,7 +259,8 @@ pub fn render_context_engine_overview_json(summary: &ContextEngineOverview) -> S
         "mutable_count": summary.mutable_count,
         "sections": summary.sections,
     }))
-    .unwrap_or_else(|_| "{}".to_string()) + "\n"
+    .unwrap_or_else(|_| "{}".to_string())
+        + "\n"
 }
 
 pub fn render_context_bundle_human(bundle: &ContextBundle) -> String {
@@ -275,7 +293,8 @@ pub fn render_context_bundle_json(bundle: &ContextBundle) -> String {
         "sections": bundle.sections,
         "section_sources": bundle.section_sources,
     }))
-    .unwrap_or_else(|_| "{}".to_string()) + "\n"
+    .unwrap_or_else(|_| "{}".to_string())
+        + "\n"
 }
 
 pub fn render_context_overlay_write_human(result: &ContextOverlayWriteResult) -> String {
@@ -297,7 +316,8 @@ pub fn render_context_overlay_write_json(result: &ContextOverlayWriteResult) -> 
         "section": result.section,
         "byte_count": result.byte_count,
     }))
-    .unwrap_or_else(|_| "{}".to_string()) + "\n"
+    .unwrap_or_else(|_| "{}".to_string())
+        + "\n"
 }
 
 fn load_context_layers(root: &Path) -> LoomResult<Vec<ContextLayerRecord>> {
@@ -324,7 +344,10 @@ fn parse_layer(value: &Value) -> LoomResult<ContextLayerRecord> {
         agent_id: optional_string(value.get("agent_id")),
         path: required_string(value.get("path"), "path")?,
         precedence: value.get("precedence").and_then(Value::as_u64).unwrap_or(0) as u32,
-        mutable: value.get("mutable").and_then(Value::as_bool).unwrap_or(false),
+        mutable: value
+            .get("mutable")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
     })
 }
 
@@ -395,7 +418,8 @@ fn agent_layers(profile: &AgentRuntimeProfile) -> Vec<ContextLayerRecord> {
 
 fn resolve_agent_profile(root: &Path, agent_id: &str) -> LoomResult<AgentRuntimeProfile> {
     ensure_agent_runtime_scaffold(root)?;
-    let normalized = trim_to_option(Some(agent_id)).ok_or_else(|| "agent_id is required".to_string())?;
+    let normalized =
+        trim_to_option(Some(agent_id)).ok_or_else(|| "agent_id is required".to_string())?;
     load_agent_runtime_registry(root)?
         .into_iter()
         .find(|profile| profile.agent_id == normalized)
@@ -472,18 +496,38 @@ mod tests {
     fn context_bundle_merges_global_agent_and_overlay_layers() {
         let root = temp_path("loom-context-engine-bundle");
         sync_context_registry(&root).expect("sync context registry");
-        let overlay = write_context_overlay(&root, "atlas", "session-demo", "memory", "- Session override: prioritize pricing deltas")
-            .expect("write overlay");
+        let overlay = write_context_overlay(
+            &root,
+            "atlas",
+            "session-demo",
+            "memory",
+            "- Session override: prioritize pricing deltas",
+        )
+        .expect("write overlay");
         assert!(overlay.overlay_path.exists());
         let bundle = context_bundle(&root, "atlas", Some("session-demo")).expect("context bundle");
         assert_eq!(bundle.agent_id, "atlas");
-        assert!(bundle.sections.get("soul").unwrap_or(&String::new()).contains("Meridian Loom"));
-        assert!(bundle.sections.get("soul").unwrap_or(&String::new()).contains("Atlas"));
-        assert!(bundle.sections.get("memory").unwrap_or(&String::new()).contains("Session override"));
+        assert!(bundle
+            .sections
+            .get("soul")
+            .unwrap_or(&String::new())
+            .contains("Meridian Loom"));
+        assert!(bundle
+            .sections
+            .get("soul")
+            .unwrap_or(&String::new())
+            .contains("Atlas"));
+        assert!(bundle
+            .sections
+            .get("memory")
+            .unwrap_or(&String::new())
+            .contains("Session override"));
         assert!(bundle
             .section_sources
             .get("memory")
-            .map(|sources| sources.iter().any(|source| source.contains("session-demo/memory.md")))
+            .map(|sources| sources
+                .iter()
+                .any(|source| source.contains("session-demo/memory.md")))
             .unwrap_or(false));
     }
 }

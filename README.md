@@ -84,7 +84,7 @@ loom capability list --root "$HOME/.local/share/meridian-loom/runtime/default" -
 
 - Local install, queue, audit, parity, and operator surfaces are real.
 - Terminal execution, browser navigation, and heartbeat scheduling are real local primitives with bounded scope.
-- Omni-channel presence and persistent memory remain broader architecture surfaces beyond the current local proof line.
+- Omni-channel presence and persistent memory should be claimed only through a bounded proof contract that names the exact live surface and its limits, rather than as a blanket hosted-runtime claim.
 - This repo does not claim hosted runtime replacement or broad production cutover.
 - Legacy compatibility surfaces remain only where they still serve migration or import compatibility.
 

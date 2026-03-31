@@ -3,16 +3,22 @@ use std::io::IsTerminal;
 use crate::*;
 use loom_core::channels::{
     channel_overview, enqueue_channel_delivery, ingest_channel_message, list_channel_deliveries,
-    list_channel_deliveries_with_options, list_channel_ingress,
-    render_channel_delivery_human, render_channel_delivery_json, render_channel_delivery_list_human,
+    list_channel_deliveries_with_options, list_channel_ingress, render_channel_delivery_human,
+    render_channel_delivery_json, render_channel_delivery_list_human,
     render_channel_delivery_list_json, render_channel_ingress_human, render_channel_ingress_json,
-    render_channel_ingress_list_human, render_channel_ingress_list_json, render_channel_overview_human,
-    render_channel_overview_json, render_channel_sync_human, render_channel_sync_json, sync_channel_registry,
-    update_channel_delivery, ChannelDeliveryRequest, ChannelIngressRequest,
+    render_channel_ingress_list_human, render_channel_ingress_list_json,
+    render_channel_overview_human, render_channel_overview_json, render_channel_sync_human,
+    render_channel_sync_json, sync_channel_registry, update_channel_delivery,
+    ChannelDeliveryRequest, ChannelIngressRequest,
 };
 
 pub(crate) fn handle_channel(args: &[String]) -> LoomResult<()> {
-    if args.is_empty() || matches!(args.first().map(String::as_str), Some("help" | "--help" | "-h")) {
+    if args.is_empty()
+        || matches!(
+            args.first().map(String::as_str),
+            Some("help" | "--help" | "-h")
+        )
+    {
         print_channel_help();
         return Ok(());
     }
@@ -125,7 +131,8 @@ fn handle_channel_send(args: &[String]) -> LoomResult<()> {
         }
     });
     let text = if let Some(path) = take_value(args, "--file") {
-        std::fs::read_to_string(&path).map_err(|error| format!("failed to read {}: {}", path, error))?
+        std::fs::read_to_string(&path)
+            .map_err(|error| format!("failed to read {}: {}", path, error))?
     } else {
         required_flag(args, "--text")?
     };
@@ -182,7 +189,6 @@ fn handle_channel_deliveries(args: &[String]) -> LoomResult<()> {
     Ok(())
 }
 
-
 fn handle_channel_update(args: &[String]) -> LoomResult<()> {
     if has_flag(args, "--help") || has_flag(args, "-h") {
         print_channel_help();
@@ -231,7 +237,8 @@ fn handle_channel_ingest(args: &[String]) -> LoomResult<()> {
         }
     });
     let text = if let Some(path) = take_value(args, "--file") {
-        std::fs::read_to_string(&path).map_err(|error| format!("failed to read {}: {}", path, error))?
+        std::fs::read_to_string(&path)
+            .map_err(|error| format!("failed to read {}: {}", path, error))?
     } else {
         required_flag(args, "--text")?
     };

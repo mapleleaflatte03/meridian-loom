@@ -3,17 +3,22 @@ use std::io::IsTerminal;
 use crate::*;
 use loom_core::recurring::{
     cancel_heartbeat, heartbeat_overview, heartbeat_summary, load_heartbeats, pause_heartbeat,
-    render_heartbeat_overview_human, render_heartbeat_overview_json,
-    render_heartbeat_record_human, render_heartbeat_record_json,
-    render_heartbeat_run_summary_human, render_heartbeat_run_summary_json,
-    run_due_heartbeats, schedule_heartbeat, HeartbeatDeliveryTarget, HeartbeatRecord, HeartbeatScheduleRequest,
+    render_heartbeat_overview_human, render_heartbeat_overview_json, render_heartbeat_record_human,
+    render_heartbeat_record_json, render_heartbeat_run_summary_human,
+    render_heartbeat_run_summary_json, run_due_heartbeats, schedule_heartbeat,
+    HeartbeatDeliveryTarget, HeartbeatRecord, HeartbeatScheduleRequest,
 };
 use loom_core::recurring_executor::{
     dispatch_heartbeat_run, render_recurring_run_human, render_recurring_run_json,
 };
 
 pub(crate) fn handle_heartbeat(args: &[String]) -> LoomResult<()> {
-    if args.is_empty() || matches!(args.first().map(String::as_str), Some("help" | "--help" | "-h")) {
+    if args.is_empty()
+        || matches!(
+            args.first().map(String::as_str),
+            Some("help" | "--help" | "-h")
+        )
+    {
         print_heartbeat_help();
         return Ok(());
     }
@@ -26,7 +31,10 @@ pub(crate) fn handle_heartbeat(args: &[String]) -> LoomResult<()> {
         Some("cancel") => handle_heartbeat_cancel(&args[1..]),
         Some("run-due") => handle_heartbeat_run_due(&args[1..]),
         Some("run") => handle_heartbeat_run(&args[1..]),
-        _ => Err("heartbeat supports: status, list, show, schedule, pause, cancel, run-due, run".to_string()),
+        _ => Err(
+            "heartbeat supports: status, list, show, schedule, pause, cancel, run-due, run"
+                .to_string(),
+        ),
     }
 }
 
@@ -148,17 +156,19 @@ fn handle_heartbeat_schedule(args: &[String]) -> LoomResult<()> {
     let jitter_seconds = take_value(args, "--jitter-seconds")
         .and_then(|raw| raw.parse::<u64>().ok())
         .unwrap_or(0);
-    let not_before_unix_ms = take_value(args, "--not-before-unix-ms")
-        .and_then(|raw| raw.parse::<u64>().ok());
+    let not_before_unix_ms =
+        take_value(args, "--not-before-unix-ms").and_then(|raw| raw.parse::<u64>().ok());
     let max_attempts = take_value(args, "--max-attempts")
         .and_then(|raw| raw.parse::<u32>().ok())
         .unwrap_or(1);
-    let delivery_target = take_value(args, "--delivery-channel").map(|channel_id| HeartbeatDeliveryTarget {
-        channel_id,
-        recipient: required_flag(args, "--delivery-recipient").unwrap_or_else(|_| "".to_string()),
-        allow_receipt_hashes: has_flag(args, "--delivery-allow-receipt-hashes"),
-        allow_operator_diagnostics: has_flag(args, "--delivery-allow-operator-diagnostics"),
-    });
+    let delivery_target =
+        take_value(args, "--delivery-channel").map(|channel_id| HeartbeatDeliveryTarget {
+            channel_id,
+            recipient: required_flag(args, "--delivery-recipient")
+                .unwrap_or_else(|_| "".to_string()),
+            allow_receipt_hashes: has_flag(args, "--delivery-allow-receipt-hashes"),
+            allow_operator_diagnostics: has_flag(args, "--delivery-allow-operator-diagnostics"),
+        });
     let request = HeartbeatScheduleRequest {
         heartbeat_id: take_value(args, "--heartbeat-id"),
         agent_id,
@@ -272,8 +282,13 @@ fn render_heartbeat_list_human(records: &[HeartbeatRecord]) -> String {
 }
 
 fn render_heartbeat_list_json(records: &[HeartbeatRecord]) -> String {
-    let rendered = serde_json::to_string_pretty(&records.iter().map(heartbeat_record_json).collect::<Vec<_>>())
-        .unwrap_or_else(|_| "[]".to_string());
+    let rendered = serde_json::to_string_pretty(
+        &records
+            .iter()
+            .map(heartbeat_record_json)
+            .collect::<Vec<_>>(),
+    )
+    .unwrap_or_else(|_| "[]".to_string());
     rendered + "\n"
 }
 

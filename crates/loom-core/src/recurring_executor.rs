@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
@@ -12,6 +13,13 @@ pub type LoomResult<T> = Result<T, String>;
 
 pub const DEFAULT_RECURRING_RUNS_DIR: &str = "state/recurring/runs";
 pub const DEFAULT_RECURRING_RUN_INDEX_PATH: &str = "state/recurring/run-index.json";
+
+struct ExecutionAttempt {
+    exit_code: i32,
+    stdout: Option<String>,
+    stderr: Option<String>,
+    status: String,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RecurringRunRecord {
@@ -89,19 +97,25 @@ pub fn dispatch_schedule_run(
     index_run_record(root, &run)?;
 
     // Attempt execution via loom binary if available
-    let execution_result = attempt_capability_execution(root, &capability_name, &record.agent_id, &record.payload_json);
+    let execution_result = attempt_schedule_execution(
+        root,
+        &run_id,
+        &capability_name,
+        &record.agent_id,
+        &record.payload_json,
+    );
 
     match execution_result {
-        Ok((exit_code, stdout, stderr)) => {
-            run.exit_code = Some(exit_code);
-            run.stdout_summary = truncate_output(stdout, 2000);
-            run.stderr_summary = truncate_output(stderr, 500);
-            // exit_code 0 from truthful dispatch means "accepted by service", not
-            // "execution complete". Use "dispatched" to reflect that the supervisor
-            // will complete execution asynchronously.
-            run.status = if exit_code == 0 { "dispatched".to_string() } else { "failed".to_string() };
-            if exit_code != 0 {
-                run.last_error = run.stderr_summary.clone().or_else(|| run.stdout_summary.clone());
+        Ok(attempt) => {
+            run.exit_code = Some(attempt.exit_code);
+            run.stdout_summary = truncate_output(attempt.stdout, 2000);
+            run.stderr_summary = truncate_output(attempt.stderr, 500);
+            run.status = attempt.status;
+            if attempt.exit_code != 0 {
+                run.last_error = run
+                    .stderr_summary
+                    .clone()
+                    .or_else(|| run.stdout_summary.clone());
             }
         }
         Err(err) => {
@@ -150,7 +164,11 @@ pub fn dispatch_heartbeat_run(
     ensure_recurring_executor_scaffold(root)?;
     let run_id = format!("hb-run-{}", unique_token());
     let now = timestamp_now();
-    let capability_name = record.capability_name.trim().to_string().or_empty_fallback("loom.llm.inference.v1");
+    let capability_name = record
+        .capability_name
+        .trim()
+        .to_string()
+        .or_empty_fallback("loom.llm.inference.v1");
 
     let mut run = RecurringRunRecord {
         run_id: run_id.clone(),
@@ -176,16 +194,25 @@ pub fn dispatch_heartbeat_run(
     index_run_record(root, &run)?;
 
     // Attempt execution
-    let execution_result = attempt_capability_execution(root, &capability_name, &record.agent_id, &record.payload_json);
+    let execution_result = attempt_schedule_execution(
+        root,
+        &run_id,
+        &capability_name,
+        &record.agent_id,
+        &record.payload_json,
+    );
 
     match execution_result {
-        Ok((exit_code, stdout, stderr)) => {
-            run.exit_code = Some(exit_code);
-            run.stdout_summary = truncate_output(stdout, 2000);
-            run.stderr_summary = truncate_output(stderr, 500);
-            run.status = if exit_code == 0 { "dispatched".to_string() } else { "failed".to_string() };
-            if exit_code != 0 {
-                run.last_error = run.stderr_summary.clone().or_else(|| run.stdout_summary.clone());
+        Ok(attempt) => {
+            run.exit_code = Some(attempt.exit_code);
+            run.stdout_summary = truncate_output(attempt.stdout, 2000);
+            run.stderr_summary = truncate_output(attempt.stderr, 500);
+            run.status = attempt.status;
+            if attempt.exit_code != 0 {
+                run.last_error = run
+                    .stderr_summary
+                    .clone()
+                    .or_else(|| run.stdout_summary.clone());
             }
         }
         Err(err) => {
@@ -260,10 +287,7 @@ pub fn list_recurring_runs(
     Ok(records)
 }
 
-pub fn show_recurring_run(
-    root: &Path,
-    run_id: &str,
-) -> LoomResult<Option<RecurringRunRecord>> {
+pub fn show_recurring_run(root: &Path, run_id: &str) -> LoomResult<Option<RecurringRunRecord>> {
     let run_id = run_id.trim();
     if run_id.is_empty() {
         return Err("run_id is required".to_string());
@@ -305,9 +329,7 @@ pub fn render_recurring_run_human(run: &RecurringRunRecord) -> String {
 }
 
 pub fn render_recurring_run_json(run: &RecurringRunRecord) -> String {
-    serde_json::to_string_pretty(&run_record_json(run))
-        .unwrap_or_else(|_| "{}".to_string())
-        + "\n"
+    serde_json::to_string_pretty(&run_record_json(run)).unwrap_or_else(|_| "{}".to_string()) + "\n"
 }
 
 pub fn render_recurring_runs_list_human(runs: &[RecurringRunRecord]) -> String {
@@ -322,7 +344,9 @@ pub fn render_recurring_runs_list_human(runs: &[RecurringRunRecord]) -> String {
             run.job_type,
             run.job_id,
             run.status,
-            run.exit_code.map(|c| c.to_string()).unwrap_or_else(|| "(none)".to_string()),
+            run.exit_code
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "(none)".to_string()),
         ));
     }
     out
@@ -338,8 +362,8 @@ pub fn render_recurring_runs_list_json(runs: &[RecurringRunRecord]) -> String {
 
 fn persist_run_record(root: &Path, run: &RecurringRunRecord) -> LoomResult<()> {
     let path = recurring_runs_dir(root).join(format!("{}.json", safe_filename(&run.run_id)));
-    let mut rendered = serde_json::to_string_pretty(&run_record_json(run))
-        .map_err(|e| e.to_string())?;
+    let mut rendered =
+        serde_json::to_string_pretty(&run_record_json(run)).map_err(|e| e.to_string())?;
     rendered.push('\n');
     fs::write(path, rendered).map_err(io_err)
 }
@@ -362,15 +386,14 @@ fn index_run_record(root: &Path, run: &RecurringRunRecord) -> LoomResult<()> {
     } else {
         "{\"index\":{}}".to_string()
     };
-    let mut value: Value =
-        serde_json::from_str(&raw).unwrap_or_else(|_| json!({"index": {}}));
-    let index = value
-        .as_object_mut()
-        .and_then(|obj| obj.entry("index").or_insert_with(|| json!({})).as_object_mut());
+    let mut value: Value = serde_json::from_str(&raw).unwrap_or_else(|_| json!({"index": {}}));
+    let index = value.as_object_mut().and_then(|obj| {
+        obj.entry("index")
+            .or_insert_with(|| json!({}))
+            .as_object_mut()
+    });
     if let Some(index) = index {
-        let entry = index
-            .entry(&run.job_id)
-            .or_insert_with(|| json!([]));
+        let entry = index.entry(&run.job_id).or_insert_with(|| json!([]));
         if let Some(arr) = entry.as_array_mut() {
             let run_id_val = Value::String(run.run_id.clone());
             if !arr.contains(&run_id_val) {
@@ -382,7 +405,8 @@ fn index_run_record(root: &Path, run: &RecurringRunRecord) -> LoomResult<()> {
             }
         }
     }
-    let mut rendered = serde_json::to_string_pretty(&value).unwrap_or_else(|_| "{\"index\":{}}".to_string());
+    let mut rendered =
+        serde_json::to_string_pretty(&value).unwrap_or_else(|_| "{\"index\":{}}".to_string());
     rendered.push('\n');
     let _ = fs::write(index_path, rendered);
     Ok(())
@@ -409,10 +433,98 @@ fn attempt_capability_execution(
         0,
         Some(format!(
             "capability dispatch accepted: capability={} agent={} payload_bytes={}",
-            capability_name, agent_id, payload_json.len()
+            capability_name,
+            agent_id,
+            payload_json.len()
         )),
         None,
     ))
+}
+
+fn attempt_schedule_execution(
+    root: &Path,
+    run_id: &str,
+    capability_name: &str,
+    agent_id: &str,
+    payload_json: &str,
+) -> Result<ExecutionAttempt, String> {
+    if let Some(exec_argv) = extract_exec_argv(payload_json) {
+        return run_exec_argv(root, run_id, agent_id, capability_name, &exec_argv);
+    }
+    let (exit_code, stdout, stderr) =
+        attempt_capability_execution(root, capability_name, agent_id, payload_json)?;
+    Ok(ExecutionAttempt {
+        exit_code,
+        stdout,
+        stderr,
+        status: if exit_code == 0 {
+            "dispatched".to_string()
+        } else {
+            "failed".to_string()
+        },
+    })
+}
+
+fn extract_exec_argv(payload_json: &str) -> Option<Vec<String>> {
+    let value = serde_json::from_str::<Value>(payload_json).ok()?;
+    let argv = value.get("exec_argv")?.as_array()?;
+    let collected = argv
+        .iter()
+        .map(|item| {
+            item.as_str()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        })
+        .collect::<Option<Vec<_>>>()?;
+    if collected.is_empty() {
+        None
+    } else {
+        Some(collected)
+    }
+}
+
+fn run_exec_argv(
+    root: &Path,
+    run_id: &str,
+    agent_id: &str,
+    capability_name: &str,
+    exec_argv: &[String],
+) -> Result<ExecutionAttempt, String> {
+    if exec_argv.is_empty() {
+        return Err("exec_argv requires at least one command token".to_string());
+    }
+    let mut command = Command::new(&exec_argv[0]);
+    if exec_argv.len() > 1 {
+        command.args(&exec_argv[1..]);
+    }
+    command
+        .current_dir(root)
+        .env("MERIDIAN_LOOM_ROOT", root.display().to_string())
+        .env("MERIDIAN_RECURRING_RUN_ID", run_id)
+        .env("MERIDIAN_RECURRING_AGENT_ID", agent_id)
+        .env("MERIDIAN_RECURRING_CAPABILITY", capability_name);
+    let output = command.output().map_err(io_err)?;
+    let exit_code = output.status.code().unwrap_or(1);
+    Ok(ExecutionAttempt {
+        exit_code,
+        stdout: string_from_bytes(output.stdout),
+        stderr: string_from_bytes(output.stderr),
+        status: if exit_code == 0 {
+            "completed".to_string()
+        } else {
+            "failed".to_string()
+        },
+    })
+}
+
+fn string_from_bytes(raw: Vec<u8>) -> Option<String> {
+    let text = String::from_utf8_lossy(&raw).trim().to_string();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
 }
 
 fn extract_delivery_text(payload_json: &str, run: &RecurringRunRecord) -> String {
@@ -448,7 +560,10 @@ fn parse_run_record(raw: &str) -> LoomResult<RecurringRunRecord> {
         started_at: value_opt_string(value.get("started_at")),
         completed_at: value_opt_string(value.get("completed_at")),
         status: value_string_or(value.get("status"), "unknown"),
-        exit_code: value.get("exit_code").and_then(Value::as_i64).map(|v| v as i32),
+        exit_code: value
+            .get("exit_code")
+            .and_then(Value::as_i64)
+            .map(|v| v as i32),
         stdout_summary: value_opt_string(value.get("stdout_summary")),
         stderr_summary: value_opt_string(value.get("stderr_summary")),
         delivery_intent_id: value_opt_string(value.get("delivery_intent_id")),
@@ -498,8 +613,16 @@ fn parse_schedule_run_record(raw: &str) -> LoomResult<RecurringRunRecord> {
         job_type: "schedule".to_string(),
         job_id: value_string_or(value.get("job_id"), ""),
         triggered_at: fired_at.clone(),
-        started_at: if fired_at.is_empty() { None } else { Some(fired_at.clone()) },
-        completed_at: if fired_at.is_empty() { None } else { Some(fired_at) },
+        started_at: if fired_at.is_empty() {
+            None
+        } else {
+            Some(fired_at.clone())
+        },
+        completed_at: if fired_at.is_empty() {
+            None
+        } else {
+            Some(fired_at)
+        },
         status: value_string_or(value.get("status"), "unknown"),
         exit_code: None,
         stdout_summary: None,
@@ -686,7 +809,9 @@ mod tests {
         let runs = list_recurring_runs(&root, 10, Some("schedule")).expect("list recurring runs");
         assert!(runs.iter().any(|run| run.run_id == run_id));
 
-        let shown = show_recurring_run(&root, &run_id).expect("show run").expect("schedule run visible");
+        let shown = show_recurring_run(&root, &run_id)
+            .expect("show run")
+            .expect("schedule run visible");
         assert_eq!(shown.job_type, "schedule");
         assert_eq!(shown.run_id, run_id);
     }

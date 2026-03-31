@@ -7,7 +7,12 @@ use loom_core::recurring_executor::{
 };
 
 pub(crate) fn handle_recurring(args: &[String]) -> LoomResult<()> {
-    if args.is_empty() || matches!(args.first().map(String::as_str), Some("help" | "--help" | "-h")) {
+    if args.is_empty()
+        || matches!(
+            args.first().map(String::as_str),
+            Some("help" | "--help" | "-h")
+        )
+    {
         print_recurring_help();
         return Ok(());
     }

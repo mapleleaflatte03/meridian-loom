@@ -20,8 +20,7 @@ mod wasm_runner;
 
 #[allow(unused_imports)]
 pub use wasm_runner::{
-    run_wasm_guest, WasmExecutionRequest, WasmExecutionResult, WasmGuestSource,
-    WasmMemoryProbe,
+    run_wasm_guest, WasmExecutionRequest, WasmExecutionResult, WasmGuestSource, WasmMemoryProbe,
 };
 
 pub const WASM_HOST_CALL_NAMESPACE: &str = "loom_host";
@@ -567,7 +566,9 @@ pub fn render_wasm_terminal_exec_request_json(request: &WasmTerminalExecRequest)
     .to_string()
 }
 
-pub fn render_wasm_heartbeat_schedule_request_json(request: &WasmHeartbeatScheduleRequest) -> String {
+pub fn render_wasm_heartbeat_schedule_request_json(
+    request: &WasmHeartbeatScheduleRequest,
+) -> String {
     json!({
         "security": render_security_context_value(&request.security),
         "heartbeat_id": request.heartbeat_id,
@@ -680,7 +681,9 @@ pub fn builtin_kv_set_guest_bytes(request_json: &str) -> Result<Vec<u8>, String>
     build_host_call_guest(HOST_KV_SET, request_json)
 }
 
-pub(crate) fn parse_wasm_browser_navigate_request(raw: &str) -> Result<WasmBrowserNavigateRequest, String> {
+pub(crate) fn parse_wasm_browser_navigate_request(
+    raw: &str,
+) -> Result<WasmBrowserNavigateRequest, String> {
     let value: Value = serde_json::from_str(raw)
         .map_err(|error| format!("invalid browser navigate request json: {error}"))?;
     Ok(WasmBrowserNavigateRequest {
@@ -694,7 +697,9 @@ pub(crate) fn parse_wasm_browser_navigate_request(raw: &str) -> Result<WasmBrows
     })
 }
 
-pub(crate) fn parse_wasm_terminal_exec_request(raw: &str) -> Result<WasmTerminalExecRequest, String> {
+pub(crate) fn parse_wasm_terminal_exec_request(
+    raw: &str,
+) -> Result<WasmTerminalExecRequest, String> {
     let value: Value = serde_json::from_str(raw)
         .map_err(|error| format!("invalid terminal exec request json: {error}"))?;
     Ok(WasmTerminalExecRequest {
@@ -709,7 +714,9 @@ pub(crate) fn parse_wasm_terminal_exec_request(raw: &str) -> Result<WasmTerminal
     })
 }
 
-pub(crate) fn parse_wasm_heartbeat_schedule_request(raw: &str) -> Result<WasmHeartbeatScheduleRequest, String> {
+pub(crate) fn parse_wasm_heartbeat_schedule_request(
+    raw: &str,
+) -> Result<WasmHeartbeatScheduleRequest, String> {
     let value: Value = serde_json::from_str(raw)
         .map_err(|error| format!("invalid heartbeat request json: {error}"))?;
     let schedule_kind = match value_string_or(value.get("schedule_kind"), "interval").as_str() {
@@ -727,7 +734,10 @@ pub(crate) fn parse_wasm_heartbeat_schedule_request(raw: &str) -> Result<WasmHea
         interval_seconds: value.get("interval_seconds").and_then(Value::as_u64),
         jitter_seconds: value_u64_or(value.get("jitter_seconds"), 15),
         payload_json: value_string(value.get("payload_json")),
-        max_runs: value.get("max_runs").and_then(Value::as_u64).map(|value| value as u32),
+        max_runs: value
+            .get("max_runs")
+            .and_then(Value::as_u64)
+            .map(|value| value as u32),
     })
 }
 
@@ -761,7 +771,9 @@ pub(crate) fn parse_wasm_fs_write_request(raw: &str) -> Result<WasmFsWriteReques
     })
 }
 
-pub(crate) fn parse_wasm_llm_inference_request(raw: &str) -> Result<WasmLlmInferenceRequest, String> {
+pub(crate) fn parse_wasm_llm_inference_request(
+    raw: &str,
+) -> Result<WasmLlmInferenceRequest, String> {
     let value: Value = serde_json::from_str(raw)
         .map_err(|error| format!("invalid llm inference request json: {error}"))?;
     Ok(WasmLlmInferenceRequest {
@@ -770,7 +782,10 @@ pub(crate) fn parse_wasm_llm_inference_request(raw: &str) -> Result<WasmLlmInfer
         model: value_string_or(value.get("model"), "qwen2.5:7b"),
         system_prompt: value_string(value.get("system_prompt")),
         user_prompt: value_string(value.get("user_prompt")),
-        max_tokens: value.get("max_tokens").and_then(Value::as_u64).map(|value| value as u32),
+        max_tokens: value
+            .get("max_tokens")
+            .and_then(Value::as_u64)
+            .map(|value| value as u32),
     })
 }
 
@@ -795,7 +810,9 @@ pub(crate) fn parse_wasm_kv_set_request(raw: &str) -> Result<WasmKvSetRequest, S
     })
 }
 
-pub(crate) fn render_wasm_browser_navigate_response_json(response: &WasmBrowserNavigateResponse) -> String {
+pub(crate) fn render_wasm_browser_navigate_response_json(
+    response: &WasmBrowserNavigateResponse,
+) -> String {
     json!({
         "decision": response.decision.label(),
         "navigation_id": response.navigation_id,
@@ -810,7 +827,9 @@ pub(crate) fn render_wasm_browser_navigate_response_json(response: &WasmBrowserN
     .to_string()
 }
 
-pub(crate) fn render_wasm_terminal_exec_response_json(response: &WasmTerminalExecResponse) -> String {
+pub(crate) fn render_wasm_terminal_exec_response_json(
+    response: &WasmTerminalExecResponse,
+) -> String {
     json!({
         "decision": response.decision.label(),
         "exit_code": response.exit_code,
@@ -823,7 +842,9 @@ pub(crate) fn render_wasm_terminal_exec_response_json(response: &WasmTerminalExe
     .to_string()
 }
 
-pub(crate) fn render_wasm_heartbeat_schedule_response_json(response: &WasmHeartbeatScheduleResponse) -> String {
+pub(crate) fn render_wasm_heartbeat_schedule_response_json(
+    response: &WasmHeartbeatScheduleResponse,
+) -> String {
     json!({
         "decision": response.decision.label(),
         "heartbeat_id": response.heartbeat_id,
@@ -869,7 +890,9 @@ pub(crate) fn render_wasm_fs_write_response_json(response: &WasmFsWriteResponse)
     .to_string()
 }
 
-pub(crate) fn render_wasm_llm_inference_response_json(response: &WasmLlmInferenceResponse) -> String {
+pub(crate) fn render_wasm_llm_inference_response_json(
+    response: &WasmLlmInferenceResponse,
+) -> String {
     json!({
         "decision": response.decision.label(),
         "model": response.model,
@@ -970,8 +993,10 @@ fn parse_security_context(value: Option<&Value>) -> WasmHostSecurityContext {
         security.org_id = value_string(value.get("org_id"));
         security.session_id = value_string(value.get("session_id"));
         security.operation_id = value_string(value.get("operation_id"));
-        security.max_timeout_ms = value_u64_or(value.get("max_timeout_ms"), security.max_timeout_ms);
-        security.max_response_bytes = value_usize_or(value.get("max_response_bytes"), security.max_response_bytes);
+        security.max_timeout_ms =
+            value_u64_or(value.get("max_timeout_ms"), security.max_timeout_ms);
+        security.max_response_bytes =
+            value_usize_or(value.get("max_response_bytes"), security.max_response_bytes);
         let allowed_hosts = value_string_array(value.get("allowed_hosts"));
         if !allowed_hosts.is_empty() {
             security.allowed_hosts = allowed_hosts;
@@ -980,13 +1005,19 @@ fn parse_security_context(value: Option<&Value>) -> WasmHostSecurityContext {
         if !allowed_roots.is_empty() {
             security.allowed_workdir_roots = allowed_roots;
         }
-        security.require_user_present = value_bool_or(value.get("require_user_present"), security.require_user_present);
+        security.require_user_present = value_bool_or(
+            value.get("require_user_present"),
+            security.require_user_present,
+        );
     }
     security
 }
 
 fn value_string(value: Option<&Value>) -> String {
-    value.and_then(Value::as_str).unwrap_or_default().to_string()
+    value
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string()
 }
 
 fn value_string_or(value: Option<&Value>, default: &str) -> String {
@@ -1011,7 +1042,10 @@ fn value_u64_or(value: Option<&Value>, default: u64) -> u64 {
 }
 
 fn value_usize_or(value: Option<&Value>, default: usize) -> usize {
-    value.and_then(Value::as_u64).map(|value| value as usize).unwrap_or(default)
+    value
+        .and_then(Value::as_u64)
+        .map(|value| value as usize)
+        .unwrap_or(default)
 }
 
 fn value_bool_or(value: Option<&Value>, default: bool) -> bool {
@@ -1093,7 +1127,9 @@ impl WasmHostBuilder {
             pooling: PoolingConfig::from_profile(PoolingProfile::Standard),
             fuel_metering_enabled: true,
             epoch_deadline_ms: Some(1_000),
-            notes: vec!["prepared host config; execution lives in the experimental guest lane".to_string()],
+            notes: vec![
+                "prepared host config; execution lives in the experimental guest lane".to_string(),
+            ],
         }
     }
 
@@ -1179,7 +1215,10 @@ impl WasmHostBuilder {
         }
     }
 
-    pub fn build_with_profile(profile_name: impl Into<String>, profile: PoolingProfile) -> Result<WasmHostConfig, Vec<String>> {
+    pub fn build_with_profile(
+        profile_name: impl Into<String>,
+        profile: PoolingProfile,
+    ) -> Result<WasmHostConfig, Vec<String>> {
         Self::new()
             .with_profile_name(profile_name)
             .with_pooling_profile(profile)
@@ -1319,7 +1358,10 @@ mod tests {
         assert_eq!(config.backend, HostBackend::PreviewOnly);
         assert!(config.component_model_enabled);
         assert!(config.fuel_metering_enabled);
-        assert!(config.notes.iter().any(|note| note.contains("experimental guest lane")));
+        assert!(config
+            .notes
+            .iter()
+            .any(|note| note.contains("experimental guest lane")));
         assert!(validate_host_config(&config).is_ok());
     }
 
@@ -1351,7 +1393,9 @@ mod tests {
             .with_pooling_config(PoolingConfig::from_profile(PoolingProfile::Heavy))
             .build()
             .expect_err("should reject oversized pooling");
-        assert!(config.iter().any(|reason| reason.contains("exceeds store limit")));
+        assert!(config
+            .iter()
+            .any(|reason| reason.contains("exceeds store limit")));
     }
 
     #[test]
@@ -1379,16 +1423,36 @@ mod tests {
     fn host_call_signature_surface_covers_builtin_host_calls() {
         let signatures = wasm_host_call_signatures();
         assert_eq!(signatures.len(), 9);
-        assert!(signatures.iter().all(|signature| signature.import_module == WASM_HOST_CALL_NAMESPACE));
-        assert!(signatures.iter().any(|signature| signature.import_name() == HOST_BROWSER_NAVIGATE));
-        assert!(signatures.iter().any(|signature| signature.import_name() == HOST_SCHEDULE_HEARTBEAT));
-        assert!(signatures.iter().any(|signature| signature.import_name() == HOST_TERMINAL_EXEC));
-        assert!(signatures.iter().any(|signature| signature.import_name() == HOST_SYSTEM_INFO));
-        assert!(signatures.iter().any(|signature| signature.import_name() == HOST_FS_READ));
-        assert!(signatures.iter().any(|signature| signature.import_name() == HOST_FS_WRITE));
-        assert!(signatures.iter().any(|signature| signature.import_name() == HOST_LLM_INFERENCE));
-        assert!(signatures.iter().any(|signature| signature.import_name() == HOST_KV_GET));
-        assert!(signatures.iter().any(|signature| signature.import_name() == HOST_KV_SET));
+        assert!(signatures
+            .iter()
+            .all(|signature| signature.import_module == WASM_HOST_CALL_NAMESPACE));
+        assert!(signatures
+            .iter()
+            .any(|signature| signature.import_name() == HOST_BROWSER_NAVIGATE));
+        assert!(signatures
+            .iter()
+            .any(|signature| signature.import_name() == HOST_SCHEDULE_HEARTBEAT));
+        assert!(signatures
+            .iter()
+            .any(|signature| signature.import_name() == HOST_TERMINAL_EXEC));
+        assert!(signatures
+            .iter()
+            .any(|signature| signature.import_name() == HOST_SYSTEM_INFO));
+        assert!(signatures
+            .iter()
+            .any(|signature| signature.import_name() == HOST_FS_READ));
+        assert!(signatures
+            .iter()
+            .any(|signature| signature.import_name() == HOST_FS_WRITE));
+        assert!(signatures
+            .iter()
+            .any(|signature| signature.import_name() == HOST_LLM_INFERENCE));
+        assert!(signatures
+            .iter()
+            .any(|signature| signature.import_name() == HOST_KV_GET));
+        assert!(signatures
+            .iter()
+            .any(|signature| signature.import_name() == HOST_KV_SET));
     }
 
     #[test]

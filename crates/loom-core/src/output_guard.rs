@@ -29,7 +29,10 @@ impl Default for OutputGuardPolicy {
     }
 }
 
-pub fn guard_user_visible_output(raw: &str, policy: &OutputGuardPolicy) -> LoomResult<OutputGuardResult> {
+pub fn guard_user_visible_output(
+    raw: &str,
+    policy: &OutputGuardPolicy,
+) -> LoomResult<OutputGuardResult> {
     let raw_text = raw.to_string();
     let trimmed = raw.trim();
     if trimmed.is_empty() {
@@ -88,7 +91,9 @@ pub fn guard_user_visible_output(raw: &str, policy: &OutputGuardPolicy) -> LoomR
             final_class,
             allowed: false,
             display_text: String::new(),
-            deny_reason: Some("internal planning or heartbeat text must not reach user channels".to_string()),
+            deny_reason: Some(
+                "internal planning or heartbeat text must not reach user channels".to_string(),
+            ),
             redactions_applied,
             detected_tokens,
         });
@@ -104,7 +109,9 @@ pub fn guard_user_visible_output(raw: &str, policy: &OutputGuardPolicy) -> LoomR
             final_class,
             allowed: false,
             display_text: String::new(),
-            deny_reason: Some("operator diagnostics require explicit policy to reach user channels".to_string()),
+            deny_reason: Some(
+                "operator diagnostics require explicit policy to reach user channels".to_string(),
+            ),
             redactions_applied,
             detected_tokens,
         });
@@ -212,7 +219,8 @@ pub fn render_output_guard_json(result: &OutputGuardResult) -> String {
         "detected_tokens": result.detected_tokens,
         "display_text": result.display_text,
     }))
-    .unwrap_or_else(|_| "{}".to_string()) + "\n"
+    .unwrap_or_else(|_| "{}".to_string())
+        + "\n"
 }
 
 fn extract_final_answer(raw: &str) -> Option<String> {
@@ -258,9 +266,13 @@ fn extract_receipt_hash(line: &str) -> Option<String> {
 }
 
 fn is_non_user_scaffold_line(line: &str) -> bool {
-    ["[👤 USER GOAL]", "[🧠 USER GOAL]", "⚙️ Meridian Loom is governing your request..."]
-        .iter()
-        .any(|token| line.contains(token))
+    [
+        "[👤 USER GOAL]",
+        "[🧠 USER GOAL]",
+        "⚙️ Meridian Loom is governing your request...",
+    ]
+    .iter()
+    .any(|token| line.contains(token))
 }
 
 fn collapse_blank_lines(input: &str) -> String {
@@ -283,7 +295,8 @@ mod tests {
 
     #[test]
     fn sleep_is_blocked() {
-        let result = guard_user_visible_output("SLEEP", &OutputGuardPolicy::default()).expect("guard result");
+        let result = guard_user_visible_output("SLEEP", &OutputGuardPolicy::default())
+            .expect("guard result");
         assert!(!result.allowed);
         assert_eq!(result.final_class, "blocked");
         assert!(result.detected_tokens.iter().any(|token| token == "sleep"));
@@ -292,16 +305,24 @@ mod tests {
     #[test]
     fn final_answer_is_extracted_and_receipts_removed() {
         let raw = "[👤 USER GOAL]\nhello\n[✅ FINAL ANSWER]\nXin chao\n[🛡️ PoGE PROTOCOL] Cryptographic Audit Root Settled: 0xabc\n";
-        let result = guard_user_visible_output(raw, &OutputGuardPolicy::default()).expect("guard result");
+        let result =
+            guard_user_visible_output(raw, &OutputGuardPolicy::default()).expect("guard result");
         assert!(result.allowed);
         assert_eq!(result.display_text, "Xin chao");
-        assert!(result.redactions_applied.iter().any(|rule| rule == "extracted_final_answer"));
-        assert!(result.redactions_applied.iter().any(|rule| rule == "receipt_removed"));
+        assert!(result
+            .redactions_applied
+            .iter()
+            .any(|rule| rule == "extracted_final_answer"));
+        assert!(result
+            .redactions_applied
+            .iter()
+            .any(|rule| rule == "receipt_removed"));
     }
 
     #[test]
     fn receipt_can_be_compacted_when_allowed() {
-        let raw = "[✅ FINAL ANSWER]\nDone\n[🛡️ PoGE PROTOCOL] Cryptographic Audit Root Settled: 0xabc\n";
+        let raw =
+            "[✅ FINAL ANSWER]\nDone\n[🛡️ PoGE PROTOCOL] Cryptographic Audit Root Settled: 0xabc\n";
         let result = guard_user_visible_output(
             raw,
             &OutputGuardPolicy {
@@ -319,7 +340,8 @@ mod tests {
     #[test]
     fn operator_dump_is_blocked_by_default() {
         let raw = r#"{\n  \"capability\": \"loom.system.info.v1\",\n  \"host_calls\": [\"system.info\"]\n}"#;
-        let result = guard_user_visible_output(raw, &OutputGuardPolicy::default()).expect("guard result");
+        let result =
+            guard_user_visible_output(raw, &OutputGuardPolicy::default()).expect("guard result");
         assert!(!result.allowed);
         assert_eq!(result.source_class, "operator_only");
     }
@@ -327,7 +349,8 @@ mod tests {
     #[test]
     fn heartbeat_prompt_is_blocked() {
         let raw = "[SYSTEM: HEARTBEAT] Check your context and memory.";
-        let result = guard_user_visible_output(raw, &OutputGuardPolicy::default()).expect("guard result");
+        let result =
+            guard_user_visible_output(raw, &OutputGuardPolicy::default()).expect("guard result");
         assert!(!result.allowed);
         assert_eq!(result.source_class, "internal_only");
     }

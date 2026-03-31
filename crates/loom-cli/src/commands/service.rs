@@ -8,7 +8,6 @@ pub(crate) fn handle_start(args: &[String]) -> LoomResult<()> {
     start_service_with_mode(args)
 }
 
-
 pub(crate) fn handle_stop(args: &[String]) -> LoomResult<()> {
     if has_flag(args, "--help") || has_flag(args, "-h") {
         print_stop_help();
@@ -25,7 +24,6 @@ pub(crate) fn handle_stop(args: &[String]) -> LoomResult<()> {
     }
     Ok(())
 }
-
 
 pub(crate) fn handle_restart(args: &[String]) -> LoomResult<()> {
     if has_flag(args, "--help") || has_flag(args, "-h") {
@@ -47,7 +45,6 @@ pub(crate) fn handle_restart(args: &[String]) -> LoomResult<()> {
     }
     start_service_with_mode(args)
 }
-
 
 pub(crate) fn handle_logs(args: &[String]) -> LoomResult<()> {
     if has_flag(args, "--help") || has_flag(args, "-h") {
@@ -83,9 +80,13 @@ pub(crate) fn handle_logs(args: &[String]) -> LoomResult<()> {
     Ok(())
 }
 
-
 pub(crate) fn handle_service(args: &[String]) -> LoomResult<()> {
-    if args.is_empty() || matches!(args.first().map(String::as_str), Some("help" | "--help" | "-h")) {
+    if args.is_empty()
+        || matches!(
+            args.first().map(String::as_str),
+            Some("help" | "--help" | "-h")
+        )
+    {
         print_service_help();
         return Ok(());
     }
@@ -266,7 +267,6 @@ pub(crate) fn handle_service(args: &[String]) -> LoomResult<()> {
     }
 }
 
-
 fn handle_service_cancel(args: &[String]) -> LoomResult<()> {
     if has_flag(args, "--help") || has_flag(args, "-h") {
         print_service_cancel_help();
@@ -293,7 +293,6 @@ fn handle_service_cancel(args: &[String]) -> LoomResult<()> {
     }
     Ok(())
 }
-
 
 fn handle_service_pipeline(args: &[String]) -> LoomResult<()> {
     let root = root_from(take_value(args, "--root").as_deref())?;
@@ -325,11 +324,13 @@ fn handle_service_pipeline(args: &[String]) -> LoomResult<()> {
             print_startup_banner();
             print_human(&loom_core::pipeline::render_pipeline_runs_list_human(&runs));
         }
-        _ => print!("{}", loom_core::pipeline::render_pipeline_runs_list_json(&runs)),
+        _ => print!(
+            "{}",
+            loom_core::pipeline::render_pipeline_runs_list_json(&runs)
+        ),
     }
     Ok(())
 }
-
 
 pub(crate) fn start_service_with_mode(args: &[String]) -> LoomResult<()> {
     let root = root_from(take_value(args, "--root").as_deref())?;
@@ -394,7 +395,11 @@ pub(crate) fn start_service_with_mode(args: &[String]) -> LoomResult<()> {
             workspace_token.as_deref(),
             max_jobs,
             poll_seconds,
-            if iterations == 0 { usize::MAX } else { iterations },
+            if iterations == 0 {
+                usize::MAX
+            } else {
+                iterations
+            },
             &session_id,
         )?;
         if format == "json" {
@@ -431,7 +436,11 @@ pub(crate) fn start_service_with_mode(args: &[String]) -> LoomResult<()> {
         .arg("--poll-seconds")
         .arg(poll_seconds.to_string())
         .arg("--iterations")
-        .arg(if iterations == 0 { usize::MAX.to_string() } else { iterations.to_string() })
+        .arg(if iterations == 0 {
+            usize::MAX.to_string()
+        } else {
+            iterations.to_string()
+        })
         .arg("--session-id")
         .arg(&session_id)
         .stdout(Stdio::from(stdout))
@@ -494,8 +503,10 @@ pub(crate) fn start_service_with_mode(args: &[String]) -> LoomResult<()> {
     Ok(())
 }
 
-
-pub(crate) fn effective_service_token(config: &loom_core::Config, explicit: Option<String>) -> LoomResult<Option<String>> {
+pub(crate) fn effective_service_token(
+    config: &loom_core::Config,
+    explicit: Option<String>,
+) -> LoomResult<Option<String>> {
     if let Some(explicit) = explicit {
         return Ok(Some(explicit));
     }
@@ -507,7 +518,6 @@ pub(crate) fn effective_service_token(config: &loom_core::Config, explicit: Opti
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty()))
 }
-
 
 pub(crate) fn print_start_help() {
     print_human(
@@ -523,7 +533,6 @@ notes:\n\
     );
 }
 
-
 pub(crate) fn print_stop_help() {
     print_human(
         "Meridian Loom // STOP HELP\n\
@@ -536,7 +545,6 @@ notes:\n\
     );
 }
 
-
 pub(crate) fn print_restart_help() {
     print_human(
         "Meridian Loom // RESTART HELP\n\
@@ -548,7 +556,6 @@ notes:\n\
   - starts a new local service session for the same runtime root\n",
     );
 }
-
 
 pub(crate) fn print_service_cancel_help() {
     print_human(
@@ -563,7 +570,6 @@ notes:\n\
     );
 }
 
-
 pub(crate) fn print_logs_help() {
     print_human(
         "Meridian Loom // LOGS HELP\n\
@@ -575,7 +581,6 @@ notes:\n\
   - use --follow for a streaming local operator view\n",
     );
 }
-
 
 pub(crate) fn print_service_help() {
     print_human(

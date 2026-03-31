@@ -124,11 +124,17 @@ pub fn ensure_agent_runtime_scaffold(root: &Path) -> LoomResult<PathBuf> {
 
         let memory_file_path = agent_memory_file_path_for_profile(root, profile);
         if !memory_file_path.exists() {
-            write_json_pretty(&memory_file_path, &default_memory_snapshot(profile).as_json())?;
+            write_json_pretty(
+                &memory_file_path,
+                &default_memory_snapshot(profile).as_json(),
+            )?;
         }
         let current_session_path = agent_session_current_path_for_profile(root, profile);
         if !current_session_path.exists() {
-            write_json_pretty(&current_session_path, &default_session_record(profile).as_json())?;
+            write_json_pretty(
+                &current_session_path,
+                &default_session_record(profile).as_json(),
+            )?;
         }
     }
     Ok(registry_path)
@@ -156,7 +162,10 @@ pub fn agent_runtime_overview(root: &Path) -> LoomResult<AgentRuntimeOverview> {
     Ok(AgentRuntimeOverview {
         registry_path: agent_runtime_registry_path(root),
         profile_count: profiles.len(),
-        agent_ids: profiles.into_iter().map(|profile| profile.agent_id).collect(),
+        agent_ids: profiles
+            .into_iter()
+            .map(|profile| profile.agent_id)
+            .collect(),
         memory_ready_count,
         session_ready_count,
     })
@@ -278,7 +287,6 @@ pub fn write_agent_memory_snapshot(
     )?;
     agent_memory_summary(root, agent_id)
 }
-
 
 pub fn agent_provider_profile(root: &Path, agent_id: &str) -> LoomResult<String> {
     Ok(resolve_agent_runtime_profile(root, agent_id)?.provider_profile)
@@ -561,7 +569,10 @@ fn ensure_agent_operating_files(root: &Path, profile: &AgentRuntimeProfile) -> L
     )?;
     write_text_if_missing(
         &workspace_path.join(DEFAULT_HEARTBEAT_FILE),
-        &format!("# Heartbeat Policy\n- Policy: {}\n", profile.heartbeat_policy),
+        &format!(
+            "# Heartbeat Policy\n- Policy: {}\n",
+            profile.heartbeat_policy
+        ),
     )?;
     Ok(())
 }
@@ -638,7 +649,8 @@ fn resolve_agent_runtime_profile(root: &Path, agent_id: &str) -> LoomResult<Agen
 }
 
 fn agent_memory_file_path_for_profile(root: &Path, profile: &AgentRuntimeProfile) -> PathBuf {
-    root.join(&profile.memory_root).join(DEFAULT_AGENT_MEMORY_FILE)
+    root.join(&profile.memory_root)
+        .join(DEFAULT_AGENT_MEMORY_FILE)
 }
 
 fn agent_session_current_path_for_profile(root: &Path, profile: &AgentRuntimeProfile) -> PathBuf {
@@ -655,7 +667,10 @@ fn default_memory_snapshot(profile: &AgentRuntimeProfile) -> AgentMemorySnapshot
     let mut facts = BTreeMap::new();
     facts.insert("display_name".to_string(), profile.display_name.clone());
     facts.insert("role".to_string(), profile.role.clone());
-    facts.insert("provider_profile".to_string(), profile.provider_profile.clone());
+    facts.insert(
+        "provider_profile".to_string(),
+        profile.provider_profile.clone(),
+    );
     facts.insert("tool_scope".to_string(), profile.tool_scope.clone());
     facts.insert(
         "heartbeat_policy".to_string(),
@@ -773,8 +788,8 @@ fn parse_agent_session_record(raw: &str) -> LoomResult<AgentSessionRecord> {
 }
 
 fn parse_agent_memory_snapshot(raw: &str) -> LoomResult<AgentMemorySnapshot> {
-    let value: Value = serde_json::from_str(raw)
-        .map_err(|error| format!("invalid agent memory json: {error}"))?;
+    let value: Value =
+        serde_json::from_str(raw).map_err(|error| format!("invalid agent memory json: {error}"))?;
     let facts_value = value
         .get("facts")
         .and_then(Value::as_object)
@@ -840,7 +855,13 @@ fn unique_token() -> String {
 fn safe_file_token(input: &str) -> String {
     input
         .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() { ch.to_ascii_lowercase() } else { '-' })
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
         .collect::<String>()
         .trim_matches('-')
         .to_string()
@@ -893,7 +914,8 @@ mod tests {
     #[test]
     fn scaffold_writes_default_agent_registry_and_state_files() {
         let root = temp_path("loom-agent-runtime-scaffold");
-        let registry = ensure_agent_runtime_scaffold(&root).expect("scaffold agent runtime registry");
+        let registry =
+            ensure_agent_runtime_scaffold(&root).expect("scaffold agent runtime registry");
         assert!(registry.exists());
         let overview = agent_runtime_overview(&root).expect("agent runtime overview");
         assert_eq!(overview.profile_count, 7);
@@ -913,9 +935,14 @@ mod tests {
         let summary = agent_runtime_summary(&root, "pulse").expect("agent runtime summary");
         assert_eq!(summary.profile.display_name, "Pulse");
         assert_eq!(summary.profile.provider_profile, "local_ollama");
-        assert_eq!(summary.memory_snapshot.facts.get("role"), Some(&"compressor".to_string()));
+        assert_eq!(
+            summary.memory_snapshot.facts.get("role"),
+            Some(&"compressor".to_string())
+        );
         assert_eq!(summary.current_session.status, "idle");
-        assert!(summary.workspace_path.ends_with(Path::new("agents/pulse/workspace")));
+        assert!(summary
+            .workspace_path
+            .ends_with(Path::new("agents/pulse/workspace")));
     }
 
     #[test]
@@ -947,19 +974,40 @@ mod tests {
         let mut updates = BTreeMap::new();
         updates.insert("mission".to_string(), "governed execution".to_string());
         let summary = write_agent_memory_snapshot(&root, "forge", &updates).expect("write memory");
-        assert_eq!(summary.snapshot.facts.get("mission"), Some(&"governed execution".to_string()));
-        assert_eq!(summary.snapshot.facts.get("role"), Some(&"executor".to_string()));
+        assert_eq!(
+            summary.snapshot.facts.get("mission"),
+            Some(&"governed execution".to_string())
+        );
+        assert_eq!(
+            summary.snapshot.facts.get("role"),
+            Some(&"executor".to_string())
+        );
     }
-
 
     #[test]
     fn context_bundle_merges_global_and_agent_operating_files() {
         let root = temp_path("loom-agent-runtime-context");
         ensure_agent_runtime_scaffold(&root).expect("scaffold agent runtime registry");
         let bundle = agent_context_bundle(&root, "atlas").expect("agent context bundle");
-        assert!(bundle.sections.get("soul").unwrap_or(&String::new()).contains("Meridian Loom"));
-        assert!(bundle.sections.get("soul").unwrap_or(&String::new()).contains("Atlas"));
-        assert!(bundle.sections.get("memory").unwrap_or(&String::new()).contains("Provider profile"));
-        assert!(bundle.section_sources.get("agents").map(|items| !items.is_empty()).unwrap_or(false));
+        assert!(bundle
+            .sections
+            .get("soul")
+            .unwrap_or(&String::new())
+            .contains("Meridian Loom"));
+        assert!(bundle
+            .sections
+            .get("soul")
+            .unwrap_or(&String::new())
+            .contains("Atlas"));
+        assert!(bundle
+            .sections
+            .get("memory")
+            .unwrap_or(&String::new())
+            .contains("Provider profile"));
+        assert!(bundle
+            .section_sources
+            .get("agents")
+            .map(|items| !items.is_empty())
+            .unwrap_or(false));
     }
 }

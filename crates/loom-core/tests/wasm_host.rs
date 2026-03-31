@@ -1,16 +1,16 @@
+#[path = "../src/wasm_host.rs"]
+mod wasm_host;
 #[path = "../src/wasm_limits.rs"]
 mod wasm_limits;
 #[path = "../src/wasm_profiles.rs"]
 mod wasm_profiles;
-#[path = "../src/wasm_host.rs"]
-mod wasm_host;
 
 use wasm_host::{
     host_config_hints, render_host_config_human, render_host_config_json, run_wasm_guest,
     validate_host_config, HostBackend, WasmExecutionRequest, WasmGuestSource, WasmHostBuilder,
 };
-use wasm_profiles::{PoolingConfig, PoolingProfile};
 use wasm_limits::WasmStoreLimits;
+use wasm_profiles::{PoolingConfig, PoolingProfile};
 
 #[test]
 fn host_builder_defaults_to_truthful_preview_mode() {
@@ -30,7 +30,10 @@ fn host_builder_can_select_profile_and_backend() {
         .build()
         .expect("host config");
     let hints = host_config_hints(&config);
-    assert_eq!(hints.get("profile_name"), Some(&"host/standard".to_string()));
+    assert_eq!(
+        hints.get("profile_name"),
+        Some(&"host/standard".to_string())
+    );
     assert_eq!(hints.get("backend"), Some(&"wasmtime_ready".to_string()));
     assert_eq!(config.pooling.profile, PoolingProfile::Standard);
 }
@@ -49,7 +52,9 @@ fn host_builder_rejects_incompatible_store_and_pooling() {
         .with_pooling_config(PoolingConfig::from_profile(PoolingProfile::Heavy))
         .build();
     let errors = config.expect_err("should fail");
-    assert!(errors.iter().any(|error| error.contains("exceeds store limit")));
+    assert!(errors
+        .iter()
+        .any(|error| error.contains("exceeds store limit")));
 }
 
 #[test]
@@ -109,7 +114,9 @@ fn wasm_guest_execution_surfaces_configured_limits_and_profiles() {
             max_memories: 2,
             fuel_limit: Some(50_000),
         })
-        .with_pooling_config(PoolingConfig::from_profile(PoolingProfile::Minimal).with_max_memory_pages(1))
+        .with_pooling_config(
+            PoolingConfig::from_profile(PoolingProfile::Minimal).with_max_memory_pages(1),
+        )
         .build()
         .expect("host config");
     let request = WasmExecutionRequest {
