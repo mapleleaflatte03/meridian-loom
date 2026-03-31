@@ -107,29 +107,34 @@ impl SchedulerJob {
 
     fn from_json(raw: &str) -> SchedulerResult<(String, Self)> {
         let id = extract_json_string(raw, "\"id\"")
+            .map(|s| s.to_string())
             .ok_or_else(|| "id missing".to_string())?;
         let agent_id = extract_json_string(raw, "\"agent_id\"")
+            .map(|s| s.to_string())
             .ok_or_else(|| "agent_id missing".to_string())?;
         let org_id = extract_json_string(raw, "\"org_id\"")
+            .map(|s| s.to_string())
             .ok_or_else(|| "org_id missing".to_string())?;
         let action_type = extract_json_string(raw, "\"action_type\"")
+            .map(|s| s.to_string())
             .ok_or_else(|| "action_type missing".to_string())?;
         let resource = extract_json_string(raw, "\"resource\"")
+            .map(|s| s.to_string())
             .ok_or_else(|| "resource missing".to_string())?;
         let policy_class =
-            extract_json_string(raw, "\"policy_class\"").unwrap_or_else(|| "standard".to_string());
+            extract_json_string(raw, "\"policy_class\"").map(|s| s.to_string()).unwrap_or_else(|| "standard".to_string());
         let queue_bucket =
-            extract_json_string(raw, "\"queue_bucket\"").unwrap_or_else(|| "pending".to_string());
+            extract_json_string(raw, "\"queue_bucket\"").map(|s| s.to_string()).unwrap_or_else(|| "pending".to_string());
         let status_str = extract_json_string(raw, "\"status\"")
             .ok_or_else(|| "status missing".to_string())?;
-        let status = JobStatus::from_str(&status_str)?;
+        let status = JobStatus::from_str(status_str)?;
         let enqueued_at = extract_json_u64(raw, "\"enqueued_at\"")
             .ok_or_else(|| "enqueued_at missing".to_string())?;
         let started_at = extract_json_optional_u64(raw, "\"started_at\"");
         let completed_at = extract_json_optional_u64(raw, "\"completed_at\"");
         let attempt_count = extract_json_u32(raw, "\"attempt_count\"").unwrap_or(0);
-        let lease_owner = extract_json_optional_string(raw, "\"lease_owner\"");
-        let result_summary = extract_json_optional_string(raw, "\"result_summary\"");
+        let lease_owner = extract_json_optional_string(raw, "\"lease_owner\"").map(|s| s.to_string());
+        let result_summary = extract_json_optional_string(raw, "\"result_summary\"").map(|s| s.to_string());
         Ok((id, SchedulerJob {
             agent_id,
             org_id,
@@ -386,13 +391,13 @@ fn option_string_json(opt: &Option<String>) -> String {
     }
 }
 
-fn extract_json_string(section: &str, key: &str) -> Option<String> {
+fn extract_json_string<'a>(section: &'a str, key: &str) -> Option<&'a str> {
     let idx = section.find(key)?;
     let after = &section[idx + key.len()..];
     let first_quote = after.find('"')?;
     let rest = &after[first_quote + 1..];
     let end_quote = rest.find('"')?;
-    Some(rest[..end_quote].to_string())
+    Some(&rest[..end_quote])
 }
 
 fn extract_json_u64(section: &str, key: &str) -> Option<u64> {
@@ -431,7 +436,7 @@ fn extract_json_optional_u64(section: &str, key: &str) -> Option<u64> {
     rest[..end].trim().parse::<u64>().ok()
 }
 
-fn extract_json_optional_string(section: &str, key: &str) -> Option<String> {
+fn extract_json_optional_string<'a>(section: &'a str, key: &str) -> Option<&'a str> {
     let idx = section.find(key)?;
     let after = &section[idx + key.len()..];
     let colon = after.find(':')?;
@@ -442,7 +447,7 @@ fn extract_json_optional_string(section: &str, key: &str) -> Option<String> {
     let first_quote = rest.find('"')?;
     let inner = &rest[first_quote + 1..];
     let end_quote = inner.find('"')?;
-    Some(inner[..end_quote].to_string())
+    Some(&inner[..end_quote])
 }
 
 fn split_json_objects(body: &str) -> Vec<String> {
