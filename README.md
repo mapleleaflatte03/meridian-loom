@@ -73,6 +73,7 @@ These examples are intentionally concrete. They assume:
 - you installed `loom`
 - your Kernel repo is available at `/opt/meridian-kernel`
 - you are willing to keep the truth boundary explicit
+- you are fine using `local_foundry` as the default local org id on a fresh root
 
 If you have not initialized the Kernel yet, run example 3 first.
 
@@ -81,12 +82,13 @@ If you have not initialized the Kernel yet, run example 3 first.
 ```bash
 export LOOM_ROOT="${HOME}/.local/share/meridian-loom/runtime/default"
 export MERIDIAN_KERNEL_PATH=/opt/meridian-kernel
+export MERIDIAN_ORG_ID="${MERIDIAN_ORG_ID:-local_foundry}"
 
 loom init \
   --root "$LOOM_ROOT" \
   --mode embedded \
   --kernel-path "$MERIDIAN_KERNEL_PATH" \
-  --org-id local_foundry
+  --org-id "$MERIDIAN_ORG_ID"
 
 loom doctor --root "$LOOM_ROOT" --format human
 
@@ -94,11 +96,17 @@ loom action execute \
   --root "$LOOM_ROOT" \
   --kernel-path "$MERIDIAN_KERNEL_PATH" \
   --agent-id agent_atlas \
-  --org-id <org_id> \
+  --org-id "$MERIDIAN_ORG_ID" \
   --capability loom.terminal.exec.v1 \
   --payload-json '{"argv":["bash","-lc","printf \"hello from loom\\n\""],"working_dir":".","timeout_ms":2000,"max_output_bytes":4096}' \
   --estimated-cost-usd 0.05
 
+LATEST_JOB_ID="$(
+  loom job list --root "$LOOM_ROOT" --format json \
+    | python3 -c 'import json,sys; jobs=json.load(sys.stdin).get("jobs", []); print(jobs[0]["job_id"] if jobs else "")'
+)"
+
+loom job inspect --root "$LOOM_ROOT" --job-id "$LATEST_JOB_ID" --format human
 loom parity report --root "$LOOM_ROOT"
 loom shadow report --root "$LOOM_ROOT"
 ```
@@ -115,18 +123,23 @@ What you should see:
 ```bash
 export LOOM_ROOT="${HOME}/.local/share/meridian-loom/runtime/default"
 export MERIDIAN_KERNEL_PATH=/opt/meridian-kernel
+export MERIDIAN_ORG_ID="${MERIDIAN_ORG_ID:-local_foundry}"
 
 loom action execute \
   --root "$LOOM_ROOT" \
   --kernel-path "$MERIDIAN_KERNEL_PATH" \
   --agent-id agent_atlas \
-  --org-id <org_id> \
+  --org-id "$MERIDIAN_ORG_ID" \
   --capability loom.browser.navigate.v1 \
   --payload-json '{"session_id":"docs-example","url":"https://example.com","allowed_hosts":["example.com"],"wait_for":"dom_content_loaded","timeout_ms":4000,"capture_semantic_snapshot":true}' \
   --estimated-cost-usd 0.05
 
-loom job list --root "$LOOM_ROOT" --format human
-loom job inspect --root "$LOOM_ROOT" --job-id <job_id> --format human
+LATEST_JOB_ID="$(
+  loom job list --root "$LOOM_ROOT" --format json \
+    | python3 -c 'import json,sys; jobs=json.load(sys.stdin).get("jobs", []); print(jobs[0]["job_id"] if jobs else "")'
+)"
+
+loom job inspect --root "$LOOM_ROOT" --job-id "$LATEST_JOB_ID" --format human
 loom parity report --root "$LOOM_ROOT"
 ```
 
@@ -140,11 +153,12 @@ cd /opt/meridian-kernel
 python3 quickstart.py --init-only
 
 export LOOM_ROOT="${HOME}/.local/share/meridian-loom/runtime/default"
+export MERIDIAN_ORG_ID="${MERIDIAN_ORG_ID:-local_foundry}"
 loom init \
   --root "$LOOM_ROOT" \
   --mode embedded \
   --kernel-path /opt/meridian-kernel \
-  --org-id local_foundry
+  --org-id "$MERIDIAN_ORG_ID"
 
 loom contract show --root "$LOOM_ROOT" --kernel-path /opt/meridian-kernel
 loom doctor --root "$LOOM_ROOT" --format human
