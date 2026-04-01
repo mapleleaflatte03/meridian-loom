@@ -84,6 +84,7 @@ jobs:
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         shell: bash
         run: |
           set -euo pipefail
@@ -92,8 +93,8 @@ jobs:
             echo "no release assets downloaded" >&2
             exit 1
           fi
-          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            gh release upload "${GITHUB_REF_NAME}" "${files[@]}" --clobber
+          if gh release view "${GITHUB_REF_NAME}" --repo "${GH_REPO}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" "${files[@]}" --repo "${GH_REPO}" --clobber
           else
-            gh release create "${GITHUB_REF_NAME}" "${files[@]}" --verify-tag --title "${GITHUB_REF_NAME}" --notes "Official Meridian Loom v0.1 local runtime release."
+            gh release create "${GITHUB_REF_NAME}" "${files[@]}" --repo "${GH_REPO}" --title "${GITHUB_REF_NAME}" --notes "Official Meridian Loom v0.1 local runtime release."
           fi
