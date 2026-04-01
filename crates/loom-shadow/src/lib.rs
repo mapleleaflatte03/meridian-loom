@@ -51,11 +51,32 @@ use std::io::{self, ErrorKind, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream, ToSocketAddrs};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
+use std::hint::black_box;
 use std::process::Command;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub type ShadowResult<T> = Result<T, String>;
+
+// Security: Compare strings in constant time to prevent timing attacks.
+// Uses bitwise XOR and black_box to ensure the compiler doesn't optimize
+// the loop into a short-circuiting operation.
+fn constant_time_eq(a: &str, b: &str) -> bool {
+    let a_bytes = a.as_bytes();
+    let b_bytes = b.as_bytes();
+
+    if a_bytes.len() != b_bytes.len() {
+        return false;
+    }
+
+    let mut result: u8 = 0;
+    for (x, y) in a_bytes.iter().zip(b_bytes.iter()) {
+        result |= x ^ y;
+        black_box(result);
+    }
+
+    result == 0
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PreflightCapture {
@@ -4846,7 +4867,7 @@ fn handle_runtime_service_http_request(
             .strip_prefix("Bearer ")
             .unwrap_or_default()
             .to_string();
-        if presented != expected {
+        if !constant_time_eq(&presented, expected) {
             let payload = "{\"status\":\"unauthorized\",\"note\":\"service token required for this HTTP surface\"}\n".to_string();
             return Ok(RuntimeServiceReply {
                 status: "unauthorized".to_string(),

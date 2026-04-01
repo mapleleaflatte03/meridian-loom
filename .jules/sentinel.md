@@ -1,0 +1,4 @@
+## 2024-04-01 - Prevent Timing Attacks in Token Validation
+**Vulnerability:** A bearer token comparison in `handle_runtime_service_http_request` used the standard `!=` operator to check against an expected token.
+**Learning:** The default string comparison operator (`==` or `!=`) short-circuits execution as soon as a mismatch is found. This leaks information about how many initial characters were correctly guessed based on the function's execution time, opening the application to timing attacks. While `subtle` is an external dependency we avoid for simple checks, using bitwise XOR combined with `std::hint::black_box` inside a loop correctly implements an inline constant-time equality check in Rust.
+**Prevention:** Whenever validating auth tokens, secrets, or sensitive hashes, always use constant-time equality comparisons (e.g. iterating over bytes with bitwise XOR) instead of standard operators to prevent leaking the secret value's internal structure.
