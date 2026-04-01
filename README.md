@@ -13,6 +13,10 @@
 </p>
 
 <p align="center">
+  <img src="./docs/assets/install_in_60_seconds.gif" alt="Install Loom in one command, then run doctor and status to see the proof-first runtime surface." width="920">
+</p>
+
+<p align="center">
   <a href="docs/INSTALL.md">Install</a> ·
   <a href="docs/RUN_LOCAL.md">Run Local</a> ·
   <a href="docs/BENCHMARKS.md">Benchmarks</a> ·
