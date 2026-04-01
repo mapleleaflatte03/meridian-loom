@@ -281,75 +281,116 @@ fn collect_service_ingress_records(root: &Path) -> LoomResult<Vec<ServiceIngress
     fs::create_dir_all(&request_dir).map_err(io_err)?;
     fs::create_dir_all(&receipt_dir).map_err(io_err)?;
 
-    let mut records = Vec::new();
+    let mut receipt_files = std::collections::HashSet::new();
+    if let Ok(entries) = fs::read_dir(&receipt_dir) {
+        for entry in entries.filter_map(Result::ok) {
+            receipt_files.insert(entry.file_name());
+        }
+    }
+
+    let mut request_paths = Vec::new();
     for entry in fs::read_dir(&request_dir).map_err(io_err)? {
         let path = entry.map_err(io_err)?.path();
-        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
-            continue;
+        if path.extension().and_then(|ext| ext.to_str()) == Some("json") {
+            request_paths.push(path);
         }
-        let raw = fs::read_to_string(&path).map_err(io_err)?;
-        let request = serde_json::from_str::<Value>(&raw)
-            .map_err(|error| format!("invalid service ingress request json: {error}"))?;
-        let request_id = value_string_value(&request, "request_id", "");
-        let receipt_path = path
-            .file_name()
-            .map(|name| receipt_dir.join(name))
-            .filter(|candidate| candidate.exists());
-        let receipt = if let Some(receipt_path) = &receipt_path {
-            let raw = fs::read_to_string(receipt_path).map_err(io_err)?;
-            Some(
-                serde_json::from_str::<Value>(&raw)
-                    .map_err(|error| format!("invalid service ingress receipt json: {error}"))?,
-            )
-        } else {
-            None
-        };
-        let status = if receipt.is_some() {
-            value_string(
-                receipt.as_ref(),
-                "status",
-                value_string_value(&request, "status", "received").as_str(),
-            )
-        } else {
-            value_string_value(&request, "status", "received")
-        };
-        records.push(ServiceIngressRecord {
-            request_id,
-            request_type: value_string_value(&request, "request_type", ""),
-            status,
-            transport: if receipt.is_some() {
-                value_string(
-                    receipt.as_ref(),
-                    "transport",
-                    value_string_value(&request, "transport", "").as_str(),
-                )
-            } else {
-                value_string_value(&request, "transport", "")
-            },
-            ingress_target: value_string_value(
-                &request,
-                "ingress_target",
-                value_string(receipt.as_ref(), "service_target", "").as_str(),
-            ),
-            agent_id: value_string_value(&request, "agent_id", ""),
-            org_id: value_string_value(&request, "org_id", ""),
-            action_type: value_string_value(&request, "action_type", ""),
-            resource: value_string_value(&request, "resource", ""),
-            capability_name: value_string_value(&request, "capability_name", ""),
-            payload_json: value_string_value(&request, "payload_json", ""),
-            estimated_cost_usd: request
-                .get("estimated_cost_usd")
-                .and_then(Value::as_f64)
-                .unwrap_or(0.0),
-            received_at: value_string_value(&request, "received_at", ""),
-            accepted_at: value_string(receipt.as_ref(), "accepted_at", ""),
-            job_id: value_string(receipt.as_ref(), "job_id", ""),
-            policy_class: value_string(receipt.as_ref(), "policy_class", ""),
-            queue_path: value_string(receipt.as_ref(), "queue_path", ""),
-            request_path: path.clone(),
-            receipt_path,
-        });
     }
+
+    if request_paths.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let thread_count = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+    let chunk_size = (request_paths.len() + thread_count - 1) / thread_count;
+    let mut handles = Vec::new();
+
+    let receipt_files = std::sync::Arc::new(receipt_files);
+    let receipt_dir = std::sync::Arc::new(receipt_dir);
+
+    for chunk in request_paths.chunks(chunk_size) {
+        let chunk = chunk.to_vec();
+        let receipt_files = std::sync::Arc::clone(&receipt_files);
+        let receipt_dir = std::sync::Arc::clone(&receipt_dir);
+        let handle = std::thread::spawn(move || -> LoomResult<Vec<ServiceIngressRecord>> {
+            let mut chunk_records = Vec::new();
+            for path in chunk {
+                let raw = fs::read_to_string(&path).map_err(io_err)?;
+                let request = serde_json::from_str::<Value>(&raw)
+                    .map_err(|error| format!("invalid service ingress request json: {error}"))?;
+                let request_id = value_string_value(&request, "request_id", "");
+                let receipt_path = path
+                    .file_name()
+                    .filter(|name| receipt_files.contains(*name))
+                    .map(|name| receipt_dir.join(name));
+                let receipt = if let Some(receipt_path) = &receipt_path {
+                    let raw = fs::read_to_string(receipt_path).map_err(io_err)?;
+                    Some(
+                        serde_json::from_str::<Value>(&raw)
+                            .map_err(|error| format!("invalid service ingress receipt json: {error}"))?,
+                    )
+                } else {
+                    None
+                };
+                let status = if receipt.is_some() {
+                    value_string(
+                        receipt.as_ref(),
+                        "status",
+                        value_string_value(&request, "status", "received").as_str(),
+                    )
+                } else {
+                    value_string_value(&request, "status", "received")
+                };
+                chunk_records.push(ServiceIngressRecord {
+                    request_id,
+                    request_type: value_string_value(&request, "request_type", ""),
+                    status,
+                    transport: if receipt.is_some() {
+                        value_string(
+                            receipt.as_ref(),
+                            "transport",
+                            value_string_value(&request, "transport", "").as_str(),
+                        )
+                    } else {
+                        value_string_value(&request, "transport", "")
+                    },
+                    ingress_target: value_string_value(
+                        &request,
+                        "ingress_target",
+                        value_string(receipt.as_ref(), "service_target", "").as_str(),
+                    ),
+                    agent_id: value_string_value(&request, "agent_id", ""),
+                    org_id: value_string_value(&request, "org_id", ""),
+                    action_type: value_string_value(&request, "action_type", ""),
+                    resource: value_string_value(&request, "resource", ""),
+                    capability_name: value_string_value(&request, "capability_name", ""),
+                    payload_json: value_string_value(&request, "payload_json", ""),
+                    estimated_cost_usd: request
+                        .get("estimated_cost_usd")
+                        .and_then(Value::as_f64)
+                        .unwrap_or(0.0),
+                    received_at: value_string_value(&request, "received_at", ""),
+                    accepted_at: value_string(receipt.as_ref(), "accepted_at", ""),
+                    job_id: value_string(receipt.as_ref(), "job_id", ""),
+                    policy_class: value_string(receipt.as_ref(), "policy_class", ""),
+                    queue_path: value_string(receipt.as_ref(), "queue_path", ""),
+                    request_path: path.clone(),
+                    receipt_path,
+                });
+            }
+            Ok(chunk_records)
+        });
+        handles.push(handle);
+    }
+
+    let mut records = Vec::new();
+    for handle in handles {
+        match handle.join() {
+            Ok(Ok(chunk_records)) => records.extend(chunk_records),
+            Ok(Err(e)) => return Err(e),
+            Err(_) => return Err("thread panicked during service ingress record collection".to_string()),
+        }
+    }
+
     records.sort_by(|left, right| {
         right
             .received_at

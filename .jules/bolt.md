@@ -1,0 +1,3 @@
+## 2024-04-01 - Avoid repeated `path.exists()` calls on slow filesystems for log ingestion
+**Learning:** Found a major I/O bottleneck when parsing files in a directory. Doing `candidate.exists()` per loop iteration over thousands of parsed log requests incurs massive `stat` syscall overhead. Similarly, sequentially reading and JSON-parsing hundreds of log files is a CPU & I/O bottleneck.
+**Action:** When matching files across multiple directories or iterating over unknown file sets, pre-scan the target directory `file_name` into an O(1) in-memory `HashSet<OsString>`. To maximize throughput on ingestion parsing, read the list of files first, divide by core count, and use `std::thread::spawn` and `chunks()` to process them in parallel.
