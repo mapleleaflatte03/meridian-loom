@@ -196,8 +196,13 @@ pub(crate) fn handle_status(args: &[String]) -> LoomResult<()> {
     let root = root_from(take_value(args, "--root").as_deref())?;
     let base = status_human(&root)?;
     let service = runtime_service_status(&root, take_value(args, "--socket").as_deref())?;
+    let queue = queue_status(&root).ok();
     print_startup_banner();
-    print_human_block(&[base, render_runtime_service_human(&service)]);
+    let mut blocks = vec![base, render_runtime_service_human(&service)];
+    if let Some(snapshot) = queue {
+        blocks.push(render_queue_status_human(&snapshot));
+    }
+    print_human_block(&blocks);
     Ok(())
 }
 

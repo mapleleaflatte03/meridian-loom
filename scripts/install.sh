@@ -393,20 +393,20 @@ BANNER
     printf '[1;97m%s[0m
 ' 'MERIDIAN'
     printf '[38;5;245m%s[0m
-' 'CONSTITUTIONAL OS'
+' 'GOVERNED LOCAL RUNTIME'
     printf '[38;5;153m%s[0m
 
-' 'Loom v0.1.14 - governed runtime for bounded autonomous work.'
+' 'Loom v0.1.15 - official local runtime with bounded proof surfaces.'
   else
     printf '%s
 ' "$icon"
     printf '%s
 ' 'MERIDIAN'
     printf '%s
-' 'CONSTITUTIONAL OS'
+' 'GOVERNED LOCAL RUNTIME'
     printf '%s
 
-' 'Loom v0.1.14 - governed runtime for bounded autonomous work.'
+' 'Loom v0.1.15 - official local runtime with bounded proof surfaces.'
   fi
 }
 

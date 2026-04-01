@@ -9,9 +9,11 @@ The tarball produced by `scripts/package_release.sh` contains:
 - `bin/loom`
 - `config/loom.toml.example`
 - `docs/*.md`
+- `docs/BENCHMARKS.md`
 - `scripts/install_local.sh`
 - `scripts/release_local.sh`
 - `scripts/package_release.sh`
+- `scripts/bench_runtime.py`
 - `scripts/acceptance_local_service.sh`
 - `scripts/acceptance_container_service.sh`
 - `scripts/verify_release_local.sh`
@@ -31,12 +33,14 @@ The tarball produced by `scripts/package_release.sh` contains:
 
 ## Publish a tagged release
 
-Create and push a tag like `v0.1.14`. The GitHub release workflow builds the package archive for the host runner, attaches:
+Create and push a tag like `v0.1.15`. The GitHub release workflow builds and publishes four release assets:
 
-- `meridian-loom-<version>-<os>-<arch>.tar.gz`
-- `meridian-loom-<version>-<os>-<arch>.tar.gz.sha256`
+- `meridian-loom-<version>-linux-x86_64.tar.gz`
+- `meridian-loom-<version>-linux-aarch64.tar.gz`
+- `meridian-loom-<version>-darwin-x86_64.tar.gz`
+- `meridian-loom-<version>-darwin-aarch64.tar.gz`
 
-and publishes them on the matching GitHub Release.
+Each asset also gets a matching `.sha256` checksum file on the same GitHub Release.
 
 ## Install a release
 
@@ -67,5 +71,5 @@ Both run Loom in foreground mode so systemd owns the process lifecycle.
 
 ## Truth boundary
 
-A Loom release today is a production-oriented local runtime package. It is not
-a hosted runtime release and it is not a legacy-runtime cutover artifact.
+A Loom release today is an official production-oriented local runtime package.
+It is not a hosted runtime release and it is not a legacy-runtime cutover artifact.

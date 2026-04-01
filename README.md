@@ -5,90 +5,247 @@
 <p align="center">
   <img src="https://img.shields.io/badge/license-MIT-1f6feb?style=flat-square" alt="MIT license">
   <img src="https://img.shields.io/github/actions/workflow/status/mapleleaflatte03/meridian-loom/rust.yml?branch=main&style=flat-square" alt="Build passing">
-  <img src="https://img.shields.io/badge/version-0.1.14-0c1117?style=flat-square" alt="Version 0.1.14">
+  <img src="https://img.shields.io/badge/version-0.1.15-0c1117?style=flat-square" alt="Version 0.1.15">
 </p>
 
 <p align="center">
-  <strong>A governed local runtime for bounded autonomous work.</strong>
+  <strong>Install in one command. Run a governed job in minutes. Inspect the receipt instead of guessing.</strong>
 </p>
 
 <p align="center">
   <a href="docs/INSTALL.md">Install</a> ·
   <a href="docs/RUN_LOCAL.md">Run Local</a> ·
+  <a href="docs/BENCHMARKS.md">Benchmarks</a> ·
+  <a href="docs/RELEASE.md">Release</a> ·
   <a href="docs/SERVICE.md">Service</a> ·
-  <a href="docs/CONFIG.md">Config</a> ·
-  <a href="docs/OPERATIONS.md">Operations</a> ·
-  <a href="docs/ARCHITECTURE.md">Architecture</a>
+  <a href="docs/ARCHITECTURE.md">Architecture</a> ·
+  <a href="docs/MERIDIAN_PoGE_PROTOCOL.md">PoGE</a>
 </p>
 
 # Meridian Loom
 
-Meridian Loom is the primary hands-on product surface for Meridian v0.1.14. It carries the Meridian installer and CLI, provisions into the operator's home directory, and exposes the bounded execution primitives that operators can install, inspect, and run directly.
+Meridian Loom is the official Meridian v0.1 local runtime. It installs under
+the operator's home directory, exposes a full CLI, runs bounded terminal and
+browser jobs, and writes local proof, audit, queue, and parity artifacts you
+can inspect immediately.
 
-## Proof of Governed Execution (PoGE)
+If you want the shortest honest summary:
 
-The platform's cryptographic execution-receipt architecture is defined in the [Meridian PoGE Protocol RFC](docs/MERIDIAN_PoGE_PROTOCOL.md).
+- **Install:** one command, binary first
+- **Operate:** one CLI for doctor, status, jobs, queue, parity, service
+- **Prove:** every governed execution emits filesystem receipts and proof views
+- **Boundary:** local runtime is real; hosted replacement is not claimed here
 
-- Purpose: bind governed host-calls to verifiable receipts, Merkle roots, and future settlement surfaces.
-- Scope: Loom runtime host-call evidence and audit architecture, not a blanket claim that every future chain settlement primitive is already live here.
-
-## 1-Command Install
+## 1-command install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mapleleaflatte03/meridian-loom/main/scripts/install.sh | bash
 ```
 
-The installer now prefers a prebuilt GitHub release for the current host and only falls back to a source build when a compatible release asset is unavailable. It provisions the runtime under `$HOME/.local/share/meridian-loom`, links `loom` into `$HOME/.local/bin`, and seeds the built-in Wasm capability registry.
+The installer prefers prebuilt GitHub release assets for the current host and
+falls back to a source build only when no matching asset is available.
 
-## Runtime Primitive Story
+## What ships in the official v0.1 release
 
-Meridian Loom is the local runtime layer for the following primitive surfaces:
+- One-command installer with binary-first release installs
+- Prebuilt GitHub release assets for:
+  - Linux x86_64
+  - Linux arm64
+  - macOS x86_64
+  - macOS arm64
+- Local runtime root under `$HOME/.local/share/meridian-loom`
+- `loom` linked into `$HOME/.local/bin`
+- Built-in governed capabilities for:
+  - terminal execution
+  - browser navigation
+  - heartbeat scheduling
+- Queue, job, audit, parity, and runtime-service surfaces on disk
+- Proof of Governed Execution (PoGE) contract and receipt architecture
 
-- Terminal Execution: bounded local argv execution through the native Wasm host-call lane.
-- Browser Vision: bounded browser navigation and content capture through the local web/Wasm path.
-- Omni-channel Presence: declared gateway surface for delivery and presence routing.
-- Persistent Memory: architecture surface for durable memory records and state entries.
-- Heartbeat / Background Autonomy: built-in heartbeat scheduling primitive with local receipt logging and truthful scheduler boundaries.
-- Dynamic Skill Loading: imported workspace skills, plugin compatibility, and capability loading through the operator surface.
+## Quickstart: three copy-paste examples
 
-## What Ships In v0.1.14
+These examples are intentionally concrete. They assume:
 
-- 1-command installer with Meridian branding and binary-first release installs.
-- Polished interactive onboarding with stage cards, animated setup spinners, stronger info/ok/warn color hierarchy, route previews, and a tighter finish-line handoff.
-- Richer QuickStart and Manual provider branch cards that explain the Meridian path, operator handoff, and what doctor will validate next.
-- Non-interactive setup now renders as a log-friendly progress transcript with explicit start/ok/warn markers instead of collapsing spinner frames into noisy capture output.
-- Fresh installs now stay `fresh_no_auth` until the operator explicitly chooses a provider path.
-- Provider-aware runtime-ready summaries for OpenAI-compatible, custom endpoint, Codex, and local Ollama flows.
-- Setup state now distinguishes “provider configured, auth pending” from a completely fresh runtime.
-- `--codex-auth-path` now accepts `~/...` paths instead of forcing a fully expanded absolute path.
-- Local service lifecycle with foreground and background modes.
-- Tokenized local HTTP control plane.
-- Queue, job ledger, audit, parity, and shadow artifacts on disk.
-- Built-in Wasm capabilities for browser navigation, terminal execution, and heartbeat scheduling.
-- Capability tooling for list/show/import/verify/promote flows.
+- you installed `loom`
+- your Kernel repo is available at `/opt/meridian-kernel`
+- you are willing to keep the truth boundary explicit
 
-## Quick Start After Install
+If you have not initialized the Kernel yet, run example 3 first.
+
+### 1. Run one terminal job and inspect the receipt
+
+```bash
+export LOOM_ROOT="${HOME}/.local/share/meridian-loom/runtime/default"
+export MERIDIAN_KERNEL_PATH=/opt/meridian-kernel
+
+loom init \
+  --root "$LOOM_ROOT" \
+  --mode embedded \
+  --kernel-path "$MERIDIAN_KERNEL_PATH" \
+  --org-id local_foundry
+
+loom doctor --root "$LOOM_ROOT" --format human
+
+loom action execute \
+  --root "$LOOM_ROOT" \
+  --kernel-path "$MERIDIAN_KERNEL_PATH" \
+  --agent-id agent_atlas \
+  --org-id <org_id> \
+  --capability loom.terminal.exec.v1 \
+  --payload-json '{"argv":["bash","-lc","printf \"hello from loom\\n\""],"working_dir":".","timeout_ms":2000,"max_output_bytes":4096}' \
+  --estimated-cost-usd 0.05
+
+loom parity report --root "$LOOM_ROOT"
+loom shadow report --root "$LOOM_ROOT"
+```
+
+What you should see:
+
+- a governed decision
+- a runtime execution receipt
+- audit/parity artifact paths
+- one obvious next step if the run degraded
+
+### 2. Run bounded browser navigation and inspect proof
+
+```bash
+export LOOM_ROOT="${HOME}/.local/share/meridian-loom/runtime/default"
+export MERIDIAN_KERNEL_PATH=/opt/meridian-kernel
+
+loom action execute \
+  --root "$LOOM_ROOT" \
+  --kernel-path "$MERIDIAN_KERNEL_PATH" \
+  --agent-id agent_atlas \
+  --org-id <org_id> \
+  --capability loom.browser.navigate.v1 \
+  --payload-json '{"session_id":"docs-example","url":"https://example.com","allowed_hosts":["example.com"],"wait_for":"dom_content_loaded","timeout_ms":4000,"capture_semantic_snapshot":true}' \
+  --estimated-cost-usd 0.05
+
+loom job list --root "$LOOM_ROOT" --format human
+loom job inspect --root "$LOOM_ROOT" --job-id <job_id> --format human
+loom parity report --root "$LOOM_ROOT"
+```
+
+This proves the local browser host-call lane and its receipt surfaces. It does
+not claim broad hosted browser automation.
+
+### 3. Connect Loom to Kernel using `quickstart.py`
+
+```bash
+cd /opt/meridian-kernel
+python3 quickstart.py --init-only
+
+export LOOM_ROOT="${HOME}/.local/share/meridian-loom/runtime/default"
+loom init \
+  --root "$LOOM_ROOT" \
+  --mode embedded \
+  --kernel-path /opt/meridian-kernel \
+  --org-id local_foundry
+
+loom contract show --root "$LOOM_ROOT" --kernel-path /opt/meridian-kernel
+loom doctor --root "$LOOM_ROOT" --format human
+```
+
+If you want the Kernel demo dashboard as well:
+
+```bash
+cd /opt/meridian-kernel
+python3 quickstart.py --port 8080
+```
+
+That gives you the governed workspace while Loom remains the local execution
+surface.
+
+## Doctor and status should tell you what to do next
+
+The first-run commands worth memorizing are:
 
 ```bash
 loom doctor --root "$HOME/.local/share/meridian-loom/runtime/default" --format human
-loom capability list --root "$HOME/.local/share/meridian-loom/runtime/default" --format human
+loom status --root "$HOME/.local/share/meridian-loom/runtime/default"
 ```
 
-## Three-Part Stack
+The goal of both commands is simple:
 
-- [meridian-loom](https://github.com/mapleleaflatte03/meridian-loom): local runtime surface and operator tooling.
-- [meridian-kernel](https://github.com/mapleleaflatte03/meridian-kernel): governance, policy, authority, treasury, and court.
-- [meridian-intelligence](https://github.com/mapleleaflatte03/meridian-intelligence): public intelligence surface and route layer.
+- `doctor` tells you whether the runtime is ready, degraded, or blocked
+- `status` tells you where the runtime, queue, and service artifacts live
+- both should point to an obvious next command instead of forcing you to read the source
 
-## Truth Boundary
+## Benchmark harness
 
-- Local install, queue, audit, parity, and operator surfaces are real.
-- Terminal execution, browser navigation, and heartbeat scheduling are real local primitives with bounded scope.
-- Omni-channel presence and persistent memory should be claimed only through a bounded proof contract that names the exact live surface and its limits, rather than as a blanket hosted-runtime claim.
-- This repo does not claim hosted runtime replacement or broad production cutover.
-- Legacy compatibility surfaces remain only where they still serve migration or import compatibility.
+Loom now ships a tiny reproducible benchmark harness at
+[`scripts/bench_runtime.py`](scripts/bench_runtime.py). It measures short-lived
+CLI cold starts and approximate peak RSS on the same host.
 
-## Operational Surface
+Example:
+
+```bash
+python3 scripts/bench_runtime.py \
+  --iterations 5 \
+  --warmup 1 \
+  --case "loom status::./target/release/loom status --root /tmp/loom-bench-root" \
+  --case "openfang help::openfang --help" \
+  --case "ironclaw::ironclaw --help" \
+  --format markdown
+```
+
+Current reference run on the Meridian VPS (`2026-04-01`):
+
+| Case | Mean cold start (ms) | p95 (ms) | Peak RSS (MiB) |
+| --- | ---: | ---: | ---: |
+| `loom status` | 29.8 | 33.9 | 4.8 |
+| `openfang --help` | 28.5 | 30.8 | 2.8 |
+| `ironclaw --help` | 32.6 | 33.9 | 5.1 |
+
+Why this exists:
+
+- OpenFang is strong on one-binary operator packaging
+- IronClaw is strong on secure local-assistant ergonomics
+- Loom should make the comparison reproducible on one machine, with one script,
+  and with a clear boundary around what the numbers do and do not mean
+
+See [docs/BENCHMARKS.md](docs/BENCHMARKS.md) for the benchmark boundary and the
+recommended command choices.
+
+## Release story
+
+Loom releases are GitHub-first operator packages. Tagging `v0.1.15` builds and
+publishes release archives for:
+
+- Linux x86_64
+- Linux arm64
+- macOS x86_64
+- macOS arm64
+
+Each asset includes the Loom binary, example config, docs, installer helpers,
+systemd units, and a checksum file.
+
+See [docs/RELEASE.md](docs/RELEASE.md) for the release layout.
+
+## Three-part Meridian stack
+
+- [meridian-loom](https://github.com/mapleleaflatte03/meridian-loom): local runtime surface and operator tooling
+- [meridian-kernel](https://github.com/mapleleaflatte03/meridian-kernel): governance, policy, authority, treasury, and court
+- [meridian-intelligence](https://github.com/mapleleaflatte03/meridian-intelligence): public product surface and governed delivery routes
+
+## Proof of Governed Execution (PoGE)
+
+The cryptographic execution-receipt architecture is defined in the
+[Meridian PoGE Protocol RFC](docs/MERIDIAN_PoGE_PROTOCOL.md).
+
+- Purpose: bind governed host-calls to verifiable receipts, Merkle roots, and future settlement surfaces
+- Scope: Loom runtime host-call evidence and audit architecture
+- Boundary: this repo does not claim that every future settlement primitive is already live here
+
+## Truth boundary
+
+- Local install, queue, audit, parity, and runtime-service surfaces are real
+- Terminal execution, browser navigation, and heartbeat scheduling are real local primitives
+- Hosted runtime replacement is not claimed here
+- Multi-channel presence and memory should only be claimed through named proof surfaces, not vague runtime language
+- Compatibility and migration surfaces exist where they still help real operator cutovers; they do not turn Loom into a broad hosted-runtime claim
+
+## Operational surface
 
 - `loom init`, `loom doctor`, `loom health`, `loom status`
 - `loom start`, `loom stop`, `loom restart`, `loom logs`
@@ -101,6 +258,6 @@ loom capability list --root "$HOME/.local/share/meridian-loom/runtime/default" -
 
 ## Rehearsals
 
-- Operational rehearsals live in `scripts/tests/`.
-- Migration and backward-compatibility rehearsals live in `scripts/migration_tools/`.
-- Generated `examples/*-output.txt` transcripts are not checked in.
+- Operational rehearsals live in `scripts/tests/`
+- Migration and backward-compatibility rehearsals live in `scripts/migration_tools/`
+- Generated `examples/*-output.txt` transcripts are not checked in

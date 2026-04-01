@@ -6468,8 +6468,8 @@ pub fn render_queue_status_human(snapshot: &QueueStatusSnapshot) -> String {
     format!(
         r#"Meridian Loom // QUEUE STATUS
 =============================
-phase:       experimental local queue status
-boundary:    queue depth is locally inspectable; hosted queue orchestration is not
+phase:       official v0.1 local queue surface
+boundary:    queue depth is locally inspectable; hosted queue orchestration is not claimed
 
 Current state
 =============
@@ -7011,7 +7011,7 @@ pub fn render_runtime_service_human(snapshot: &RuntimeServiceSnapshot) -> String
     let health = runtime_service_health(snapshot);
     if !snapshot.available {
         return format!(
-            "Meridian Loom // RUNTIME SERVICE\n=================================\nphase:       experimental local runtime service\nboundary:    no service state captured yet; transport replacement remains future work\n\nCurrent state\n=============\nroot:                {}\nconfig:              {}\nservice_dir:         {}\nservice_lock:        {}\nmetrics:             {}\nsocket_path:         {}\nhttp_address:        {}\nhttp_token_required: {}\nruntime_state:       {}\nstdout_log:          {}\nevent_log:           {}\ningress_stream:      {}\nhealth:              {}\ntransport:           {}\npending_jobs:        {}\nprocessed_jobs:      {}\nfailed_jobs:         {}\nnote:                {}\n\nNext\n====\n1. loom service start --root {} --http-address 127.0.0.1:0 --max-jobs 1 --poll-seconds 1\n2. loom service submit --root {} --agent-id agent_atlas --action-type research --resource web_search --estimated-cost-usd 0.05\n3. loom service status --root {}\n",
+            "Meridian Loom // RUNTIME SERVICE\n=================================\nphase:       official v0.1 local runtime service\nboundary:    no service state captured yet; transport replacement remains future work\n\nCurrent state\n=============\nroot:                {}\nconfig:              {}\nservice_dir:         {}\nservice_lock:        {}\nmetrics:             {}\nsocket_path:         {}\nhttp_address:        {}\nhttp_token_required: {}\nruntime_state:       {}\nstdout_log:          {}\nevent_log:           {}\ningress_stream:      {}\nhealth:              {}\ntransport:           {}\npending_jobs:        {}\nprocessed_jobs:      {}\nfailed_jobs:         {}\nnote:                {}\n\nNext\n====\n1. loom service start --root {} --http-address 127.0.0.1:0 --max-jobs 1 --poll-seconds 1\n2. loom service submit --root {} --agent-id agent_atlas --action-type research --resource web_search --estimated-cost-usd 0.05\n3. loom service status --root {}\n",
             snapshot.root.display(),
             snapshot.config_path.display(),
             snapshot.service_dir.display(),
@@ -7037,7 +7037,7 @@ pub fn render_runtime_service_human(snapshot: &RuntimeServiceSnapshot) -> String
     }
 
     format!(
-        "Meridian Loom // RUNTIME SERVICE\n=================================\nphase:       experimental local runtime service\nboundary:    service-owned ingress is locally real; live replacement is not\n\nCurrent state\n=============\nroot:                {}\nconfig:              {}\nservice_dir:         {}\nservice_lock:        {}\nmetrics:             {}\nsocket_path:         {}\nhttp_address:        {}\nhttp_token_required: {}\ntransport:           {}\nhealth:              {}\nsession_id:          {}\npid:                 {}\nrunning:             {}\nstatus:              {}\nbooted_at:           {}\nupdated_at:          {}\nstopped_at:          {}\npoll_seconds:        {}\nmax_jobs:            {}\nmax_iterations:      {}\niterations_completed:{}\nrequests_received:   {}\nsubmitted:           {}\nprocessed:           {}\nallowed:             {}\ndenied:              {}\nfailed:              {}\npending_jobs:        {}\nprocessed_jobs:      {}\nfailed_jobs:         {}\nlast_request_id:     {}\nlast_job_id:         {}\nruntime_state:       {}\nstdout_log:          {}\nevent_log:           {}\ningress_stream:      {}\nstop_request:        {}\nnote:                {}\n\nNext\n====\n1. loom service submit --root {} --agent-id agent_atlas --action-type research --resource web_search --estimated-cost-usd 0.05\n2. loom service status --root {}\n3. loom parity report --root {}\n4. loom job inspect --job-id {} --root {}\n",
+        "Meridian Loom // RUNTIME SERVICE\n=================================\nphase:       official v0.1 local runtime service\nboundary:    service-owned ingress is locally real; live replacement is not claimed\n\nCurrent state\n=============\nroot:                {}\nconfig:              {}\nservice_dir:         {}\nservice_lock:        {}\nmetrics:             {}\nsocket_path:         {}\nhttp_address:        {}\nhttp_token_required: {}\ntransport:           {}\nhealth:              {}\nsession_id:          {}\npid:                 {}\nrunning:             {}\nstatus:              {}\nbooted_at:           {}\nupdated_at:          {}\nstopped_at:          {}\npoll_seconds:        {}\nmax_jobs:            {}\nmax_iterations:      {}\niterations_completed:{}\nrequests_received:   {}\nsubmitted:           {}\nprocessed:           {}\nallowed:             {}\ndenied:              {}\nfailed:              {}\npending_jobs:        {}\nprocessed_jobs:      {}\nfailed_jobs:         {}\nlast_request_id:     {}\nlast_job_id:         {}\nruntime_state:       {}\nstdout_log:          {}\nevent_log:           {}\ningress_stream:      {}\nstop_request:        {}\nnote:                {}\n\nNext\n====\n1. loom service submit --root {} --agent-id agent_atlas --action-type research --resource web_search --estimated-cost-usd 0.05\n2. loom service status --root {}\n3. loom parity report --root {}\n4. loom job inspect --job-id {} --root {}\n",
         snapshot.root.display(),
         snapshot.config_path.display(),
         snapshot.service_dir.display(),
@@ -11488,6 +11488,7 @@ if __name__ == '__main__':
         assert_eq!(job.status, "completed");
         let human = render_runtime_service_human(&snapshot);
         assert!(human.contains("RUNTIME SERVICE"));
+        assert!(human.contains("official v0.1 local runtime service"));
         assert!(human.contains("service-owned ingress is locally real"));
     }
 
@@ -12169,6 +12170,7 @@ print(json.dumps({'id': agent_id, 'name': 'Atlas', 'org_id': org_id, 'role': 'an
         assert_eq!(snapshot.sanction_sensitive_depth, 0);
         let human = render_queue_status_human(&snapshot);
         assert!(human.contains("QUEUE STATUS"));
+        assert!(human.contains("official v0.1 local queue surface"));
         assert!(human.contains("standard_depth:"));
         let json = render_queue_status_json(&snapshot);
         assert!(json.contains(r#""status": "queue_status""#));

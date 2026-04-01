@@ -428,18 +428,18 @@ fn render_startup_banner(color: bool) -> String {
     ]
     .join("\n");
     let version_line = format!(
-        "Loom v{} — governed runtime for bounded autonomous work.",
+        "Loom v{} — official local runtime with proof-first receipts.",
         env!("CARGO_PKG_VERSION")
     );
     if color {
         format!(
-            "\x1b[38;5;81m{}\x1b[0m\n\x1b[1;97mMERIDIAN\x1b[0m\n\x1b[38;5;245mCONSTITUTIONAL OS\x1b[0m\n\x1b[38;5;153m{}\x1b[0m\n\n",
+            "\x1b[38;5;81m{}\x1b[0m\n\x1b[1;97mMERIDIAN\x1b[0m\n\x1b[38;5;245mGOVERNED LOCAL RUNTIME\x1b[0m\n\x1b[38;5;153m{}\x1b[0m\n\n",
             icon,
             version_line,
         )
     } else {
         format!(
-            "{}\nMERIDIAN\nCONSTITUTIONAL OS\n{}\n\n",
+            "{}\nMERIDIAN\nGOVERNED LOCAL RUNTIME\n{}\n\n",
             icon, version_line,
         )
     }
@@ -751,5 +751,14 @@ mod tests {
         assert!(human.contains("expectation_summary: runtime_outcome=worker_rejected"));
         assert!(human.contains("failure_reason:    policy reject: missing fixture set"));
         assert!(human.contains("job_note:          reject reason: missing fixture set"));
+    }
+
+    #[test]
+    fn startup_banner_uses_official_runtime_wording() {
+        let banner = render_startup_banner(false);
+        assert!(banner.contains("MERIDIAN"));
+        assert!(banner.contains("GOVERNED LOCAL RUNTIME"));
+        assert!(banner.contains("official local runtime with proof-first receipts"));
+        assert!(!banner.contains("CONSTITUTIONAL OS"));
     }
 }

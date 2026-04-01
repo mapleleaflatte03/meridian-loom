@@ -1602,10 +1602,30 @@ pub fn doctor(root: &Path) -> LoomResult<Vec<Check>> {
 }
 
 pub fn render_doctor_human(checks: &[Check]) -> String {
-    let mut out = String::from(
-        "Meridian Loom // DOCTOR\n=======================\nphase:       production-oriented local runtime surface\nboundary:    local-first service is real; hosted replacement is not\n\n",
+    let ok_count = checks.iter().filter(|c| c.level == "OK").count();
+    let warn_count = checks.iter().filter(|c| c.level == "WARN").count();
+    let crit_count = checks.iter().filter(|c| c.level == "CRITICAL").count();
+    let overall = if crit_count > 0 {
+        "blocked"
+    } else if warn_count > 0 {
+        "attention_needed"
+    } else {
+        "ready"
+    };
+    let next_step = if crit_count > 0 || warn_count > 0 {
+        "loom doctor --root <path> --format human --fix"
+    } else {
+        "loom status --root <path>"
+    };
+    let mut out = format!(
+        "Meridian Loom // DOCTOR\n=======================\nrelease:     official v0.1 local runtime\nboundary:    local-first service and proof surfaces are real; hosted replacement is not\n\nSummary\n=======\noverall:     {}\nchecks:      {} total · {} ok · {} warn · {} critical\nnext_step:   {}\n\n",
+        overall,
+        checks.len(),
+        ok_count,
+        warn_count,
+        crit_count,
+        next_step,
     );
-    // Group by category
     let mut categories: Vec<&str> = Vec::new();
     for check in checks {
         if !categories.contains(&check.category) {
@@ -1632,17 +1652,6 @@ pub fn render_doctor_human(checks: &[Check]) -> String {
         }
         out.push('\n');
     }
-    // Summary
-    let ok_count = checks.iter().filter(|c| c.level == "OK").count();
-    let warn_count = checks.iter().filter(|c| c.level == "WARN").count();
-    let crit_count = checks.iter().filter(|c| c.level == "CRITICAL").count();
-    out.push_str(&format!(
-        "Summary: {} checks — {} OK, {} WARN, {} CRITICAL\n",
-        checks.len(),
-        ok_count,
-        warn_count,
-        crit_count
-    ));
     out
 }
 
@@ -1693,12 +1702,18 @@ pub fn render_health_human(healthy: bool, json: &str) -> String {
     let mode = extract_json_string(json, "\"mode\"").unwrap_or_else(|| "unknown".to_string());
     let org_id = extract_json_string(json, "\"org_id\"").unwrap_or_else(|| "unknown".to_string());
     let check_count = json.matches("\"label\"").count();
+    let next_step = if healthy {
+        "loom status --root <path>"
+    } else {
+        "loom doctor --root <path> --format human --fix"
+    };
     format!(
-        "Meridian Loom // HEALTH\n=======================\nstatus:      {}\nmode:        {}\norg_id:      {}\nchecks:      {}\nsource:      doctor-derived health summary\nnext_step:   loom doctor --root <path> --format human\n",
+        "Meridian Loom // HEALTH\n=======================\nrelease:     official v0.1 local runtime\nstatus:      {}\nmode:        {}\norg_id:      {}\nchecks:      {}\nsource:      doctor-derived health summary\nnext_step:   {}\n",
         status,
         mode,
         org_id,
-        check_count
+        check_count,
+        next_step,
     )
 }
 
@@ -1728,7 +1743,7 @@ pub fn status_human(root: &Path) -> LoomResult<String> {
             "provider_cfg: (unavailable)\nprovider_src: (unavailable)\ndefault_prof: (unavailable)\nprofile_cnt: 0\ncap_routes:  0\nagent_routes: 0\n".to_string()
         });
     Ok(format!(
-        "Meridian Loom // STATUS\n=======================\nmode:        {}\norg_id:      {}\nroot:        {}\nstate_dir:   {}\nrun_dir:     {}\nlog_dir:     {}\nartifact_dir:{}\nkernel_path: {}\ncapsule:     {}\nshadow:      {}\nqueue:       {}\n{}runtime:     experimental local queue supervisor + service shell\nexperimental_hooks: {}\n",
+        "Meridian Loom // STATUS\n=======================\nrelease:     official v0.1 local runtime\nboundary:    local root, queue, service, and proof artifacts are inspectable here\nmode:        {}\norg_id:      {}\nroot:        {}\nstate_dir:   {}\nrun_dir:     {}\nlog_dir:     {}\nartifact_dir:{}\nkernel_path: {}\ncapsule:     {}\nshadow:      {}\nqueue:       {}\n{}runtime:     local queue supervisor + service shell\ngovernance_surfaces: {}\n",
         config.mode,
         config.org_id,
         root.display(),
@@ -1888,7 +1903,7 @@ pub fn render_contract_human(snapshot: &ContractSnapshot) -> String {
     for (hook, value) in &snapshot.hooks {
         out.push_str(&format!("{:<18} {}\n", hook, value));
     }
-    out.push_str("\nexperimental_hook_paths\n-----------------------\n");
+    out.push_str("\ngovernance_hook_paths\n---------------------\n");
     for (hook, value) in &snapshot.experimental_hooks {
         out.push_str(&format!("{:<18} {}\n", hook, value));
     }
@@ -3131,6 +3146,39 @@ mod tests {
         assert!(queue_check
             .detail
             .contains(&root.join("state/delivery-queue").display().to_string()));
+    }
+
+    #[test]
+    fn doctor_human_render_includes_overall_summary() {
+        let human = render_doctor_human(&[
+            Check {
+                level: "OK",
+                label: "config",
+                detail: "loaded /tmp/loom.toml".to_string(),
+                category: "config",
+                remediation: "",
+            },
+            Check {
+                level: "WARN",
+                label: "provider",
+                detail: "provider auth missing".to_string(),
+                category: "provider",
+                remediation: "loom onboard",
+            },
+        ]);
+        assert!(human.contains("release:     official v0.1 local runtime"));
+        assert!(human.contains("overall:     attention_needed"));
+        assert!(human.contains("next_step:   loom doctor --root <path> --format human --fix"));
+    }
+
+    #[test]
+    fn status_human_render_uses_official_runtime_wording() {
+        let root = temp_path("loom-core-status");
+        init_workspace(&root, "embedded", Some("/tmp/meridian-kernel"), "org_demo")
+            .expect("init workspace");
+        let human = status_human(&root).expect("status");
+        assert!(human.contains("release:     official v0.1 local runtime"));
+        assert!(human.contains("runtime:     local queue supervisor + service shell"));
     }
 
     #[test]

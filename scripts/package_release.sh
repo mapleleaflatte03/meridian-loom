@@ -74,7 +74,7 @@ mkdir -p "$output_dir" "$staging_dir/bin" "$staging_dir/config" "$staging_dir/do
 install -m 0755 "$binary_path" "$staging_dir/bin/loom"
 install -m 0644 "$repo_root/loom.toml.example" "$staging_dir/config/loom.toml.example"
 
-for doc in INSTALL.md RUN_LOCAL.md SERVICE.md CONFIG.md OPERATIONS.md RELEASE.md ARCHITECTURE.md; do
+for doc in INSTALL.md RUN_LOCAL.md SERVICE.md CONFIG.md OPERATIONS.md RELEASE.md ARCHITECTURE.md BENCHMARKS.md; do
   install -m 0644 "$repo_root/docs/$doc" "$staging_dir/docs/$doc"
 done
 
@@ -83,6 +83,7 @@ install -m 0755 "$repo_root/scripts/install.sh" "$staging_dir/scripts/install.sh
 install -m 0755 "$repo_root/scripts/install_local.sh" "$staging_dir/scripts/install_local.sh"
 install -m 0755 "$repo_root/scripts/release_local.sh" "$staging_dir/scripts/release_local.sh"
 install -m 0755 "$repo_root/scripts/package_release.sh" "$staging_dir/scripts/package_release.sh"
+install -m 0755 "$repo_root/scripts/bench_runtime.py" "$staging_dir/scripts/bench_runtime.py"
 install -m 0755 "$repo_root/scripts/acceptance_local_service.sh" "$staging_dir/scripts/acceptance_local_service.sh"
 install -m 0755 "$repo_root/scripts/acceptance_container_service.sh" "$staging_dir/scripts/acceptance_container_service.sh"
 install -m 0755 "$repo_root/scripts/verify_release_local.sh" "$staging_dir/scripts/verify_release_local.sh"
@@ -99,7 +100,7 @@ os=${os}
 arch=${arch}
 kernel_path_hint=${kernel_path}
 build_target=${build_target:-native}
-truth=local-first experimental runtime; hosted replacement not claimed
+truth=official v0.1 local runtime package; hosted replacement not claimed
 layout=bin/loom config/loom.toml.example docs/ scripts/ deploy/systemd/ Dockerfile docker-compose.yml Makefile
 EOF
 
