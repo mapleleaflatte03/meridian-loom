@@ -7,8 +7,9 @@ It goes through:
 1. install
 2. initialize Kernel
 3. create a governed personal agent
-4. run the agent loop
-5. inspect delivery, memory, and proof receipts
+4. connect a delivery channel
+5. run the agent loop
+6. inspect delivery, memory, and proof receipts
 
 ## 1. Install Loom
 
@@ -56,7 +57,29 @@ loom new-agent \
   --webhook-url "https://example.com/loom-hook"
 ```
 
-## 4. Run the personal agent loop
+## 4. Connect a delivery channel
+
+```bash
+loom channel connect telegram \
+  --agent my-assistant \
+  --chat-id "123456789"
+```
+
+Or wire a webhook:
+
+```bash
+loom channel connect webhook \
+  --agent my-assistant \
+  --url "https://example.com/loom-hook"
+```
+
+Inspect the configured route:
+
+```bash
+loom channel show --agent my-assistant
+```
+
+## 5. Run the personal agent loop
 
 ```bash
 loom run-agent my-assistant
@@ -74,11 +97,12 @@ Inspect it:
 
 ```bash
 tail -f "${HOME}/.local/share/meridian-loom/runtime/default/run/personal-agents/my-assistant.log"
+loom run-agent status my-assistant
 loom status --root "$LOOM_ROOT"
 loom doctor --root "$LOOM_ROOT" --format human
 ```
 
-## 5. Inspect memory, channels, and receipts
+## 6. Inspect memory, channels, and receipts
 
 Search the seeded profile memory:
 
@@ -107,8 +131,10 @@ Then inspect the runtime surfaces:
 
 ```bash
 loom memory search --root "$LOOM_ROOT" --agent-id "$AGENT_ID" --category profile
+loom memory receipts --root "$LOOM_ROOT" --agent-id "$AGENT_ID" --limit 10
 loom channel status --root "$LOOM_ROOT" --format human
 loom channel deliveries --root "$LOOM_ROOT" --include-archived
+loom channel test --agent my-assistant --text "Loom delivery path check"
 loom job list --root "$LOOM_ROOT" --format human
 ```
 
@@ -123,5 +149,6 @@ $LOOM_ROOT/state/memory/receipts.jsonl
 After this quickstart, do one of these:
 
 - connect Telegram or webhook delivery in `agent.toml`
+- use `loom channel connect` / `loom channel test` instead of editing config by hand
 - inspect the generated agent folder under `~/.config/meridian-loom/agents/my-assistant/`
 - run the terminal and browser examples from the main README

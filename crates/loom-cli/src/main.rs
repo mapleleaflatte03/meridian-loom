@@ -304,7 +304,9 @@ Bootstrap\n\
   loom logs [--root PATH] [--lines N] [--follow]\n\
   loom config show [--root PATH]\n\
   loom new-agent --name NAME [--root PATH] [--kernel-path PATH] [--org-id ORG] [--telegram-chat-id ID] [--webhook-url URL] [--format human|json]\n\
-  loom run-agent NAME [--foreground] [--poll-seconds N]\n\
+  loom run-agent NAME [--foreground] [--poll-seconds N] [--once]\n\
+  loom run-agent status NAME [--format human|json]\n\
+  loom run-agent stop NAME [--format human|json]\n\
   loom provider status [--root PATH] [--format human|json]\n\
   loom provider route [--root PATH] [--capability NAME] [--model NAME] [--agent-id ID] [--org-id ORG] [--profile NAME] [--format human|json]\n\
   loom provider auth [--root PATH] [--profile NAME] [--format human|json]\n\
@@ -321,6 +323,12 @@ Bootstrap\n\
   loom binding resolve --channel ID --peer ID [--thread ID] [--agent-id ID] [--root PATH] [--format human|json]\n\
   loom channel status [--root PATH] [--format human|json]\n\
   loom channel sync [--root PATH] [--format human|json]\n\
+  loom channel show --agent NAME [--format human|json]\n\
+  loom channel connect telegram --agent NAME --chat-id ID [--token-env ENV]\n\
+  loom channel connect webhook --agent NAME --url URL [--header TEXT]\n\
+  loom channel disconnect telegram --agent NAME\n\
+  loom channel disconnect webhook --agent NAME\n\
+  loom channel test --agent NAME [--text TEXT] [--format human|json]\n\
   loom channel send --channel ID --recipient ID [--text TEXT|--file PATH] [--allow-receipt-hashes] [--allow-operator-diagnostics] [--root PATH] [--format human|json]\n\
   loom channel deliveries [--root PATH] [--limit N] [--include-archived|--archived-only] [--format human|json]\n\
   loom ingress status [--root PATH] [--format human|json]\n\
@@ -332,6 +340,7 @@ Bootstrap\n\
   loom context overlay --agent-id ID --session-id ID --section soul|user|tools|heartbeat|agents|memory [--text TEXT|--file PATH] [--root PATH] [--format human|json]\n\
   loom memory status [--root PATH] [--format human|json]\n\
   loom memory search --agent-id ID [--category NAME] [--key-prefix PREFIX] [--root PATH] [--format human|json]\n\
+  loom memory receipts [--agent-id ID] [--limit N] [--root PATH] [--format human|json]\n\
   loom memory write --agent-id ID --category NAME --key KEY --content TEXT [--source NAME] [--root PATH] [--format human|json]\n\
   loom memory remove --agent-id ID --category NAME --key KEY [--root PATH] [--format human|json]\n\
   loom memory prune [--root PATH] [--format human|json]\n\

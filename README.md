@@ -63,6 +63,10 @@ loom new-agent \
   --kernel-path "$MERIDIAN_KERNEL_PATH" \
   --org-id "$MERIDIAN_ORG_ID"
 
+loom channel connect telegram \
+  --agent my-assistant \
+  --chat-id "123456789"
+
 loom run-agent my-assistant
 ```
 
@@ -72,12 +76,15 @@ What that does:
 - registers the agent in Kernel with `runtime_binding=loom_native`
 - creates `~/.config/meridian-loom/agents/my-assistant/`
 - writes `agent.toml`, `README.md`, `MEMORY.md`, and `SOUL.md`
+- lets you connect Telegram or webhook delivery later with `loom channel connect`
 - starts a persistent heartbeat-driven governed loop when you run the agent
 
 Inspect it:
 
 ```bash
+loom run-agent status my-assistant
 loom status --root "$LOOM_ROOT"
+loom memory receipts --root "$LOOM_ROOT" --limit 10
 loom channel deliveries --root "$LOOM_ROOT" --include-archived
 ```
 
@@ -100,6 +107,8 @@ The full end-to-end flow lives in [docs/QUICKSTART.md](docs/QUICKSTART.md).
 - Personal agent commands:
   - `loom new-agent`
   - `loom run-agent`
+  - `loom channel connect/show/test`
+  - `loom memory receipts`
 - Queue, job, audit, parity, and runtime-service surfaces on disk
 - Memory receipts for write/read/remove/prune operations
 - Proof of Governed Execution (PoGE) contract and receipt architecture

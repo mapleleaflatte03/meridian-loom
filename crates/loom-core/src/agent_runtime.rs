@@ -635,11 +635,17 @@ fn ensure_profile_runtime_state(root: &Path, profile: &AgentRuntimeProfile) -> L
 
     let memory_file_path = agent_memory_file_path_for_profile(root, profile);
     if !memory_file_path.exists() {
-        write_json_pretty(&memory_file_path, &default_memory_snapshot(profile).as_json())?;
+        write_json_pretty(
+            &memory_file_path,
+            &default_memory_snapshot(profile).as_json(),
+        )?;
     }
     let current_session_path = agent_session_current_path_for_profile(root, profile);
     if !current_session_path.exists() {
-        write_json_pretty(&current_session_path, &default_session_record(profile).as_json())?;
+        write_json_pretty(
+            &current_session_path,
+            &default_session_record(profile).as_json(),
+        )?;
     }
     Ok(())
 }

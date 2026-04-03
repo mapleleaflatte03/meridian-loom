@@ -119,8 +119,13 @@ loom new-agent \
   --kernel-path "$MERIDIAN_KERNEL_PATH" \
   --org-id "$MERIDIAN_ORG_ID"
 
+loom channel connect telegram \
+  --agent my-assistant \
+  --chat-id "123456789"
+
 loom run-agent my-assistant
 loom doctor --root "$LOOM_ROOT" --format human
+loom memory receipts --root "$LOOM_ROOT" --limit 10
 loom channel deliveries --root "$LOOM_ROOT" --include-archived
 ```
 

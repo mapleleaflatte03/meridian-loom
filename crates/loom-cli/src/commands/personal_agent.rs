@@ -32,28 +32,28 @@ const PERSONAL_AGENT_TEMPLATE_SOUL: &str =
     include_str!("../../../../templates/personal-agent/SOUL.md");
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct PersonalAgentConfig {
-    name: String,
-    slug: String,
-    agent_id: String,
-    display_name: String,
-    role: String,
-    purpose: String,
-    provider_profile: String,
-    tool_scope: String,
-    org_id: String,
-    loom_root: String,
-    kernel_path: String,
-    service_http_address: String,
-    service_token: String,
-    heartbeat_capability: String,
-    heartbeat_every_seconds: u64,
-    telegram_enabled: bool,
-    telegram_chat_id: String,
-    telegram_token_env: String,
-    webhook_enabled: bool,
-    webhook_url: String,
-    webhook_header: String,
+pub(crate) struct PersonalAgentConfig {
+    pub(crate) name: String,
+    pub(crate) slug: String,
+    pub(crate) agent_id: String,
+    pub(crate) display_name: String,
+    pub(crate) role: String,
+    pub(crate) purpose: String,
+    pub(crate) provider_profile: String,
+    pub(crate) tool_scope: String,
+    pub(crate) org_id: String,
+    pub(crate) loom_root: String,
+    pub(crate) kernel_path: String,
+    pub(crate) service_http_address: String,
+    pub(crate) service_token: String,
+    pub(crate) heartbeat_capability: String,
+    pub(crate) heartbeat_every_seconds: u64,
+    pub(crate) telegram_enabled: bool,
+    pub(crate) telegram_chat_id: String,
+    pub(crate) telegram_token_env: String,
+    pub(crate) webhook_enabled: bool,
+    pub(crate) webhook_url: String,
+    pub(crate) webhook_header: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -68,6 +68,25 @@ struct PersonalAgentLoopState {
     last_tick_unix_ms: u64,
     heartbeat_id: String,
     log_path: String,
+    last_memory_sync_unix_ms: u64,
+    memory_entries_recalled: usize,
+    memory_entries_updated: usize,
+    primary_channel_id: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct PersonalAgentMemorySyncState {
+    config_hash: String,
+    soul_hash: String,
+    memory_hash: String,
+    last_sync_unix_ms: u64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct PersonalAgentMemorySyncResult {
+    changed_count: usize,
+    recalled_count: usize,
+    sync_state: PersonalAgentMemorySyncState,
 }
 
 pub(crate) fn handle_new_agent(args: &[String]) -> LoomResult<()> {
@@ -92,7 +111,11 @@ pub(crate) fn handle_new_agent(args: &[String]) -> LoomResult<()> {
 
     let requested_kernel_path = take_value(args, "--kernel-path").or_else(default_kernel_path);
     let requested_org_id = take_value(args, "--org-id");
-    let runtime_config = ensure_runtime_initialized(&root, requested_kernel_path.as_deref(), requested_org_id.as_deref())?;
+    let runtime_config = ensure_runtime_initialized(
+        &root,
+        requested_kernel_path.as_deref(),
+        requested_org_id.as_deref(),
+    )?;
     let kernel_path = kernel_path_for(&root, requested_kernel_path.as_deref())?;
     let org_id = requested_org_id.unwrap_or_else(|| runtime_config.org_id.clone());
     let role = take_value(args, "--role").unwrap_or_else(|| DEFAULT_PERSONAL_ROLE.to_string());
@@ -100,8 +123,8 @@ pub(crate) fn handle_new_agent(args: &[String]) -> LoomResult<()> {
         .unwrap_or_else(|| format!("Governed personal agent for {}", display_name.trim()));
     let provider_profile = take_value(args, "--provider-profile")
         .unwrap_or_else(|| DEFAULT_PERSONAL_PROVIDER_PROFILE.to_string());
-    let tool_scope = take_value(args, "--tool-scope")
-        .unwrap_or_else(|| DEFAULT_PERSONAL_TOOL_SCOPE.to_string());
+    let tool_scope =
+        take_value(args, "--tool-scope").unwrap_or_else(|| DEFAULT_PERSONAL_TOOL_SCOPE.to_string());
     let telegram_chat_id = take_value(args, "--telegram-chat-id").unwrap_or_default();
     let webhook_url = take_value(args, "--webhook-url").unwrap_or_default();
     let webhook_header = take_value(args, "--webhook-header").unwrap_or_default();
@@ -212,6 +235,12 @@ pub(crate) fn handle_run_agent(args: &[String]) -> LoomResult<()> {
         return Ok(());
     }
 
+    match args.first().map(String::as_str) {
+        Some("status") => return handle_run_agent_status(&args[1..]),
+        Some("stop") => return handle_run_agent_stop(&args[1..]),
+        _ => {}
+    }
+
     let Some(name_or_slug) = positional_name(args) else {
         return Err("run-agent requires an agent name or slug".to_string());
     };
@@ -223,6 +252,7 @@ pub(crate) fn handle_run_agent(args: &[String]) -> LoomResult<()> {
     let poll_seconds = take_value(args, "--poll-seconds")
         .and_then(|value| value.parse::<u64>().ok())
         .unwrap_or(15);
+    let once = has_flag(args, "--once");
     let foreground = has_flag(args, "--foreground") || has_flag(args, "--loop");
 
     if !foreground {
@@ -274,6 +304,12 @@ pub(crate) fn handle_run_agent(args: &[String]) -> LoomResult<()> {
                 last_tick_unix_ms: 0,
                 heartbeat_id: heartbeat_id.clone(),
                 log_path: loop_log_path.display().to_string(),
+                last_memory_sync_unix_ms: 0,
+                memory_entries_recalled: 0,
+                memory_entries_updated: 0,
+                primary_channel_id: configured_delivery_target(&config)
+                    .map(|target| target.channel_id)
+                    .unwrap_or_default(),
             },
         )?;
         print_startup_banner();
@@ -293,7 +329,15 @@ pub(crate) fn handle_run_agent(args: &[String]) -> LoomResult<()> {
         return Ok(());
     }
 
-    run_agent_loop(&root, &config, &state_path, &loop_log_path, &heartbeat_id, poll_seconds)
+    run_agent_loop(
+        &root,
+        &config,
+        &state_path,
+        &loop_log_path,
+        &heartbeat_id,
+        poll_seconds,
+        once,
+    )
 }
 
 fn run_agent_loop(
@@ -303,24 +347,62 @@ fn run_agent_loop(
     log_path: &Path,
     heartbeat_id: &str,
     poll_seconds: u64,
+    once: bool,
 ) -> LoomResult<()> {
     ensure_runtime_ready_for_personal_agent(root, config)?;
-    ensure_delivery_channels(root, config)?;
+    sync_personal_agent_delivery_channels(root, config)?;
     let delivery_target = configured_delivery_target(config);
     ensure_personal_agent_heartbeat(root, config, heartbeat_id, delivery_target)?;
-    let recalled = seed_personal_agent_memory(root, config)?;
+    clear_stop_request(root, &config.slug)?;
+    let mut memory_sync = sync_personal_agent_memory(root, config)?;
     let _ = open_agent_session(root, &config.agent_id, Some("personal_agent"))?;
 
     loop {
         let now_ms = now_unix_ms();
+        if stop_requested(root, &config.slug)? {
+            write_loop_state(
+                state_path,
+                &PersonalAgentLoopState {
+                    slug: config.slug.clone(),
+                    agent_id: config.agent_id.clone(),
+                    pid: std::process::id(),
+                    status: "stopped".to_string(),
+                    launched_at_unix_ms: load_loop_state(state_path)?
+                        .map(|state| state.launched_at_unix_ms)
+                        .unwrap_or(now_ms),
+                    updated_at_unix_ms: now_ms,
+                    last_run_status: "stop requested by operator".to_string(),
+                    last_tick_unix_ms: now_ms,
+                    heartbeat_id: heartbeat_id.to_string(),
+                    log_path: log_path.display().to_string(),
+                    last_memory_sync_unix_ms: memory_sync.sync_state.last_sync_unix_ms,
+                    memory_entries_recalled: memory_sync.recalled_count,
+                    memory_entries_updated: memory_sync.changed_count,
+                    primary_channel_id: configured_delivery_target(config)
+                        .map(|target| target.channel_id)
+                        .unwrap_or_default(),
+                },
+            )?;
+            clear_stop_request(root, &config.slug)?;
+            return Ok(());
+        }
+
+        let latest_sync = sync_personal_agent_memory(root, config)?;
+        if latest_sync.changed_count > 0 || latest_sync.recalled_count > 0 {
+            memory_sync = latest_sync;
+        }
         let due = recurring::claim_due_heartbeats(root, now_ms, 8)?;
         let mut last_status = if due.is_empty() {
-            format!("idle; recall_entries={}", recalled)
+            format!(
+                "idle; recall_entries={} updated_entries={}",
+                memory_sync.recalled_count, memory_sync.changed_count
+            )
         } else {
             format!("dispatching {} heartbeat(s)", due.len())
         };
         for record in due {
             let run = dispatch_heartbeat_run(root, &record)?;
+            memory_sync = recall_personal_agent_memory(root, config)?;
             last_status = format!("{} => {}", record.heartbeat_id, run.status);
         }
         let _ = loom_core::agent_runtime::commit_agent_session(
@@ -344,12 +426,44 @@ fn run_agent_loop(
                     .map(|state| state.launched_at_unix_ms)
                     .unwrap_or(now_ms),
                 updated_at_unix_ms: now_ms,
-                last_run_status: last_status,
+                last_run_status: last_status.clone(),
                 last_tick_unix_ms: now_ms,
                 heartbeat_id: heartbeat_id.to_string(),
                 log_path: log_path.display().to_string(),
+                last_memory_sync_unix_ms: memory_sync.sync_state.last_sync_unix_ms,
+                memory_entries_recalled: memory_sync.recalled_count,
+                memory_entries_updated: memory_sync.changed_count,
+                primary_channel_id: configured_delivery_target(config)
+                    .map(|target| target.channel_id)
+                    .unwrap_or_default(),
             },
         )?;
+        if once {
+            write_loop_state(
+                state_path,
+                &PersonalAgentLoopState {
+                    slug: config.slug.clone(),
+                    agent_id: config.agent_id.clone(),
+                    pid: 0,
+                    status: "completed_once".to_string(),
+                    launched_at_unix_ms: load_loop_state(state_path)?
+                        .map(|state| state.launched_at_unix_ms)
+                        .unwrap_or(now_ms),
+                    updated_at_unix_ms: now_ms,
+                    last_run_status: last_status.clone(),
+                    last_tick_unix_ms: now_ms,
+                    heartbeat_id: heartbeat_id.to_string(),
+                    log_path: log_path.display().to_string(),
+                    last_memory_sync_unix_ms: memory_sync.sync_state.last_sync_unix_ms,
+                    memory_entries_recalled: memory_sync.recalled_count,
+                    memory_entries_updated: memory_sync.changed_count,
+                    primary_channel_id: configured_delivery_target(config)
+                        .map(|target| target.channel_id)
+                        .unwrap_or_default(),
+                },
+            )?;
+            return Ok(());
+        }
         thread::sleep(Duration::from_secs(poll_seconds.max(5)));
     }
 }
@@ -371,11 +485,21 @@ fn ensure_runtime_ready_for_personal_agent(
         heartbeat_policy: "persistent".to_string(),
     };
     let _ = upsert_agent_runtime_profile(root, &profile)?;
-    let _ = write_agent_memory_snapshot(root, &config.agent_id, &BTreeMap::from([
-        ("personal_agent_slug".to_string(), config.slug.clone()),
-        ("service_http_address".to_string(), runtime_config.service_http_address.clone()),
-        ("heartbeat_capability".to_string(), config.heartbeat_capability.clone()),
-    ]))?;
+    let _ = write_agent_memory_snapshot(
+        root,
+        &config.agent_id,
+        &BTreeMap::from([
+            ("personal_agent_slug".to_string(), config.slug.clone()),
+            (
+                "service_http_address".to_string(),
+                runtime_config.service_http_address.clone(),
+            ),
+            (
+                "heartbeat_capability".to_string(),
+                config.heartbeat_capability.clone(),
+            ),
+        ]),
+    )?;
     if !runtime_service_status(root, None)?.running {
         let start_args = vec![
             "--root".to_string(),
@@ -403,7 +527,10 @@ fn ensure_runtime_ready_for_personal_agent(
     Ok(())
 }
 
-fn ensure_delivery_channels(root: &Path, config: &PersonalAgentConfig) -> LoomResult<()> {
+pub(crate) fn sync_personal_agent_delivery_channels(
+    root: &Path,
+    config: &PersonalAgentConfig,
+) -> LoomResult<()> {
     let runtime_config = read_config(root)?;
     let mut manifest = onboarding::load_onboard_manifest(root)?;
     if config.telegram_enabled {
@@ -432,6 +559,29 @@ fn ensure_delivery_channels(root: &Path, config: &PersonalAgentConfig) -> LoomRe
                 streaming: "async".to_string(),
                 note: format!(
                     "personal_agent={} gateway={}",
+                    config.slug, runtime_config.service_http_address
+                ),
+            },
+        )?;
+    } else {
+        channels::upsert_channel_record(
+            root,
+            &ChannelRecord {
+                channel_id: webhook_channel_id(&config.slug),
+                kind: "webhook".to_string(),
+                enabled: false,
+                endpoint: config.webhook_url.clone(),
+                auth_mode: if config.webhook_header.trim().is_empty() {
+                    "none".to_string()
+                } else {
+                    "inline_header".to_string()
+                },
+                credential_ref: config.webhook_header.clone(),
+                dm_policy: "per-agent".to_string(),
+                group_policy: String::new(),
+                streaming: "async".to_string(),
+                note: format!(
+                    "personal_agent={} gateway={} status=disabled",
                     config.slug, runtime_config.service_http_address
                 ),
             },
@@ -515,7 +665,88 @@ fn seed_personal_agent_memory(root: &Path, config: &PersonalAgentConfig) -> Loom
     Ok(recalled.len())
 }
 
-fn configured_delivery_target(config: &PersonalAgentConfig) -> Option<HeartbeatDeliveryTarget> {
+fn sync_personal_agent_memory(
+    root: &Path,
+    config: &PersonalAgentConfig,
+) -> LoomResult<PersonalAgentMemorySyncResult> {
+    let service = MemoryService::with_defaults(root);
+    let state_path = personal_agent_memory_sync_state_path(root, &config.slug)?;
+    let previous = load_memory_sync_state(&state_path)?;
+    let agent_dir = personal_agent_config_path(&config.slug)?
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| "personal agent directory was not found".to_string())?;
+
+    let config_body = render_personal_agent_config(config);
+    let soul_body = fs::read_to_string(agent_dir.join("SOUL.md")).unwrap_or_default();
+    let memory_body = fs::read_to_string(agent_dir.join("MEMORY.md")).unwrap_or_default();
+
+    let current = PersonalAgentMemorySyncState {
+        config_hash: fingerprint_text(&config_body),
+        soul_hash: fingerprint_text(&soul_body),
+        memory_hash: fingerprint_text(&memory_body),
+        last_sync_unix_ms: now_unix_ms(),
+    };
+
+    let mut changed_count = 0usize;
+    if previous.config_hash != current.config_hash {
+        let _ = service.write(
+            &config.agent_id,
+            "profile",
+            "agent-config",
+            &compact_memory_body(&config_body),
+            "loom.personal-agent.sync",
+        )?;
+        changed_count += 1;
+    }
+    if previous.soul_hash != current.soul_hash {
+        let _ = service.write(
+            &config.agent_id,
+            "soul",
+            "operator-soul",
+            &compact_memory_body(&soul_body),
+            "loom.personal-agent.sync",
+        )?;
+        changed_count += 1;
+    }
+    if previous.memory_hash != current.memory_hash {
+        let _ = service.write(
+            &config.agent_id,
+            "notes",
+            "operator-memory",
+            &compact_memory_body(&memory_body),
+            "loom.personal-agent.sync",
+        )?;
+        changed_count += 1;
+    }
+
+    write_memory_sync_state(&state_path, &current)?;
+    let recalled = recall_personal_agent_memory(root, config)?;
+    Ok(PersonalAgentMemorySyncResult {
+        changed_count,
+        recalled_count: recalled.recalled_count,
+        sync_state: current,
+    })
+}
+
+fn recall_personal_agent_memory(
+    root: &Path,
+    config: &PersonalAgentConfig,
+) -> LoomResult<PersonalAgentMemorySyncResult> {
+    let service = MemoryService::with_defaults(root);
+    let entries = service.search(&config.agent_id, None, None)?;
+    let state =
+        load_memory_sync_state(&personal_agent_memory_sync_state_path(root, &config.slug)?)?;
+    Ok(PersonalAgentMemorySyncResult {
+        changed_count: 0,
+        recalled_count: entries.len(),
+        sync_state: state,
+    })
+}
+
+pub(crate) fn configured_delivery_target(
+    config: &PersonalAgentConfig,
+) -> Option<HeartbeatDeliveryTarget> {
     if config.telegram_enabled && !config.telegram_chat_id.trim().is_empty() {
         return Some(HeartbeatDeliveryTarget {
             channel_id: "telegram".to_string(),
@@ -548,7 +779,9 @@ fn ensure_runtime_initialized(
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .or(fallback_kernel.as_deref())
-                .ok_or_else(|| "kernel path is required to bootstrap a personal agent".to_string())?;
+                .ok_or_else(|| {
+                    "kernel path is required to bootstrap a personal agent".to_string()
+                })?;
             config.kernel_path = kernel_path.to_string();
             let _ = loom_core::write_config(root, &config)?;
         }
@@ -613,7 +846,7 @@ fn register_kernel_agent(
         .ok_or_else(|| "kernel agent registration did not return an agent id".to_string())
 }
 
-fn load_personal_agent_config(name_or_slug: &str) -> LoomResult<PersonalAgentConfig> {
+pub(crate) fn load_personal_agent_config(name_or_slug: &str) -> LoomResult<PersonalAgentConfig> {
     let slug = sanitize_personal_slug(name_or_slug);
     let direct = personal_agent_config_path(&slug)?;
     if direct.exists() {
@@ -621,7 +854,10 @@ fn load_personal_agent_config(name_or_slug: &str) -> LoomResult<PersonalAgentCon
     }
     let root = personal_agents_config_root()?;
     if !root.exists() {
-        return Err(format!("personal agent config was not found for '{}'", name_or_slug));
+        return Err(format!(
+            "personal agent config was not found for '{}'",
+            name_or_slug
+        ));
     }
     for entry in fs::read_dir(&root).map_err(|error| error.to_string())? {
         let entry = entry.map_err(|error| error.to_string())?;
@@ -637,7 +873,10 @@ fn load_personal_agent_config(name_or_slug: &str) -> LoomResult<PersonalAgentCon
             return Ok(config);
         }
     }
-    Err(format!("personal agent config was not found for '{}'", name_or_slug))
+    Err(format!(
+        "personal agent config was not found for '{}'",
+        name_or_slug
+    ))
 }
 
 fn parse_personal_agent_config(path: &Path) -> LoomResult<PersonalAgentConfig> {
@@ -693,7 +932,10 @@ fn parse_personal_agent_config(path: &Path) -> LoomResult<PersonalAgentConfig> {
     })
 }
 
-fn write_personal_agent_config(path: &Path, config: &PersonalAgentConfig) -> LoomResult<()> {
+pub(crate) fn write_personal_agent_config(
+    path: &Path,
+    config: &PersonalAgentConfig,
+) -> LoomResult<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
@@ -775,13 +1017,21 @@ fn render_personal_agent_template(template: &str, config: &PersonalAgentConfig) 
         )
         .replace(
             "{{TELEGRAM_ENABLED}}",
-            if config.telegram_enabled { "true" } else { "false" },
+            if config.telegram_enabled {
+                "true"
+            } else {
+                "false"
+            },
         )
         .replace("{{TELEGRAM_CHAT_ID}}", &config.telegram_chat_id)
         .replace("{{TELEGRAM_TOKEN_ENV}}", &config.telegram_token_env)
         .replace(
             "{{WEBHOOK_ENABLED}}",
-            if config.webhook_enabled { "true" } else { "false" },
+            if config.webhook_enabled {
+                "true"
+            } else {
+                "false"
+            },
         )
         .replace("{{WEBHOOK_URL}}", &config.webhook_url)
         .replace("{{WEBHOOK_HEADER}}", &config.webhook_header)
@@ -791,7 +1041,7 @@ fn personal_agents_config_root() -> LoomResult<PathBuf> {
     Ok(config_home()?.join("meridian-loom").join("agents"))
 }
 
-fn personal_agent_config_path(slug: &str) -> LoomResult<PathBuf> {
+pub(crate) fn personal_agent_config_path(slug: &str) -> LoomResult<PathBuf> {
     Ok(personal_agents_config_root()?.join(slug).join("agent.toml"))
 }
 
@@ -809,11 +1059,25 @@ fn personal_agent_state_path(root: &Path, slug: &str) -> LoomResult<PathBuf> {
         .join(format!("{}.state.json", slug)))
 }
 
+fn personal_agent_stop_request_path(root: &Path, slug: &str) -> LoomResult<PathBuf> {
+    Ok(root
+        .join("run")
+        .join("personal-agents")
+        .join(format!("{}.stop", slug)))
+}
+
+fn personal_agent_memory_sync_state_path(root: &Path, slug: &str) -> LoomResult<PathBuf> {
+    Ok(root
+        .join("run")
+        .join("personal-agents")
+        .join(format!("{}.memory-sync.json", slug)))
+}
+
 fn heartbeat_id_for_slug(slug: &str) -> String {
     format!("personal-{}-heartbeat", slug)
 }
 
-fn webhook_channel_id(slug: &str) -> String {
+pub(crate) fn webhook_channel_id(slug: &str) -> String {
     format!("webhook_{}", slug)
 }
 
@@ -840,10 +1104,7 @@ fn default_kernel_path() -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-fn required_config_value(
-    values: &BTreeMap<String, String>,
-    key: &str,
-) -> LoomResult<String> {
+fn required_config_value(values: &BTreeMap<String, String>, key: &str) -> LoomResult<String> {
     values
         .get(key)
         .cloned()
@@ -874,8 +1135,7 @@ fn load_loop_state(path: &Path) -> LoomResult<Option<PersonalAgentLoopState>> {
         return Ok(None);
     }
     let raw = fs::read_to_string(path).map_err(|error| error.to_string())?;
-    let value: serde_json::Value =
-        serde_json::from_str(&raw).map_err(|error| error.to_string())?;
+    let value: serde_json::Value = serde_json::from_str(&raw).map_err(|error| error.to_string())?;
     Ok(Some(PersonalAgentLoopState {
         slug: value
             .get("slug")
@@ -923,6 +1183,23 @@ fn load_loop_state(path: &Path) -> LoomResult<Option<PersonalAgentLoopState>> {
             .and_then(serde_json::Value::as_str)
             .unwrap_or_default()
             .to_string(),
+        last_memory_sync_unix_ms: value
+            .get("last_memory_sync_unix_ms")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or_default(),
+        memory_entries_recalled: value
+            .get("memory_entries_recalled")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or_default() as usize,
+        memory_entries_updated: value
+            .get("memory_entries_updated")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or_default() as usize,
+        primary_channel_id: value
+            .get("primary_channel_id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
     }))
 }
 
@@ -941,9 +1218,101 @@ fn write_loop_state(path: &Path, state: &PersonalAgentLoopState) -> LoomResult<(
         "last_tick_unix_ms": state.last_tick_unix_ms,
         "heartbeat_id": state.heartbeat_id,
         "log_path": state.log_path,
+        "last_memory_sync_unix_ms": state.last_memory_sync_unix_ms,
+        "memory_entries_recalled": state.memory_entries_recalled,
+        "memory_entries_updated": state.memory_entries_updated,
+        "primary_channel_id": state.primary_channel_id,
     }))
     .map_err(|error| error.to_string())?;
     fs::write(path, format!("{}\n", rendered)).map_err(|error| error.to_string())
+}
+
+fn load_memory_sync_state(path: &Path) -> LoomResult<PersonalAgentMemorySyncState> {
+    if !path.exists() {
+        return Ok(PersonalAgentMemorySyncState::default());
+    }
+    let raw = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let value: serde_json::Value = serde_json::from_str(&raw).map_err(|error| error.to_string())?;
+    Ok(PersonalAgentMemorySyncState {
+        config_hash: value
+            .get("config_hash")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        soul_hash: value
+            .get("soul_hash")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        memory_hash: value
+            .get("memory_hash")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        last_sync_unix_ms: value
+            .get("last_sync_unix_ms")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or_default(),
+    })
+}
+
+fn write_memory_sync_state(path: &Path, state: &PersonalAgentMemorySyncState) -> LoomResult<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let rendered = serde_json::to_string_pretty(&serde_json::json!({
+        "config_hash": state.config_hash,
+        "soul_hash": state.soul_hash,
+        "memory_hash": state.memory_hash,
+        "last_sync_unix_ms": state.last_sync_unix_ms,
+    }))
+    .map_err(|error| error.to_string())?;
+    fs::write(path, format!("{}\n", rendered)).map_err(|error| error.to_string())
+}
+
+fn stop_requested(root: &Path, slug: &str) -> LoomResult<bool> {
+    Ok(personal_agent_stop_request_path(root, slug)?.exists())
+}
+
+fn clear_stop_request(root: &Path, slug: &str) -> LoomResult<()> {
+    let path = personal_agent_stop_request_path(root, slug)?;
+    if path.exists() {
+        fs::remove_file(path).map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn write_stop_request(root: &Path, slug: &str) -> LoomResult<PathBuf> {
+    let path = personal_agent_stop_request_path(root, slug)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    fs::write(&path, b"stop\n").map_err(|error| error.to_string())?;
+    Ok(path)
+}
+
+fn fingerprint_text(input: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    input.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+fn compact_memory_body(input: &str) -> String {
+    const MAX_BYTES: usize = 12_000;
+    let trimmed = input.trim();
+    if trimmed.len() <= MAX_BYTES {
+        return trimmed.to_string();
+    }
+    let mut end = MAX_BYTES;
+    while !trimmed.is_char_boundary(end) {
+        end = end.saturating_sub(1);
+    }
+    format!(
+        "{}\n\n[loom.personal-agent.sync truncated {} bytes]",
+        &trimmed[..end],
+        trimmed.len().saturating_sub(end)
+    )
 }
 
 fn pid_is_running(pid: u32) -> bool {
@@ -953,9 +1322,138 @@ fn pid_is_running(pid: u32) -> bool {
     Command::new("kill")
         .arg("-0")
         .arg(pid.to_string())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status()
         .map(|status| status.success())
         .unwrap_or(false)
+}
+
+fn handle_run_agent_status(args: &[String]) -> LoomResult<()> {
+    let Some(name_or_slug) = positional_name(args) else {
+        return Err("run-agent status requires an agent name or slug".to_string());
+    };
+    let config = load_personal_agent_config(&name_or_slug)?;
+    let root = root_from(Some(&config.loom_root))?;
+    let state_path = personal_agent_state_path(&root, &config.slug)?;
+    let stop_path = personal_agent_stop_request_path(&root, &config.slug)?;
+    let state = load_loop_state(&state_path)?;
+    let running = state
+        .as_ref()
+        .map(|state| pid_is_running(state.pid))
+        .unwrap_or(false);
+    let normalized_status = state
+        .as_ref()
+        .map(|state| {
+            if running {
+                state.status.clone()
+            } else if matches!(state.status.as_str(), "running" | "starting") {
+                "stopped".to_string()
+            } else {
+                state.status.clone()
+            }
+        })
+        .unwrap_or_else(|| "not_started".to_string());
+    let primary_channel = configured_delivery_target(&config)
+        .map(|target| format!("{} -> {}", target.channel_id, target.recipient))
+        .unwrap_or_else(|| "none".to_string());
+    let summary = serde_json::json!({
+        "name": config.display_name,
+        "slug": config.slug,
+        "agent_id": config.agent_id,
+        "running": running,
+        "status": normalized_status,
+        "pid": state.as_ref().map(|state| state.pid).unwrap_or_default(),
+        "heartbeat_id": heartbeat_id_for_slug(&config.slug),
+        "last_run_status": state.as_ref().map(|state| state.last_run_status.clone()).unwrap_or_else(|| "not_started".to_string()),
+        "last_tick_unix_ms": state.as_ref().map(|state| state.last_tick_unix_ms).unwrap_or_default(),
+        "last_memory_sync_unix_ms": state.as_ref().map(|state| state.last_memory_sync_unix_ms).unwrap_or_default(),
+        "memory_entries_recalled": state.as_ref().map(|state| state.memory_entries_recalled).unwrap_or_default(),
+        "memory_entries_updated": state.as_ref().map(|state| state.memory_entries_updated).unwrap_or_default(),
+        "primary_channel": primary_channel,
+        "config_path": personal_agent_config_path(&config.slug)?.display().to_string(),
+        "state_path": state_path.display().to_string(),
+        "stop_request_path": stop_path.display().to_string(),
+        "stop_requested": stop_path.exists(),
+    });
+    let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+    match format.as_str() {
+        "json" => {
+            print!(
+                "{}\n",
+                serde_json::to_string_pretty(&summary).map_err(|error| error.to_string())?
+            );
+        }
+        _ => {
+            print_startup_banner();
+            print_human(&format!(
+                "Meridian Loom // RUN AGENT STATUS\n=================================\nname:                  {}\nslug:                  {}\nagent_id:              {}\nrunning:               {}\nstatus:                {}\npid:                   {}\nheartbeat_id:          {}\nlast_run_status:       {}\nlast_tick_unix_ms:     {}\nlast_memory_sync_ms:   {}\nmemory_entries_recalled:{}\nmemory_entries_updated:{}\nprimary_channel:       {}\nconfig_path:           {}\nstate_path:            {}\nstop_requested:        {}\n",
+                summary["name"].as_str().unwrap_or(""),
+                summary["slug"].as_str().unwrap_or(""),
+                summary["agent_id"].as_str().unwrap_or(""),
+                summary["running"].as_bool().unwrap_or(false),
+                summary["status"].as_str().unwrap_or(""),
+                summary["pid"].as_u64().unwrap_or_default(),
+                summary["heartbeat_id"].as_str().unwrap_or(""),
+                summary["last_run_status"].as_str().unwrap_or(""),
+                summary["last_tick_unix_ms"].as_u64().unwrap_or_default(),
+                summary["last_memory_sync_unix_ms"].as_u64().unwrap_or_default(),
+                summary["memory_entries_recalled"].as_u64().unwrap_or_default(),
+                summary["memory_entries_updated"].as_u64().unwrap_or_default(),
+                summary["primary_channel"].as_str().unwrap_or(""),
+                summary["config_path"].as_str().unwrap_or(""),
+                summary["state_path"].as_str().unwrap_or(""),
+                summary["stop_requested"].as_bool().unwrap_or(false),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn handle_run_agent_stop(args: &[String]) -> LoomResult<()> {
+    let Some(name_or_slug) = positional_name(args) else {
+        return Err("run-agent stop requires an agent name or slug".to_string());
+    };
+    let config = load_personal_agent_config(&name_or_slug)?;
+    let root = root_from(Some(&config.loom_root))?;
+    let state_path = personal_agent_state_path(&root, &config.slug)?;
+    let state = load_loop_state(&state_path)?;
+    let stop_path = write_stop_request(&root, &config.slug)?;
+    let running = state
+        .as_ref()
+        .map(|state| pid_is_running(state.pid))
+        .unwrap_or(false);
+    let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+    let payload = serde_json::json!({
+        "status": if running { "stop_requested" } else { "stop_written_no_process" },
+        "name": config.display_name,
+        "slug": config.slug,
+        "agent_id": config.agent_id,
+        "pid": state.as_ref().map(|state| state.pid).unwrap_or_default(),
+        "stop_request_path": stop_path.display().to_string(),
+    });
+    match format.as_str() {
+        "json" => {
+            print!(
+                "{}\n",
+                serde_json::to_string_pretty(&payload).map_err(|error| error.to_string())?
+            );
+        }
+        _ => {
+            print_startup_banner();
+            print_human(&format!(
+                "Meridian Loom // RUN AGENT STOP\n===============================\nname:              {}\nslug:              {}\nagent_id:          {}\nstatus:            {}\npid:               {}\nstop_request_path: {}\n",
+                payload["name"].as_str().unwrap_or(""),
+                payload["slug"].as_str().unwrap_or(""),
+                payload["agent_id"].as_str().unwrap_or(""),
+                payload["status"].as_str().unwrap_or(""),
+                payload["pid"].as_u64().unwrap_or_default(),
+                payload["stop_request_path"].as_str().unwrap_or(""),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn print_new_agent_help() {
@@ -997,13 +1495,19 @@ USAGE:
 
 PURPOSE:
   Start a persistent governed personal agent loop. The loop keeps Loom service
-  and supervisor ready, claims due heartbeats, dispatches them through the
-  governed runtime, and writes loop state under the runtime root.
+  and supervisor ready, syncs SOUL/MEMORY/config into governed memory with
+  receipts, claims due heartbeats, dispatches them through the governed
+  runtime, and writes loop state under the runtime root.
+
+SUBCOMMANDS:
+  status <name-or-slug>     Show loop state, primary channel, and memory sync state
+  stop <name-or-slug>       Write a graceful stop request for the running loop
 
 OPTIONS:
   --foreground             Run the loop in the current terminal
   --loop                   Internal flag used by the background daemon mode
   --poll-seconds N         Loop polling interval (default: 15)
+  --once                   Run a single loop tick, then exit
 ",
     );
 }
@@ -1011,6 +1515,22 @@ OPTIONS:
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    fn temp_root(label: &str) -> PathBuf {
+        let n = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!(
+            "loom_personal_agent_{}_{}_{}",
+            label,
+            std::process::id(),
+            n
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("create temp root");
+        dir
+    }
 
     #[test]
     fn personal_agent_slug_is_sanitized() {
@@ -1055,5 +1575,63 @@ mod tests {
         assert_eq!(parsed.agent_id, config.agent_id);
         assert_eq!(parsed.webhook_url, config.webhook_url);
         assert_eq!(parsed.provider_profile, config.provider_profile);
+    }
+
+    #[test]
+    fn personal_agent_memory_sync_tracks_file_changes() {
+        let root = temp_root("memory_sync");
+        let slug = format!(
+            "my-assistant-{}",
+            TEST_COUNTER.fetch_add(1, Ordering::SeqCst)
+        );
+        let config = PersonalAgentConfig {
+            name: "My Assistant".to_string(),
+            slug: slug.clone(),
+            agent_id: "agent_my_123".to_string(),
+            display_name: "My Assistant".to_string(),
+            role: "manager".to_string(),
+            purpose: "Governed personal agent".to_string(),
+            provider_profile: "local_ollama".to_string(),
+            tool_scope: "personal_agent_scope".to_string(),
+            org_id: "local_foundry".to_string(),
+            loom_root: root.display().to_string(),
+            kernel_path: "/opt/meridian-kernel".to_string(),
+            service_http_address: "127.0.0.1:18910".to_string(),
+            service_token: "token".to_string(),
+            heartbeat_capability: "loom.system.info.v1".to_string(),
+            heartbeat_every_seconds: 300,
+            telegram_enabled: true,
+            telegram_chat_id: "12345".to_string(),
+            telegram_token_env: DEFAULT_TELEGRAM_TOKEN_ENV.to_string(),
+            webhook_enabled: false,
+            webhook_url: String::new(),
+            webhook_header: String::new(),
+        };
+        let config_path = personal_agent_config_path(&slug).expect("config path");
+        write_personal_agent_config(&config_path, &config).expect("write config");
+        write_personal_agent_support_files(&config_path, &config).expect("support files");
+
+        let first = sync_personal_agent_memory(&root, &config).expect("first sync");
+        assert!(first.changed_count >= 3);
+        assert!(first.recalled_count >= 3);
+
+        let second = sync_personal_agent_memory(&root, &config).expect("second sync");
+        assert_eq!(second.changed_count, 0);
+
+        let memory_file = config_path.parent().expect("agent dir").join("MEMORY.md");
+        fs::write(&memory_file, "# changed\nnew durable fact\n").expect("write memory");
+        let third = sync_personal_agent_memory(&root, &config).expect("third sync");
+        assert!(third.changed_count >= 1);
+
+        fs::remove_dir_all(&root).ok();
+        fs::remove_dir_all(config_path.parent().expect("agent dir").to_path_buf()).ok();
+    }
+
+    #[test]
+    fn compact_memory_body_marks_truncation() {
+        let body = "a".repeat(13_000);
+        let compacted = compact_memory_body(&body);
+        assert!(compacted.contains("truncated"));
+        assert!(compacted.len() < body.len());
     }
 }

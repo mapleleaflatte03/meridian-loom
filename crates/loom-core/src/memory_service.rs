@@ -86,6 +86,76 @@ pub struct MemoryIndex {
     pub newest_entry: u64,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MemoryReceiptRecord {
+    pub timestamp_unix_ms: u64,
+    pub operation: String,
+    pub agent_id: String,
+    pub kind: String,
+    pub receipt_hash: String,
+    pub input_summary: String,
+    pub output_summary: String,
+    pub is_error: bool,
+}
+
+impl MemoryReceiptRecord {
+    pub fn from_json(value: &Value) -> LoomResult<Self> {
+        Ok(Self {
+            timestamp_unix_ms: value
+                .get("timestamp_unix_ms")
+                .and_then(Value::as_u64)
+                .unwrap_or_default(),
+            operation: value
+                .get("operation")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            agent_id: value
+                .get("agent_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            kind: value
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            receipt_hash: value
+                .get("receipt_hash")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            input_summary: value
+                .get("input_summary")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            output_summary: value
+                .get("output_summary")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            is_error: value
+                .get("is_error")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        })
+    }
+
+    pub fn to_json(&self) -> Value {
+        json!({
+            "timestamp_unix_ms": self.timestamp_unix_ms,
+            "operation": self.operation,
+            "agent_id": self.agent_id,
+            "kind": self.kind,
+            "receipt_hash": self.receipt_hash,
+            "input_summary": self.input_summary,
+            "output_summary": self.output_summary,
+            "is_error": self.is_error,
+        })
+    }
+}
+
 // ───── Repo operations ─────
 
 /// Memory repo — per-agent directory of governed memory files.
@@ -377,7 +447,10 @@ impl MemoryService {
         self.append_receipt(
             "prune",
             "memory-service",
-            &format!("retention_days={} cutoff={}", self.policy.retention_days, cutoff),
+            &format!(
+                "retention_days={} cutoff={}",
+                self.policy.retention_days, cutoff
+            ),
             &format!("pruned_entries={}", total_pruned),
             false,
         )?;
@@ -405,6 +478,39 @@ impl MemoryService {
         })
     }
 
+    pub fn list_receipts(
+        &self,
+        limit: usize,
+        agent_id: Option<&str>,
+    ) -> LoomResult<Vec<MemoryReceiptRecord>> {
+        let path = self.repo.root.join(MEMORY_RECEIPTS_FILE);
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+        let raw = fs::read_to_string(&path).map_err(|e| format!("memory receipt read: {}", e))?;
+        let mut records = Vec::new();
+        for line in raw.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let value: Value = serde_json::from_str(trimmed)
+                .map_err(|e| format!("memory receipt parse: {}", e))?;
+            let record = MemoryReceiptRecord::from_json(&value)?;
+            if let Some(filter) = agent_id {
+                if record.agent_id != filter {
+                    continue;
+                }
+            }
+            records.push(record);
+        }
+        records.sort_by_key(|record| std::cmp::Reverse(record.timestamp_unix_ms));
+        if limit == 0 || records.len() <= limit {
+            return Ok(records);
+        }
+        Ok(records.into_iter().take(limit).collect())
+    }
+
     fn append_receipt(
         &self,
         operation: &str,
@@ -413,7 +519,8 @@ impl MemoryService {
         output_summary: &str,
         is_error: bool,
     ) -> LoomResult<()> {
-        fs::create_dir_all(&self.repo.root).map_err(|e| format!("memory receipt scaffold: {}", e))?;
+        fs::create_dir_all(&self.repo.root)
+            .map_err(|e| format!("memory receipt scaffold: {}", e))?;
         let timestamp_ms = current_unix_ms();
         let event = HostCallEvent {
             kind: match operation {
@@ -543,6 +650,38 @@ pub fn render_memory_entries_json(entries: &[MemoryEntry]) -> String {
         + "\n"
 }
 
+pub fn render_memory_receipts_human(receipts: &[MemoryReceiptRecord]) -> String {
+    if receipts.is_empty() {
+        return "receipt_count:     0\n".to_string();
+    }
+    let mut rendered = format!("receipt_count:     {}\n", receipts.len());
+    for receipt in receipts {
+        rendered.push_str(&format!(
+            "\n[receipt:{}]\nagent_id:         {}\noperation:        {}\nkind:             {}\ntimestamp_ms:     {}\nerror:            {}\ninput:            {}\noutput:           {}\n",
+            receipt.receipt_hash,
+            receipt.agent_id,
+            receipt.operation,
+            receipt.kind,
+            receipt.timestamp_unix_ms,
+            receipt.is_error,
+            receipt.input_summary.replace('\n', "\\n"),
+            receipt.output_summary.replace('\n', "\\n"),
+        ));
+    }
+    rendered
+}
+
+pub fn render_memory_receipts_json(receipts: &[MemoryReceiptRecord]) -> String {
+    serde_json::to_string_pretty(
+        &receipts
+            .iter()
+            .map(MemoryReceiptRecord::to_json)
+            .collect::<Vec<_>>(),
+    )
+    .unwrap_or_else(|_| "[]".to_string())
+        + "\n"
+}
+
 fn current_unix() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -561,7 +700,9 @@ fn synthetic_warrant_id(agent_id: &str) -> [u8; 32] {
     let mut warrant = [0u8; 32];
     for (index, byte) in agent_id.as_bytes().iter().enumerate() {
         let slot = index % 32;
-        warrant[slot] = warrant[slot].wrapping_add(*byte).rotate_left((slot % 7) as u32);
+        warrant[slot] = warrant[slot]
+            .wrapping_add(*byte)
+            .rotate_left((slot % 7) as u32);
     }
     warrant
 }
@@ -726,6 +867,23 @@ mod tests {
         let sentinel_entries = svc.search("sentinel", None, None).unwrap();
         assert_eq!(sentinel_entries.len(), 1);
         assert_eq!(sentinel_entries[0].content, "sentinel_data");
+        cleanup(&root);
+    }
+
+    #[test]
+    fn test_list_receipts_filters_by_agent_and_limit() {
+        let root = temp_root();
+        let svc = MemoryService::with_defaults(&root);
+        svc.write("atlas", "facts", "k1", "v1", "test").unwrap();
+        svc.search("atlas", Some("facts"), None).unwrap();
+        svc.write("quill", "notes", "k2", "v2", "test").unwrap();
+
+        let atlas = svc.list_receipts(10, Some("atlas")).unwrap();
+        assert!(!atlas.is_empty());
+        assert!(atlas.iter().all(|record| record.agent_id == "atlas"));
+
+        let limited = svc.list_receipts(1, None).unwrap();
+        assert_eq!(limited.len(), 1);
         cleanup(&root);
     }
 }

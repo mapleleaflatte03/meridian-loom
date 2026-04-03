@@ -2,7 +2,8 @@ use std::io::IsTerminal;
 
 use crate::*;
 use loom_core::memory_service::{
-    render_memory_entries_human, render_memory_entries_json, render_memory_service_overview_human,
+    render_memory_entries_human, render_memory_entries_json, render_memory_receipts_human,
+    render_memory_receipts_json, render_memory_service_overview_human,
     render_memory_service_overview_json, MemoryService,
 };
 
@@ -10,11 +11,12 @@ pub(crate) fn handle_memory(args: &[String]) -> LoomResult<()> {
     match args.first().map(String::as_str) {
         Some("status") | Some("overview") => handle_memory_overview(&args[1..]),
         Some("search") => handle_memory_search(&args[1..]),
+        Some("receipts") => handle_memory_receipts(&args[1..]),
         Some("write") => handle_memory_write(&args[1..]),
         Some("remove") => handle_memory_remove(&args[1..]),
         Some("prune") => handle_memory_prune(&args[1..]),
         _ => Err(
-            "memory supports 'status', 'overview', 'search', 'write', 'remove', and 'prune'"
+            "memory supports 'status', 'overview', 'search', 'receipts', 'write', 'remove', and 'prune'"
                 .to_string(),
         ),
     }
@@ -61,6 +63,24 @@ fn handle_memory_search(args: &[String]) -> LoomResult<()> {
             print_human(&render_memory_entries_human(&entries));
         }
         _ => print!("{}", render_memory_entries_json(&entries)),
+    }
+    Ok(())
+}
+
+fn handle_memory_receipts(args: &[String]) -> LoomResult<()> {
+    let root = root_from(take_value(args, "--root").as_deref())?;
+    let format = output_format(args);
+    let agent_id = take_value(args, "--agent-id");
+    let limit = take_value(args, "--limit")
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(20);
+    let receipts = MemoryService::with_defaults(&root).list_receipts(limit, agent_id.as_deref())?;
+    match format.as_str() {
+        "human" => {
+            print_startup_banner();
+            print_human(&render_memory_receipts_human(&receipts));
+        }
+        _ => print!("{}", render_memory_receipts_json(&receipts)),
     }
     Ok(())
 }
