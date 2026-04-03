@@ -84,6 +84,7 @@ Inspect it:
 ```bash
 loom run-agent status my-assistant
 loom run-agent inspect my-assistant
+loom run-agent diagnose my-assistant
 loom run-agent watch my-assistant --once
 loom status --root "$LOOM_ROOT"
 loom memory receipts --root "$LOOM_ROOT" --limit 10
@@ -246,6 +247,7 @@ The goal of both commands is simple:
 - `doctor` tells you whether the runtime is ready, degraded, or blocked
 - `status` tells you where the runtime, queue, service, and agent artifacts live
 - `run-agent inspect` gives one operator view for supervisor state, channel health, recent deliveries, and recent memory receipts
+- `run-agent diagnose` turns crash/channel state into concrete next commands instead of leaving you to infer remediation from raw status
 - `run-agent watch` gives a compact terminal dashboard over the same operator surface
 - `channel health` now includes recent health transitions and test diagnostics, not just the current point-in-time state
 - both should point to an obvious next command instead of forcing you to read the source

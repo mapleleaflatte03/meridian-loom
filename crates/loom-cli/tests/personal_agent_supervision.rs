@@ -30,6 +30,14 @@ struct Harness {
 
 impl Harness {
     fn new(label: &str) -> Self {
+        Self::new_with_channel(label, true)
+    }
+
+    fn new_without_channel(label: &str) -> Self {
+        Self::new_with_channel(label, false)
+    }
+
+    fn new_with_channel(label: &str, connect_channel: bool) -> Self {
         let home = unique_temp_dir(label);
         let root = home.join(".local/share/meridian-loom/runtime/default");
         let kernel = home.join("kernel");
@@ -64,17 +72,19 @@ impl Harness {
             "--format",
             "json",
         ]);
-        harness.run_ok(&[
-            "channel",
-            "connect",
-            "webhook",
-            "--root",
-            harness.root_str(),
-            "--agent",
-            &harness.slug,
-            "--url",
-            "https://example.com/hook",
-        ]);
+        if connect_channel {
+            harness.run_ok(&[
+                "channel",
+                "connect",
+                "webhook",
+                "--root",
+                harness.root_str(),
+                "--agent",
+                &harness.slug,
+                "--url",
+                "https://example.com/hook",
+            ]);
+        }
         harness
     }
 
@@ -158,6 +168,26 @@ impl Harness {
         self.json_ok(&[
             "run-agent",
             "inspect",
+            &self.slug,
+            "--root",
+            self.root_str(),
+            "--history-limit",
+            "5",
+            "--diagnostic-limit",
+            "5",
+            "--receipt-limit",
+            "5",
+            "--delivery-limit",
+            "5",
+            "--format",
+            "json",
+        ])
+    }
+
+    fn diagnose_json(&self) -> Value {
+        self.json_ok(&[
+            "run-agent",
+            "diagnose",
             &self.slug,
             "--root",
             self.root_str(),
@@ -265,6 +295,12 @@ fn copy_kernel_fixture(destination: &Path) {
         .status()
         .expect("copy kernel fixture");
     assert!(status.success(), "cp -R /opt/meridian-kernel failed");
+    let agent_registry = destination.join("kernel").join("agent_registry.json");
+    fs::write(
+        &agent_registry,
+        "{\n  \"agents\": {},\n  \"updatedAt\": \"1970-01-01T00:00:00Z\"\n}\n",
+    )
+    .expect("reset copied kernel agent registry");
 }
 
 #[test]
@@ -308,10 +344,25 @@ fn manual_policy_exposes_crash_and_requires_operator_restart() {
             .unwrap_or_default()
             .contains("operator restart required")
     }));
+    let diagnose = harness.diagnose_json();
+    assert_eq!(
+        diagnose["diagnosis"]["status"].as_str(),
+        Some("worker_crashed_manual_policy")
+    );
+    let recommended_actions = diagnose["recommended_actions"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(recommended_actions.iter().any(|item| {
+        item["command"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("loom run-agent reconcile smoke-agent")
+    }));
 
     let log = fs::read_to_string(harness.log_path()).expect("read supervisor log");
     assert!(log.contains("chaos injected phase=after_tick mode=once exit_code=91"));
-    assert!(log.contains("manual policy leaves crashed worker stopped"));
+    assert!(log.contains("worker exit unexpected=true reason=worker exited with code 91"));
 }
 
 #[test]
@@ -350,6 +401,8 @@ fn always_policy_recovers_after_single_injected_crash() {
         inspect["agent"]["supervision_action"].as_str(),
         Some("healthy")
     );
+    let diagnose = harness.diagnose_json();
+    assert_eq!(diagnose["diagnosis"]["status"].as_str(), Some("healthy"));
     assert!(inspect["recent_memory_receipts"]
         .as_array()
         .map(|items| !items.is_empty())
@@ -409,10 +462,62 @@ fn always_policy_surfaces_waiting_backoff_during_repeated_crashes() {
             .unwrap_or_default()
             .contains("waiting for restart backoff")
     }));
+    let diagnose = harness.diagnose_json();
+    assert_eq!(
+        diagnose["diagnosis"]["status"].as_str(),
+        Some("restart_backoff_active")
+    );
+    let recommended_actions = diagnose["recommended_actions"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(recommended_actions.iter().any(|item| {
+        item["command"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("loom run-agent watch smoke-agent")
+    }));
 
     let stop = harness.stop_json();
     assert!(matches!(
         stop["status"].as_str(),
         Some("stop_requested") | Some("stop_written_no_process")
     ));
+}
+
+#[test]
+fn diagnose_surfaces_missing_channel_remediation_for_running_agent() {
+    let harness = Harness::new_without_channel("no_channel");
+    harness.run_ok(&[
+        "run-agent",
+        &harness.slug,
+        "--root",
+        harness.root_str(),
+        "--restart-policy",
+        "always",
+        "--restart-backoff-seconds",
+        "1",
+        "--poll-seconds",
+        "1",
+    ]);
+
+    let _status = harness.wait_for_status(Duration::from_secs(12), |value| {
+        value["worker_running"].as_bool() == Some(true)
+            && value["supervisor_running"].as_bool() == Some(true)
+    });
+    let diagnose = harness.diagnose_json();
+    assert_eq!(
+        diagnose["diagnosis"]["status"].as_str(),
+        Some("no_delivery_channel")
+    );
+    let recommended_actions = diagnose["recommended_actions"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(recommended_actions.iter().any(|item| {
+        item["command"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("loom channel connect webhook --agent smoke-agent")
+    }));
 }

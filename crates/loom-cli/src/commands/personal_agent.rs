@@ -278,6 +278,7 @@ pub(crate) fn handle_run_agent(args: &[String]) -> LoomResult<()> {
     match args.first().map(String::as_str) {
         Some("status") => return handle_run_agent_status(&args[1..]),
         Some("inspect") => return handle_run_agent_inspect(&args[1..]),
+        Some("diagnose") => return handle_run_agent_diagnose(&args[1..]),
         Some("watch") => return handle_run_agent_watch(&args[1..]),
         Some("stop") => return handle_run_agent_stop(&args[1..]),
         Some("reconcile") => return handle_run_agent_reconcile(&args[1..]),
@@ -2428,6 +2429,337 @@ fn render_run_agent_watch_human(
     rendered
 }
 
+fn recommended_action(command: String, reason: &str) -> serde_json::Value {
+    serde_json::json!({
+        "command": command,
+        "reason": reason,
+    })
+}
+
+fn build_run_agent_diagnose_payload(
+    root: &Path,
+    config: &PersonalAgentConfig,
+    receipt_limit: usize,
+    delivery_limit: usize,
+    history_limit: usize,
+    diagnostic_limit: usize,
+) -> LoomResult<serde_json::Value> {
+    let mut payload = build_run_agent_operator_payload(
+        root,
+        config,
+        receipt_limit,
+        delivery_limit,
+        history_limit,
+        diagnostic_limit,
+    )?;
+    let agent = &payload["agent"];
+    let slug = agent["slug"].as_str().unwrap_or(&config.slug);
+    let supervision_action = agent["supervision_action"]
+        .as_str()
+        .unwrap_or("stopped_by_policy");
+    let stop_requested = agent["stop_requested"].as_bool().unwrap_or(false);
+    let last_crash_reason = agent["last_crash_reason"].as_str().unwrap_or("");
+    let next_restart_after_unix_ms = agent["next_restart_after_unix_ms"]
+        .as_u64()
+        .unwrap_or_default();
+    let worker_running = agent["worker_running"].as_bool().unwrap_or(false);
+    let channels = payload["channel_health"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let no_channels = channels.is_empty();
+    let degraded_channels = channels
+        .iter()
+        .filter(|entry| !matches!(entry["health"].as_str().unwrap_or(""), "healthy" | "active"))
+        .map(|entry| entry["channel_id"].as_str().unwrap_or("").to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    let failed_diagnostics = channels
+        .iter()
+        .filter_map(|entry| {
+            let channel_id = entry["channel_id"].as_str().unwrap_or("").trim();
+            let diagnostic = entry["diagnostics"]
+                .as_array()
+                .and_then(|items| items.first())?;
+            let status = diagnostic["status"].as_str().unwrap_or("").trim();
+            if matches!(status, "delivered" | "acknowledged" | "queued") {
+                return None;
+            }
+            Some(format!(
+                "{}:{}",
+                channel_id,
+                if status.is_empty() { "unknown" } else { status }
+            ))
+        })
+        .collect::<Vec<_>>();
+    let no_memory_receipts = payload["recent_memory_receipts"]
+        .as_array()
+        .map(|items| items.is_empty())
+        .unwrap_or(true);
+
+    let mut status = "healthy".to_string();
+    let mut severity = "ok".to_string();
+    let mut summary =
+        "Agent is supervised, channel-ready, and emitting governed receipts.".to_string();
+    if stop_requested {
+        status = "stop_requested".to_string();
+        severity = "attention".to_string();
+        summary =
+            "A stop request is pending. The supervisor should drain and stop the worker cleanly."
+                .to_string();
+    } else if supervision_action == "manual_restart_required" {
+        status = "worker_crashed_manual_policy".to_string();
+        severity = "action_required".to_string();
+        summary = format!(
+            "The worker crashed under manual restart policy. Operator action is required before the agent can resume{}.",
+            if last_crash_reason.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", last_crash_reason)
+            }
+        );
+    } else if supervision_action == "waiting_backoff" {
+        status = "restart_backoff_active".to_string();
+        severity = "attention".to_string();
+        summary = format!(
+            "The supervisor is backing off before relaunching the worker. Next restart is scheduled at unix_ms={}.",
+            next_restart_after_unix_ms
+        );
+    } else if supervision_action == "needs_restart" {
+        status = "worker_down_restart_available".to_string();
+        severity = "action_required".to_string();
+        summary =
+            "The worker is down and eligible for restart under the current supervision policy."
+                .to_string();
+    } else if no_channels {
+        status = "no_delivery_channel".to_string();
+        severity = "attention".to_string();
+        summary =
+            "The agent can run, but no delivery channel is configured, so no operator-visible output can leave Loom."
+                .to_string();
+    } else if !failed_diagnostics.is_empty() {
+        status = "channel_diagnostic_failed".to_string();
+        severity = "attention".to_string();
+        summary = format!(
+            "Recent channel diagnostics failed for {}.",
+            failed_diagnostics.join(", ")
+        );
+    } else if !degraded_channels.is_empty() {
+        status = "channel_degraded".to_string();
+        severity = "attention".to_string();
+        summary = format!(
+            "One or more delivery channels are degraded: {}.",
+            degraded_channels.join(", ")
+        );
+    } else if !worker_running {
+        status = "supervisor_idle".to_string();
+        severity = "attention".to_string();
+        summary =
+            "The worker is not currently running. Inspect the loop state and reconcile if this is unexpected."
+                .to_string();
+    } else if no_memory_receipts {
+        status = "memory_receipts_missing".to_string();
+        severity = "attention".to_string();
+        summary =
+            "The agent is running, but no recent memory receipts were found. The memory loop may not have warmed up yet."
+                .to_string();
+    }
+
+    let mut actions = Vec::new();
+    match status.as_str() {
+        "worker_crashed_manual_policy" => {
+            actions.push(recommended_action(
+                format!("loom run-agent reconcile {}", slug),
+                "Start a fresh supervised worker under the current policy.",
+            ));
+            actions.push(recommended_action(
+                format!("loom run-agent inspect {}", slug),
+                "Review recent receipts, deliveries, and crash context before restarting again.",
+            ));
+            actions.push(recommended_action(
+                format!(
+                    "loom doctor --root \"{}\" --format human --fix",
+                    config.loom_root
+                ),
+                "Apply safe runtime scaffold repairs if the local state looks inconsistent after the crash.",
+            ));
+        }
+        "restart_backoff_active" => {
+            actions.push(recommended_action(
+                format!("loom run-agent watch {}", slug),
+                "Watch the next restart window and confirm the worker recovers cleanly after backoff.",
+            ));
+            actions.push(recommended_action(
+                format!("loom run-agent inspect {}", slug),
+                "Inspect crash details, recent memory receipts, and delivery health while the supervisor is waiting.",
+            ));
+            actions.push(recommended_action(
+                format!(
+                    "loom channel health --agent {} --history-limit 5 --diagnostic-limit 5",
+                    slug
+                ),
+                "Confirm channel health is not contributing to repeated restart loops.",
+            ));
+        }
+        "worker_down_restart_available" | "supervisor_idle" => {
+            actions.push(recommended_action(
+                format!("loom run-agent reconcile {}", slug),
+                "Relaunch the supervised worker if the agent should still be serving.",
+            ));
+            actions.push(recommended_action(
+                format!("loom run-agent inspect {}", slug),
+                "Review the current loop state before and after reconcile.",
+            ));
+            actions.push(recommended_action(
+                format!(
+                    "loom doctor --root \"{}\" --format human --fix",
+                    config.loom_root
+                ),
+                "Refresh safe runtime scaffolding if the agent should be running but state files drifted.",
+            ));
+        }
+        "no_delivery_channel" => {
+            actions.push(recommended_action(
+                format!("loom channel show --agent {}", slug),
+                "Inspect the current channel config for this agent.",
+            ));
+            actions.push(recommended_action(
+                format!(
+                    "loom channel connect webhook --agent {} --url https://example.com/hook",
+                    slug
+                ),
+                "Attach a webhook so the agent can emit governed outbound deliveries immediately.",
+            ));
+            actions.push(recommended_action(
+                format!(
+                    "loom channel connect telegram --agent {} --chat-id <telegram-chat-id>",
+                    slug
+                ),
+                "Attach Telegram if you want operator-visible delivery on chat instead of webhook.",
+            ));
+        }
+        "channel_diagnostic_failed" | "channel_degraded" => {
+            actions.push(recommended_action(
+                format!(
+                    "loom channel health --agent {} --history-limit 5 --diagnostic-limit 5",
+                    slug
+                ),
+                "Inspect recent health transitions and failed diagnostics for the affected channels.",
+            ));
+            actions.push(recommended_action(
+                format!(
+                    "loom channel test --agent {} --text \"diagnostic ping\"",
+                    slug
+                ),
+                "Queue a fresh diagnostic delivery on the agent's primary channel.",
+            ));
+            actions.push(recommended_action(
+                format!("loom run-agent inspect {}", slug),
+                "Cross-check channel issues against recent receipts and deliveries from the agent loop.",
+            ));
+        }
+        "stop_requested" => {
+            actions.push(recommended_action(
+                format!("loom run-agent status {}", slug),
+                "Confirm the loop drains and transitions to a stopped state cleanly.",
+            ));
+            actions.push(recommended_action(
+                format!("loom run-agent watch {}", slug),
+                "Follow the stop transition in real time instead of polling raw state files.",
+            ));
+        }
+        "memory_receipts_missing" => {
+            actions.push(recommended_action(
+                format!("loom run-agent {} --foreground --once", slug),
+                "Force a single governed loop tick so memory sync and recall can emit receipts.",
+            ));
+            actions.push(recommended_action(
+                format!(
+                    "loom memory receipts --root \"{}\" --agent-id {}",
+                    config.loom_root, config.agent_id
+                ),
+                "Inspect read/write receipt history directly for this agent.",
+            ));
+            actions.push(recommended_action(
+                format!("loom run-agent inspect {}", slug),
+                "Confirm memory receipts appear in the operator view after the next tick.",
+            ));
+        }
+        _ => {
+            actions.push(recommended_action(
+                format!("loom run-agent watch {}", slug),
+                "Keep a live operator view on the agent, channels, and receipts.",
+            ));
+            actions.push(recommended_action(
+                format!("loom run-agent inspect {}", slug),
+                "Inspect deeper delivery and memory detail on demand.",
+            ));
+        }
+    }
+
+    if let Some(object) = payload.as_object_mut() {
+        object.insert(
+            "diagnosis".to_string(),
+            serde_json::json!({
+                "status": status,
+                "severity": severity,
+                "summary": summary,
+            }),
+        );
+        object.insert(
+            "recommended_actions".to_string(),
+            serde_json::Value::Array(actions),
+        );
+    }
+    Ok(payload)
+}
+
+fn render_run_agent_diagnose_human(payload: &serde_json::Value) -> String {
+    let mut rendered = String::new();
+    rendered.push_str("Meridian Loom // RUN AGENT DIAGNOSE\n===================================\n");
+    rendered.push_str(&format!(
+        "name:                  {}\nslug:                  {}\nagent_id:              {}\nstatus:                {}\ndiagnosis:             {}\nseverity:              {}\nsupervision_action:    {}\ncrash_state:           {}\nworker_pid:            {}\nsupervisor_pid:        {}\nprimary_channel:       {}\n\nsummary: {}\n",
+        payload["agent"]["name"].as_str().unwrap_or(""),
+        payload["agent"]["slug"].as_str().unwrap_or(""),
+        payload["agent"]["agent_id"].as_str().unwrap_or(""),
+        payload["agent"]["status"].as_str().unwrap_or(""),
+        payload["diagnosis"]["status"].as_str().unwrap_or(""),
+        payload["diagnosis"]["severity"].as_str().unwrap_or(""),
+        payload["agent"]["supervision_action"].as_str().unwrap_or(""),
+        payload["agent"]["crash_state"].as_str().unwrap_or(""),
+        payload["agent"]["worker_pid"].as_u64().unwrap_or_default(),
+        payload["agent"]["supervisor_pid"].as_u64().unwrap_or_default(),
+        payload["agent"]["primary_channel"].as_str().unwrap_or(""),
+        payload["diagnosis"]["summary"].as_str().unwrap_or(""),
+    ));
+    rendered.push_str("\nAlerts\n------\n");
+    if let Some(alerts) = payload["alerts"].as_array() {
+        if alerts.is_empty() {
+            rendered.push_str("(none)\n");
+        } else {
+            for alert in alerts {
+                rendered.push_str(&format!("- {}\n", alert.as_str().unwrap_or("")));
+            }
+        }
+    }
+    rendered.push_str("\nRecommended actions\n-------------------\n");
+    if let Some(actions) = payload["recommended_actions"].as_array() {
+        if actions.is_empty() {
+            rendered.push_str("(none)\n");
+        } else {
+            for (index, action) in actions.iter().enumerate() {
+                rendered.push_str(&format!(
+                    "{}. {}\n   reason: {}\n",
+                    index + 1,
+                    action["command"].as_str().unwrap_or(""),
+                    action["reason"].as_str().unwrap_or(""),
+                ));
+            }
+        }
+    }
+    rendered
+}
+
 fn handle_run_agent_inspect(args: &[String]) -> LoomResult<()> {
     let Some(name_or_slug) = positional_name(args) else {
         return Err("run-agent inspect requires an agent name or slug".to_string());
@@ -2463,6 +2795,46 @@ fn handle_run_agent_inspect(args: &[String]) -> LoomResult<()> {
         _ => {
             print_startup_banner();
             print_human(&render_run_agent_inspect_human(&payload));
+        }
+    }
+    Ok(())
+}
+
+fn handle_run_agent_diagnose(args: &[String]) -> LoomResult<()> {
+    let Some(name_or_slug) = positional_name(args) else {
+        return Err("run-agent diagnose requires an agent name or slug".to_string());
+    };
+    let config = load_personal_agent_config(&name_or_slug)?;
+    let root = root_from(Some(&config.loom_root))?;
+    let receipt_limit = take_value(args, "--receipt-limit")
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(5);
+    let delivery_limit = take_value(args, "--delivery-limit")
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(5);
+    let history_limit = take_value(args, "--history-limit")
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(5);
+    let diagnostic_limit = take_value(args, "--diagnostic-limit")
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(3);
+    let payload = build_run_agent_diagnose_payload(
+        &root,
+        &config,
+        receipt_limit,
+        delivery_limit,
+        history_limit,
+        diagnostic_limit,
+    )?;
+    let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+    match format.as_str() {
+        "json" => print!(
+            "{}\n",
+            serde_json::to_string_pretty(&payload).map_err(|error| error.to_string())?
+        ),
+        _ => {
+            print_startup_banner();
+            print_human(&render_run_agent_diagnose_human(&payload));
         }
     }
     Ok(())
@@ -2730,6 +3102,7 @@ PURPOSE:
 SUBCOMMANDS:
   status <name-or-slug>     Show loop state, worker/supervisor pids, and crash semantics
   inspect <name-or-slug>    Show operator-facing state, channel health history, diagnostics, and receipts
+  diagnose <name-or-slug>   Turn crash/channel state into a concrete remediation plan
   watch <name-or-slug>      Compact terminal dashboard that refreshes agent/operator state
   stop <name-or-slug>       Write a graceful stop request for the running loop
   reconcile <name-or-slug>  Restart a dead background loop when policy allows it

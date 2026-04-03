@@ -101,6 +101,7 @@ Inspect it:
 tail -f "${HOME}/.local/share/meridian-loom/runtime/default/run/personal-agents/my-assistant.log"
 loom run-agent status my-assistant
 loom run-agent inspect my-assistant
+loom run-agent diagnose my-assistant
 loom run-agent watch my-assistant --once
 loom status --root "$LOOM_ROOT"
 loom doctor --root "$LOOM_ROOT" --format human

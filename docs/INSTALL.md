@@ -144,6 +144,7 @@ loom run-agent reconcile my-assistant
 Operator semantics:
 
 - `loom run-agent inspect` shows supervisor state, crash semantics, channel health history, recent diagnostics, deliveries, and memory receipts in one payload
+- `loom run-agent diagnose` turns crash, backoff, missing-channel, and degraded-channel states into concrete remediation commands
 - `loom run-agent watch` renders the same surface as a compact terminal dashboard
 - `loom channel health` now shows recent transitions and recent channel-test diagnostics instead of only the current state
 

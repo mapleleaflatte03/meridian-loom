@@ -25,6 +25,7 @@ loom run-agent reconcile {{SLUG}}
 
 ```bash
 loom run-agent inspect {{SLUG}}
+loom run-agent diagnose {{SLUG}}
 loom run-agent watch {{SLUG}} --once
 loom status --root "{{LOOM_ROOT}}"
 loom agent runtime --root "{{LOOM_ROOT}}" --agent-id "{{AGENT_ID}}"
