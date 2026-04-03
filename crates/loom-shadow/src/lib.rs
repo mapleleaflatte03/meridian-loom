@@ -4846,7 +4846,15 @@ fn handle_runtime_service_http_request(
             .strip_prefix("Bearer ")
             .unwrap_or_default()
             .to_string();
-        if presented != expected {
+
+        let mut matches = expected.len() == presented.len();
+        let mut result = 0;
+        for (a, b) in expected.bytes().zip(presented.bytes()) {
+            result |= std::hint::black_box(a ^ b);
+        }
+        matches &= result == 0;
+
+        if !matches {
             let payload = "{\"status\":\"unauthorized\",\"note\":\"service token required for this HTTP surface\"}\n".to_string();
             return Ok(RuntimeServiceReply {
                 status: "unauthorized".to_string(),
