@@ -126,7 +126,8 @@ loom channel connect telegram \
 loom run-agent my-assistant
 loom doctor --root "$LOOM_ROOT" --format human
 loom run-agent inspect my-assistant
-loom channel health --root "$LOOM_ROOT" --agent my-assistant
+loom run-agent watch my-assistant --once
+loom channel health --root "$LOOM_ROOT" --agent my-assistant --history-limit 5 --diagnostic-limit 5
 loom memory receipts --root "$LOOM_ROOT" --limit 10
 loom channel deliveries --root "$LOOM_ROOT" --include-archived
 ```
@@ -139,6 +140,12 @@ If you want the loop to come back under operator control after an exit:
 loom run-agent my-assistant --restart-policy always --restart-backoff-seconds 30
 loom run-agent reconcile my-assistant
 ```
+
+Operator semantics:
+
+- `loom run-agent inspect` shows supervisor state, crash semantics, channel health history, recent diagnostics, deliveries, and memory receipts in one payload
+- `loom run-agent watch` renders the same surface as a compact terminal dashboard
+- `loom channel health` now shows recent transitions and recent channel-test diagnostics instead of only the current state
 
 For the full end-to-end walkthrough, including memory and receipt inspection:
 

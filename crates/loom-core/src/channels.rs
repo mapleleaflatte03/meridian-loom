@@ -14,6 +14,8 @@ pub type LoomResult<T> = Result<T, String>;
 pub const DEFAULT_CHANNEL_REGISTRY_PATH: &str = "state/channels/registry.json";
 pub const DEFAULT_CHANNEL_DELIVERY_DIR: &str = "state/channels/delivery";
 pub const DEFAULT_CHANNEL_INBOX_DIR: &str = "state/channels/inbox";
+pub const DEFAULT_CHANNEL_HEALTH_DIR: &str = "state/channels/health";
+pub const DEFAULT_CHANNEL_DIAGNOSTICS_DIR: &str = "state/channels/diagnostics";
 pub const LEGACY_CHANNEL_ARCHIVE_AFTER_MS: u64 = 5 * 60 * 1000;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -59,6 +61,38 @@ pub struct ChannelHealthRecord {
     pub failed_count: usize,
     pub blocked_count: usize,
     pub archived_delivery_count: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChannelHealthHistoryRecord {
+    pub captured_at_unix_ms: u64,
+    pub trigger: String,
+    pub channel_id: String,
+    pub health: String,
+    pub ready: bool,
+    pub status_detail: String,
+    pub latest_delivery_status: String,
+    pub latest_delivery_at_unix_ms: u64,
+    pub queued_count: usize,
+    pub delivered_count: usize,
+    pub failed_count: usize,
+    pub blocked_count: usize,
+    pub archived_delivery_count: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChannelTestDiagnosticRecord {
+    pub diagnostic_id: String,
+    pub delivery_id: String,
+    pub channel_id: String,
+    pub recipient: String,
+    pub submitted_at_unix_ms: u64,
+    pub updated_at_unix_ms: u64,
+    pub status: String,
+    pub ready: bool,
+    pub health: String,
+    pub status_detail: String,
+    pub note: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -133,6 +167,22 @@ pub fn channel_inbox_path(root: &Path) -> PathBuf {
     root.join(DEFAULT_CHANNEL_INBOX_DIR)
 }
 
+pub fn channel_health_path(root: &Path) -> PathBuf {
+    root.join(DEFAULT_CHANNEL_HEALTH_DIR)
+}
+
+pub fn channel_diagnostics_path(root: &Path) -> PathBuf {
+    root.join(DEFAULT_CHANNEL_DIAGNOSTICS_DIR)
+}
+
+pub fn channel_health_history_path(root: &Path, channel_id: &str) -> PathBuf {
+    channel_health_path(root).join(format!("{}.jsonl", safe_file_token(channel_id)))
+}
+
+pub fn channel_test_diagnostic_path(root: &Path, delivery_id: &str) -> PathBuf {
+    channel_diagnostics_path(root).join(format!("{}.json", safe_file_token(delivery_id)))
+}
+
 pub fn ensure_channel_runtime_scaffold(root: &Path) -> LoomResult<PathBuf> {
     let registry_path = channel_registry_path(root);
     if let Some(parent) = registry_path.parent() {
@@ -140,6 +190,8 @@ pub fn ensure_channel_runtime_scaffold(root: &Path) -> LoomResult<PathBuf> {
     }
     fs::create_dir_all(channel_delivery_path(root)).map_err(io_err)?;
     fs::create_dir_all(channel_inbox_path(root)).map_err(io_err)?;
+    fs::create_dir_all(channel_health_path(root)).map_err(io_err)?;
+    fs::create_dir_all(channel_diagnostics_path(root)).map_err(io_err)?;
     if !registry_path.exists() {
         sync_channel_registry(root)?;
     }
@@ -179,6 +231,7 @@ pub fn upsert_channel_record(root: &Path, record: &ChannelRecord) -> LoomResult<
         records.sort_by(|left, right| left.channel_id.cmp(&right.channel_id));
     }
     persist_channel_registry(root, &records)?;
+    let _ = record_channel_health_snapshots(root, "channel_upsert");
     Ok(channel_registry_path(root))
 }
 
@@ -295,6 +348,190 @@ pub fn list_channel_health(root: &Path) -> LoomResult<Vec<ChannelHealthRecord>> 
     Ok(health)
 }
 
+pub fn list_channel_health_history(
+    root: &Path,
+    channel_id: &str,
+    limit: usize,
+) -> LoomResult<Vec<ChannelHealthHistoryRecord>> {
+    ensure_channel_runtime_scaffold(root)?;
+    let path = channel_health_history_path(root, channel_id);
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let raw = fs::read_to_string(path).map_err(io_err)?;
+    let mut records = raw
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .filter_map(|line| parse_channel_health_history_record(line).ok())
+        .collect::<Vec<_>>();
+    records.sort_by(|left, right| right.captured_at_unix_ms.cmp(&left.captured_at_unix_ms));
+    if limit > 0 {
+        records.truncate(limit);
+    }
+    Ok(records)
+}
+
+pub fn list_channel_test_diagnostics(
+    root: &Path,
+    channel_id: &str,
+    limit: usize,
+) -> LoomResult<Vec<ChannelTestDiagnosticRecord>> {
+    ensure_channel_runtime_scaffold(root)?;
+    let dir = channel_diagnostics_path(root);
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut records = Vec::new();
+    for entry in fs::read_dir(dir).map_err(io_err)? {
+        let entry = entry.map_err(io_err)?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let raw = fs::read_to_string(path).map_err(io_err)?;
+        let record = parse_channel_test_diagnostic_record(&raw)?;
+        if record.channel_id == channel_id {
+            records.push(record);
+        }
+    }
+    records.sort_by(|left, right| right.updated_at_unix_ms.cmp(&left.updated_at_unix_ms));
+    if limit > 0 {
+        records.truncate(limit);
+    }
+    Ok(records)
+}
+
+pub fn record_channel_test_diagnostic(
+    root: &Path,
+    delivery: &ChannelDeliveryRecord,
+    note: &str,
+) -> LoomResult<ChannelTestDiagnosticRecord> {
+    ensure_channel_runtime_scaffold(root)?;
+    let health = list_channel_health(root)?
+        .into_iter()
+        .find(|record| record.channel_id == delivery.channel_id);
+    let now = now_unix_ms();
+    let diagnostic = ChannelTestDiagnosticRecord {
+        diagnostic_id: format!("diag-{}", delivery.delivery_id),
+        delivery_id: delivery.delivery_id.clone(),
+        channel_id: delivery.channel_id.clone(),
+        recipient: delivery.recipient.clone(),
+        submitted_at_unix_ms: delivery.submitted_at_unix_ms,
+        updated_at_unix_ms: now,
+        status: delivery.status.clone(),
+        ready: health.as_ref().map(|record| record.ready).unwrap_or(false),
+        health: health
+            .as_ref()
+            .map(|record| record.health.clone())
+            .unwrap_or_else(|| "unknown".to_string()),
+        status_detail: delivery.status_detail.clone(),
+        note: note.trim().to_string(),
+    };
+    persist_channel_test_diagnostic(root, &diagnostic)?;
+    Ok(diagnostic)
+}
+
+fn record_channel_health_snapshots(root: &Path, trigger: &str) -> LoomResult<()> {
+    for record in list_channel_health(root)? {
+        append_channel_health_snapshot(root, &record, trigger)?;
+    }
+    Ok(())
+}
+
+fn append_channel_health_snapshot(
+    root: &Path,
+    record: &ChannelHealthRecord,
+    trigger: &str,
+) -> LoomResult<()> {
+    ensure_channel_runtime_scaffold(root)?;
+    let history_path = channel_health_history_path(root, &record.channel_id);
+    if let Some(parent) = history_path.parent() {
+        fs::create_dir_all(parent).map_err(io_err)?;
+    }
+    let history_record = ChannelHealthHistoryRecord {
+        captured_at_unix_ms: now_unix_ms(),
+        trigger: trigger.trim().to_string(),
+        channel_id: record.channel_id.clone(),
+        health: record.health.clone(),
+        ready: record.ready,
+        status_detail: record.status_detail.clone(),
+        latest_delivery_status: record.latest_delivery_status.clone(),
+        latest_delivery_at_unix_ms: record.latest_delivery_at_unix_ms,
+        queued_count: record.queued_count,
+        delivered_count: record.delivered_count,
+        failed_count: record.failed_count,
+        blocked_count: record.blocked_count,
+        archived_delivery_count: record.archived_delivery_count,
+    };
+    if let Some(previous) = list_channel_health_history(root, &record.channel_id, 1)?.first() {
+        if previous.health == history_record.health
+            && previous.ready == history_record.ready
+            && previous.status_detail == history_record.status_detail
+            && previous.latest_delivery_status == history_record.latest_delivery_status
+            && previous.queued_count == history_record.queued_count
+            && previous.delivered_count == history_record.delivered_count
+            && previous.failed_count == history_record.failed_count
+            && previous.blocked_count == history_record.blocked_count
+            && previous.archived_delivery_count == history_record.archived_delivery_count
+        {
+            return Ok(());
+        }
+    }
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(history_path)
+        .map_err(io_err)?;
+    let rendered = serde_json::to_string(&channel_health_history_json(&history_record))
+        .map_err(|error| error.to_string())?;
+    use std::io::Write;
+    writeln!(file, "{}", rendered).map_err(io_err)
+}
+
+fn sync_channel_test_diagnostic(
+    root: &Path,
+    delivery: &ChannelDeliveryRecord,
+) -> LoomResult<Option<ChannelTestDiagnosticRecord>> {
+    let path = channel_test_diagnostic_path(root, &delivery.delivery_id);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(&path).map_err(io_err)?;
+    let mut diagnostic = parse_channel_test_diagnostic_record(&raw)?;
+    let health = list_channel_health(root)?
+        .into_iter()
+        .find(|record| record.channel_id == delivery.channel_id);
+    diagnostic.updated_at_unix_ms = now_unix_ms();
+    diagnostic.status = delivery.status.clone();
+    diagnostic.ready = health.as_ref().map(|record| record.ready).unwrap_or(false);
+    diagnostic.health = health
+        .as_ref()
+        .map(|record| record.health.clone())
+        .unwrap_or_else(|| "unknown".to_string());
+    diagnostic.status_detail = if delivery.status_detail.trim().is_empty() {
+        delivery.deny_reason.clone()
+    } else {
+        delivery.status_detail.clone()
+    };
+    persist_channel_test_diagnostic(root, &diagnostic)?;
+    Ok(Some(diagnostic))
+}
+
+fn persist_channel_test_diagnostic(
+    root: &Path,
+    diagnostic: &ChannelTestDiagnosticRecord,
+) -> LoomResult<PathBuf> {
+    ensure_channel_runtime_scaffold(root)?;
+    let path = channel_test_diagnostic_path(root, &diagnostic.delivery_id);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(io_err)?;
+    }
+    let rendered = serde_json::to_string_pretty(&channel_test_diagnostic_json(diagnostic))
+        .map_err(|error| error.to_string())?;
+    fs::write(&path, format!("{}\n", rendered)).map_err(io_err)?;
+    Ok(path)
+}
+
 pub fn enqueue_channel_delivery(
     root: &Path,
     request: &ChannelDeliveryRequest,
@@ -368,6 +605,7 @@ pub fn enqueue_channel_delivery(
     };
 
     persist_delivery_record(root, &delivery)?;
+    let _ = record_channel_health_snapshots(root, "delivery_enqueued");
     delivery.display_text = delivery.display_text.trim().to_string();
     Ok(delivery)
 }
@@ -428,6 +666,8 @@ pub fn update_channel_delivery(
         record.status_detail = status_detail.trim().to_string();
     }
     persist_delivery_record_at_path(&path, &record)?;
+    let _ = sync_channel_test_diagnostic(root, &record);
+    let _ = record_channel_health_snapshots(root, "delivery_updated");
     Ok(record)
 }
 
@@ -986,6 +1226,46 @@ fn persist_ingress_record(root: &Path, record: &ChannelIngressRecord) -> LoomRes
     fs::write(path, rendered).map_err(io_err)
 }
 
+fn parse_channel_health_history_record(raw: &str) -> LoomResult<ChannelHealthHistoryRecord> {
+    let value: Value = serde_json::from_str(raw)
+        .map_err(|error| format!("invalid channel health history json: {error}"))?;
+    Ok(ChannelHealthHistoryRecord {
+        captured_at_unix_ms: value_u64(value.get("captured_at_unix_ms")).unwrap_or_default(),
+        trigger: value_string_or(value.get("trigger"), "unknown"),
+        channel_id: value_string(value.get("channel_id"), "channel_id")?,
+        health: value_string_or(value.get("health"), "unknown"),
+        ready: value.get("ready").and_then(Value::as_bool).unwrap_or(false),
+        status_detail: value_string_or(value.get("status_detail"), ""),
+        latest_delivery_status: value_string_or(value.get("latest_delivery_status"), "none"),
+        latest_delivery_at_unix_ms: value_u64(value.get("latest_delivery_at_unix_ms"))
+            .unwrap_or_default(),
+        queued_count: value_u64(value.get("queued_count")).unwrap_or_default() as usize,
+        delivered_count: value_u64(value.get("delivered_count")).unwrap_or_default() as usize,
+        failed_count: value_u64(value.get("failed_count")).unwrap_or_default() as usize,
+        blocked_count: value_u64(value.get("blocked_count")).unwrap_or_default() as usize,
+        archived_delivery_count: value_u64(value.get("archived_delivery_count")).unwrap_or_default()
+            as usize,
+    })
+}
+
+fn parse_channel_test_diagnostic_record(raw: &str) -> LoomResult<ChannelTestDiagnosticRecord> {
+    let value: Value = serde_json::from_str(raw)
+        .map_err(|error| format!("invalid channel diagnostic json: {error}"))?;
+    Ok(ChannelTestDiagnosticRecord {
+        diagnostic_id: value_string(value.get("diagnostic_id"), "diagnostic_id")?,
+        delivery_id: value_string(value.get("delivery_id"), "delivery_id")?,
+        channel_id: value_string(value.get("channel_id"), "channel_id")?,
+        recipient: value_string(value.get("recipient"), "recipient")?,
+        submitted_at_unix_ms: value_u64(value.get("submitted_at_unix_ms")).unwrap_or_default(),
+        updated_at_unix_ms: value_u64(value.get("updated_at_unix_ms")).unwrap_or_default(),
+        status: value_string_or(value.get("status"), "queued"),
+        ready: value.get("ready").and_then(Value::as_bool).unwrap_or(false),
+        health: value_string_or(value.get("health"), "unknown"),
+        status_detail: value_string_or(value.get("status_detail"), ""),
+        note: value_string_or(value.get("note"), ""),
+    })
+}
+
 fn parse_delivery_record(raw: &str) -> LoomResult<ChannelDeliveryRecord> {
     let value: Value = serde_json::from_str(raw)
         .map_err(|error| format!("invalid channel delivery json: {error}"))?;
@@ -1033,6 +1313,40 @@ fn parse_ingress_record(raw: &str) -> LoomResult<ChannelIngressRecord> {
         session_key: value_string(value.get("session_key"), "session_key")?,
         route_kind: value_string_or(value.get("route_kind"), "default_manager"),
         text: value_string(value.get("text"), "text")?,
+    })
+}
+
+fn channel_health_history_json(record: &ChannelHealthHistoryRecord) -> Value {
+    json!({
+        "captured_at_unix_ms": record.captured_at_unix_ms,
+        "trigger": record.trigger,
+        "channel_id": record.channel_id,
+        "health": record.health,
+        "ready": record.ready,
+        "status_detail": record.status_detail,
+        "latest_delivery_status": record.latest_delivery_status,
+        "latest_delivery_at_unix_ms": record.latest_delivery_at_unix_ms,
+        "queued_count": record.queued_count,
+        "delivered_count": record.delivered_count,
+        "failed_count": record.failed_count,
+        "blocked_count": record.blocked_count,
+        "archived_delivery_count": record.archived_delivery_count,
+    })
+}
+
+fn channel_test_diagnostic_json(record: &ChannelTestDiagnosticRecord) -> Value {
+    json!({
+        "diagnostic_id": record.diagnostic_id,
+        "delivery_id": record.delivery_id,
+        "channel_id": record.channel_id,
+        "recipient": record.recipient,
+        "submitted_at_unix_ms": record.submitted_at_unix_ms,
+        "updated_at_unix_ms": record.updated_at_unix_ms,
+        "status": record.status,
+        "ready": record.ready,
+        "health": record.health,
+        "status_detail": record.status_detail,
+        "note": record.note,
     })
 }
 
@@ -1478,5 +1792,113 @@ mod tests {
         let history = list_channel_ingress(&root, 10).expect("list ingress");
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].ingress_id, record.ingress_id);
+    }
+
+    #[test]
+    fn channel_health_history_records_transitions() {
+        let root = temp_path("loom-channel-health-history");
+        init_workspace(&root, "embedded", Some("/tmp/meridian-kernel"), "org_demo")
+            .expect("init workspace");
+        ensure_channel_runtime_scaffold(&root).expect("channel scaffold");
+
+        upsert_channel_record(
+            &root,
+            &ChannelRecord {
+                channel_id: "webhook_demo".to_string(),
+                kind: "webhook".to_string(),
+                enabled: true,
+                endpoint: "https://example.com/hook".to_string(),
+                auth_mode: "inline_header".to_string(),
+                credential_ref: "Authorization: Bearer test".to_string(),
+                dm_policy: "per-agent".to_string(),
+                group_policy: String::new(),
+                streaming: "async".to_string(),
+                note: "personal_agent=demo".to_string(),
+            },
+        )
+        .expect("upsert webhook");
+
+        let delivery = enqueue_channel_delivery(
+            &root,
+            &ChannelDeliveryRequest {
+                channel_id: "webhook_demo".to_string(),
+                recipient: "https://example.com/hook".to_string(),
+                raw_text: "delivery".to_string(),
+                allow_receipt_hashes: false,
+                allow_operator_diagnostics: false,
+            },
+        )
+        .expect("enqueue delivery");
+        update_channel_delivery(
+            &root,
+            &delivery.delivery_id,
+            "failed",
+            None,
+            Some("network timeout"),
+        )
+        .expect("mark failed");
+
+        let history = list_channel_health_history(&root, "webhook_demo", 10).expect("history");
+        assert!(history.len() >= 2);
+        assert_eq!(history[0].health, "warning");
+        assert_eq!(history[0].latest_delivery_status, "failed");
+        assert!(history
+            .iter()
+            .any(|entry| entry.trigger == "delivery_updated"));
+    }
+
+    #[test]
+    fn channel_test_diagnostics_track_delivery_updates() {
+        let root = temp_path("loom-channel-diagnostics");
+        init_workspace(&root, "embedded", Some("/tmp/meridian-kernel"), "org_demo")
+            .expect("init workspace");
+        ensure_channel_runtime_scaffold(&root).expect("channel scaffold");
+
+        upsert_channel_record(
+            &root,
+            &ChannelRecord {
+                channel_id: "webhook_demo".to_string(),
+                kind: "webhook".to_string(),
+                enabled: true,
+                endpoint: "https://example.com/hook".to_string(),
+                auth_mode: "inline_header".to_string(),
+                credential_ref: "Authorization: Bearer test".to_string(),
+                dm_policy: "per-agent".to_string(),
+                group_policy: String::new(),
+                streaming: "async".to_string(),
+                note: "personal_agent=demo".to_string(),
+            },
+        )
+        .expect("upsert webhook");
+
+        let delivery = enqueue_channel_delivery(
+            &root,
+            &ChannelDeliveryRequest {
+                channel_id: "webhook_demo".to_string(),
+                recipient: "https://example.com/hook".to_string(),
+                raw_text: "probe".to_string(),
+                allow_receipt_hashes: false,
+                allow_operator_diagnostics: false,
+            },
+        )
+        .expect("enqueue delivery");
+        let diagnostic = record_channel_test_diagnostic(&root, &delivery, "queued from unit test")
+            .expect("record diagnostic");
+        assert_eq!(diagnostic.status, "queued");
+
+        let updated = update_channel_delivery(
+            &root,
+            &delivery.delivery_id,
+            "failed",
+            None,
+            Some("simulated downstream failure"),
+        )
+        .expect("update delivery");
+        let diagnostics =
+            list_channel_test_diagnostics(&root, "webhook_demo", 10).expect("diagnostics");
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].delivery_id, updated.delivery_id);
+        assert_eq!(diagnostics[0].status, "failed");
+        assert!(diagnostics[0].updated_at_unix_ms >= diagnostics[0].submitted_at_unix_ms);
     }
 }

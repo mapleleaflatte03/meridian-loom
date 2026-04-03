@@ -25,9 +25,10 @@ loom run-agent reconcile {{SLUG}}
 
 ```bash
 loom run-agent inspect {{SLUG}}
+loom run-agent watch {{SLUG}} --once
 loom status --root "{{LOOM_ROOT}}"
 loom agent runtime --root "{{LOOM_ROOT}}" --agent-id "{{AGENT_ID}}"
-loom channel health --root "{{LOOM_ROOT}}" --agent {{SLUG}}
+loom channel health --root "{{LOOM_ROOT}}" --agent {{SLUG}} --history-limit 5 --diagnostic-limit 5
 loom channel deliveries --root "{{LOOM_ROOT}}" --include-archived
 loom memory receipts --root "{{LOOM_ROOT}}" --agent-id "{{AGENT_ID}}" --limit 10
 loom memory search --root "{{LOOM_ROOT}}" --agent-id "{{AGENT_ID}}" --category profile
@@ -41,5 +42,12 @@ loom memory search --root "{{LOOM_ROOT}}" --agent-id "{{AGENT_ID}}" --category p
 - memory receipts for profile and recall activity
 - optional Telegram/webhook delivery targets from your creation flags
 - a supervision policy block for manual or always-restart operation
+
+Useful operator signals:
+
+- `healthy`: supervisor and worker are both running
+- `waiting_backoff`: Loom is waiting before a restart
+- `manual_restart_required`: the loop exited and needs `loom run-agent reconcile {{SLUG}}`
+- `channel health` includes recent transitions and recent test diagnostics for the agent's channels
 
 Edit `SOUL.md`, `MEMORY.md`, and `agent.toml`, then restart the agent loop if you change runtime behavior.

@@ -7,16 +7,16 @@ use super::personal_agent::{
 use crate::*;
 use loom_core::channels::{
     channel_overview, enqueue_channel_delivery, ingest_channel_message, list_channel_deliveries,
-    list_channel_deliveries_with_options, list_channel_health, list_channel_ingress, load_channels,
-    render_channel_delivery_human, render_channel_delivery_json,
+    list_channel_deliveries_with_options, list_channel_health, list_channel_health_history,
+    list_channel_ingress, list_channel_test_diagnostics, load_channels,
+    record_channel_test_diagnostic, render_channel_delivery_human, render_channel_delivery_json,
     render_channel_delivery_list_human, render_channel_delivery_list_json,
-    render_channel_health_human, render_channel_health_json, render_channel_ingress_human,
-    render_channel_ingress_json, render_channel_ingress_list_human,
+    render_channel_ingress_human, render_channel_ingress_json, render_channel_ingress_list_human,
     render_channel_ingress_list_json, render_channel_list_human, render_channel_list_json,
     render_channel_overview_human, render_channel_overview_json, render_channel_sync_human,
     render_channel_sync_json, sync_channel_registry, update_channel_delivery,
-    upsert_channel_record, ChannelDeliveryRequest, ChannelHealthRecord, ChannelIngressRequest,
-    ChannelRecord,
+    upsert_channel_record, ChannelDeliveryRequest, ChannelHealthHistoryRecord, ChannelHealthRecord,
+    ChannelIngressRequest, ChannelRecord, ChannelTestDiagnosticRecord,
 };
 
 pub(crate) fn handle_channel(args: &[String]) -> LoomResult<()> {
@@ -60,6 +60,8 @@ COMMANDS:
   sync                                Sync channel registry from onboarding state
   list [--agent NAME]                 List known channel records
   health [--agent NAME]               Show operator-facing channel health
+         [--history-limit N]          Include recent health transitions (default: 5)
+         [--diagnostic-limit N]       Include recent test diagnostics (default: 3)
   show --agent NAME                   Show configured personal-agent delivery channels
   connect telegram --agent NAME       Connect Telegram delivery for a personal agent
           --chat-id ID [--token-env ENV]
@@ -179,17 +181,32 @@ fn handle_channel_health(args: &[String]) -> LoomResult<()> {
             "json".to_string()
         }
     });
+    let history_limit = take_value(args, "--history-limit")
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(5);
+    let diagnostic_limit = take_value(args, "--diagnostic-limit")
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(3);
     let mut records = list_channel_health(&root)?;
     if let Some(agent) = take_value(args, "--agent") {
         let config = load_personal_agent_config(&agent)?;
         records = filter_channel_health_for_agent(records, &config);
     }
+    let enriched = records
+        .iter()
+        .map(|record| {
+            let history = list_channel_health_history(&root, &record.channel_id, history_limit)?;
+            let diagnostics =
+                list_channel_test_diagnostics(&root, &record.channel_id, diagnostic_limit)?;
+            Ok((record.clone(), history, diagnostics))
+        })
+        .collect::<LoomResult<Vec<_>>>()?;
     match format.as_str() {
         "human" => {
             print_startup_banner();
-            print_human(&render_channel_health_human(&records));
+            print_human(&render_channel_health_surface_human(&enriched));
         }
-        _ => print!("{}", render_channel_health_json(&records)),
+        _ => print!("{}", render_channel_health_surface_json(&enriched)?),
     }
     Ok(())
 }
@@ -379,6 +396,15 @@ fn handle_channel_test(args: &[String]) -> LoomResult<()> {
             allow_operator_diagnostics: false,
         },
     )?;
+    let diagnostic = record_channel_test_diagnostic(
+        &root,
+        &record,
+        "queued from loom channel test; downstream channel acknowledgement may still be pending",
+    )?;
+    let diagnostic_path =
+        loom_core::channels::channel_test_diagnostic_path(&root, &record.delivery_id)
+            .display()
+            .to_string();
     let format = take_value(args, "--format").unwrap_or_else(|| {
         if std::io::stdout().is_terminal() {
             "human".to_string()
@@ -386,12 +412,38 @@ fn handle_channel_test(args: &[String]) -> LoomResult<()> {
             "json".to_string()
         }
     });
+    let payload = serde_json::json!({
+        "delivery": serde_json::from_str::<serde_json::Value>(&render_channel_delivery_json(&record))
+            .unwrap_or_else(|_| serde_json::json!({})),
+        "diagnostic": {
+            "diagnostic_id": diagnostic.diagnostic_id,
+            "status": diagnostic.status,
+            "health": diagnostic.health,
+            "ready": diagnostic.ready,
+            "status_detail": diagnostic.status_detail,
+            "note": diagnostic.note,
+            "path": diagnostic_path,
+        }
+    });
     match format.as_str() {
         "human" => {
             print_startup_banner();
-            print_human(&render_channel_delivery_human(&record));
+            print_human(&format!(
+                "{}\ndiagnostic_id:     {}\ndiagnostic_status: {}\ndiagnostic_health: {}\ndiagnostic_ready:  {}\ndiagnostic_detail: {}\ndiagnostic_note:   {}\ndiagnostic_path:   {}\n",
+                render_channel_delivery_human(&record).trim_end(),
+                payload["diagnostic"]["diagnostic_id"].as_str().unwrap_or(""),
+                payload["diagnostic"]["status"].as_str().unwrap_or(""),
+                payload["diagnostic"]["health"].as_str().unwrap_or(""),
+                payload["diagnostic"]["ready"].as_bool().unwrap_or(false),
+                payload["diagnostic"]["status_detail"].as_str().unwrap_or(""),
+                payload["diagnostic"]["note"].as_str().unwrap_or(""),
+                payload["diagnostic"]["path"].as_str().unwrap_or(""),
+            ));
         }
-        _ => print!("{}", render_channel_delivery_json(&record)),
+        _ => print!(
+            "{}\n",
+            serde_json::to_string_pretty(&payload).map_err(|error| error.to_string())?
+        ),
     }
     Ok(())
 }
@@ -476,6 +528,129 @@ fn agent_channel_ids(config: &super::personal_agent::PersonalAgentConfig) -> Vec
         }
     }
     channel_ids
+}
+
+fn render_channel_health_surface_human(
+    records: &[(
+        ChannelHealthRecord,
+        Vec<ChannelHealthHistoryRecord>,
+        Vec<ChannelTestDiagnosticRecord>,
+    )],
+) -> String {
+    if records.is_empty() {
+        return "channel_health_count: 0\n".to_string();
+    }
+    let mut rendered = format!("channel_health_count: {}\n", records.len());
+    for (record, history, diagnostics) in records {
+        rendered.push_str(&format!(
+            "\n- {} kind={} health={} ready={} latest={} queued={} delivered={} failed={} blocked={} archived={} detail={}\n",
+            record.channel_id,
+            record.kind,
+            record.health,
+            record.ready,
+            record.latest_delivery_status,
+            record.queued_count,
+            record.delivered_count,
+            record.failed_count,
+            record.blocked_count,
+            record.archived_delivery_count,
+            record.status_detail.replace('\n', "\\n"),
+        ));
+        rendered.push_str("  history:\n");
+        if history.is_empty() {
+            rendered.push_str("    (none)\n");
+        } else {
+            for item in history {
+                rendered.push_str(&format!(
+                    "    - at={} trigger={} health={} ready={} latest={} detail={}\n",
+                    item.captured_at_unix_ms,
+                    item.trigger,
+                    item.health,
+                    item.ready,
+                    item.latest_delivery_status,
+                    item.status_detail.replace('\n', "\\n"),
+                ));
+            }
+        }
+        rendered.push_str("  diagnostics:\n");
+        if diagnostics.is_empty() {
+            rendered.push_str("    (none)\n");
+        } else {
+            for item in diagnostics {
+                rendered.push_str(&format!(
+                    "    - {} status={} health={} ready={} updated_at={} note={} detail={}\n",
+                    item.diagnostic_id,
+                    item.status,
+                    item.health,
+                    item.ready,
+                    item.updated_at_unix_ms,
+                    item.note.replace('\n', "\\n"),
+                    item.status_detail.replace('\n', "\\n"),
+                ));
+            }
+        }
+    }
+    rendered
+}
+
+fn render_channel_health_surface_json(
+    records: &[(
+        ChannelHealthRecord,
+        Vec<ChannelHealthHistoryRecord>,
+        Vec<ChannelTestDiagnosticRecord>,
+    )],
+) -> LoomResult<String> {
+    let payload = records
+        .iter()
+        .map(|(record, history, diagnostics)| {
+            serde_json::json!({
+                "channel_id": record.channel_id,
+                "kind": record.kind,
+                "enabled": record.enabled,
+                "ready": record.ready,
+                "health": record.health,
+                "status_detail": record.status_detail,
+                "endpoint": record.endpoint,
+                "latest_delivery_status": record.latest_delivery_status,
+                "latest_delivery_at_unix_ms": record.latest_delivery_at_unix_ms,
+                "queued_count": record.queued_count,
+                "delivered_count": record.delivered_count,
+                "failed_count": record.failed_count,
+                "blocked_count": record.blocked_count,
+                "archived_delivery_count": record.archived_delivery_count,
+                "history": history.iter().map(|item| serde_json::json!({
+                    "captured_at_unix_ms": item.captured_at_unix_ms,
+                    "trigger": item.trigger,
+                    "health": item.health,
+                    "ready": item.ready,
+                    "status_detail": item.status_detail,
+                    "latest_delivery_status": item.latest_delivery_status,
+                    "latest_delivery_at_unix_ms": item.latest_delivery_at_unix_ms,
+                    "queued_count": item.queued_count,
+                    "delivered_count": item.delivered_count,
+                    "failed_count": item.failed_count,
+                    "blocked_count": item.blocked_count,
+                    "archived_delivery_count": item.archived_delivery_count,
+                })).collect::<Vec<_>>(),
+                "diagnostics": diagnostics.iter().map(|item| serde_json::json!({
+                    "diagnostic_id": item.diagnostic_id,
+                    "delivery_id": item.delivery_id,
+                    "recipient": item.recipient,
+                    "submitted_at_unix_ms": item.submitted_at_unix_ms,
+                    "updated_at_unix_ms": item.updated_at_unix_ms,
+                    "status": item.status,
+                    "ready": item.ready,
+                    "health": item.health,
+                    "status_detail": item.status_detail,
+                    "note": item.note,
+                })).collect::<Vec<_>>(),
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(format!(
+        "{}\n",
+        serde_json::to_string_pretty(&payload).map_err(|error| error.to_string())?
+    ))
 }
 
 fn handle_channel_send(args: &[String]) -> LoomResult<()> {

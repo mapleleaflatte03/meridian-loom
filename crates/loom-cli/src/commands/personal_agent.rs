@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 use std::env;
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
@@ -11,7 +13,10 @@ use loom_core::agent_runtime::{
     open_agent_session, upsert_agent_runtime_profile, write_agent_memory_snapshot,
     AgentRuntimeProfile,
 };
-use loom_core::channels::{self, ChannelRecord};
+use loom_core::channels::{
+    self, ChannelDeliveryRecord, ChannelHealthHistoryRecord, ChannelHealthRecord, ChannelRecord,
+    ChannelTestDiagnosticRecord,
+};
 use loom_core::memory_service::MemoryService;
 use loom_core::onboarding;
 use loom_core::recurring::{self, HeartbeatDeliveryTarget, HeartbeatScheduleRequest};
@@ -102,7 +107,17 @@ struct PersonalAgentRunPolicy {
     last_exit_unix_ms: u64,
     next_restart_after_unix_ms: u64,
     last_exit_status: String,
+    supervisor_pid: u32,
+    current_worker_pid: u32,
+    last_crash_unix_ms: u64,
+    last_crash_reason: String,
 }
+
+type PersonalAgentChannelSurface = (
+    ChannelHealthRecord,
+    Vec<ChannelHealthHistoryRecord>,
+    Vec<ChannelTestDiagnosticRecord>,
+);
 
 pub(crate) fn handle_new_agent(args: &[String]) -> LoomResult<()> {
     if has_flag(args, "--help") || has_flag(args, "-h") {
@@ -255,8 +270,10 @@ pub(crate) fn handle_run_agent(args: &[String]) -> LoomResult<()> {
     match args.first().map(String::as_str) {
         Some("status") => return handle_run_agent_status(&args[1..]),
         Some("inspect") => return handle_run_agent_inspect(&args[1..]),
+        Some("watch") => return handle_run_agent_watch(&args[1..]),
         Some("stop") => return handle_run_agent_stop(&args[1..]),
         Some("reconcile") => return handle_run_agent_reconcile(&args[1..]),
+        Some("supervise") => return handle_run_agent_supervise(&args[1..]),
         _ => {}
     }
 
@@ -273,6 +290,9 @@ pub(crate) fn handle_run_agent(args: &[String]) -> LoomResult<()> {
         .unwrap_or(15);
     let once = has_flag(args, "--once");
     let foreground = has_flag(args, "--foreground") || has_flag(args, "--loop");
+    let supervisor_pid = take_value(args, "--supervisor-pid")
+        .and_then(|value| value.parse::<u32>().ok())
+        .filter(|pid| *pid > 0);
     let restart_policy = take_value(args, "--restart-policy")
         .map(|value| normalize_restart_policy(&value))
         .unwrap_or_else(|| normalize_restart_policy(&config.restart_policy));
@@ -282,24 +302,24 @@ pub(crate) fn handle_run_agent(args: &[String]) -> LoomResult<()> {
         .max(1);
 
     if !foreground {
-        if let Some(state) = load_loop_state(&state_path)? {
-            if pid_is_running(state.pid) {
-                print_startup_banner();
-                print_human(&format!(
-                    "Meridian Loom // RUN AGENT\n==========================\nname:         {}\nslug:         {}\nagent_id:     {}\nstatus:       already running\npid:          {}\nheartbeat_id: {}\nlog_path:     {}\nstate_path:   {}\n",
-                    config.display_name,
-                    config.slug,
-                    config.agent_id,
-                    state.pid,
-                    state.heartbeat_id,
-                    state.log_path,
-                    state_path.display(),
-                ));
-                return Ok(());
-            }
+        let summary = build_run_agent_summary(&root, &config)?;
+        if summary["running"].as_bool().unwrap_or(false) {
+            print_startup_banner();
+            print_human(&format!(
+                "Meridian Loom // RUN AGENT\n==========================\nname:         {}\nslug:         {}\nagent_id:     {}\nstatus:       already supervised\nworker_pid:   {}\nsupervisor_pid:{}\nheartbeat_id: {}\nlog_path:     {}\nstate_path:   {}\n",
+                config.display_name,
+                config.slug,
+                config.agent_id,
+                summary["worker_pid"].as_u64().unwrap_or_default(),
+                summary["supervisor_pid"].as_u64().unwrap_or_default(),
+                heartbeat_id,
+                loop_log_path.display(),
+                state_path.display(),
+            ));
+            return Ok(());
         }
 
-        let child = spawn_run_agent_background(
+        let child = spawn_run_agent_supervisor(
             &root,
             &config,
             poll_seconds,
@@ -308,7 +328,7 @@ pub(crate) fn handle_run_agent(args: &[String]) -> LoomResult<()> {
         )?;
         print_startup_banner();
         print_human(&format!(
-            "Meridian Loom // RUN AGENT\n==========================\nname:         {}\nslug:         {}\nagent_id:     {}\nstatus:       background loop started\npid:          {}\nheartbeat_id: {}\nlog_path:     {}\nstate_path:   {}\nrestart_policy:{}\nrestart_backoff:{}s\n\nNext\n----\n1. tail -f \"{}\"\n2. loom run-agent inspect {}\n3. loom recurring runs --root \"{}\" --job-type heartbeat\n4. loom channel deliveries --root \"{}\" --include-archived\n",
+            "Meridian Loom // RUN AGENT\n==========================\nname:         {}\nslug:         {}\nagent_id:     {}\nstatus:       supervisor started\nsupervisor_pid:{}\nheartbeat_id: {}\nlog_path:     {}\nstate_path:   {}\nrestart_policy:{}\nrestart_backoff:{}s\n\nNext\n----\n1. tail -f \"{}\"\n2. loom run-agent watch {}\n3. loom run-agent inspect {}\n4. loom run-agent reconcile {}\n",
             config.display_name,
             config.slug,
             config.agent_id,
@@ -320,8 +340,8 @@ pub(crate) fn handle_run_agent(args: &[String]) -> LoomResult<()> {
             restart_backoff_seconds,
             loop_log_path.display(),
             config.slug,
-            root.display(),
-            root.display(),
+            config.slug,
+            config.slug,
         ));
         return Ok(());
     }
@@ -334,6 +354,7 @@ pub(crate) fn handle_run_agent(args: &[String]) -> LoomResult<()> {
         &heartbeat_id,
         poll_seconds,
         once,
+        supervisor_pid,
     )
 }
 
@@ -345,6 +366,7 @@ fn run_agent_loop(
     heartbeat_id: &str,
     poll_seconds: u64,
     once: bool,
+    _supervisor_pid: Option<u32>,
 ) -> LoomResult<()> {
     ensure_runtime_ready_for_personal_agent(root, config)?;
     sync_personal_agent_delivery_channels(root, config)?;
@@ -482,28 +504,23 @@ fn run_agent_loop(
     }
 }
 
-fn spawn_run_agent_background(
+fn spawn_run_agent_worker(
     root: &Path,
     config: &PersonalAgentConfig,
     poll_seconds: u64,
-    restart_policy: &str,
-    restart_backoff_seconds: u64,
 ) -> LoomResult<std::process::Child> {
     let loop_log_path = personal_agent_log_path(root, &config.slug)?;
     let state_path = personal_agent_state_path(root, &config.slug)?;
     let heartbeat_id = heartbeat_id_for_slug(&config.slug);
-    let policy_path = personal_agent_policy_path(root, &config.slug)?;
-    let mut policy = load_run_policy(&policy_path, config)?;
-    policy.desired_state = "running".to_string();
-    policy.restart_policy = normalize_restart_policy(restart_policy);
-    policy.restart_backoff_seconds = restart_backoff_seconds.max(1);
-    policy.next_restart_after_unix_ms = 0;
-    write_run_policy(&policy_path, &policy)?;
 
     if let Some(parent) = loop_log_path.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-    let stdout = fs::File::create(&loop_log_path).map_err(|error| error.to_string())?;
+    let stdout = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&loop_log_path)
+        .map_err(|error| error.to_string())?;
     let stderr = stdout.try_clone().map_err(|error| error.to_string())?;
     let exe = env::current_exe().map_err(|error| error.to_string())?;
     let mut command = Command::new(exe);
@@ -542,6 +559,184 @@ fn spawn_run_agent_background(
     Ok(child)
 }
 
+fn spawn_run_agent_supervisor(
+    root: &Path,
+    config: &PersonalAgentConfig,
+    poll_seconds: u64,
+    restart_policy: &str,
+    restart_backoff_seconds: u64,
+) -> LoomResult<std::process::Child> {
+    let loop_log_path = personal_agent_log_path(root, &config.slug)?;
+    let policy_path = personal_agent_policy_path(root, &config.slug)?;
+    let mut policy = load_run_policy(&policy_path, config)?;
+    policy.desired_state = "running".to_string();
+    policy.restart_policy = normalize_restart_policy(restart_policy);
+    policy.restart_backoff_seconds = restart_backoff_seconds.max(1);
+    policy.next_restart_after_unix_ms = 0;
+    policy.supervisor_pid = 0;
+    policy.current_worker_pid = 0;
+    write_run_policy(&policy_path, &policy)?;
+
+    if let Some(parent) = loop_log_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let stdout = fs::File::create(&loop_log_path).map_err(|error| error.to_string())?;
+    let stderr = stdout.try_clone().map_err(|error| error.to_string())?;
+    let exe = env::current_exe().map_err(|error| error.to_string())?;
+    let mut command = Command::new(exe);
+    command
+        .arg("run-agent")
+        .arg("supervise")
+        .arg(&config.slug)
+        .arg("--poll-seconds")
+        .arg(poll_seconds.to_string())
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(stderr));
+    command.spawn().map_err(|error| error.to_string())
+}
+
+fn append_supervisor_log(log_path: &Path, line: &str) -> LoomResult<()> {
+    if let Some(parent) = log_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path)
+        .map_err(|error| error.to_string())?;
+    use std::io::Write;
+    writeln!(file, "{} :: {}", now_unix_ms(), line).map_err(|error| error.to_string())
+}
+
+fn describe_exit_status(status: std::process::ExitStatus) -> String {
+    if let Some(code) = status.code() {
+        if code == 0 {
+            return "worker exited cleanly".to_string();
+        }
+        return format!("worker exited with code {}", code);
+    }
+    #[cfg(unix)]
+    if let Some(signal) = status.signal() {
+        return format!("worker terminated by signal {}", signal);
+    }
+    "worker exited without status code".to_string()
+}
+
+fn run_agent_supervisor_loop(
+    root: &Path,
+    config: &PersonalAgentConfig,
+    poll_seconds: u64,
+) -> LoomResult<()> {
+    let policy_path = personal_agent_policy_path(root, &config.slug)?;
+    let log_path = personal_agent_log_path(root, &config.slug)?;
+    let supervisor_pid = std::process::id();
+    let mut child: Option<std::process::Child> = None;
+    append_supervisor_log(
+        &log_path,
+        &format!("supervisor starting pid={}", supervisor_pid),
+    )?;
+
+    loop {
+        let mut policy = load_run_policy(&policy_path, config)?;
+        policy.supervisor_pid = supervisor_pid;
+
+        if policy.desired_state != "running" {
+            if child.is_none() {
+                policy.supervisor_pid = 0;
+                policy.current_worker_pid = 0;
+                policy.next_restart_after_unix_ms = 0;
+                write_run_policy(&policy_path, &policy)?;
+                clear_stop_request(root, &config.slug)?;
+                append_supervisor_log(&log_path, "supervisor stopped by policy")?;
+                return Ok(());
+            }
+            if !stop_requested(root, &config.slug)? {
+                let _ = write_stop_request(root, &config.slug)?;
+            }
+        }
+
+        if let Some(child_process) = child.as_mut() {
+            match child_process
+                .try_wait()
+                .map_err(|error| error.to_string())?
+            {
+                Some(status) => {
+                    let now_ms = now_unix_ms();
+                    let exit_reason = describe_exit_status(status);
+                    let unexpected_exit =
+                        policy.desired_state == "running" && !stop_requested(root, &config.slug)?;
+                    policy.current_worker_pid = 0;
+                    policy.last_exit_unix_ms = now_ms;
+                    policy.last_exit_status = exit_reason.clone();
+                    if unexpected_exit {
+                        policy.failure_count = policy.failure_count.saturating_add(1);
+                        policy.last_crash_unix_ms = now_ms;
+                        policy.last_crash_reason = exit_reason.clone();
+                        if policy.restart_policy == "always" {
+                            policy.next_restart_after_unix_ms = now_ms.saturating_add(
+                                policy.restart_backoff_seconds.saturating_mul(1000),
+                            );
+                        } else {
+                            policy.next_restart_after_unix_ms = 0;
+                        }
+                    } else {
+                        policy.next_restart_after_unix_ms = 0;
+                    }
+                    write_run_policy(&policy_path, &policy)?;
+                    append_supervisor_log(
+                        &log_path,
+                        &format!(
+                            "worker exit unexpected={} reason={}",
+                            unexpected_exit, exit_reason
+                        ),
+                    )?;
+                    child = None;
+                    if policy.desired_state != "running" {
+                        continue;
+                    }
+                    if policy.restart_policy != "always" {
+                        policy.supervisor_pid = 0;
+                        write_run_policy(&policy_path, &policy)?;
+                        append_supervisor_log(
+                            &log_path,
+                            "manual policy leaves crashed worker stopped",
+                        )?;
+                        return Ok(());
+                    }
+                }
+                None => {
+                    policy.current_worker_pid = child_process.id();
+                    write_run_policy(&policy_path, &policy)?;
+                    thread::sleep(Duration::from_secs(poll_seconds.min(5).max(1)));
+                    continue;
+                }
+            }
+        }
+
+        let policy = load_run_policy(&policy_path, config)?;
+        if policy.desired_state != "running" {
+            continue;
+        }
+        let now_ms = now_unix_ms();
+        if policy.next_restart_after_unix_ms > now_ms {
+            thread::sleep(Duration::from_secs(1));
+            continue;
+        }
+
+        clear_stop_request(root, &config.slug)?;
+        let new_child = spawn_run_agent_worker(root, config, poll_seconds)?;
+        let mut policy = load_run_policy(&policy_path, config)?;
+        policy.supervisor_pid = supervisor_pid;
+        policy.current_worker_pid = new_child.id();
+        policy.last_exit_status = "worker running".to_string();
+        write_run_policy(&policy_path, &policy)?;
+        append_supervisor_log(&log_path, &format!("worker spawned pid={}", new_child.id()))?;
+        child = Some(new_child);
+        thread::sleep(Duration::from_secs(1));
+    }
+}
+
 fn build_run_agent_summary(
     root: &Path,
     config: &PersonalAgentConfig,
@@ -550,29 +745,38 @@ fn build_run_agent_summary(
     let stop_path = personal_agent_stop_request_path(root, &config.slug)?;
     let policy_path = personal_agent_policy_path(root, &config.slug)?;
     let state = load_loop_state(&state_path)?;
-    let running = state
-        .as_ref()
-        .map(|state| pid_is_running(state.pid))
-        .unwrap_or(false);
     let run_policy = load_run_policy(&policy_path, config)?;
-    let normalized_status = state
+    let now_ms = now_unix_ms();
+    let supervisor_running = pid_is_running(run_policy.supervisor_pid);
+    let state_worker_pid = state
         .as_ref()
-        .map(|state| {
-            if running {
-                state.status.clone()
-            } else if matches!(state.status.as_str(), "running" | "starting") {
-                match supervision_action(&run_policy, now_unix_ms()) {
-                    "needs_restart" => "needs_restart".to_string(),
-                    "waiting_backoff" => "waiting_backoff".to_string(),
-                    "manual_restart_required" => "stopped".to_string(),
-                    "stopped_by_policy" => "stopped".to_string(),
-                    _ => "stopped".to_string(),
-                }
-            } else {
-                state.status.clone()
-            }
-        })
-        .unwrap_or_else(|| "not_started".to_string());
+        .map(|state| state.pid)
+        .filter(|pid| pid_is_running(*pid))
+        .unwrap_or_default();
+    let policy_worker_pid =
+        if state_worker_pid == 0 && pid_is_running(run_policy.current_worker_pid) {
+            run_policy.current_worker_pid
+        } else {
+            0
+        };
+    let worker_pid = if state_worker_pid != 0 {
+        state_worker_pid
+    } else {
+        policy_worker_pid
+    };
+    let worker_running = worker_pid != 0;
+    let action = if worker_running {
+        "healthy"
+    } else {
+        supervision_action(&run_policy, now_ms)
+    };
+    let normalized_status = derive_run_agent_status(
+        state.as_ref(),
+        worker_running,
+        supervisor_running,
+        &run_policy,
+        action,
+    );
     let primary_channel = configured_delivery_target(config)
         .map(|target| format!("{} -> {}", target.channel_id, target.recipient))
         .unwrap_or_else(|| "none".to_string());
@@ -580,11 +784,15 @@ fn build_run_agent_summary(
         "name": config.display_name,
         "slug": config.slug,
         "agent_id": config.agent_id,
-        "running": running,
+        "running": worker_running,
         "status": normalized_status,
-        "pid": state.as_ref().map(|state| state.pid).unwrap_or_default(),
+        "pid": worker_pid,
+        "worker_pid": worker_pid,
+        "worker_running": worker_running,
+        "supervisor_pid": run_policy.supervisor_pid,
+        "supervisor_running": supervisor_running,
         "heartbeat_id": heartbeat_id_for_slug(&config.slug),
-        "last_run_status": state.as_ref().map(|state| state.last_run_status.clone()).unwrap_or_else(|| "not_started".to_string()),
+        "last_run_status": state.as_ref().map(|state| state.last_run_status.clone()).unwrap_or_else(|| run_policy.last_exit_status.clone()),
         "last_tick_unix_ms": state.as_ref().map(|state| state.last_tick_unix_ms).unwrap_or_default(),
         "last_memory_sync_unix_ms": state.as_ref().map(|state| state.last_memory_sync_unix_ms).unwrap_or_default(),
         "memory_entries_recalled": state.as_ref().map(|state| state.memory_entries_recalled).unwrap_or_default(),
@@ -602,16 +810,91 @@ fn build_run_agent_summary(
         "last_exit_unix_ms": run_policy.last_exit_unix_ms,
         "next_restart_after_unix_ms": run_policy.next_restart_after_unix_ms,
         "last_exit_status": run_policy.last_exit_status,
-        "supervision_action": supervision_action(&run_policy, now_unix_ms()),
+        "last_crash_unix_ms": run_policy.last_crash_unix_ms,
+        "last_crash_reason": run_policy.last_crash_reason,
+        "crash_state": derive_crash_state(&run_policy, worker_running, supervisor_running, now_ms),
+        "supervision_action": action,
     }))
+}
+
+fn derive_run_agent_status(
+    state: Option<&PersonalAgentLoopState>,
+    worker_running: bool,
+    supervisor_running: bool,
+    policy: &PersonalAgentRunPolicy,
+    action: &str,
+) -> String {
+    if worker_running {
+        return state
+            .map(|item| item.status.clone())
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| "running".to_string());
+    }
+    match action {
+        "waiting_backoff" => "waiting_backoff".to_string(),
+        "supervisor_active" => {
+            if policy.last_crash_unix_ms > 0 {
+                "recovering".to_string()
+            } else if supervisor_running {
+                "supervising".to_string()
+            } else {
+                "starting".to_string()
+            }
+        }
+        "manual_restart_required" => "crashed".to_string(),
+        "stopped_by_policy" => "stopped".to_string(),
+        _ => state
+            .map(|item| item.status.clone())
+            .filter(|value| !matches!(value.as_str(), "running" | "starting"))
+            .unwrap_or_else(|| {
+                if policy.last_crash_unix_ms > 0 {
+                    "crashed".to_string()
+                } else {
+                    "not_started".to_string()
+                }
+            }),
+    }
+}
+
+fn derive_crash_state(
+    policy: &PersonalAgentRunPolicy,
+    worker_running: bool,
+    supervisor_running: bool,
+    now_unix_ms: u64,
+) -> &'static str {
+    if policy.last_crash_unix_ms == 0 {
+        return "none";
+    }
+    if worker_running {
+        return "recovered";
+    }
+    if supervisor_running || policy.next_restart_after_unix_ms > now_unix_ms {
+        return "awaiting_restart";
+    }
+    if policy.restart_policy == "always" {
+        return "restart_due";
+    }
+    "manual_restart_required"
 }
 
 fn supervision_action(policy: &PersonalAgentRunPolicy, now_unix_ms: u64) -> &'static str {
     if policy.desired_state != "running" {
         return "stopped_by_policy";
     }
+    if pid_is_running(policy.current_worker_pid) {
+        return "healthy";
+    }
+    if pid_is_running(policy.supervisor_pid) {
+        if policy.next_restart_after_unix_ms > now_unix_ms {
+            return "waiting_backoff";
+        }
+        return "supervisor_active";
+    }
     if policy.restart_policy != "always" {
-        return "manual_restart_required";
+        if policy.last_crash_unix_ms > 0 || policy.failure_count > 0 {
+            return "manual_restart_required";
+        }
+        return "needs_restart";
     }
     if policy.next_restart_after_unix_ms > now_unix_ms {
         return "waiting_backoff";
@@ -1464,6 +1747,10 @@ fn default_run_policy(config: &PersonalAgentConfig) -> PersonalAgentRunPolicy {
         last_exit_unix_ms: 0,
         next_restart_after_unix_ms: 0,
         last_exit_status: "not_started".to_string(),
+        supervisor_pid: 0,
+        current_worker_pid: 0,
+        last_crash_unix_ms: 0,
+        last_crash_reason: String::new(),
     }
 }
 
@@ -1510,6 +1797,23 @@ fn load_run_policy(
             .and_then(serde_json::Value::as_str)
             .unwrap_or("not_started")
             .to_string(),
+        supervisor_pid: value
+            .get("supervisor_pid")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or_default() as u32,
+        current_worker_pid: value
+            .get("current_worker_pid")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or_default() as u32,
+        last_crash_unix_ms: value
+            .get("last_crash_unix_ms")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or_default(),
+        last_crash_reason: value
+            .get("last_crash_reason")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
     })
 }
 
@@ -1525,6 +1829,10 @@ fn write_run_policy(path: &Path, policy: &PersonalAgentRunPolicy) -> LoomResult<
         "last_exit_unix_ms": policy.last_exit_unix_ms,
         "next_restart_after_unix_ms": policy.next_restart_after_unix_ms,
         "last_exit_status": policy.last_exit_status,
+        "supervisor_pid": policy.supervisor_pid,
+        "current_worker_pid": policy.current_worker_pid,
+        "last_crash_unix_ms": policy.last_crash_unix_ms,
+        "last_crash_reason": policy.last_crash_reason,
     }))
     .map_err(|error| error.to_string())?;
     fs::write(path, format!("{}\n", rendered)).map_err(|error| error.to_string())
@@ -1615,13 +1923,19 @@ fn handle_run_agent_status(args: &[String]) -> LoomResult<()> {
         _ => {
             print_startup_banner();
             print_human(&format!(
-                "Meridian Loom // RUN AGENT STATUS\n=================================\nname:                  {}\nslug:                  {}\nagent_id:              {}\nrunning:               {}\nstatus:                {}\npid:                   {}\nheartbeat_id:          {}\nlast_run_status:       {}\nlast_tick_unix_ms:     {}\nlast_memory_sync_ms:   {}\nmemory_entries_recalled:{}\nmemory_entries_updated:{}\nprimary_channel:       {}\ndesired_state:         {}\nrestart_policy:        {}\nrestart_backoff_sec:   {}\nsupervision_action:    {}\nconfig_path:           {}\nstate_path:            {}\npolicy_path:           {}\nstop_requested:        {}\n",
+                "Meridian Loom // RUN AGENT STATUS\n=================================\nname:                  {}\nslug:                  {}\nagent_id:              {}\nstatus:                {}\nrunning:               {}\nworker_pid:            {}\nworker_running:        {}\nsupervisor_pid:        {}\nsupervisor_running:    {}\ncrash_state:           {}\nlast_crash_unix_ms:    {}\nlast_crash_reason:     {}\nheartbeat_id:          {}\nlast_run_status:       {}\nlast_tick_unix_ms:     {}\nlast_memory_sync_ms:   {}\nmemory_entries_recalled:{}\nmemory_entries_updated:{}\nprimary_channel:       {}\ndesired_state:         {}\nrestart_policy:        {}\nrestart_backoff_sec:   {}\nsupervision_action:    {}\nconfig_path:           {}\nstate_path:            {}\npolicy_path:           {}\nstop_requested:        {}\n",
                 summary["name"].as_str().unwrap_or(""),
                 summary["slug"].as_str().unwrap_or(""),
                 summary["agent_id"].as_str().unwrap_or(""),
-                summary["running"].as_bool().unwrap_or(false),
                 summary["status"].as_str().unwrap_or(""),
-                summary["pid"].as_u64().unwrap_or_default(),
+                summary["running"].as_bool().unwrap_or(false),
+                summary["worker_pid"].as_u64().unwrap_or_default(),
+                summary["worker_running"].as_bool().unwrap_or(false),
+                summary["supervisor_pid"].as_u64().unwrap_or_default(),
+                summary["supervisor_running"].as_bool().unwrap_or(false),
+                summary["crash_state"].as_str().unwrap_or(""),
+                summary["last_crash_unix_ms"].as_u64().unwrap_or_default(),
+                summary["last_crash_reason"].as_str().unwrap_or(""),
                 summary["heartbeat_id"].as_str().unwrap_or(""),
                 summary["last_run_status"].as_str().unwrap_or(""),
                 summary["last_tick_unix_ms"].as_u64().unwrap_or_default(),
@@ -1643,35 +1957,104 @@ fn handle_run_agent_status(args: &[String]) -> LoomResult<()> {
     Ok(())
 }
 
-fn handle_run_agent_inspect(args: &[String]) -> LoomResult<()> {
-    let Some(name_or_slug) = positional_name(args) else {
-        return Err("run-agent inspect requires an agent name or slug".to_string());
-    };
-    let config = load_personal_agent_config(&name_or_slug)?;
-    let root = root_from(Some(&config.loom_root))?;
-    let summary = build_run_agent_summary(&root, &config)?;
-    let receipt_limit = take_value(args, "--receipt-limit")
-        .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(5);
-    let delivery_limit = take_value(args, "--delivery-limit")
-        .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(5);
-    let channel_ids = personal_agent_channel_ids(&config);
-    let channel_health = loom_core::channels::list_channel_health(&root)?
+fn collect_personal_agent_channel_surface(
+    root: &Path,
+    config: &PersonalAgentConfig,
+    history_limit: usize,
+    diagnostic_limit: usize,
+) -> LoomResult<Vec<PersonalAgentChannelSurface>> {
+    let channel_ids = personal_agent_channel_ids(config);
+    loom_core::channels::list_channel_health(root)?
         .into_iter()
         .filter(|record| channel_ids.iter().any(|id| id == &record.channel_id))
-        .collect::<Vec<_>>();
-    let recent_receipts =
-        MemoryService::with_defaults(&root).list_receipts(receipt_limit, Some(&config.agent_id))?;
-    let recent_deliveries =
-        loom_core::channels::list_channel_deliveries_with_options(&root, 0, true, false)?
+        .map(|record| {
+            let history = loom_core::channels::list_channel_health_history(
+                root,
+                &record.channel_id,
+                history_limit,
+            )?;
+            let diagnostics = loom_core::channels::list_channel_test_diagnostics(
+                root,
+                &record.channel_id,
+                diagnostic_limit,
+            )?;
+            Ok((record, history, diagnostics))
+        })
+        .collect()
+}
+
+fn collect_personal_agent_recent_deliveries(
+    root: &Path,
+    config: &PersonalAgentConfig,
+    limit: usize,
+) -> LoomResult<Vec<ChannelDeliveryRecord>> {
+    let channel_ids = personal_agent_channel_ids(config);
+    Ok(
+        loom_core::channels::list_channel_deliveries_with_options(root, 0, true, false)?
             .into_iter()
             .filter(|record| channel_ids.iter().any(|id| id == &record.channel_id))
-            .take(delivery_limit)
-            .collect::<Vec<_>>();
-    let payload = serde_json::json!({
+            .take(limit)
+            .collect::<Vec<_>>(),
+    )
+}
+
+fn build_run_agent_operator_payload(
+    root: &Path,
+    config: &PersonalAgentConfig,
+    receipt_limit: usize,
+    delivery_limit: usize,
+    history_limit: usize,
+    diagnostic_limit: usize,
+) -> LoomResult<serde_json::Value> {
+    let summary = build_run_agent_summary(root, config)?;
+    let channel_health =
+        collect_personal_agent_channel_surface(root, config, history_limit, diagnostic_limit)?;
+    let recent_receipts =
+        MemoryService::with_defaults(root).list_receipts(receipt_limit, Some(&config.agent_id))?;
+    let recent_deliveries = collect_personal_agent_recent_deliveries(root, config, delivery_limit)?;
+    let mut alerts = Vec::new();
+    match summary["supervision_action"]
+        .as_str()
+        .unwrap_or("stopped_by_policy")
+    {
+        "manual_restart_required" => alerts
+            .push("Worker crashed under manual policy; operator restart required.".to_string()),
+        "waiting_backoff" => alerts.push(
+            "Supervisor is waiting for restart backoff to expire before relaunching the worker."
+                .to_string(),
+        ),
+        "needs_restart" => alerts.push("Agent is down and ready for restart.".to_string()),
+        _ => {}
+    }
+    if summary["stop_requested"].as_bool().unwrap_or(false) {
+        alerts.push(
+            "Stop request is pending; supervisor will drain and stop the worker.".to_string(),
+        );
+    }
+    for (record, _, diagnostics) in &channel_health {
+        if !matches!(record.health.as_str(), "healthy" | "active") {
+            alerts.push(format!(
+                "Channel {} is {} ({})",
+                record.channel_id, record.health, record.status_detail
+            ));
+        }
+        if let Some(item) = diagnostics.first() {
+            if !matches!(
+                item.status.as_str(),
+                "delivered" | "acknowledged" | "queued"
+            ) {
+                alerts.push(format!(
+                    "Channel {} last diagnostic is {} ({})",
+                    record.channel_id, item.status, item.status_detail
+                ));
+            }
+        }
+    }
+    Ok(serde_json::json!({
+        "captured_at_unix_ms": now_unix_ms(),
         "agent": summary,
-        "channel_health": channel_health.iter().map(|record| serde_json::json!({
+        "alerts": alerts,
+        "channel_health": channel_health.iter().map(|(record, history, diagnostics)| serde_json::json!({
             "channel_id": record.channel_id,
             "kind": record.kind,
             "health": record.health,
@@ -1679,6 +2062,29 @@ fn handle_run_agent_inspect(args: &[String]) -> LoomResult<()> {
             "status_detail": record.status_detail,
             "latest_delivery_status": record.latest_delivery_status,
             "latest_delivery_at_unix_ms": record.latest_delivery_at_unix_ms,
+            "queued_count": record.queued_count,
+            "delivered_count": record.delivered_count,
+            "failed_count": record.failed_count,
+            "blocked_count": record.blocked_count,
+            "archived_delivery_count": record.archived_delivery_count,
+            "history": history.iter().map(|item| serde_json::json!({
+                "captured_at_unix_ms": item.captured_at_unix_ms,
+                "trigger": item.trigger,
+                "health": item.health,
+                "ready": item.ready,
+                "status_detail": item.status_detail,
+                "latest_delivery_status": item.latest_delivery_status,
+            })).collect::<Vec<_>>(),
+            "diagnostics": diagnostics.iter().map(|item| serde_json::json!({
+                "diagnostic_id": item.diagnostic_id,
+                "delivery_id": item.delivery_id,
+                "status": item.status,
+                "health": item.health,
+                "ready": item.ready,
+                "updated_at_unix_ms": item.updated_at_unix_ms,
+                "status_detail": item.status_detail,
+                "note": item.note,
+            })).collect::<Vec<_>>(),
         })).collect::<Vec<_>>(),
         "recent_memory_receipts": recent_receipts.iter().map(|receipt| serde_json::json!({
             "operation": receipt.operation,
@@ -1694,8 +2100,252 @@ fn handle_run_agent_inspect(args: &[String]) -> LoomResult<()> {
             "status": record.status,
             "submitted_at_unix_ms": record.submitted_at_unix_ms,
             "recipient": record.recipient,
+            "status_detail": record.status_detail,
         })).collect::<Vec<_>>(),
-    });
+    }))
+}
+
+fn render_run_agent_inspect_human(payload: &serde_json::Value) -> String {
+    let mut rendered = String::new();
+    rendered.push_str("Meridian Loom // RUN AGENT INSPECT\n==================================\n");
+    rendered.push_str(&format!(
+        "name:                  {}\nslug:                  {}\nagent_id:              {}\nstatus:                {}\nsupervision_action:    {}\ncrash_state:           {}\nworker_pid:            {}\nsupervisor_pid:        {}\nprimary_channel:       {}\nrestart_policy:        {}\nrestart_backoff_sec:   {}\n\n",
+        payload["agent"]["name"].as_str().unwrap_or(""),
+        payload["agent"]["slug"].as_str().unwrap_or(""),
+        payload["agent"]["agent_id"].as_str().unwrap_or(""),
+        payload["agent"]["status"].as_str().unwrap_or(""),
+        payload["agent"]["supervision_action"].as_str().unwrap_or(""),
+        payload["agent"]["crash_state"].as_str().unwrap_or(""),
+        payload["agent"]["worker_pid"].as_u64().unwrap_or_default(),
+        payload["agent"]["supervisor_pid"].as_u64().unwrap_or_default(),
+        payload["agent"]["primary_channel"].as_str().unwrap_or(""),
+        payload["agent"]["restart_policy"].as_str().unwrap_or(""),
+        payload["agent"]["restart_backoff_seconds"].as_u64().unwrap_or_default(),
+    ));
+    rendered.push_str("Alerts\n------\n");
+    if let Some(alerts) = payload["alerts"].as_array() {
+        if alerts.is_empty() {
+            rendered.push_str("(none)\n");
+        } else {
+            for alert in alerts {
+                rendered.push_str(&format!("- {}\n", alert.as_str().unwrap_or("")));
+            }
+        }
+    }
+    rendered.push_str("\nChannel health\n--------------\n");
+    if let Some(channels) = payload["channel_health"].as_array() {
+        if channels.is_empty() {
+            rendered.push_str("(no configured delivery channels)\n");
+        } else {
+            for entry in channels {
+                rendered.push_str(&format!(
+                    "- {} kind={} health={} ready={} latest={} detail={}\n",
+                    entry["channel_id"].as_str().unwrap_or(""),
+                    entry["kind"].as_str().unwrap_or(""),
+                    entry["health"].as_str().unwrap_or(""),
+                    entry["ready"].as_bool().unwrap_or(false),
+                    entry["latest_delivery_status"].as_str().unwrap_or(""),
+                    entry["status_detail"]
+                        .as_str()
+                        .unwrap_or("")
+                        .replace('\n', "\\n"),
+                ));
+                rendered.push_str("  history:\n");
+                if let Some(history) = entry["history"].as_array() {
+                    if history.is_empty() {
+                        rendered.push_str("    (none)\n");
+                    } else {
+                        for item in history {
+                            rendered.push_str(&format!(
+                                "    - at={} trigger={} health={} latest={}\n",
+                                item["captured_at_unix_ms"].as_u64().unwrap_or_default(),
+                                item["trigger"].as_str().unwrap_or(""),
+                                item["health"].as_str().unwrap_or(""),
+                                item["latest_delivery_status"].as_str().unwrap_or(""),
+                            ));
+                        }
+                    }
+                }
+                rendered.push_str("  diagnostics:\n");
+                if let Some(diagnostics) = entry["diagnostics"].as_array() {
+                    if diagnostics.is_empty() {
+                        rendered.push_str("    (none)\n");
+                    } else {
+                        for item in diagnostics {
+                            rendered.push_str(&format!(
+                                "    - {} status={} health={} ready={} updated_at={}\n",
+                                item["diagnostic_id"].as_str().unwrap_or(""),
+                                item["status"].as_str().unwrap_or(""),
+                                item["health"].as_str().unwrap_or(""),
+                                item["ready"].as_bool().unwrap_or(false),
+                                item["updated_at_unix_ms"].as_u64().unwrap_or_default(),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    rendered.push_str("\nRecent memory receipts\n----------------------\n");
+    if let Some(receipts) = payload["recent_memory_receipts"].as_array() {
+        if receipts.is_empty() {
+            rendered.push_str("(no memory receipts)\n");
+        } else {
+            for receipt in receipts {
+                rendered.push_str(&format!(
+                    "- {} kind={} at={} output={}\n",
+                    receipt["operation"].as_str().unwrap_or(""),
+                    receipt["kind"].as_str().unwrap_or(""),
+                    receipt["timestamp_unix_ms"].as_u64().unwrap_or_default(),
+                    receipt["output_summary"]
+                        .as_str()
+                        .unwrap_or("")
+                        .replace('\n', "\\n"),
+                ));
+            }
+        }
+    }
+    rendered.push_str("\nRecent deliveries\n-----------------\n");
+    if let Some(deliveries) = payload["recent_deliveries"].as_array() {
+        if deliveries.is_empty() {
+            rendered.push_str("(no recent deliveries)\n");
+        } else {
+            for record in deliveries {
+                rendered.push_str(&format!(
+                    "- {} channel={} status={} recipient={} submitted_at={}\n",
+                    record["delivery_id"].as_str().unwrap_or(""),
+                    record["channel_id"].as_str().unwrap_or(""),
+                    record["status"].as_str().unwrap_or(""),
+                    record["recipient"].as_str().unwrap_or(""),
+                    record["submitted_at_unix_ms"].as_u64().unwrap_or_default(),
+                ));
+            }
+        }
+    }
+    rendered
+}
+
+fn render_run_agent_watch_human(
+    payload: &serde_json::Value,
+    frame_index: usize,
+    continuous: bool,
+) -> String {
+    let mut rendered = String::new();
+    rendered.push_str("Meridian Loom // RUN AGENT WATCH\n================================\n");
+    rendered.push_str(&format!(
+        "frame:                 {}\ncaptured_at_unix_ms:    {}\nname:                  {}\nstatus:                {}\nworker:                pid={} running={}\nsupervisor:            pid={} running={}\naction:                {}\ncrash_state:           {}\nprimary_channel:       {}\n",
+        frame_index,
+        payload["captured_at_unix_ms"].as_u64().unwrap_or_default(),
+        payload["agent"]["name"].as_str().unwrap_or(""),
+        payload["agent"]["status"].as_str().unwrap_or(""),
+        payload["agent"]["worker_pid"].as_u64().unwrap_or_default(),
+        payload["agent"]["worker_running"].as_bool().unwrap_or(false),
+        payload["agent"]["supervisor_pid"].as_u64().unwrap_or_default(),
+        payload["agent"]["supervisor_running"].as_bool().unwrap_or(false),
+        payload["agent"]["supervision_action"].as_str().unwrap_or(""),
+        payload["agent"]["crash_state"].as_str().unwrap_or(""),
+        payload["agent"]["primary_channel"].as_str().unwrap_or(""),
+    ));
+    if continuous {
+        rendered.push_str("hint: press Ctrl+C to exit watch mode\n");
+    }
+    rendered.push_str("\nalerts\n------\n");
+    if let Some(alerts) = payload["alerts"].as_array() {
+        if alerts.is_empty() {
+            rendered.push_str("(none)\n");
+        } else {
+            for alert in alerts.iter().take(3) {
+                rendered.push_str(&format!("- {}\n", alert.as_str().unwrap_or("")));
+            }
+        }
+    }
+    rendered.push_str("\nchannels\n--------\n");
+    if let Some(channels) = payload["channel_health"].as_array() {
+        if channels.is_empty() {
+            rendered.push_str("(no configured delivery channels)\n");
+        } else {
+            for entry in channels {
+                let latest_diag = entry["diagnostics"]
+                    .as_array()
+                    .and_then(|items| items.first())
+                    .map(|item| {
+                        format!(
+                            "diag={} / {}",
+                            item["status"].as_str().unwrap_or(""),
+                            item["health"].as_str().unwrap_or("")
+                        )
+                    })
+                    .unwrap_or_else(|| "diag=none".to_string());
+                rendered.push_str(&format!(
+                    "- {} {} ready={} latest={} {}\n",
+                    entry["channel_id"].as_str().unwrap_or(""),
+                    entry["health"].as_str().unwrap_or(""),
+                    entry["ready"].as_bool().unwrap_or(false),
+                    entry["latest_delivery_status"].as_str().unwrap_or(""),
+                    latest_diag,
+                ));
+            }
+        }
+    }
+    rendered.push_str("\nrecent receipts\n---------------\n");
+    if let Some(receipts) = payload["recent_memory_receipts"].as_array() {
+        if receipts.is_empty() {
+            rendered.push_str("(none)\n");
+        } else {
+            for receipt in receipts.iter().take(3) {
+                rendered.push_str(&format!(
+                    "- {} {} at={}\n",
+                    receipt["operation"].as_str().unwrap_or(""),
+                    receipt["kind"].as_str().unwrap_or(""),
+                    receipt["timestamp_unix_ms"].as_u64().unwrap_or_default(),
+                ));
+            }
+        }
+    }
+    rendered.push_str("\nrecent deliveries\n-----------------\n");
+    if let Some(deliveries) = payload["recent_deliveries"].as_array() {
+        if deliveries.is_empty() {
+            rendered.push_str("(none)\n");
+        } else {
+            for record in deliveries.iter().take(3) {
+                rendered.push_str(&format!(
+                    "- {} {} {}\n",
+                    record["channel_id"].as_str().unwrap_or(""),
+                    record["status"].as_str().unwrap_or(""),
+                    record["recipient"].as_str().unwrap_or(""),
+                ));
+            }
+        }
+    }
+    rendered
+}
+
+fn handle_run_agent_inspect(args: &[String]) -> LoomResult<()> {
+    let Some(name_or_slug) = positional_name(args) else {
+        return Err("run-agent inspect requires an agent name or slug".to_string());
+    };
+    let config = load_personal_agent_config(&name_or_slug)?;
+    let root = root_from(Some(&config.loom_root))?;
+    let receipt_limit = take_value(args, "--receipt-limit")
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(5);
+    let delivery_limit = take_value(args, "--delivery-limit")
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(5);
+    let history_limit = take_value(args, "--history-limit")
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(5);
+    let diagnostic_limit = take_value(args, "--diagnostic-limit")
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(3);
+    let payload = build_run_agent_operator_payload(
+        &root,
+        &config,
+        receipt_limit,
+        delivery_limit,
+        history_limit,
+        diagnostic_limit,
+    )?;
     let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
     match format.as_str() {
         "json" => print!(
@@ -1703,72 +2353,105 @@ fn handle_run_agent_inspect(args: &[String]) -> LoomResult<()> {
             serde_json::to_string_pretty(&payload).map_err(|error| error.to_string())?
         ),
         _ => {
-            let mut rendered = String::new();
-            rendered.push_str(
-                "Meridian Loom // RUN AGENT INSPECT\n==================================\n",
-            );
-            rendered.push_str(&format!(
-                "name:                  {}\nslug:                  {}\nagent_id:              {}\nstatus:                {}\nsupervision_action:    {}\nprimary_channel:       {}\nrestart_policy:        {}\nrestart_backoff_sec:   {}\n\n",
-                payload["agent"]["name"].as_str().unwrap_or(""),
-                payload["agent"]["slug"].as_str().unwrap_or(""),
-                payload["agent"]["agent_id"].as_str().unwrap_or(""),
-                payload["agent"]["status"].as_str().unwrap_or(""),
-                payload["agent"]["supervision_action"].as_str().unwrap_or(""),
-                payload["agent"]["primary_channel"].as_str().unwrap_or(""),
-                payload["agent"]["restart_policy"].as_str().unwrap_or(""),
-                payload["agent"]["restart_backoff_seconds"].as_u64().unwrap_or_default(),
-            ));
-            rendered.push_str("Channel health\n--------------\n");
-            if channel_health.is_empty() {
-                rendered.push_str("(no configured delivery channels)\n");
-            } else {
-                for record in &channel_health {
-                    rendered.push_str(&format!(
-                        "- {} kind={} health={} ready={} latest={} detail={}\n",
-                        record.channel_id,
-                        record.kind,
-                        record.health,
-                        record.ready,
-                        record.latest_delivery_status,
-                        record.status_detail,
-                    ));
-                }
-            }
-            rendered.push_str("\nRecent memory receipts\n----------------------\n");
-            if recent_receipts.is_empty() {
-                rendered.push_str("(no memory receipts)\n");
-            } else {
-                for receipt in &recent_receipts {
-                    rendered.push_str(&format!(
-                        "- {} kind={} at={} input={} output={}\n",
-                        receipt.operation,
-                        receipt.kind,
-                        receipt.timestamp_unix_ms,
-                        receipt.input_summary.replace('\n', "\\n"),
-                        receipt.output_summary.replace('\n', "\\n"),
-                    ));
-                }
-            }
-            rendered.push_str("\nRecent deliveries\n-----------------\n");
-            if recent_deliveries.is_empty() {
-                rendered.push_str("(no recent deliveries)\n");
-            } else {
-                for record in &recent_deliveries {
-                    rendered.push_str(&format!(
-                        "- {} channel={} status={} recipient={} submitted_at={}\n",
-                        record.delivery_id,
-                        record.channel_id,
-                        record.status,
-                        record.recipient,
-                        record.submitted_at_unix_ms,
-                    ));
-                }
-            }
             print_startup_banner();
-            print_human(&rendered);
+            print_human(&render_run_agent_inspect_human(&payload));
         }
     }
     Ok(())
+}
+
+fn handle_run_agent_watch(args: &[String]) -> LoomResult<()> {
+    let Some(name_or_slug) = positional_name(args) else {
+        return Err("run-agent watch requires an agent name or slug".to_string());
+    };
+    let config = load_personal_agent_config(&name_or_slug)?;
+    let root = root_from(Some(&config.loom_root))?;
+    let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+    let once = has_flag(args, "--once");
+    let iterations = if once {
+        1
+    } else {
+        take_value(args, "--iterations")
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(if format == "json" { 1 } else { 0 })
+    };
+    let poll_seconds = take_value(args, "--poll-seconds")
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(2)
+        .max(1);
+    let receipt_limit = take_value(args, "--receipt-limit")
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(3);
+    let delivery_limit = take_value(args, "--delivery-limit")
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(3);
+    let history_limit = take_value(args, "--history-limit")
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(3);
+    let diagnostic_limit = take_value(args, "--diagnostic-limit")
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(2);
+    let clear_each_frame =
+        format == "human" && std::io::stdout().is_terminal() && !has_flag(args, "--no-clear");
+    let mut frame = 0usize;
+    let mut snapshots = Vec::new();
+    loop {
+        frame = frame.saturating_add(1);
+        let payload = build_run_agent_operator_payload(
+            &root,
+            &config,
+            receipt_limit,
+            delivery_limit,
+            history_limit,
+            diagnostic_limit,
+        )?;
+        if format == "json" {
+            snapshots.push(payload);
+        } else {
+            if clear_each_frame {
+                print!("\x1b[2J\x1b[H");
+                let _ = std::io::Write::flush(&mut std::io::stdout());
+            }
+            print_startup_banner();
+            print_human(&render_run_agent_watch_human(
+                &payload,
+                frame,
+                iterations == 0,
+            ));
+        }
+        if iterations != 0 && frame >= iterations {
+            break;
+        }
+        thread::sleep(Duration::from_secs(poll_seconds));
+    }
+    if format == "json" {
+        if snapshots.len() == 1 {
+            print!(
+                "{}\n",
+                serde_json::to_string_pretty(&snapshots.remove(0))
+                    .map_err(|error| error.to_string())?
+            );
+        } else {
+            print!(
+                "{}\n",
+                serde_json::to_string_pretty(&snapshots).map_err(|error| error.to_string())?
+            );
+        }
+    }
+    Ok(())
+}
+
+fn handle_run_agent_supervise(args: &[String]) -> LoomResult<()> {
+    let Some(name_or_slug) = positional_name(args) else {
+        return Err("run-agent supervise requires an agent name or slug".to_string());
+    };
+    let config = load_personal_agent_config(&name_or_slug)?;
+    let root = root_from(Some(&config.loom_root))?;
+    let poll_seconds = take_value(args, "--poll-seconds")
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(15)
+        .max(1);
+    run_agent_supervisor_loop(&root, &config, poll_seconds)
 }
 
 fn handle_run_agent_stop(args: &[String]) -> LoomResult<()> {
@@ -1840,8 +2523,8 @@ fn handle_run_agent_reconcile(args: &[String]) -> LoomResult<()> {
             .as_str()
             .unwrap_or("stopped_by_policy")
         {
-            "needs_restart" => {
-                let child = spawn_run_agent_background(
+            "needs_restart" | "manual_restart_required" => {
+                let child = spawn_run_agent_supervisor(
                     &root,
                     &config,
                     poll_seconds,
@@ -1852,10 +2535,10 @@ fn handle_run_agent_reconcile(args: &[String]) -> LoomResult<()> {
                         .as_u64()
                         .unwrap_or(DEFAULT_PERSONAL_RESTART_BACKOFF_SECONDS),
                 )?;
-                format!("restarted pid={}", child.id())
+                format!("supervisor_started pid={}", child.id())
             }
             "waiting_backoff" => "waiting_backoff".to_string(),
-            "manual_restart_required" => "manual_restart_required".to_string(),
+            "supervisor_active" => "supervisor_active".to_string(),
             "stopped_by_policy" => "stopped_by_policy".to_string(),
             other => other.to_string(),
         }
@@ -1937,10 +2620,12 @@ PURPOSE:
   runtime, and writes loop state under the runtime root.
 
 SUBCOMMANDS:
-  status <name-or-slug>     Show loop state, primary channel, and memory sync state
-  inspect <name-or-slug>    Show operator-facing state, channel health, and recent receipts
+  status <name-or-slug>     Show loop state, worker/supervisor pids, and crash semantics
+  inspect <name-or-slug>    Show operator-facing state, channel health history, diagnostics, and receipts
+  watch <name-or-slug>      Compact terminal dashboard that refreshes agent/operator state
   stop <name-or-slug>       Write a graceful stop request for the running loop
   reconcile <name-or-slug>  Restart a dead background loop when policy allows it
+  supervise <name-or-slug>  Internal supervisor entrypoint (can also be run directly)
 
 OPTIONS:
   --foreground             Run the loop in the current terminal
@@ -1950,6 +2635,8 @@ OPTIONS:
   --restart-policy POLICY  Restart policy for background mode: manual|always
   --restart-backoff-seconds N
                            Backoff before reconcile can restart the loop
+  --iterations N          Bound run-agent watch to N frames (default: infinite in human mode)
+  --no-clear              Keep watch output appended instead of refreshing the terminal
 ",
     );
 }
@@ -2119,6 +2806,105 @@ mod tests {
         assert_eq!(loaded.restart_backoff_seconds, 45);
         assert_eq!(loaded.desired_state, "running");
         assert_eq!(supervision_action(&loaded, 0), "needs_restart");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn supervision_action_tracks_manual_and_backoff_states() {
+        let config = PersonalAgentConfig {
+            name: "My Assistant".to_string(),
+            slug: "my-assistant".to_string(),
+            agent_id: "agent_my_123".to_string(),
+            display_name: "My Assistant".to_string(),
+            role: "manager".to_string(),
+            purpose: "Governed personal agent".to_string(),
+            provider_profile: "local_ollama".to_string(),
+            tool_scope: "personal_agent_scope".to_string(),
+            org_id: "local_foundry".to_string(),
+            loom_root: "/tmp/loom".to_string(),
+            kernel_path: "/opt/meridian-kernel".to_string(),
+            service_http_address: "127.0.0.1:18910".to_string(),
+            service_token: "token".to_string(),
+            heartbeat_capability: "loom.system.info.v1".to_string(),
+            heartbeat_every_seconds: 300,
+            restart_policy: "manual".to_string(),
+            restart_backoff_seconds: 45,
+            telegram_enabled: false,
+            telegram_chat_id: String::new(),
+            telegram_token_env: DEFAULT_TELEGRAM_TOKEN_ENV.to_string(),
+            webhook_enabled: false,
+            webhook_url: String::new(),
+            webhook_header: String::new(),
+        };
+        let mut policy = default_run_policy(&config);
+        policy.desired_state = "running".to_string();
+        policy.last_crash_unix_ms = 42;
+        policy.failure_count = 1;
+        assert_eq!(supervision_action(&policy, 100), "manual_restart_required");
+        assert_eq!(
+            derive_crash_state(&policy, false, false, 100),
+            "manual_restart_required"
+        );
+
+        policy.restart_policy = "always".to_string();
+        policy.next_restart_after_unix_ms = 200;
+        assert_eq!(supervision_action(&policy, 100), "waiting_backoff");
+        assert_eq!(
+            derive_crash_state(&policy, false, false, 100),
+            "awaiting_restart"
+        );
+    }
+
+    #[test]
+    fn build_run_agent_summary_exposes_supervisor_and_worker_state() {
+        let root = temp_root("summary_state");
+        let config = PersonalAgentConfig {
+            name: "My Assistant".to_string(),
+            slug: "my-assistant-summary".to_string(),
+            agent_id: "agent_summary_123".to_string(),
+            display_name: "My Assistant".to_string(),
+            role: "manager".to_string(),
+            purpose: "Governed personal agent".to_string(),
+            provider_profile: "local_ollama".to_string(),
+            tool_scope: "personal_agent_scope".to_string(),
+            org_id: "local_foundry".to_string(),
+            loom_root: root.display().to_string(),
+            kernel_path: "/opt/meridian-kernel".to_string(),
+            service_http_address: "127.0.0.1:18910".to_string(),
+            service_token: "token".to_string(),
+            heartbeat_capability: "loom.system.info.v1".to_string(),
+            heartbeat_every_seconds: 300,
+            restart_policy: "always".to_string(),
+            restart_backoff_seconds: 45,
+            telegram_enabled: false,
+            telegram_chat_id: String::new(),
+            telegram_token_env: DEFAULT_TELEGRAM_TOKEN_ENV.to_string(),
+            webhook_enabled: false,
+            webhook_url: String::new(),
+            webhook_header: String::new(),
+        };
+        let policy_path = personal_agent_policy_path(&root, &config.slug).expect("policy path");
+        let mut policy = default_run_policy(&config);
+        policy.desired_state = "running".to_string();
+        policy.supervisor_pid = std::process::id();
+        policy.current_worker_pid = std::process::id();
+        policy.last_crash_unix_ms = 7;
+        policy.last_crash_reason = "previous failure".to_string();
+        write_run_policy(&policy_path, &policy).expect("write policy");
+        let summary = build_run_agent_summary(&root, &config).expect("build summary");
+        assert_eq!(
+            summary["supervisor_pid"].as_u64().unwrap_or_default(),
+            std::process::id() as u64
+        );
+        assert_eq!(
+            summary["worker_pid"].as_u64().unwrap_or_default(),
+            std::process::id() as u64
+        );
+        assert_eq!(
+            summary["supervision_action"].as_str().unwrap_or(""),
+            "healthy"
+        );
+        assert_eq!(summary["crash_state"].as_str().unwrap_or(""), "recovered");
         fs::remove_dir_all(&root).ok();
     }
 }

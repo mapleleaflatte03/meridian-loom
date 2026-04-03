@@ -77,7 +77,7 @@ Inspect the configured route:
 
 ```bash
 loom channel list --root "$LOOM_ROOT" --agent my-assistant
-loom channel health --root "$LOOM_ROOT" --agent my-assistant
+loom channel health --root "$LOOM_ROOT" --agent my-assistant --history-limit 5 --diagnostic-limit 5
 ```
 
 ## 5. Run the personal agent loop
@@ -101,6 +101,7 @@ Inspect it:
 tail -f "${HOME}/.local/share/meridian-loom/runtime/default/run/personal-agents/my-assistant.log"
 loom run-agent status my-assistant
 loom run-agent inspect my-assistant
+loom run-agent watch my-assistant --once
 loom status --root "$LOOM_ROOT"
 loom doctor --root "$LOOM_ROOT" --format human
 ```
@@ -110,6 +111,13 @@ If the loop exits and the policy should bring it back:
 ```bash
 loom run-agent reconcile my-assistant
 ```
+
+The supervisor semantics are intentionally explicit:
+
+- `healthy`: supervisor + worker are both running
+- `waiting_backoff`: the worker exited and the supervisor is waiting before restart
+- `manual_restart_required`: the worker exited under manual policy and needs operator action
+- `stopped_by_policy`: the loop is stopped and no restart is pending
 
 ## 6. Inspect memory, channels, and receipts
 
@@ -142,7 +150,7 @@ Then inspect the runtime surfaces:
 loom memory search --root "$LOOM_ROOT" --agent-id "$AGENT_ID" --category profile
 loom memory receipts --root "$LOOM_ROOT" --agent-id "$AGENT_ID" --limit 10
 loom channel list --root "$LOOM_ROOT" --agent my-assistant
-loom channel health --root "$LOOM_ROOT" --agent my-assistant
+loom channel health --root "$LOOM_ROOT" --agent my-assistant --history-limit 5 --diagnostic-limit 5
 loom channel deliveries --root "$LOOM_ROOT" --include-archived
 loom channel test --agent my-assistant --text "Loom delivery path check"
 loom job list --root "$LOOM_ROOT" --format human
@@ -160,6 +168,8 @@ After this quickstart, do one of these:
 
 - connect Telegram or webhook delivery in `agent.toml`
 - use `loom channel connect` / `loom channel test` instead of editing config by hand
+- use `loom channel health --history-limit 5 --diagnostic-limit 5` to verify both current health and recent test history
 - set `[supervision] restart_policy = "always"` in `agent.toml` if you want reconcile-friendly restarts
+- use `loom run-agent watch my-assistant` when you want a compact operator dashboard instead of raw JSON
 - inspect the generated agent folder under `~/.config/meridian-loom/agents/my-assistant/`
 - run the terminal and browser examples from the main README
