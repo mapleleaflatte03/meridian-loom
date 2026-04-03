@@ -31,6 +31,7 @@ const DEFAULT_PERSONAL_HEARTBEAT_SECONDS: u64 = 300;
 const DEFAULT_TELEGRAM_TOKEN_ENV: &str = "MERIDIAN_TELEGRAM_BOT_TOKEN";
 const DEFAULT_PERSONAL_RESTART_POLICY: &str = "manual";
 const DEFAULT_PERSONAL_RESTART_BACKOFF_SECONDS: u64 = 30;
+const PERSONAL_AGENT_CHAOS_ENV: &str = "MERIDIAN_LOOM_AGENT_CHAOS";
 const PERSONAL_AGENT_TEMPLATE_README: &str =
     include_str!("../../../../templates/personal-agent/README.md");
 const PERSONAL_AGENT_TEMPLATE_MEMORY: &str =
@@ -111,6 +112,13 @@ struct PersonalAgentRunPolicy {
     current_worker_pid: u32,
     last_crash_unix_ms: u64,
     last_crash_reason: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PersonalAgentChaosDirective {
+    phase: String,
+    mode: String,
+    exit_code: i32,
 }
 
 type PersonalAgentChannelSurface = (
@@ -418,6 +426,7 @@ fn run_agent_loop(
         if latest_sync.changed_count > 0 || latest_sync.recalled_count > 0 {
             memory_sync = latest_sync;
         }
+        maybe_inject_personal_agent_chaos(root, config, log_path, "post_sync")?;
         let due = recurring::claim_due_heartbeats(root, now_ms, 8)?;
         let mut last_status = if due.is_empty() {
             format!(
@@ -465,6 +474,7 @@ fn run_agent_loop(
                     .unwrap_or_default(),
             },
         )?;
+        maybe_inject_personal_agent_chaos(root, config, log_path, "after_tick")?;
         if once {
             run_policy.last_exit_unix_ms = now_ms;
             run_policy.last_exit_status = last_status.clone();
@@ -826,8 +836,12 @@ fn derive_run_agent_status(
 ) -> String {
     if worker_running {
         return state
-            .map(|item| item.status.clone())
+            .map(|item| item.status.as_str())
             .filter(|value| !value.trim().is_empty())
+            .map(|value| match value {
+                "starting" => "running".to_string(),
+                other => other.to_string(),
+            })
             .unwrap_or_else(|| "running".to_string());
     }
     match action {
@@ -1541,6 +1555,17 @@ fn personal_agent_memory_sync_state_path(root: &Path, slug: &str) -> LoomResult<
         .join(format!("{}.memory-sync.json", slug)))
 }
 
+fn personal_agent_chaos_marker_path(
+    root: &Path,
+    slug: &str,
+    directive: &PersonalAgentChaosDirective,
+) -> LoomResult<PathBuf> {
+    Ok(root.join("run").join("personal-agents").join(format!(
+        "{}.chaos.{}.{}.{}.marker",
+        slug, directive.phase, directive.mode, directive.exit_code
+    )))
+}
+
 fn heartbeat_id_for_slug(slug: &str) -> String {
     format!("personal-{}-heartbeat", slug)
 }
@@ -1596,6 +1621,24 @@ fn now_unix_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+fn atomic_write_text(path: &Path, contents: &str) -> LoomResult<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        let temp_path = parent.join(format!(
+            ".{}.{}.{}.tmp",
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("loom-state"),
+            now_unix_ms(),
+            std::process::id()
+        ));
+        fs::write(&temp_path, contents).map_err(|error| error.to_string())?;
+        fs::rename(&temp_path, path).map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+    fs::write(path, contents).map_err(|error| error.to_string())
 }
 
 fn load_loop_state(path: &Path) -> LoomResult<Option<PersonalAgentLoopState>> {
@@ -1672,9 +1715,6 @@ fn load_loop_state(path: &Path) -> LoomResult<Option<PersonalAgentLoopState>> {
 }
 
 fn write_loop_state(path: &Path, state: &PersonalAgentLoopState) -> LoomResult<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
     let rendered = serde_json::to_string_pretty(&serde_json::json!({
         "slug": state.slug,
         "agent_id": state.agent_id,
@@ -1692,7 +1732,7 @@ fn write_loop_state(path: &Path, state: &PersonalAgentLoopState) -> LoomResult<(
         "primary_channel_id": state.primary_channel_id,
     }))
     .map_err(|error| error.to_string())?;
-    fs::write(path, format!("{}\n", rendered)).map_err(|error| error.to_string())
+    atomic_write_text(path, &format!("{}\n", rendered))
 }
 
 fn load_memory_sync_state(path: &Path) -> LoomResult<PersonalAgentMemorySyncState> {
@@ -1725,9 +1765,6 @@ fn load_memory_sync_state(path: &Path) -> LoomResult<PersonalAgentMemorySyncStat
 }
 
 fn write_memory_sync_state(path: &Path, state: &PersonalAgentMemorySyncState) -> LoomResult<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
     let rendered = serde_json::to_string_pretty(&serde_json::json!({
         "config_hash": state.config_hash,
         "soul_hash": state.soul_hash,
@@ -1735,7 +1772,7 @@ fn write_memory_sync_state(path: &Path, state: &PersonalAgentMemorySyncState) ->
         "last_sync_unix_ms": state.last_sync_unix_ms,
     }))
     .map_err(|error| error.to_string())?;
-    fs::write(path, format!("{}\n", rendered)).map_err(|error| error.to_string())
+    atomic_write_text(path, &format!("{}\n", rendered))
 }
 
 fn default_run_policy(config: &PersonalAgentConfig) -> PersonalAgentRunPolicy {
@@ -1818,9 +1855,6 @@ fn load_run_policy(
 }
 
 fn write_run_policy(path: &Path, policy: &PersonalAgentRunPolicy) -> LoomResult<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
     let rendered = serde_json::to_string_pretty(&serde_json::json!({
         "desired_state": policy.desired_state,
         "restart_policy": normalize_restart_policy(&policy.restart_policy),
@@ -1835,7 +1869,7 @@ fn write_run_policy(path: &Path, policy: &PersonalAgentRunPolicy) -> LoomResult<
         "last_crash_reason": policy.last_crash_reason,
     }))
     .map_err(|error| error.to_string())?;
-    fs::write(path, format!("{}\n", rendered)).map_err(|error| error.to_string())
+    atomic_write_text(path, &format!("{}\n", rendered))
 }
 
 fn normalize_restart_policy(input: &str) -> String {
@@ -1843,6 +1877,80 @@ fn normalize_restart_policy(input: &str) -> String {
         "always" => "always".to_string(),
         _ => "manual".to_string(),
     }
+}
+
+fn parse_personal_agent_chaos_directive(raw: &str) -> Option<PersonalAgentChaosDirective> {
+    let mut parts = raw
+        .split(':')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    if parts.len() != 3 {
+        return None;
+    }
+    let phase = parts.remove(0).to_string();
+    let mode = match parts.remove(0) {
+        "always" => "always".to_string(),
+        "once" => "once".to_string(),
+        _ => return None,
+    };
+    let exit_code = parts.remove(0).parse::<i32>().ok()?;
+    if exit_code <= 0 {
+        return None;
+    }
+    Some(PersonalAgentChaosDirective {
+        phase,
+        mode,
+        exit_code,
+    })
+}
+
+fn load_personal_agent_chaos_directive() -> Option<PersonalAgentChaosDirective> {
+    env::var(PERSONAL_AGENT_CHAOS_ENV)
+        .ok()
+        .and_then(|raw| parse_personal_agent_chaos_directive(&raw))
+}
+
+fn maybe_inject_personal_agent_chaos(
+    root: &Path,
+    config: &PersonalAgentConfig,
+    log_path: &Path,
+    phase: &str,
+) -> LoomResult<()> {
+    let Some(directive) = load_personal_agent_chaos_directive() else {
+        return Ok(());
+    };
+    if directive.phase != phase {
+        return Ok(());
+    }
+    let marker_path = personal_agent_chaos_marker_path(root, &config.slug, &directive)?;
+    if directive.mode == "once" {
+        if marker_path.exists() {
+            return Ok(());
+        }
+        if let Some(parent) = marker_path.parent() {
+            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        fs::write(
+            &marker_path,
+            format!(
+                "phase={}\nmode={}\nexit_code={}\ntriggered_at_unix_ms={}\n",
+                directive.phase,
+                directive.mode,
+                directive.exit_code,
+                now_unix_ms()
+            ),
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    append_supervisor_log(
+        log_path,
+        &format!(
+            "chaos injected phase={} mode={} exit_code={}",
+            directive.phase, directive.mode, directive.exit_code
+        ),
+    )?;
+    std::process::exit(directive.exit_code);
 }
 
 fn stop_requested(root: &Path, slug: &str) -> LoomResult<bool> {
@@ -2766,6 +2874,17 @@ mod tests {
         let compacted = compact_memory_body(&body);
         assert!(compacted.contains("truncated"));
         assert!(compacted.len() < body.len());
+    }
+
+    #[test]
+    fn personal_agent_chaos_directive_parser_accepts_supported_shape() {
+        let directive =
+            parse_personal_agent_chaos_directive("after_tick:once:91").expect("directive");
+        assert_eq!(directive.phase, "after_tick");
+        assert_eq!(directive.mode, "once");
+        assert_eq!(directive.exit_code, 91);
+        assert!(parse_personal_agent_chaos_directive("after_tick:weird:91").is_none());
+        assert!(parse_personal_agent_chaos_directive("after_tick:once:0").is_none());
     }
 
     #[test]

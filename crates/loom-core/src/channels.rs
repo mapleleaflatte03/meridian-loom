@@ -523,12 +523,9 @@ fn persist_channel_test_diagnostic(
 ) -> LoomResult<PathBuf> {
     ensure_channel_runtime_scaffold(root)?;
     let path = channel_test_diagnostic_path(root, &diagnostic.delivery_id);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(io_err)?;
-    }
     let rendered = serde_json::to_string_pretty(&channel_test_diagnostic_json(diagnostic))
         .map_err(|error| error.to_string())?;
-    fs::write(&path, format!("{}\n", rendered)).map_err(io_err)?;
+    atomic_write_text(&path, &format!("{}\n", rendered))?;
     Ok(path)
 }
 
@@ -1177,17 +1174,32 @@ fn parse_channel_record(value: &Value) -> LoomResult<ChannelRecord> {
     })
 }
 
+fn atomic_write_text(path: &Path, contents: &str) -> LoomResult<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(io_err)?;
+        let temp_path = parent.join(format!(
+            ".{}.{}.{}.tmp",
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("loom-channel"),
+            now_unix_ms(),
+            std::process::id()
+        ));
+        fs::write(&temp_path, contents).map_err(io_err)?;
+        fs::rename(&temp_path, path).map_err(io_err)?;
+        return Ok(());
+    }
+    fs::write(path, contents).map_err(io_err)
+}
+
 fn persist_channel_registry(root: &Path, records: &[ChannelRecord]) -> LoomResult<()> {
     let registry_path = channel_registry_path(root);
-    if let Some(parent) = registry_path.parent() {
-        fs::create_dir_all(parent).map_err(io_err)?;
-    }
     let value = json!({
         "channels": records.iter().map(channel_record_json).collect::<Vec<_>>(),
     });
     let mut rendered = serde_json::to_string_pretty(&value).map_err(|error| error.to_string())?;
     rendered.push('\n');
-    fs::write(registry_path, rendered).map_err(io_err)
+    atomic_write_text(&registry_path, &rendered)
 }
 
 fn persist_delivery_record(root: &Path, record: &ChannelDeliveryRecord) -> LoomResult<()> {
@@ -1201,13 +1213,10 @@ fn persist_delivery_record(root: &Path, record: &ChannelDeliveryRecord) -> LoomR
 }
 
 fn persist_delivery_record_at_path(path: &Path, record: &ChannelDeliveryRecord) -> LoomResult<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(io_err)?;
-    }
     let mut rendered = serde_json::to_string_pretty(&delivery_record_json(record))
         .map_err(|error| error.to_string())?;
     rendered.push('\n');
-    fs::write(path, rendered).map_err(io_err)
+    atomic_write_text(path, &rendered)
 }
 
 fn persist_ingress_record(root: &Path, record: &ChannelIngressRecord) -> LoomResult<()> {
@@ -1217,13 +1226,10 @@ fn persist_ingress_record(root: &Path, record: &ChannelIngressRecord) -> LoomRes
         safe_file_token(&record.ingress_id)
     );
     let path = channel_inbox_path(root).join(file_name);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(io_err)?;
-    }
     let mut rendered = serde_json::to_string_pretty(&ingress_record_json(record))
         .map_err(|error| error.to_string())?;
     rendered.push('\n');
-    fs::write(path, rendered).map_err(io_err)
+    atomic_write_text(&path, &rendered)
 }
 
 fn parse_channel_health_history_record(raw: &str) -> LoomResult<ChannelHealthHistoryRecord> {
