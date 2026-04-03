@@ -396,7 +396,7 @@ BANNER
 ' 'GOVERNED LOCAL RUNTIME'
     printf '[38;5;153m%s[0m
 
-' 'Loom v0.1.15 - official local runtime with bounded proof surfaces.'
+' 'Loom v0.1.16 - official local runtime with bounded proof surfaces.'
   else
     printf '%s
 ' "$icon"
@@ -406,7 +406,7 @@ BANNER
 ' 'GOVERNED LOCAL RUNTIME'
     printf '%s
 
-' 'Loom v0.1.15 - official local runtime with bounded proof surfaces.'
+' 'Loom v0.1.16 - official local runtime with bounded proof surfaces.'
   fi
 }
 
@@ -560,32 +560,18 @@ run_onboard_if_interactive() {
 }
 
 print_summary() {
-  local next_step
   local doctor_step
-  local provider_step
-  local local_step
+  local new_agent_step
+  local run_agent_step
   local path_hint
   local quickstart
-  if [[ "$ONBOARD_WAS_RUN" -eq 1 ]]; then
-    next_step="$BINARY_PATH doctor --root \"$RUNTIME_ROOT\" --format human"
-  elif [[ "$RUNTIME_WAS_INITIALIZED" -eq 1 ]]; then
-    next_step="$BINARY_PATH onboard --root \"$RUNTIME_ROOT\" --format human"
-  else
-    next_step="$BINARY_PATH doctor --root \"$RUNTIME_ROOT\" --format human"
-  fi
   doctor_step="$BINARY_PATH doctor --root \"$RUNTIME_ROOT\" --format human"
-  provider_step="$BINARY_PATH provider login --source loom --device-auth"
-  local_step="$BINARY_PATH onboard --root \"$RUNTIME_ROOT\" --format human --manager-lane local"
-  if [[ "$ONBOARD_WAS_RUN" -eq 1 ]]; then
-    quickstart="Quick start:
-  1. Inspect health: $doctor_step
-  2. Re-open setup:  $BINARY_PATH onboard --root \"$RUNTIME_ROOT\" --format human --config-action modify"
-  else
-    quickstart="Quick start:
-  1. Finish setup:   $next_step
-  2. Frontier auth:  $provider_step
-  3. Local-only:     $local_step"
-  fi
+  new_agent_step="$BINARY_PATH new-agent --name \"My Assistant\" --root \"$RUNTIME_ROOT\""
+  run_agent_step="$BINARY_PATH run-agent my-assistant"
+  quickstart="Quick start:
+  1. Create an agent: $new_agent_step
+  2. Run the loop:    $run_agent_step
+  3. Inspect health:  $doctor_step"
   path_hint=""
   case ":$PATH:" in
     *":$BIN_DIR:"*) ;;
@@ -598,6 +584,7 @@ print_summary() {
 source:   $INSTALL_SOURCE
 binary:   $BINARY_PATH
 runtime:  $RUNTIME_ROOT
+message:  ✅ Loom v0.1.16 installed. Run loom new-agent to create your first governed agent.
 
 $quickstart
 $path_hint

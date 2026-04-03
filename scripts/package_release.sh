@@ -60,7 +60,7 @@ package_name="meridian-loom-${version}-${os}-${arch}"
 staging_dir="${output_dir}/${package_name}"
 tarball="${output_dir}/${package_name}.tar.gz"
 
-mkdir -p "$output_dir" "$staging_dir/bin" "$staging_dir/config" "$staging_dir/docs" "$staging_dir/scripts" "$staging_dir/deploy/systemd"
+mkdir -p "$output_dir" "$staging_dir/bin" "$staging_dir/config" "$staging_dir/docs" "$staging_dir/docs/assets" "$staging_dir/scripts" "$staging_dir/deploy/systemd" "$staging_dir/templates"
 
 (
   cd "$repo_root"
@@ -74,9 +74,11 @@ mkdir -p "$output_dir" "$staging_dir/bin" "$staging_dir/config" "$staging_dir/do
 install -m 0755 "$binary_path" "$staging_dir/bin/loom"
 install -m 0644 "$repo_root/loom.toml.example" "$staging_dir/config/loom.toml.example"
 
-for doc in INSTALL.md RUN_LOCAL.md SERVICE.md CONFIG.md OPERATIONS.md RELEASE.md ARCHITECTURE.md BENCHMARKS.md; do
+for doc in INSTALL.md QUICKSTART.md RUN_LOCAL.md SERVICE.md CONFIG.md OPERATIONS.md RELEASE.md ARCHITECTURE.md BENCHMARKS.md; do
   install -m 0644 "$repo_root/docs/$doc" "$staging_dir/docs/$doc"
 done
+cp -a "$repo_root/docs/assets/." "$staging_dir/docs/assets/"
+cp -a "$repo_root/templates/." "$staging_dir/templates/"
 
 install -m 0644 "$repo_root/README.md" "$staging_dir/README.md"
 install -m 0755 "$repo_root/scripts/install.sh" "$staging_dir/scripts/install.sh"
@@ -101,7 +103,7 @@ arch=${arch}
 kernel_path_hint=${kernel_path}
 build_target=${build_target:-native}
 truth=official v0.1 local runtime package; hosted replacement not claimed
-layout=bin/loom config/loom.toml.example docs/ scripts/ deploy/systemd/ Dockerfile docker-compose.yml Makefile
+layout=bin/loom config/loom.toml.example docs/ docs/assets/ templates/ scripts/ deploy/systemd/ Dockerfile docker-compose.yml Makefile
 EOF
 
 (

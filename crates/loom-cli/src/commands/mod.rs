@@ -10,6 +10,7 @@ pub(crate) mod job;
 pub(crate) mod memory;
 pub(crate) mod onboard;
 pub(crate) mod output;
+pub(crate) mod personal_agent;
 pub(crate) mod provider;
 pub(crate) mod queue;
 pub(crate) mod recurring;

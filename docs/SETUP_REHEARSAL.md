@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  Rehearsal transcripts for the public scaffold: install path, operator path, fail-closed path, and current parity path.
+  Rehearsal transcripts for the official local runtime: install path, operator path, fail-closed path, and current parity path.
 </p>
 
 <p align="center">
@@ -34,9 +34,8 @@ This repository includes nine focused rehearsals plus the broader setup sweep:
 - a fixture-backed local HTTP runtime control-plane rehearsal
 - a fixture-backed sender-side commitment import rehearsal
 
-The point is not to pretend Loom is already a runtime. The point is to make the
-install path, operator path, and fail-closed runtime rehearsal concrete enough
-to inspect honestly.
+The point is to make the install path, operator path, and fail-closed runtime
+boundary concrete enough to inspect honestly.
 
 <p align="center">
   <img src="assets/loom_runtime_panels.svg" alt="Meridian Loom rehearsal surfaces" width="960">
@@ -160,7 +159,7 @@ That fresh-clone run passed and confirmed:
 1. The public repository builds from scratch.
 2. The public repository tests pass from scratch.
 3. The bundled rehearsal still succeeds against the current kernel truth.
-4. The scaffold still reports `planned` runtime status and `0/7` proven hooks.
+4. The runtime still reports a bounded local proof surface and explicit hook coverage.
 
 The current founder-host rehearsal now exercises both the old and new surfaces:
 

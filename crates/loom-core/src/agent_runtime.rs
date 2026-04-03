@@ -32,6 +32,22 @@ pub struct AgentRuntimeProfile {
     pub heartbeat_policy: String,
 }
 
+impl AgentRuntimeProfile {
+    pub fn as_json(&self) -> Value {
+        json!({
+            "agent_id": self.agent_id,
+            "display_name": self.display_name,
+            "role": self.role,
+            "workspace_root": self.workspace_root,
+            "memory_root": self.memory_root,
+            "session_root": self.session_root,
+            "provider_profile": self.provider_profile,
+            "tool_scope": self.tool_scope,
+            "heartbeat_policy": self.heartbeat_policy,
+        })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AgentRuntimeOverview {
     pub registry_path: PathBuf,
@@ -144,6 +160,36 @@ pub fn load_agent_runtime_registry(root: &Path) -> LoomResult<Vec<AgentRuntimePr
     let registry_path = agent_runtime_registry_path(root);
     let raw = fs::read_to_string(&registry_path).map_err(io_err)?;
     parse_agent_runtime_registry(&raw)
+}
+
+pub fn upsert_agent_runtime_profile(
+    root: &Path,
+    profile: &AgentRuntimeProfile,
+) -> LoomResult<AgentRuntimeSummary> {
+    ensure_agent_runtime_scaffold(root)?;
+    let mut profiles = load_agent_runtime_registry(root)?;
+    if let Some(existing) = profiles
+        .iter_mut()
+        .find(|existing| existing.agent_id == profile.agent_id)
+    {
+        *existing = profile.clone();
+    } else {
+        profiles.push(profile.clone());
+        profiles.sort_by(|left, right| left.agent_id.cmp(&right.agent_id));
+    }
+
+    write_json_pretty(
+        &agent_runtime_registry_path(root),
+        &json!({
+            "agents": profiles
+                .iter()
+                .map(AgentRuntimeProfile::as_json)
+                .collect::<Vec<_>>(),
+        }),
+    )?;
+    ensure_global_context_scaffold(root, &profiles)?;
+    ensure_profile_runtime_state(root, profile)?;
+    agent_runtime_summary(root, &profile.agent_id)
 }
 
 pub fn agent_runtime_overview(root: &Path) -> LoomResult<AgentRuntimeOverview> {
@@ -577,6 +623,27 @@ fn ensure_agent_operating_files(root: &Path, profile: &AgentRuntimeProfile) -> L
     Ok(())
 }
 
+fn ensure_profile_runtime_state(root: &Path, profile: &AgentRuntimeProfile) -> LoomResult<()> {
+    let workspace_path = root.join(&profile.workspace_root);
+    let memory_path = root.join(&profile.memory_root);
+    let session_path = root.join(&profile.session_root);
+    fs::create_dir_all(&workspace_path).map_err(io_err)?;
+    fs::create_dir_all(&memory_path).map_err(io_err)?;
+    fs::create_dir_all(&session_path).map_err(io_err)?;
+    fs::create_dir_all(session_history_path_for_profile(root, profile)).map_err(io_err)?;
+    ensure_agent_operating_files(root, profile)?;
+
+    let memory_file_path = agent_memory_file_path_for_profile(root, profile);
+    if !memory_file_path.exists() {
+        write_json_pretty(&memory_file_path, &default_memory_snapshot(profile).as_json())?;
+    }
+    let current_session_path = agent_session_current_path_for_profile(root, profile);
+    if !current_session_path.exists() {
+        write_json_pretty(&current_session_path, &default_session_record(profile).as_json())?;
+    }
+    Ok(())
+}
+
 fn write_text_if_missing(path: &Path, value: &str) -> LoomResult<()> {
     if path.exists() {
         return Ok(());
@@ -690,7 +757,7 @@ fn default_session_record(profile: &AgentRuntimeProfile) -> AgentSessionRecord {
         agent_id: profile.agent_id.clone(),
         status: "idle".to_string(),
         task_kind: "standby".to_string(),
-        summary: "agent runtime scaffolded".to_string(),
+        summary: "agent runtime provisioned".to_string(),
         opened_at: now.clone(),
         updated_at: now,
         commit_count: 0,

@@ -47,7 +47,7 @@ SCENES = [
         "command": "curl -fsSL https://raw.githubusercontent.com/mapleleaflatte03/meridian-loom/main/scripts/install.sh | bash",
         "output": [
             "[loom] preferred release asset: linux-x86_64",
-            "[loom] downloaded v0.1.15",
+            "[loom] downloaded v0.1.16",
             "[loom] linked binary -> ~/.local/bin/loom",
             "[loom] runtime root -> ~/.local/share/meridian-loom/runtime/default",
             "[loom] next: loom doctor --root ~/.local/share/meridian-loom/runtime/default --format human",
@@ -113,7 +113,7 @@ def draw_header(draw: ImageDraw.ImageDraw) -> None:
     )
     pill_x = WIDTH - PADDING_X - 248
     rounded(draw, (pill_x, PADDING_Y + 10, WIDTH - PADDING_X, PADDING_Y + 48), 18, ACCENT_SOFT, ACCENT)
-    draw.text((pill_x + 16, PADDING_Y + 19), "Meridian Loom v0.1.15", font=FONT_WINDOW, fill=ACCENT)
+    draw.text((pill_x + 16, PADDING_Y + 19), "Meridian Loom v0.1.16", font=FONT_WINDOW, fill=ACCENT)
 
 
 def draw_terminal_base(draw: ImageDraw.ImageDraw, title: str, label: str) -> None:

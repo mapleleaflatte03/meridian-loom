@@ -3,7 +3,7 @@
 **RFC-MERIDIAN-0001 · Status: DRAFT · Revision: 1.0.0**
 **Author:** Meridian Cryptography Architecture Group
 **Date:** 2026-03-27
-**Implements:** Meridian Loom Runtime v0.1.15, Loom-Core Host-Call Boundary
+**Implements:** Meridian Loom Runtime v0.1.16, Loom-Core Host-Call Boundary
 **Target Chain:** Base Sepolia (EVM-compatible, Chain ID: 84532)
 
 ---

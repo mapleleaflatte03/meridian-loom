@@ -1,6 +1,6 @@
 # Install
 
-Meridian Loom should be installed as a local-first runtime package, not as an
+Meridian Loom should be installed as a real local runtime package, not as an
 ad-hoc repo script pile.
 
 Preferred install order:
@@ -103,17 +103,32 @@ Use the resulting binary:
 ./target/release/loom version
 ```
 
-## First operator flow
+## First personal-agent flow
 
 ```bash
 export LOOM_ROOT="$HOME/.local/share/meridian-loom/runtime/default"
-export LOOM_SERVICE_TOKEN=loom-local-token
 export MERIDIAN_KERNEL_PATH=/opt/meridian-kernel
+export MERIDIAN_ORG_ID="${MERIDIAN_ORG_ID:-local_foundry}"
 
-loom init --mode embedded --root "$LOOM_ROOT" --kernel-path "$MERIDIAN_KERNEL_PATH"
+cd /opt/meridian-kernel
+python3 quickstart.py --init-only
+
+loom new-agent \
+  --name "My Assistant" \
+  --root "$LOOM_ROOT" \
+  --kernel-path "$MERIDIAN_KERNEL_PATH" \
+  --org-id "$MERIDIAN_ORG_ID"
+
+loom run-agent my-assistant
 loom doctor --root "$LOOM_ROOT" --format human
-loom start --root "$LOOM_ROOT" --kernel-path "$MERIDIAN_KERNEL_PATH" --http-address 127.0.0.1:18910 --service-token "$LOOM_SERVICE_TOKEN"
+loom channel deliveries --root "$LOOM_ROOT" --include-archived
 ```
+
+That is the official first-run loop for Loom v0.1.16.
+
+For the full end-to-end walkthrough, including memory and receipt inspection:
+
+- [docs/QUICKSTART.md](QUICKSTART.md)
 
 For maintainers validating a release from end to end:
 

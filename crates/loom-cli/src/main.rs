@@ -114,6 +114,8 @@ fn run() -> LoomResult<()> {
         "provider" => commands::provider::handle_provider(&args[1..]),
         "context" => commands::context::handle_context(&args[1..]),
         "memory" => commands::memory::handle_memory(&args[1..]),
+        "new-agent" => commands::personal_agent::handle_new_agent(&args[1..]),
+        "run-agent" => commands::personal_agent::handle_run_agent(&args[1..]),
         "gateway" => commands::gateway::handle_gateway(&args[1..]),
         "binding" => commands::binding::handle_binding(&args[1..]),
         "channel" => commands::channel::handle_channel(&args[1..]),
@@ -301,6 +303,8 @@ Bootstrap\n\
   loom restart [--root PATH] [--kernel-path PATH] [--http-address HOST:PORT] [--service-token TOKEN] [--foreground]\n\
   loom logs [--root PATH] [--lines N] [--follow]\n\
   loom config show [--root PATH]\n\
+  loom new-agent --name NAME [--root PATH] [--kernel-path PATH] [--org-id ORG] [--telegram-chat-id ID] [--webhook-url URL] [--format human|json]\n\
+  loom run-agent NAME [--foreground] [--poll-seconds N]\n\
   loom provider status [--root PATH] [--format human|json]\n\
   loom provider route [--root PATH] [--capability NAME] [--model NAME] [--agent-id ID] [--org-id ORG] [--profile NAME] [--format human|json]\n\
   loom provider auth [--root PATH] [--profile NAME] [--format human|json]\n\

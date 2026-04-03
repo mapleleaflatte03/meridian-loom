@@ -9,15 +9,18 @@
 //! enforce governance (retention policy, size limits, agent isolation).
 
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use loom_poge::{HostCallEvent, HostCallKind, PoGEInterceptor};
 use serde_json::{json, Value};
 
 use crate::LoomResult;
 
 const MEMORY_ROOT_DIR: &str = "state/memory";
 const MEMORY_INDEX_FILE: &str = "index.json";
+const MEMORY_RECEIPTS_FILE: &str = "receipts.jsonl";
 const DEFAULT_MAX_ENTRIES_PER_AGENT: usize = 500;
 const DEFAULT_MAX_ENTRY_BYTES: usize = 16_384;
 const DEFAULT_RETENTION_DAYS: u64 = 365;
@@ -262,19 +265,33 @@ impl MemoryService {
         }
 
         // Upsert by key
-        if let Some(existing) = entries
+        let persisted_entry = if let Some(existing) = entries
             .iter_mut()
             .find(|e| e.key == key && e.category == category)
         {
             existing.content = entry.content.clone();
             existing.updated_at = now;
             existing.source = entry.source.clone();
+            existing.clone()
         } else {
             entries.push(entry.clone());
-        }
+            entry.clone()
+        };
 
         self.repo.write_entries(agent_id, &entries)?;
-        Ok(entry)
+        self.append_receipt(
+            "write",
+            agent_id,
+            &format!("category={} key={} source={}", category, key, source),
+            &format!(
+                "entry_id={} bytes={} governed={}",
+                persisted_entry.entry_id,
+                persisted_entry.byte_size(),
+                persisted_entry.governed
+            ),
+            false,
+        )?;
+        Ok(persisted_entry)
     }
 
     /// Search memory entries for an agent by category and/or key prefix.
@@ -301,6 +318,17 @@ impl MemoryService {
                 true
             })
             .collect();
+        self.append_receipt(
+            "read",
+            agent_id,
+            &format!(
+                "category={} key_prefix={}",
+                category.unwrap_or("*"),
+                key_prefix.unwrap_or("*")
+            ),
+            &format!("result_count={}", filtered.len()),
+            false,
+        )?;
         Ok(filtered)
     }
 
@@ -311,8 +339,22 @@ impl MemoryService {
         entries.retain(|e| !(e.key == key && e.category == category));
         if entries.len() < before {
             self.repo.write_entries(agent_id, &entries)?;
+            self.append_receipt(
+                "remove",
+                agent_id,
+                &format!("category={} key={}", category, key),
+                "removed=true",
+                false,
+            )?;
             Ok(true)
         } else {
+            self.append_receipt(
+                "remove",
+                agent_id,
+                &format!("category={} key={}", category, key),
+                "removed=false",
+                false,
+            )?;
             Ok(false)
         }
     }
@@ -332,6 +374,13 @@ impl MemoryService {
                 self.repo.write_entries(agent_id, &entries)?;
             }
         }
+        self.append_receipt(
+            "prune",
+            "memory-service",
+            &format!("retention_days={} cutoff={}", self.policy.retention_days, cutoff),
+            &format!("pruned_entries={}", total_pruned),
+            false,
+        )?;
         Ok(total_pruned)
     }
 
@@ -354,6 +403,52 @@ impl MemoryService {
             indices,
             policy: self.policy.clone(),
         })
+    }
+
+    fn append_receipt(
+        &self,
+        operation: &str,
+        agent_id: &str,
+        input_summary: &str,
+        output_summary: &str,
+        is_error: bool,
+    ) -> LoomResult<()> {
+        fs::create_dir_all(&self.repo.root).map_err(|e| format!("memory receipt scaffold: {}", e))?;
+        let timestamp_ms = current_unix_ms();
+        let event = HostCallEvent {
+            kind: match operation {
+                "write" | "remove" | "prune" => HostCallKind::KvPut,
+                _ => HostCallKind::KvGet,
+            },
+            sequence: (timestamp_ms & u32::MAX as u64) as u32,
+            warrant_id: synthetic_warrant_id(agent_id),
+            dispatch_epoch_ms: timestamp_ms,
+            input_bytes: input_summary.as_bytes(),
+            output_bytes: output_summary.as_bytes(),
+            is_error,
+        };
+        let receipt = PoGEInterceptor::receipt_for(&event).to_hex();
+        let line = serde_json::to_string(&json!({
+            "timestamp_unix_ms": timestamp_ms,
+            "operation": operation,
+            "agent_id": agent_id,
+            "kind": match event.kind {
+                HostCallKind::KvPut => "KvPut",
+                _ => "KvGet",
+            },
+            "receipt_hash": receipt,
+            "input_summary": input_summary,
+            "output_summary": output_summary,
+            "is_error": is_error,
+        }))
+        .map_err(|e| format!("memory receipt serialize: {}", e))?;
+        let path = self.repo.root.join(MEMORY_RECEIPTS_FILE);
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .map_err(|e| format!("memory receipt open: {}", e))?;
+        writeln!(file, "{}", line).map_err(|e| format!("memory receipt append: {}", e))
     }
 }
 
@@ -453,6 +548,22 @@ fn current_unix() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+fn current_unix_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+fn synthetic_warrant_id(agent_id: &str) -> [u8; 32] {
+    let mut warrant = [0u8; 32];
+    for (index, byte) in agent_id.as_bytes().iter().enumerate() {
+        let slot = index % 32;
+        warrant[slot] = warrant[slot].wrapping_add(*byte).rotate_left((slot % 7) as u32);
+    }
+    warrant
 }
 
 #[cfg(test)]

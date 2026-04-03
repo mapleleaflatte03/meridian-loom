@@ -148,6 +148,21 @@ pub fn load_channels(root: &Path) -> LoomResult<Vec<ChannelRecord>> {
     parse_channel_registry(&raw)
 }
 
+pub fn upsert_channel_record(root: &Path, record: &ChannelRecord) -> LoomResult<PathBuf> {
+    let mut records = load_channels(root)?;
+    if let Some(existing) = records
+        .iter_mut()
+        .find(|existing| existing.channel_id == record.channel_id)
+    {
+        *existing = record.clone();
+    } else {
+        records.push(record.clone());
+        records.sort_by(|left, right| left.channel_id.cmp(&right.channel_id));
+    }
+    persist_channel_registry(root, &records)?;
+    Ok(channel_registry_path(root))
+}
+
 pub fn channel_overview(root: &Path) -> LoomResult<ChannelRuntimeOverview> {
     let records = load_channels(root)?;
     let ingress_count = list_channel_ingress(root, 0)?.len();

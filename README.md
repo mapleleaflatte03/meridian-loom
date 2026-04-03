@@ -5,11 +5,11 @@
 <p align="center">
   <img src="https://img.shields.io/badge/license-MIT-1f6feb?style=flat-square" alt="MIT license">
   <img src="https://img.shields.io/github/actions/workflow/status/mapleleaflatte03/meridian-loom/rust.yml?branch=main&style=flat-square" alt="Build passing">
-  <img src="https://img.shields.io/badge/version-0.1.15-0c1117?style=flat-square" alt="Version 0.1.15">
+  <img src="https://img.shields.io/badge/version-0.1.16-0c1117?style=flat-square" alt="Version 0.1.16">
 </p>
 
 <p align="center">
-  <strong>Install in one command. Run a governed job in minutes. Inspect the receipt instead of guessing.</strong>
+  <strong>Install in one command. Run a governed local agent in minutes. Inspect the receipt instead of guessing.</strong>
 </p>
 
 <p align="center">
@@ -18,6 +18,7 @@
 
 <p align="center">
   <a href="docs/INSTALL.md">Install</a> ·
+  <a href="docs/QUICKSTART.md">Quickstart</a> ·
   <a href="docs/RUN_LOCAL.md">Run Local</a> ·
   <a href="docs/BENCHMARKS.md">Benchmarks</a> ·
   <a href="docs/RELEASE.md">Release</a> ·
@@ -26,19 +27,19 @@
   <a href="docs/MERIDIAN_PoGE_PROTOCOL.md">PoGE</a>
 </p>
 
-# Meridian Loom
+# Meridian Loom – Governed Local Agent Runtime v0.1
 
-Meridian Loom is the official Meridian v0.1 local runtime. It installs under
-the operator's home directory, exposes a full CLI, runs bounded terminal and
-browser jobs, and writes local proof, audit, queue, and parity artifacts you
-can inspect immediately.
+Loom is the governed local runtime for AI agents. Install in one command, run
+terminal/browser/schedule/personal-agent jobs, and inspect proof receipts
+immediately. No vibes, just proof + governance.
 
 If you want the shortest honest summary:
 
 - **Install:** one command, binary first
-- **Operate:** one CLI for doctor, status, jobs, queue, parity, service
-- **Prove:** every governed execution emits filesystem receipts and proof views
-- **Boundary:** local runtime is real; hosted replacement is not claimed here
+- **Create:** `loom new-agent` provisions a governed personal agent with Kernel wiring
+- **Operate:** one CLI for doctor, status, jobs, queue, parity, service, memory, and channels
+- **Prove:** every governed execution and memory event emits receipts and proof views
+- **Boundary:** the local runtime is real; broader hosted replacement is not claimed here
 
 ## 1-command install
 
@@ -48,6 +49,39 @@ curl -fsSL https://raw.githubusercontent.com/mapleleaflatte03/meridian-loom/main
 
 The installer prefers prebuilt GitHub release assets for the current host and
 falls back to a source build only when no matching asset is available.
+
+## Create your first governed personal agent
+
+```bash
+export LOOM_ROOT="${HOME}/.local/share/meridian-loom/runtime/default"
+export MERIDIAN_KERNEL_PATH=/opt/meridian-kernel
+export MERIDIAN_ORG_ID="${MERIDIAN_ORG_ID:-local_foundry}"
+
+loom new-agent \
+  --name "My Assistant" \
+  --root "$LOOM_ROOT" \
+  --kernel-path "$MERIDIAN_KERNEL_PATH" \
+  --org-id "$MERIDIAN_ORG_ID"
+
+loom run-agent my-assistant
+```
+
+What that does:
+
+- initializes Loom if needed
+- registers the agent in Kernel with `runtime_binding=loom_native`
+- creates `~/.config/meridian-loom/agents/my-assistant/`
+- writes `agent.toml`, `README.md`, `MEMORY.md`, and `SOUL.md`
+- starts a persistent heartbeat-driven governed loop when you run the agent
+
+Inspect it:
+
+```bash
+loom status --root "$LOOM_ROOT"
+loom channel deliveries --root "$LOOM_ROOT" --include-archived
+```
+
+The full end-to-end flow lives in [docs/QUICKSTART.md](docs/QUICKSTART.md).
 
 ## What ships in the official v0.1 release
 
@@ -63,7 +97,11 @@ falls back to a source build only when no matching asset is available.
   - terminal execution
   - browser navigation
   - heartbeat scheduling
+- Personal agent commands:
+  - `loom new-agent`
+  - `loom run-agent`
 - Queue, job, audit, parity, and runtime-service surfaces on disk
+- Memory receipts for write/read/remove/prune operations
 - Proof of Governed Execution (PoGE) contract and receipt architecture
 
 ## Quickstart: three copy-paste examples
@@ -75,7 +113,7 @@ These examples are intentionally concrete. They assume:
 - you are willing to keep the truth boundary explicit
 - you are fine using `local_foundry` as the default local org id on a fresh root
 
-If you have not initialized the Kernel yet, run example 3 first.
+If you have not initialized the Kernel yet, run the personal-agent flow above or example 3 first.
 
 ### 1. Run one terminal job and inspect the receipt
 
@@ -186,7 +224,7 @@ loom status --root "$HOME/.local/share/meridian-loom/runtime/default"
 The goal of both commands is simple:
 
 - `doctor` tells you whether the runtime is ready, degraded, or blocked
-- `status` tells you where the runtime, queue, and service artifacts live
+- `status` tells you where the runtime, queue, service, and agent artifacts live
 - both should point to an obvious next command instead of forcing you to read the source
 
 ## Benchmark harness
@@ -227,7 +265,7 @@ recommended command choices.
 
 ## Release story
 
-Loom releases are GitHub-first operator packages. Tagging `v0.1.15` builds and
+Loom releases are GitHub-first operator packages. Tagging `v0.1.16` builds and
 publishes release archives for:
 
 - Linux x86_64
@@ -240,11 +278,11 @@ systemd units, and a checksum file.
 
 See [docs/RELEASE.md](docs/RELEASE.md) for the release layout.
 
-## Three-part Meridian stack
+## Meridian stack
 
-- [meridian-loom](https://github.com/mapleleaflatte03/meridian-loom): local runtime surface and operator tooling
-- [meridian-kernel](https://github.com/mapleleaflatte03/meridian-kernel): governance, policy, authority, treasury, and court
-- [meridian-intelligence](https://github.com/mapleleaflatte03/meridian-intelligence): public product surface and governed delivery routes
+- [meridian-loom](https://github.com/mapleleaflatte03/meridian-loom): official first-party governed local runtime
+- [meridian-kernel](https://github.com/mapleleaflatte03/meridian-kernel): runtime-neutral governance, policy, authority, treasury, and court
+- [meridian-intelligence](https://github.com/mapleleaflatte03/meridian-intelligence): first-party workflows and public product surfaces built on Loom + Kernel
 
 ## Proof of Governed Execution (PoGE)
 

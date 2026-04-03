@@ -315,6 +315,51 @@ pub fn run_due_heartbeats(
     })
 }
 
+pub fn claim_due_heartbeats(
+    root: &Path,
+    now_unix_ms: u64,
+    limit: usize,
+) -> LoomResult<Vec<HeartbeatRecord>> {
+    let mut records = load_heartbeats(root)?;
+    let effective_limit = if limit == 0 { usize::MAX } else { limit };
+    let mut claimed = Vec::new();
+
+    for record in records.iter_mut() {
+        if claimed.len() >= effective_limit {
+            break;
+        }
+        if !heartbeat_is_due(record, now_unix_ms) {
+            continue;
+        }
+
+        let snapshot = record.clone();
+        record.run_count = record.run_count.saturating_add(1);
+        record.last_fire_at_unix_ms = Some(now_unix_ms);
+        match record.schedule_kind.as_str() {
+            "once" => {
+                record.enabled = false;
+                record.status = "completed".to_string();
+                record.next_fire_at_unix_ms = None;
+            }
+            "interval" => {
+                record.status = "scheduled".to_string();
+                record.next_fire_at_unix_ms = Some(now_unix_ms + (record.every_seconds * 1_000));
+            }
+            "cron" => {
+                record.status = "scheduled".to_string();
+                record.next_fire_at_unix_ms = None;
+            }
+            _ => {}
+        }
+        claimed.push(snapshot);
+    }
+
+    if !claimed.is_empty() {
+        persist_heartbeat_registry(root, &records)?;
+    }
+    Ok(claimed)
+}
+
 pub fn render_heartbeat_overview_human(summary: &HeartbeatRuntimeOverview) -> String {
     format!(
         "registry_path:   {}\nruns_path:       {}\ntotal_count:     {}\nenabled_count:   {}\ndue_count:       {}\n",

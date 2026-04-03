@@ -10,6 +10,8 @@ The tarball produced by `scripts/package_release.sh` contains:
 - `config/loom.toml.example`
 - `docs/*.md`
 - `docs/BENCHMARKS.md`
+- `docs/assets/*`
+- `templates/personal-agent/*`
 - `scripts/install_local.sh`
 - `scripts/release_local.sh`
 - `scripts/package_release.sh`
@@ -33,7 +35,7 @@ The tarball produced by `scripts/package_release.sh` contains:
 
 ## Publish a tagged release
 
-Create and push a tag like `v0.1.15`. The GitHub release workflow builds and publishes four release assets:
+Create and push a tag like `v0.1.16`. The GitHub release workflow builds and publishes four release assets:
 
 - `meridian-loom-<version>-linux-x86_64.tar.gz`
 - `meridian-loom-<version>-linux-aarch64.tar.gz`
