@@ -19,6 +19,10 @@ service_token = "{{SERVICE_TOKEN}}"
 heartbeat_capability = "{{HEARTBEAT_CAPABILITY}}"
 heartbeat_every_seconds = {{HEARTBEAT_EVERY_SECONDS}}
 
+[supervision]
+restart_policy = "manual"
+restart_backoff_seconds = 30
+
 [telegram]
 telegram_enabled = {{TELEGRAM_ENABLED}}
 telegram_chat_id = "{{TELEGRAM_CHAT_ID}}"

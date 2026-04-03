@@ -83,9 +83,17 @@ Inspect it:
 
 ```bash
 loom run-agent status my-assistant
+loom run-agent inspect my-assistant
 loom status --root "$LOOM_ROOT"
 loom memory receipts --root "$LOOM_ROOT" --limit 10
+loom channel health --root "$LOOM_ROOT" --agent my-assistant
 loom channel deliveries --root "$LOOM_ROOT" --include-archived
+```
+
+If the loop exits and the supervision policy says it should come back, reconcile it:
+
+```bash
+loom run-agent reconcile my-assistant
 ```
 
 The full end-to-end flow lives in [docs/QUICKSTART.md](docs/QUICKSTART.md).
@@ -107,7 +115,9 @@ The full end-to-end flow lives in [docs/QUICKSTART.md](docs/QUICKSTART.md).
 - Personal agent commands:
   - `loom new-agent`
   - `loom run-agent`
-  - `loom channel connect/show/test`
+  - `loom run-agent inspect`
+  - `loom run-agent reconcile`
+  - `loom channel connect/list/health/test`
   - `loom memory receipts`
 - Queue, job, audit, parity, and runtime-service surfaces on disk
 - Memory receipts for write/read/remove/prune operations

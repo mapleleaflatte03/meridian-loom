@@ -9,7 +9,7 @@ It goes through:
 3. create a governed personal agent
 4. connect a delivery channel
 5. run the agent loop
-6. inspect delivery, memory, and proof receipts
+6. inspect delivery, memory, channel health, and proof receipts
 
 ## 1. Install Loom
 
@@ -76,7 +76,8 @@ loom channel connect webhook \
 Inspect the configured route:
 
 ```bash
-loom channel show --agent my-assistant
+loom channel list --root "$LOOM_ROOT" --agent my-assistant
+loom channel health --root "$LOOM_ROOT" --agent my-assistant
 ```
 
 ## 5. Run the personal agent loop
@@ -92,14 +93,22 @@ The default mode starts a background loop that:
 - claims due heartbeats
 - writes loop state under `run/personal-agents/`
 - dispatches governed runs with receipts
+- follows the restart policy declared in `agent.toml`
 
 Inspect it:
 
 ```bash
 tail -f "${HOME}/.local/share/meridian-loom/runtime/default/run/personal-agents/my-assistant.log"
 loom run-agent status my-assistant
+loom run-agent inspect my-assistant
 loom status --root "$LOOM_ROOT"
 loom doctor --root "$LOOM_ROOT" --format human
+```
+
+If the loop exits and the policy should bring it back:
+
+```bash
+loom run-agent reconcile my-assistant
 ```
 
 ## 6. Inspect memory, channels, and receipts
@@ -132,7 +141,8 @@ Then inspect the runtime surfaces:
 ```bash
 loom memory search --root "$LOOM_ROOT" --agent-id "$AGENT_ID" --category profile
 loom memory receipts --root "$LOOM_ROOT" --agent-id "$AGENT_ID" --limit 10
-loom channel status --root "$LOOM_ROOT" --format human
+loom channel list --root "$LOOM_ROOT" --agent my-assistant
+loom channel health --root "$LOOM_ROOT" --agent my-assistant
 loom channel deliveries --root "$LOOM_ROOT" --include-archived
 loom channel test --agent my-assistant --text "Loom delivery path check"
 loom job list --root "$LOOM_ROOT" --format human
@@ -150,5 +160,6 @@ After this quickstart, do one of these:
 
 - connect Telegram or webhook delivery in `agent.toml`
 - use `loom channel connect` / `loom channel test` instead of editing config by hand
+- set `[supervision] restart_policy = "always"` in `agent.toml` if you want reconcile-friendly restarts
 - inspect the generated agent folder under `~/.config/meridian-loom/agents/my-assistant/`
 - run the terminal and browser examples from the main README

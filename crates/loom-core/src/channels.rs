@@ -1,3 +1,4 @@
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -40,6 +41,24 @@ pub struct ChannelRuntimeOverview {
     pub active_delivery_count: usize,
     pub archived_delivery_count: usize,
     pub channel_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChannelHealthRecord {
+    pub channel_id: String,
+    pub kind: String,
+    pub enabled: bool,
+    pub ready: bool,
+    pub health: String,
+    pub status_detail: String,
+    pub endpoint: String,
+    pub latest_delivery_status: String,
+    pub latest_delivery_at_unix_ms: u64,
+    pub queued_count: usize,
+    pub delivered_count: usize,
+    pub failed_count: usize,
+    pub blocked_count: usize,
+    pub archived_delivery_count: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -186,6 +205,94 @@ pub fn channel_overview(root: &Path) -> LoomResult<ChannelRuntimeOverview> {
             .map(|record| record.channel_id.clone())
             .collect(),
     })
+}
+
+pub fn list_channel_health(root: &Path) -> LoomResult<Vec<ChannelHealthRecord>> {
+    let records = load_channels(root)?;
+    let deliveries = list_channel_deliveries_with_options(root, 0, true, false)?;
+    let now = now_unix_ms();
+    let mut health = Vec::with_capacity(records.len());
+    for record in records {
+        let related = deliveries
+            .iter()
+            .filter(|delivery| delivery.channel_id == record.channel_id)
+            .collect::<Vec<_>>();
+        let queued_count = related
+            .iter()
+            .filter(|delivery| delivery.status == "queued")
+            .count();
+        let delivered_count = related
+            .iter()
+            .filter(|delivery| delivery.status == "delivered")
+            .count();
+        let failed_count = related
+            .iter()
+            .filter(|delivery| delivery.status == "failed")
+            .count();
+        let blocked_count = related
+            .iter()
+            .filter(|delivery| delivery.status == "blocked")
+            .count();
+        let archived_delivery_count = related
+            .iter()
+            .filter(|delivery| channel_delivery_is_archived(delivery, now))
+            .count();
+        let latest_delivery_status = related
+            .first()
+            .map(|delivery| delivery.status.clone())
+            .unwrap_or_else(|| "none".to_string());
+        let latest_delivery_at_unix_ms = related
+            .first()
+            .map(|delivery| delivery.submitted_at_unix_ms)
+            .unwrap_or_default();
+        let endpoint_ready = !record.endpoint.trim().is_empty();
+        let auth_ready = channel_auth_ready(&record);
+        let (health_label, status_detail) = if !record.enabled {
+            ("disabled".to_string(), "channel disabled".to_string())
+        } else if !endpoint_ready {
+            ("degraded".to_string(), "missing endpoint".to_string())
+        } else if !auth_ready {
+            (
+                "degraded".to_string(),
+                format!("credential not ready ({})", record.auth_mode),
+            )
+        } else if failed_count > 0 {
+            (
+                "warning".to_string(),
+                format!("{} failed delivery record(s)", failed_count),
+            )
+        } else if blocked_count > 0 {
+            (
+                "warning".to_string(),
+                format!("{} blocked delivery record(s)", blocked_count),
+            )
+        } else if queued_count > 0 {
+            (
+                "active".to_string(),
+                format!("{} queued delivery record(s)", queued_count),
+            )
+        } else {
+            ("healthy".to_string(), "ready".to_string())
+        };
+        health.push(ChannelHealthRecord {
+            channel_id: record.channel_id.clone(),
+            kind: record.kind.clone(),
+            enabled: record.enabled,
+            ready: record.enabled && endpoint_ready && auth_ready,
+            health: health_label,
+            status_detail,
+            endpoint: record.endpoint.clone(),
+            latest_delivery_status,
+            latest_delivery_at_unix_ms,
+            queued_count,
+            delivered_count,
+            failed_count,
+            blocked_count,
+            archived_delivery_count,
+        });
+    }
+    health.sort_by(|left, right| left.channel_id.cmp(&right.channel_id));
+    Ok(health)
 }
 
 pub fn enqueue_channel_delivery(
@@ -526,6 +633,95 @@ pub fn render_channel_sync_json(result: &ChannelSyncResult) -> String {
         "channel_ids": result.channel_ids,
     }))
     .unwrap_or_else(|_| "{}".to_string())
+        + "\n"
+}
+
+pub fn render_channel_list_human(records: &[ChannelRecord]) -> String {
+    if records.is_empty() {
+        return "channel_count:     0\n".to_string();
+    }
+    let mut rendered = format!("channel_count:     {}\n", records.len());
+    for record in records {
+        rendered.push_str(&format!(
+            "\n- {} kind={} enabled={} auth={} endpoint={} note={}\n",
+            record.channel_id,
+            record.kind,
+            record.enabled,
+            if record.auth_mode.trim().is_empty() {
+                "none"
+            } else {
+                &record.auth_mode
+            },
+            if record.endpoint.trim().is_empty() {
+                "(none)"
+            } else {
+                &record.endpoint
+            },
+            if record.note.trim().is_empty() {
+                "(none)"
+            } else {
+                &record.note
+            },
+        ));
+    }
+    rendered
+}
+
+pub fn render_channel_list_json(records: &[ChannelRecord]) -> String {
+    serde_json::to_string_pretty(&records.iter().map(channel_record_json).collect::<Vec<_>>())
+        .unwrap_or_else(|_| "[]".to_string())
+        + "\n"
+}
+
+pub fn render_channel_health_human(records: &[ChannelHealthRecord]) -> String {
+    if records.is_empty() {
+        return "channel_health_count: 0\n".to_string();
+    }
+    let mut rendered = format!("channel_health_count: {}\n", records.len());
+    for record in records {
+        rendered.push_str(&format!(
+            "\n- {} kind={} health={} ready={} latest={} queued={} delivered={} failed={} blocked={} archived={} detail={}\n",
+            record.channel_id,
+            record.kind,
+            record.health,
+            record.ready,
+            record.latest_delivery_status,
+            record.queued_count,
+            record.delivered_count,
+            record.failed_count,
+            record.blocked_count,
+            record.archived_delivery_count,
+            record.status_detail.replace('\n', "\\n"),
+        ));
+    }
+    rendered
+}
+
+pub fn render_channel_health_json(records: &[ChannelHealthRecord]) -> String {
+    serde_json::to_string_pretty(
+        &records
+            .iter()
+            .map(|record| {
+                json!({
+                    "channel_id": record.channel_id,
+                    "kind": record.kind,
+                    "enabled": record.enabled,
+                    "ready": record.ready,
+                    "health": record.health,
+                    "status_detail": record.status_detail,
+                    "endpoint": record.endpoint,
+                    "latest_delivery_status": record.latest_delivery_status,
+                    "latest_delivery_at_unix_ms": record.latest_delivery_at_unix_ms,
+                    "queued_count": record.queued_count,
+                    "delivered_count": record.delivered_count,
+                    "failed_count": record.failed_count,
+                    "blocked_count": record.blocked_count,
+                    "archived_delivery_count": record.archived_delivery_count,
+                })
+            })
+            .collect::<Vec<_>>(),
+    )
+    .unwrap_or_else(|_| "[]".to_string())
         + "\n"
 }
 
@@ -938,6 +1134,18 @@ fn safe_file_token(input: &str) -> String {
         .to_string()
 }
 
+fn channel_auth_ready(record: &ChannelRecord) -> bool {
+    match record.auth_mode.trim() {
+        "" | "none" => true,
+        "env_token" => env::var(record.credential_ref.trim())
+            .ok()
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false),
+        "inline_header" | "static_header" | "token" => !record.credential_ref.trim().is_empty(),
+        _ => !record.credential_ref.trim().is_empty(),
+    }
+}
+
 fn unique_token() -> String {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1179,6 +1387,67 @@ mod tests {
         let overview = channel_overview(&root).expect("channel overview");
         assert_eq!(overview.active_delivery_count, 1);
         assert_eq!(overview.archived_delivery_count, 1);
+    }
+
+    #[test]
+    fn channel_health_flags_webhook_ready_and_failed_state() {
+        let root = temp_path("loom-channel-health");
+        init_workspace(&root, "embedded", Some("/tmp/meridian-kernel"), "org_demo")
+            .expect("init workspace");
+        ensure_channel_runtime_scaffold(&root).expect("channel scaffold");
+
+        upsert_channel_record(
+            &root,
+            &ChannelRecord {
+                channel_id: "webhook_demo".to_string(),
+                kind: "webhook".to_string(),
+                enabled: true,
+                endpoint: "https://example.com/hook".to_string(),
+                auth_mode: "inline_header".to_string(),
+                credential_ref: "Authorization: Bearer test".to_string(),
+                dm_policy: "per-agent".to_string(),
+                group_policy: String::new(),
+                streaming: "async".to_string(),
+                note: "personal_agent=demo".to_string(),
+            },
+        )
+        .expect("upsert webhook");
+
+        let healthy = list_channel_health(&root).expect("channel health");
+        let webhook = healthy
+            .iter()
+            .find(|record| record.channel_id == "webhook_demo")
+            .expect("webhook health");
+        assert_eq!(webhook.health, "healthy");
+        assert!(webhook.ready);
+
+        let failed = enqueue_channel_delivery(
+            &root,
+            &ChannelDeliveryRequest {
+                channel_id: "webhook_demo".to_string(),
+                recipient: "https://example.com/hook".to_string(),
+                raw_text: "delivery".to_string(),
+                allow_receipt_hashes: false,
+                allow_operator_diagnostics: false,
+            },
+        )
+        .expect("enqueue failed");
+        update_channel_delivery(
+            &root,
+            &failed.delivery_id,
+            "failed",
+            None,
+            Some("network timeout"),
+        )
+        .expect("mark failed");
+
+        let warning = list_channel_health(&root).expect("channel health warning");
+        let webhook = warning
+            .iter()
+            .find(|record| record.channel_id == "webhook_demo")
+            .expect("webhook health warning");
+        assert_eq!(webhook.health, "warning");
+        assert_eq!(webhook.failed_count, 1);
     }
 
     #[test]

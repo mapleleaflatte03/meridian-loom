@@ -24,6 +24,8 @@ const DEFAULT_PERSONAL_ROLE: &str = "manager";
 const DEFAULT_PERSONAL_HEARTBEAT_CAPABILITY: &str = "loom.system.info.v1";
 const DEFAULT_PERSONAL_HEARTBEAT_SECONDS: u64 = 300;
 const DEFAULT_TELEGRAM_TOKEN_ENV: &str = "MERIDIAN_TELEGRAM_BOT_TOKEN";
+const DEFAULT_PERSONAL_RESTART_POLICY: &str = "manual";
+const DEFAULT_PERSONAL_RESTART_BACKOFF_SECONDS: u64 = 30;
 const PERSONAL_AGENT_TEMPLATE_README: &str =
     include_str!("../../../../templates/personal-agent/README.md");
 const PERSONAL_AGENT_TEMPLATE_MEMORY: &str =
@@ -48,6 +50,8 @@ pub(crate) struct PersonalAgentConfig {
     pub(crate) service_token: String,
     pub(crate) heartbeat_capability: String,
     pub(crate) heartbeat_every_seconds: u64,
+    pub(crate) restart_policy: String,
+    pub(crate) restart_backoff_seconds: u64,
     pub(crate) telegram_enabled: bool,
     pub(crate) telegram_chat_id: String,
     pub(crate) telegram_token_env: String,
@@ -87,6 +91,17 @@ struct PersonalAgentMemorySyncResult {
     changed_count: usize,
     recalled_count: usize,
     sync_state: PersonalAgentMemorySyncState,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PersonalAgentRunPolicy {
+    desired_state: String,
+    restart_policy: String,
+    restart_backoff_seconds: u64,
+    failure_count: u64,
+    last_exit_unix_ms: u64,
+    next_restart_after_unix_ms: u64,
+    last_exit_status: String,
 }
 
 pub(crate) fn handle_new_agent(args: &[String]) -> LoomResult<()> {
@@ -168,6 +183,8 @@ pub(crate) fn handle_new_agent(args: &[String]) -> LoomResult<()> {
         service_token,
         heartbeat_capability: DEFAULT_PERSONAL_HEARTBEAT_CAPABILITY.to_string(),
         heartbeat_every_seconds: DEFAULT_PERSONAL_HEARTBEAT_SECONDS,
+        restart_policy: DEFAULT_PERSONAL_RESTART_POLICY.to_string(),
+        restart_backoff_seconds: DEFAULT_PERSONAL_RESTART_BACKOFF_SECONDS,
         telegram_enabled: !telegram_chat_id.trim().is_empty(),
         telegram_chat_id,
         telegram_token_env: DEFAULT_TELEGRAM_TOKEN_ENV.to_string(),
@@ -237,7 +254,9 @@ pub(crate) fn handle_run_agent(args: &[String]) -> LoomResult<()> {
 
     match args.first().map(String::as_str) {
         Some("status") => return handle_run_agent_status(&args[1..]),
+        Some("inspect") => return handle_run_agent_inspect(&args[1..]),
         Some("stop") => return handle_run_agent_stop(&args[1..]),
+        Some("reconcile") => return handle_run_agent_reconcile(&args[1..]),
         _ => {}
     }
 
@@ -254,6 +273,13 @@ pub(crate) fn handle_run_agent(args: &[String]) -> LoomResult<()> {
         .unwrap_or(15);
     let once = has_flag(args, "--once");
     let foreground = has_flag(args, "--foreground") || has_flag(args, "--loop");
+    let restart_policy = take_value(args, "--restart-policy")
+        .map(|value| normalize_restart_policy(&value))
+        .unwrap_or_else(|| normalize_restart_policy(&config.restart_policy));
+    let restart_backoff_seconds = take_value(args, "--restart-backoff-seconds")
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(config.restart_backoff_seconds)
+        .max(1);
 
     if !foreground {
         if let Some(state) = load_loop_state(&state_path)? {
@@ -273,48 +299,16 @@ pub(crate) fn handle_run_agent(args: &[String]) -> LoomResult<()> {
             }
         }
 
-        if let Some(parent) = loop_log_path.parent() {
-            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-        }
-        let stdout = fs::File::create(&loop_log_path).map_err(|error| error.to_string())?;
-        let stderr = stdout.try_clone().map_err(|error| error.to_string())?;
-        let exe = env::current_exe().map_err(|error| error.to_string())?;
-        let mut command = Command::new(exe);
-        command
-            .arg("run-agent")
-            .arg(&config.slug)
-            .arg("--foreground")
-            .arg("--loop")
-            .arg("--poll-seconds")
-            .arg(poll_seconds.to_string())
-            .stdin(Stdio::null())
-            .stdout(Stdio::from(stdout))
-            .stderr(Stdio::from(stderr));
-        let child = command.spawn().map_err(|error| error.to_string())?;
-        write_loop_state(
-            &state_path,
-            &PersonalAgentLoopState {
-                slug: config.slug.clone(),
-                agent_id: config.agent_id.clone(),
-                pid: child.id(),
-                status: "starting".to_string(),
-                launched_at_unix_ms: now_unix_ms(),
-                updated_at_unix_ms: now_unix_ms(),
-                last_run_status: "booting".to_string(),
-                last_tick_unix_ms: 0,
-                heartbeat_id: heartbeat_id.clone(),
-                log_path: loop_log_path.display().to_string(),
-                last_memory_sync_unix_ms: 0,
-                memory_entries_recalled: 0,
-                memory_entries_updated: 0,
-                primary_channel_id: configured_delivery_target(&config)
-                    .map(|target| target.channel_id)
-                    .unwrap_or_default(),
-            },
+        let child = spawn_run_agent_background(
+            &root,
+            &config,
+            poll_seconds,
+            &restart_policy,
+            restart_backoff_seconds,
         )?;
         print_startup_banner();
         print_human(&format!(
-            "Meridian Loom // RUN AGENT\n==========================\nname:         {}\nslug:         {}\nagent_id:     {}\nstatus:       background loop started\npid:          {}\nheartbeat_id: {}\nlog_path:     {}\nstate_path:   {}\n\nNext\n----\n1. tail -f \"{}\"\n2. loom recurring runs --root \"{}\" --job-type heartbeat\n3. loom channel deliveries --root \"{}\" --include-archived\n",
+            "Meridian Loom // RUN AGENT\n==========================\nname:         {}\nslug:         {}\nagent_id:     {}\nstatus:       background loop started\npid:          {}\nheartbeat_id: {}\nlog_path:     {}\nstate_path:   {}\nrestart_policy:{}\nrestart_backoff:{}s\n\nNext\n----\n1. tail -f \"{}\"\n2. loom run-agent inspect {}\n3. loom recurring runs --root \"{}\" --job-type heartbeat\n4. loom channel deliveries --root \"{}\" --include-archived\n",
             config.display_name,
             config.slug,
             config.agent_id,
@@ -322,7 +316,10 @@ pub(crate) fn handle_run_agent(args: &[String]) -> LoomResult<()> {
             heartbeat_id,
             loop_log_path.display(),
             state_path.display(),
+            restart_policy,
+            restart_backoff_seconds,
             loop_log_path.display(),
+            config.slug,
             root.display(),
             root.display(),
         ));
@@ -354,12 +351,19 @@ fn run_agent_loop(
     let delivery_target = configured_delivery_target(config);
     ensure_personal_agent_heartbeat(root, config, heartbeat_id, delivery_target)?;
     clear_stop_request(root, &config.slug)?;
+    let policy_path = personal_agent_policy_path(root, &config.slug)?;
+    let mut run_policy = load_run_policy(&policy_path, config)?;
     let mut memory_sync = sync_personal_agent_memory(root, config)?;
     let _ = open_agent_session(root, &config.agent_id, Some("personal_agent"))?;
+    run_policy.last_exit_status = "running".to_string();
+    write_run_policy(&policy_path, &run_policy)?;
 
     loop {
         let now_ms = now_unix_ms();
         if stop_requested(root, &config.slug)? {
+            run_policy.last_exit_unix_ms = now_ms;
+            run_policy.next_restart_after_unix_ms = 0;
+            run_policy.last_exit_status = "stop requested by operator".to_string();
             write_loop_state(
                 state_path,
                 &PersonalAgentLoopState {
@@ -383,6 +387,7 @@ fn run_agent_loop(
                         .unwrap_or_default(),
                 },
             )?;
+            write_run_policy(&policy_path, &run_policy)?;
             clear_stop_request(root, &config.slug)?;
             return Ok(());
         }
@@ -439,6 +444,14 @@ fn run_agent_loop(
             },
         )?;
         if once {
+            run_policy.last_exit_unix_ms = now_ms;
+            run_policy.last_exit_status = last_status.clone();
+            run_policy.next_restart_after_unix_ms =
+                if run_policy.restart_policy == "always" && run_policy.desired_state == "running" {
+                    now_ms.saturating_add(run_policy.restart_backoff_seconds.saturating_mul(1000))
+                } else {
+                    0
+                };
             write_loop_state(
                 state_path,
                 &PersonalAgentLoopState {
@@ -462,10 +475,164 @@ fn run_agent_loop(
                         .unwrap_or_default(),
                 },
             )?;
+            write_run_policy(&policy_path, &run_policy)?;
             return Ok(());
         }
         thread::sleep(Duration::from_secs(poll_seconds.max(5)));
     }
+}
+
+fn spawn_run_agent_background(
+    root: &Path,
+    config: &PersonalAgentConfig,
+    poll_seconds: u64,
+    restart_policy: &str,
+    restart_backoff_seconds: u64,
+) -> LoomResult<std::process::Child> {
+    let loop_log_path = personal_agent_log_path(root, &config.slug)?;
+    let state_path = personal_agent_state_path(root, &config.slug)?;
+    let heartbeat_id = heartbeat_id_for_slug(&config.slug);
+    let policy_path = personal_agent_policy_path(root, &config.slug)?;
+    let mut policy = load_run_policy(&policy_path, config)?;
+    policy.desired_state = "running".to_string();
+    policy.restart_policy = normalize_restart_policy(restart_policy);
+    policy.restart_backoff_seconds = restart_backoff_seconds.max(1);
+    policy.next_restart_after_unix_ms = 0;
+    write_run_policy(&policy_path, &policy)?;
+
+    if let Some(parent) = loop_log_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let stdout = fs::File::create(&loop_log_path).map_err(|error| error.to_string())?;
+    let stderr = stdout.try_clone().map_err(|error| error.to_string())?;
+    let exe = env::current_exe().map_err(|error| error.to_string())?;
+    let mut command = Command::new(exe);
+    command
+        .arg("run-agent")
+        .arg(&config.slug)
+        .arg("--foreground")
+        .arg("--loop")
+        .arg("--poll-seconds")
+        .arg(poll_seconds.to_string())
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(stderr));
+    let child = command.spawn().map_err(|error| error.to_string())?;
+    write_loop_state(
+        &state_path,
+        &PersonalAgentLoopState {
+            slug: config.slug.clone(),
+            agent_id: config.agent_id.clone(),
+            pid: child.id(),
+            status: "starting".to_string(),
+            launched_at_unix_ms: now_unix_ms(),
+            updated_at_unix_ms: now_unix_ms(),
+            last_run_status: "booting".to_string(),
+            last_tick_unix_ms: 0,
+            heartbeat_id,
+            log_path: loop_log_path.display().to_string(),
+            last_memory_sync_unix_ms: 0,
+            memory_entries_recalled: 0,
+            memory_entries_updated: 0,
+            primary_channel_id: configured_delivery_target(config)
+                .map(|target| target.channel_id)
+                .unwrap_or_default(),
+        },
+    )?;
+    Ok(child)
+}
+
+fn build_run_agent_summary(
+    root: &Path,
+    config: &PersonalAgentConfig,
+) -> LoomResult<serde_json::Value> {
+    let state_path = personal_agent_state_path(root, &config.slug)?;
+    let stop_path = personal_agent_stop_request_path(root, &config.slug)?;
+    let policy_path = personal_agent_policy_path(root, &config.slug)?;
+    let state = load_loop_state(&state_path)?;
+    let running = state
+        .as_ref()
+        .map(|state| pid_is_running(state.pid))
+        .unwrap_or(false);
+    let run_policy = load_run_policy(&policy_path, config)?;
+    let normalized_status = state
+        .as_ref()
+        .map(|state| {
+            if running {
+                state.status.clone()
+            } else if matches!(state.status.as_str(), "running" | "starting") {
+                match supervision_action(&run_policy, now_unix_ms()) {
+                    "needs_restart" => "needs_restart".to_string(),
+                    "waiting_backoff" => "waiting_backoff".to_string(),
+                    "manual_restart_required" => "stopped".to_string(),
+                    "stopped_by_policy" => "stopped".to_string(),
+                    _ => "stopped".to_string(),
+                }
+            } else {
+                state.status.clone()
+            }
+        })
+        .unwrap_or_else(|| "not_started".to_string());
+    let primary_channel = configured_delivery_target(config)
+        .map(|target| format!("{} -> {}", target.channel_id, target.recipient))
+        .unwrap_or_else(|| "none".to_string());
+    Ok(serde_json::json!({
+        "name": config.display_name,
+        "slug": config.slug,
+        "agent_id": config.agent_id,
+        "running": running,
+        "status": normalized_status,
+        "pid": state.as_ref().map(|state| state.pid).unwrap_or_default(),
+        "heartbeat_id": heartbeat_id_for_slug(&config.slug),
+        "last_run_status": state.as_ref().map(|state| state.last_run_status.clone()).unwrap_or_else(|| "not_started".to_string()),
+        "last_tick_unix_ms": state.as_ref().map(|state| state.last_tick_unix_ms).unwrap_or_default(),
+        "last_memory_sync_unix_ms": state.as_ref().map(|state| state.last_memory_sync_unix_ms).unwrap_or_default(),
+        "memory_entries_recalled": state.as_ref().map(|state| state.memory_entries_recalled).unwrap_or_default(),
+        "memory_entries_updated": state.as_ref().map(|state| state.memory_entries_updated).unwrap_or_default(),
+        "primary_channel": primary_channel,
+        "config_path": personal_agent_config_path(&config.slug)?.display().to_string(),
+        "state_path": state_path.display().to_string(),
+        "policy_path": policy_path.display().to_string(),
+        "stop_request_path": stop_path.display().to_string(),
+        "stop_requested": stop_path.exists(),
+        "desired_state": run_policy.desired_state,
+        "restart_policy": run_policy.restart_policy,
+        "restart_backoff_seconds": run_policy.restart_backoff_seconds,
+        "failure_count": run_policy.failure_count,
+        "last_exit_unix_ms": run_policy.last_exit_unix_ms,
+        "next_restart_after_unix_ms": run_policy.next_restart_after_unix_ms,
+        "last_exit_status": run_policy.last_exit_status,
+        "supervision_action": supervision_action(&run_policy, now_unix_ms()),
+    }))
+}
+
+fn supervision_action(policy: &PersonalAgentRunPolicy, now_unix_ms: u64) -> &'static str {
+    if policy.desired_state != "running" {
+        return "stopped_by_policy";
+    }
+    if policy.restart_policy != "always" {
+        return "manual_restart_required";
+    }
+    if policy.next_restart_after_unix_ms > now_unix_ms {
+        return "waiting_backoff";
+    }
+    "needs_restart"
+}
+
+fn personal_agent_channel_ids(config: &PersonalAgentConfig) -> Vec<String> {
+    let mut channel_ids = Vec::new();
+    if config.telegram_enabled {
+        channel_ids.push("telegram".to_string());
+    }
+    if config.webhook_enabled {
+        channel_ids.push(webhook_channel_id(&config.slug));
+    }
+    if let Some(target) = configured_delivery_target(config) {
+        if !channel_ids.iter().any(|entry| entry == &target.channel_id) {
+            channel_ids.push(target.channel_id);
+        }
+    }
+    channel_ids
 }
 
 fn ensure_runtime_ready_for_personal_agent(
@@ -914,6 +1081,15 @@ fn parse_personal_agent_config(path: &Path) -> LoomResult<PersonalAgentConfig> {
             .get("heartbeat_every_seconds")
             .and_then(|value| value.parse::<u64>().ok())
             .unwrap_or(DEFAULT_PERSONAL_HEARTBEAT_SECONDS),
+        restart_policy: values
+            .get("restart_policy")
+            .cloned()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| DEFAULT_PERSONAL_RESTART_POLICY.to_string()),
+        restart_backoff_seconds: values
+            .get("restart_backoff_seconds")
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(DEFAULT_PERSONAL_RESTART_BACKOFF_SECONDS),
         telegram_enabled: values
             .get("telegram_enabled")
             .map(|value| value.eq_ignore_ascii_case("true"))
@@ -964,7 +1140,7 @@ fn write_personal_agent_support_files(path: &Path, config: &PersonalAgentConfig)
 
 fn render_personal_agent_config(config: &PersonalAgentConfig) -> String {
     format!(
-        "[agent]\nname = {}\nslug = {}\nagent_id = {}\ndisplay_name = {}\nrole = {}\npurpose = {}\nprovider_profile = {}\ntool_scope = {}\n\n[runtime]\norg_id = {}\nloom_root = {}\nkernel_path = {}\nservice_http_address = {}\nservice_token = {}\n\n[heartbeat]\nheartbeat_capability = {}\nheartbeat_every_seconds = {}\n\n[telegram]\ntelegram_enabled = {}\ntelegram_chat_id = {}\ntelegram_token_env = {}\n\n[webhook]\nwebhook_enabled = {}\nwebhook_url = {}\nwebhook_header = {}\n",
+        "[agent]\nname = {}\nslug = {}\nagent_id = {}\ndisplay_name = {}\nrole = {}\npurpose = {}\nprovider_profile = {}\ntool_scope = {}\n\n[runtime]\norg_id = {}\nloom_root = {}\nkernel_path = {}\nservice_http_address = {}\nservice_token = {}\n\n[heartbeat]\nheartbeat_capability = {}\nheartbeat_every_seconds = {}\n\n[supervision]\nrestart_policy = {}\nrestart_backoff_seconds = {}\n\n[telegram]\ntelegram_enabled = {}\ntelegram_chat_id = {}\ntelegram_token_env = {}\n\n[webhook]\nwebhook_enabled = {}\nwebhook_url = {}\nwebhook_header = {}\n",
         json_string(&config.name),
         json_string(&config.slug),
         json_string(&config.agent_id),
@@ -980,6 +1156,8 @@ fn render_personal_agent_config(config: &PersonalAgentConfig) -> String {
         json_string(&config.service_token),
         json_string(&config.heartbeat_capability),
         config.heartbeat_every_seconds,
+        json_string(&normalize_restart_policy(&config.restart_policy)),
+        config.restart_backoff_seconds,
         if config.telegram_enabled { "true" } else { "false" },
         json_string(&config.telegram_chat_id),
         json_string(&config.telegram_token_env),
@@ -1057,6 +1235,13 @@ fn personal_agent_state_path(root: &Path, slug: &str) -> LoomResult<PathBuf> {
         .join("run")
         .join("personal-agents")
         .join(format!("{}.state.json", slug)))
+}
+
+fn personal_agent_policy_path(root: &Path, slug: &str) -> LoomResult<PathBuf> {
+    Ok(root
+        .join("run")
+        .join("personal-agents")
+        .join(format!("{}.policy.json", slug)))
 }
 
 fn personal_agent_stop_request_path(root: &Path, slug: &str) -> LoomResult<PathBuf> {
@@ -1270,6 +1455,88 @@ fn write_memory_sync_state(path: &Path, state: &PersonalAgentMemorySyncState) ->
     fs::write(path, format!("{}\n", rendered)).map_err(|error| error.to_string())
 }
 
+fn default_run_policy(config: &PersonalAgentConfig) -> PersonalAgentRunPolicy {
+    PersonalAgentRunPolicy {
+        desired_state: "stopped".to_string(),
+        restart_policy: normalize_restart_policy(&config.restart_policy),
+        restart_backoff_seconds: config.restart_backoff_seconds.max(1),
+        failure_count: 0,
+        last_exit_unix_ms: 0,
+        next_restart_after_unix_ms: 0,
+        last_exit_status: "not_started".to_string(),
+    }
+}
+
+fn load_run_policy(
+    path: &Path,
+    config: &PersonalAgentConfig,
+) -> LoomResult<PersonalAgentRunPolicy> {
+    if !path.exists() {
+        return Ok(default_run_policy(config));
+    }
+    let raw = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let value: serde_json::Value = serde_json::from_str(&raw).map_err(|error| error.to_string())?;
+    Ok(PersonalAgentRunPolicy {
+        desired_state: value
+            .get("desired_state")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("stopped")
+            .to_string(),
+        restart_policy: normalize_restart_policy(
+            value
+                .get("restart_policy")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or(&config.restart_policy),
+        ),
+        restart_backoff_seconds: value
+            .get("restart_backoff_seconds")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(config.restart_backoff_seconds)
+            .max(1),
+        failure_count: value
+            .get("failure_count")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or_default(),
+        last_exit_unix_ms: value
+            .get("last_exit_unix_ms")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or_default(),
+        next_restart_after_unix_ms: value
+            .get("next_restart_after_unix_ms")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or_default(),
+        last_exit_status: value
+            .get("last_exit_status")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("not_started")
+            .to_string(),
+    })
+}
+
+fn write_run_policy(path: &Path, policy: &PersonalAgentRunPolicy) -> LoomResult<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let rendered = serde_json::to_string_pretty(&serde_json::json!({
+        "desired_state": policy.desired_state,
+        "restart_policy": normalize_restart_policy(&policy.restart_policy),
+        "restart_backoff_seconds": policy.restart_backoff_seconds.max(1),
+        "failure_count": policy.failure_count,
+        "last_exit_unix_ms": policy.last_exit_unix_ms,
+        "next_restart_after_unix_ms": policy.next_restart_after_unix_ms,
+        "last_exit_status": policy.last_exit_status,
+    }))
+    .map_err(|error| error.to_string())?;
+    fs::write(path, format!("{}\n", rendered)).map_err(|error| error.to_string())
+}
+
+fn normalize_restart_policy(input: &str) -> String {
+    match input.trim() {
+        "always" => "always".to_string(),
+        _ => "manual".to_string(),
+    }
+}
+
 fn stop_requested(root: &Path, slug: &str) -> LoomResult<bool> {
     Ok(personal_agent_stop_request_path(root, slug)?.exists())
 }
@@ -1336,47 +1603,7 @@ fn handle_run_agent_status(args: &[String]) -> LoomResult<()> {
     };
     let config = load_personal_agent_config(&name_or_slug)?;
     let root = root_from(Some(&config.loom_root))?;
-    let state_path = personal_agent_state_path(&root, &config.slug)?;
-    let stop_path = personal_agent_stop_request_path(&root, &config.slug)?;
-    let state = load_loop_state(&state_path)?;
-    let running = state
-        .as_ref()
-        .map(|state| pid_is_running(state.pid))
-        .unwrap_or(false);
-    let normalized_status = state
-        .as_ref()
-        .map(|state| {
-            if running {
-                state.status.clone()
-            } else if matches!(state.status.as_str(), "running" | "starting") {
-                "stopped".to_string()
-            } else {
-                state.status.clone()
-            }
-        })
-        .unwrap_or_else(|| "not_started".to_string());
-    let primary_channel = configured_delivery_target(&config)
-        .map(|target| format!("{} -> {}", target.channel_id, target.recipient))
-        .unwrap_or_else(|| "none".to_string());
-    let summary = serde_json::json!({
-        "name": config.display_name,
-        "slug": config.slug,
-        "agent_id": config.agent_id,
-        "running": running,
-        "status": normalized_status,
-        "pid": state.as_ref().map(|state| state.pid).unwrap_or_default(),
-        "heartbeat_id": heartbeat_id_for_slug(&config.slug),
-        "last_run_status": state.as_ref().map(|state| state.last_run_status.clone()).unwrap_or_else(|| "not_started".to_string()),
-        "last_tick_unix_ms": state.as_ref().map(|state| state.last_tick_unix_ms).unwrap_or_default(),
-        "last_memory_sync_unix_ms": state.as_ref().map(|state| state.last_memory_sync_unix_ms).unwrap_or_default(),
-        "memory_entries_recalled": state.as_ref().map(|state| state.memory_entries_recalled).unwrap_or_default(),
-        "memory_entries_updated": state.as_ref().map(|state| state.memory_entries_updated).unwrap_or_default(),
-        "primary_channel": primary_channel,
-        "config_path": personal_agent_config_path(&config.slug)?.display().to_string(),
-        "state_path": state_path.display().to_string(),
-        "stop_request_path": stop_path.display().to_string(),
-        "stop_requested": stop_path.exists(),
-    });
+    let summary = build_run_agent_summary(&root, &config)?;
     let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
     match format.as_str() {
         "json" => {
@@ -1388,7 +1615,7 @@ fn handle_run_agent_status(args: &[String]) -> LoomResult<()> {
         _ => {
             print_startup_banner();
             print_human(&format!(
-                "Meridian Loom // RUN AGENT STATUS\n=================================\nname:                  {}\nslug:                  {}\nagent_id:              {}\nrunning:               {}\nstatus:                {}\npid:                   {}\nheartbeat_id:          {}\nlast_run_status:       {}\nlast_tick_unix_ms:     {}\nlast_memory_sync_ms:   {}\nmemory_entries_recalled:{}\nmemory_entries_updated:{}\nprimary_channel:       {}\nconfig_path:           {}\nstate_path:            {}\nstop_requested:        {}\n",
+                "Meridian Loom // RUN AGENT STATUS\n=================================\nname:                  {}\nslug:                  {}\nagent_id:              {}\nrunning:               {}\nstatus:                {}\npid:                   {}\nheartbeat_id:          {}\nlast_run_status:       {}\nlast_tick_unix_ms:     {}\nlast_memory_sync_ms:   {}\nmemory_entries_recalled:{}\nmemory_entries_updated:{}\nprimary_channel:       {}\ndesired_state:         {}\nrestart_policy:        {}\nrestart_backoff_sec:   {}\nsupervision_action:    {}\nconfig_path:           {}\nstate_path:            {}\npolicy_path:           {}\nstop_requested:        {}\n",
                 summary["name"].as_str().unwrap_or(""),
                 summary["slug"].as_str().unwrap_or(""),
                 summary["agent_id"].as_str().unwrap_or(""),
@@ -1402,10 +1629,143 @@ fn handle_run_agent_status(args: &[String]) -> LoomResult<()> {
                 summary["memory_entries_recalled"].as_u64().unwrap_or_default(),
                 summary["memory_entries_updated"].as_u64().unwrap_or_default(),
                 summary["primary_channel"].as_str().unwrap_or(""),
+                summary["desired_state"].as_str().unwrap_or(""),
+                summary["restart_policy"].as_str().unwrap_or(""),
+                summary["restart_backoff_seconds"].as_u64().unwrap_or_default(),
+                summary["supervision_action"].as_str().unwrap_or(""),
                 summary["config_path"].as_str().unwrap_or(""),
                 summary["state_path"].as_str().unwrap_or(""),
+                summary["policy_path"].as_str().unwrap_or(""),
                 summary["stop_requested"].as_bool().unwrap_or(false),
             ));
+        }
+    }
+    Ok(())
+}
+
+fn handle_run_agent_inspect(args: &[String]) -> LoomResult<()> {
+    let Some(name_or_slug) = positional_name(args) else {
+        return Err("run-agent inspect requires an agent name or slug".to_string());
+    };
+    let config = load_personal_agent_config(&name_or_slug)?;
+    let root = root_from(Some(&config.loom_root))?;
+    let summary = build_run_agent_summary(&root, &config)?;
+    let receipt_limit = take_value(args, "--receipt-limit")
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(5);
+    let delivery_limit = take_value(args, "--delivery-limit")
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(5);
+    let channel_ids = personal_agent_channel_ids(&config);
+    let channel_health = loom_core::channels::list_channel_health(&root)?
+        .into_iter()
+        .filter(|record| channel_ids.iter().any(|id| id == &record.channel_id))
+        .collect::<Vec<_>>();
+    let recent_receipts =
+        MemoryService::with_defaults(&root).list_receipts(receipt_limit, Some(&config.agent_id))?;
+    let recent_deliveries =
+        loom_core::channels::list_channel_deliveries_with_options(&root, 0, true, false)?
+            .into_iter()
+            .filter(|record| channel_ids.iter().any(|id| id == &record.channel_id))
+            .take(delivery_limit)
+            .collect::<Vec<_>>();
+    let payload = serde_json::json!({
+        "agent": summary,
+        "channel_health": channel_health.iter().map(|record| serde_json::json!({
+            "channel_id": record.channel_id,
+            "kind": record.kind,
+            "health": record.health,
+            "ready": record.ready,
+            "status_detail": record.status_detail,
+            "latest_delivery_status": record.latest_delivery_status,
+            "latest_delivery_at_unix_ms": record.latest_delivery_at_unix_ms,
+        })).collect::<Vec<_>>(),
+        "recent_memory_receipts": recent_receipts.iter().map(|receipt| serde_json::json!({
+            "operation": receipt.operation,
+            "kind": receipt.kind,
+            "timestamp_unix_ms": receipt.timestamp_unix_ms,
+            "input_summary": receipt.input_summary,
+            "output_summary": receipt.output_summary,
+            "receipt_hash": receipt.receipt_hash,
+        })).collect::<Vec<_>>(),
+        "recent_deliveries": recent_deliveries.iter().map(|record| serde_json::json!({
+            "delivery_id": record.delivery_id,
+            "channel_id": record.channel_id,
+            "status": record.status,
+            "submitted_at_unix_ms": record.submitted_at_unix_ms,
+            "recipient": record.recipient,
+        })).collect::<Vec<_>>(),
+    });
+    let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+    match format.as_str() {
+        "json" => print!(
+            "{}\n",
+            serde_json::to_string_pretty(&payload).map_err(|error| error.to_string())?
+        ),
+        _ => {
+            let mut rendered = String::new();
+            rendered.push_str(
+                "Meridian Loom // RUN AGENT INSPECT\n==================================\n",
+            );
+            rendered.push_str(&format!(
+                "name:                  {}\nslug:                  {}\nagent_id:              {}\nstatus:                {}\nsupervision_action:    {}\nprimary_channel:       {}\nrestart_policy:        {}\nrestart_backoff_sec:   {}\n\n",
+                payload["agent"]["name"].as_str().unwrap_or(""),
+                payload["agent"]["slug"].as_str().unwrap_or(""),
+                payload["agent"]["agent_id"].as_str().unwrap_or(""),
+                payload["agent"]["status"].as_str().unwrap_or(""),
+                payload["agent"]["supervision_action"].as_str().unwrap_or(""),
+                payload["agent"]["primary_channel"].as_str().unwrap_or(""),
+                payload["agent"]["restart_policy"].as_str().unwrap_or(""),
+                payload["agent"]["restart_backoff_seconds"].as_u64().unwrap_or_default(),
+            ));
+            rendered.push_str("Channel health\n--------------\n");
+            if channel_health.is_empty() {
+                rendered.push_str("(no configured delivery channels)\n");
+            } else {
+                for record in &channel_health {
+                    rendered.push_str(&format!(
+                        "- {} kind={} health={} ready={} latest={} detail={}\n",
+                        record.channel_id,
+                        record.kind,
+                        record.health,
+                        record.ready,
+                        record.latest_delivery_status,
+                        record.status_detail,
+                    ));
+                }
+            }
+            rendered.push_str("\nRecent memory receipts\n----------------------\n");
+            if recent_receipts.is_empty() {
+                rendered.push_str("(no memory receipts)\n");
+            } else {
+                for receipt in &recent_receipts {
+                    rendered.push_str(&format!(
+                        "- {} kind={} at={} input={} output={}\n",
+                        receipt.operation,
+                        receipt.kind,
+                        receipt.timestamp_unix_ms,
+                        receipt.input_summary.replace('\n', "\\n"),
+                        receipt.output_summary.replace('\n', "\\n"),
+                    ));
+                }
+            }
+            rendered.push_str("\nRecent deliveries\n-----------------\n");
+            if recent_deliveries.is_empty() {
+                rendered.push_str("(no recent deliveries)\n");
+            } else {
+                for record in &recent_deliveries {
+                    rendered.push_str(&format!(
+                        "- {} channel={} status={} recipient={} submitted_at={}\n",
+                        record.delivery_id,
+                        record.channel_id,
+                        record.status,
+                        record.recipient,
+                        record.submitted_at_unix_ms,
+                    ));
+                }
+            }
+            print_startup_banner();
+            print_human(&rendered);
         }
     }
     Ok(())
@@ -1418,7 +1778,13 @@ fn handle_run_agent_stop(args: &[String]) -> LoomResult<()> {
     let config = load_personal_agent_config(&name_or_slug)?;
     let root = root_from(Some(&config.loom_root))?;
     let state_path = personal_agent_state_path(&root, &config.slug)?;
+    let policy_path = personal_agent_policy_path(&root, &config.slug)?;
     let state = load_loop_state(&state_path)?;
+    let mut policy = load_run_policy(&policy_path, &config)?;
+    policy.desired_state = "stopped".to_string();
+    policy.next_restart_after_unix_ms = 0;
+    policy.last_exit_status = "operator requested stop".to_string();
+    write_run_policy(&policy_path, &policy)?;
     let stop_path = write_stop_request(&root, &config.slug)?;
     let running = state
         .as_ref()
@@ -1450,6 +1816,77 @@ fn handle_run_agent_stop(args: &[String]) -> LoomResult<()> {
                 payload["status"].as_str().unwrap_or(""),
                 payload["pid"].as_u64().unwrap_or_default(),
                 payload["stop_request_path"].as_str().unwrap_or(""),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn handle_run_agent_reconcile(args: &[String]) -> LoomResult<()> {
+    let Some(name_or_slug) = positional_name(args) else {
+        return Err("run-agent reconcile requires an agent name or slug".to_string());
+    };
+    let config = load_personal_agent_config(&name_or_slug)?;
+    let root = root_from(Some(&config.loom_root))?;
+    let summary = build_run_agent_summary(&root, &config)?;
+    let poll_seconds = take_value(args, "--poll-seconds")
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(15);
+    let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+    let action = if summary["running"].as_bool().unwrap_or(false) {
+        "already_running".to_string()
+    } else {
+        match summary["supervision_action"]
+            .as_str()
+            .unwrap_or("stopped_by_policy")
+        {
+            "needs_restart" => {
+                let child = spawn_run_agent_background(
+                    &root,
+                    &config,
+                    poll_seconds,
+                    summary["restart_policy"]
+                        .as_str()
+                        .unwrap_or(DEFAULT_PERSONAL_RESTART_POLICY),
+                    summary["restart_backoff_seconds"]
+                        .as_u64()
+                        .unwrap_or(DEFAULT_PERSONAL_RESTART_BACKOFF_SECONDS),
+                )?;
+                format!("restarted pid={}", child.id())
+            }
+            "waiting_backoff" => "waiting_backoff".to_string(),
+            "manual_restart_required" => "manual_restart_required".to_string(),
+            "stopped_by_policy" => "stopped_by_policy".to_string(),
+            other => other.to_string(),
+        }
+    };
+    let payload = serde_json::json!({
+        "name": config.display_name,
+        "slug": config.slug,
+        "agent_id": config.agent_id,
+        "action": action,
+        "supervision_action": summary["supervision_action"],
+        "desired_state": summary["desired_state"],
+        "restart_policy": summary["restart_policy"],
+        "restart_backoff_seconds": summary["restart_backoff_seconds"],
+    });
+    match format.as_str() {
+        "json" => print!(
+            "{}\n",
+            serde_json::to_string_pretty(&payload).map_err(|error| error.to_string())?
+        ),
+        _ => {
+            print_startup_banner();
+            print_human(&format!(
+                "Meridian Loom // RUN AGENT RECONCILE\n====================================\nname:              {}\nslug:              {}\nagent_id:          {}\naction:            {}\nsupervision_action:{}\ndesired_state:     {}\nrestart_policy:    {}\nrestart_backoff:   {}s\n",
+                payload["name"].as_str().unwrap_or(""),
+                payload["slug"].as_str().unwrap_or(""),
+                payload["agent_id"].as_str().unwrap_or(""),
+                payload["action"].as_str().unwrap_or(""),
+                payload["supervision_action"].as_str().unwrap_or(""),
+                payload["desired_state"].as_str().unwrap_or(""),
+                payload["restart_policy"].as_str().unwrap_or(""),
+                payload["restart_backoff_seconds"].as_u64().unwrap_or_default(),
             ));
         }
     }
@@ -1501,13 +1938,18 @@ PURPOSE:
 
 SUBCOMMANDS:
   status <name-or-slug>     Show loop state, primary channel, and memory sync state
+  inspect <name-or-slug>    Show operator-facing state, channel health, and recent receipts
   stop <name-or-slug>       Write a graceful stop request for the running loop
+  reconcile <name-or-slug>  Restart a dead background loop when policy allows it
 
 OPTIONS:
   --foreground             Run the loop in the current terminal
   --loop                   Internal flag used by the background daemon mode
   --poll-seconds N         Loop polling interval (default: 15)
   --once                   Run a single loop tick, then exit
+  --restart-policy POLICY  Restart policy for background mode: manual|always
+  --restart-backoff-seconds N
+                           Backoff before reconcile can restart the loop
 ",
     );
 }
@@ -1556,6 +1998,8 @@ mod tests {
             service_token: "token".to_string(),
             heartbeat_capability: "loom.system.info.v1".to_string(),
             heartbeat_every_seconds: 300,
+            restart_policy: DEFAULT_PERSONAL_RESTART_POLICY.to_string(),
+            restart_backoff_seconds: DEFAULT_PERSONAL_RESTART_BACKOFF_SECONDS,
             telegram_enabled: false,
             telegram_chat_id: String::new(),
             telegram_token_env: DEFAULT_TELEGRAM_TOKEN_ENV.to_string(),
@@ -1600,6 +2044,8 @@ mod tests {
             service_token: "token".to_string(),
             heartbeat_capability: "loom.system.info.v1".to_string(),
             heartbeat_every_seconds: 300,
+            restart_policy: DEFAULT_PERSONAL_RESTART_POLICY.to_string(),
+            restart_backoff_seconds: DEFAULT_PERSONAL_RESTART_BACKOFF_SECONDS,
             telegram_enabled: true,
             telegram_chat_id: "12345".to_string(),
             telegram_token_env: DEFAULT_TELEGRAM_TOKEN_ENV.to_string(),
@@ -1633,5 +2079,46 @@ mod tests {
         let compacted = compact_memory_body(&body);
         assert!(compacted.contains("truncated"));
         assert!(compacted.len() < body.len());
+    }
+
+    #[test]
+    fn run_policy_defaults_and_roundtrip_are_stable() {
+        let config = PersonalAgentConfig {
+            name: "My Assistant".to_string(),
+            slug: "my-assistant".to_string(),
+            agent_id: "agent_my_123".to_string(),
+            display_name: "My Assistant".to_string(),
+            role: "manager".to_string(),
+            purpose: "Governed personal agent".to_string(),
+            provider_profile: "local_ollama".to_string(),
+            tool_scope: "personal_agent_scope".to_string(),
+            org_id: "local_foundry".to_string(),
+            loom_root: "/tmp/loom".to_string(),
+            kernel_path: "/opt/meridian-kernel".to_string(),
+            service_http_address: "127.0.0.1:18910".to_string(),
+            service_token: "token".to_string(),
+            heartbeat_capability: "loom.system.info.v1".to_string(),
+            heartbeat_every_seconds: 300,
+            restart_policy: "always".to_string(),
+            restart_backoff_seconds: 45,
+            telegram_enabled: false,
+            telegram_chat_id: String::new(),
+            telegram_token_env: DEFAULT_TELEGRAM_TOKEN_ENV.to_string(),
+            webhook_enabled: false,
+            webhook_url: String::new(),
+            webhook_header: String::new(),
+        };
+        let root = temp_root("run_policy");
+        let policy_path = personal_agent_policy_path(&root, &config.slug).expect("policy path");
+        let mut policy = default_run_policy(&config);
+        policy.desired_state = "running".to_string();
+        policy.last_exit_status = "completed_once".to_string();
+        write_run_policy(&policy_path, &policy).expect("write policy");
+        let loaded = load_run_policy(&policy_path, &config).expect("load policy");
+        assert_eq!(loaded.restart_policy, "always");
+        assert_eq!(loaded.restart_backoff_seconds, 45);
+        assert_eq!(loaded.desired_state, "running");
+        assert_eq!(supervision_action(&loaded, 0), "needs_restart");
+        fs::remove_dir_all(&root).ok();
     }
 }

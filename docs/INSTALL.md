@@ -125,11 +125,20 @@ loom channel connect telegram \
 
 loom run-agent my-assistant
 loom doctor --root "$LOOM_ROOT" --format human
+loom run-agent inspect my-assistant
+loom channel health --root "$LOOM_ROOT" --agent my-assistant
 loom memory receipts --root "$LOOM_ROOT" --limit 10
 loom channel deliveries --root "$LOOM_ROOT" --include-archived
 ```
 
 That is the official first-run loop for Loom v0.1.16.
+
+If you want the loop to come back under operator control after an exit:
+
+```bash
+loom run-agent my-assistant --restart-policy always --restart-backoff-seconds 30
+loom run-agent reconcile my-assistant
+```
 
 For the full end-to-end walkthrough, including memory and receipt inspection:
 

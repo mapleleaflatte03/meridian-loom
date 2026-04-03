@@ -306,7 +306,9 @@ Bootstrap\n\
   loom new-agent --name NAME [--root PATH] [--kernel-path PATH] [--org-id ORG] [--telegram-chat-id ID] [--webhook-url URL] [--format human|json]\n\
   loom run-agent NAME [--foreground] [--poll-seconds N] [--once]\n\
   loom run-agent status NAME [--format human|json]\n\
+  loom run-agent inspect NAME [--receipt-limit N] [--delivery-limit N] [--format human|json]\n\
   loom run-agent stop NAME [--format human|json]\n\
+  loom run-agent reconcile NAME [--poll-seconds N] [--format human|json]\n\
   loom provider status [--root PATH] [--format human|json]\n\
   loom provider route [--root PATH] [--capability NAME] [--model NAME] [--agent-id ID] [--org-id ORG] [--profile NAME] [--format human|json]\n\
   loom provider auth [--root PATH] [--profile NAME] [--format human|json]\n\
@@ -323,6 +325,8 @@ Bootstrap\n\
   loom binding resolve --channel ID --peer ID [--thread ID] [--agent-id ID] [--root PATH] [--format human|json]\n\
   loom channel status [--root PATH] [--format human|json]\n\
   loom channel sync [--root PATH] [--format human|json]\n\
+  loom channel list [--root PATH] [--agent NAME] [--format human|json]\n\
+  loom channel health [--root PATH] [--agent NAME] [--format human|json]\n\
   loom channel show --agent NAME [--format human|json]\n\
   loom channel connect telegram --agent NAME --chat-id ID [--token-env ENV]\n\
   loom channel connect webhook --agent NAME --url URL [--header TEXT]\n\

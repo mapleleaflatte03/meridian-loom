@@ -7,13 +7,16 @@ use super::personal_agent::{
 use crate::*;
 use loom_core::channels::{
     channel_overview, enqueue_channel_delivery, ingest_channel_message, list_channel_deliveries,
-    list_channel_deliveries_with_options, list_channel_ingress, render_channel_delivery_human,
-    render_channel_delivery_json, render_channel_delivery_list_human,
-    render_channel_delivery_list_json, render_channel_ingress_human, render_channel_ingress_json,
-    render_channel_ingress_list_human, render_channel_ingress_list_json,
+    list_channel_deliveries_with_options, list_channel_health, list_channel_ingress, load_channels,
+    render_channel_delivery_human, render_channel_delivery_json,
+    render_channel_delivery_list_human, render_channel_delivery_list_json,
+    render_channel_health_human, render_channel_health_json, render_channel_ingress_human,
+    render_channel_ingress_json, render_channel_ingress_list_human,
+    render_channel_ingress_list_json, render_channel_list_human, render_channel_list_json,
     render_channel_overview_human, render_channel_overview_json, render_channel_sync_human,
     render_channel_sync_json, sync_channel_registry, update_channel_delivery,
-    upsert_channel_record, ChannelDeliveryRequest, ChannelIngressRequest, ChannelRecord,
+    upsert_channel_record, ChannelDeliveryRequest, ChannelHealthRecord, ChannelIngressRequest,
+    ChannelRecord,
 };
 
 pub(crate) fn handle_channel(args: &[String]) -> LoomResult<()> {
@@ -29,6 +32,8 @@ pub(crate) fn handle_channel(args: &[String]) -> LoomResult<()> {
     match args.first().map(String::as_str) {
         Some("status") => handle_channel_status(&args[1..]),
         Some("sync") => handle_channel_sync(&args[1..]),
+        Some("list") => handle_channel_list(&args[1..]),
+        Some("health") => handle_channel_health(&args[1..]),
         Some("show") => handle_channel_show(&args[1..]),
         Some("connect") => handle_channel_connect(&args[1..]),
         Some("disconnect") => handle_channel_disconnect(&args[1..]),
@@ -38,7 +43,7 @@ pub(crate) fn handle_channel(args: &[String]) -> LoomResult<()> {
         Some("update") => handle_channel_update(&args[1..]),
         Some("ingest") => handle_channel_ingest(&args[1..]),
         Some("inbox") => handle_channel_inbox(&args[1..]),
-        _ => Err("channel supports 'status', 'sync', 'show', 'connect', 'disconnect', 'test', 'send', 'deliveries', 'update', 'ingest', and 'inbox'".to_string()),
+        _ => Err("channel supports 'status', 'sync', 'list', 'health', 'show', 'connect', 'disconnect', 'test', 'send', 'deliveries', 'update', 'ingest', and 'inbox'".to_string()),
     }
 }
 
@@ -53,6 +58,8 @@ USAGE: loom channel <COMMAND> [OPTIONS]
 COMMANDS:
   status                              Show channel runtime overview
   sync                                Sync channel registry from onboarding state
+  list [--agent NAME]                 List known channel records
+  health [--agent NAME]               Show operator-facing channel health
   show --agent NAME                   Show configured personal-agent delivery channels
   connect telegram --agent NAME       Connect Telegram delivery for a personal agent
           --chat-id ID [--token-env ENV]
@@ -127,6 +134,62 @@ fn handle_channel_sync(args: &[String]) -> LoomResult<()> {
             print_human(&render_channel_sync_human(&summary));
         }
         _ => print!("{}", render_channel_sync_json(&summary)),
+    }
+    Ok(())
+}
+
+fn handle_channel_list(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_channel_help();
+        return Ok(());
+    }
+    let root = root_from(take_value(args, "--root").as_deref())?;
+    let format = take_value(args, "--format").unwrap_or_else(|| {
+        if std::io::stdout().is_terminal() {
+            "human".to_string()
+        } else {
+            "json".to_string()
+        }
+    });
+    let mut records = load_channels(&root)?;
+    if let Some(agent) = take_value(args, "--agent") {
+        let config = load_personal_agent_config(&agent)?;
+        records = filter_channel_records_for_agent(records, &config);
+    }
+    match format.as_str() {
+        "human" => {
+            print_startup_banner();
+            print_human(&render_channel_list_human(&records));
+        }
+        _ => print!("{}", render_channel_list_json(&records)),
+    }
+    Ok(())
+}
+
+fn handle_channel_health(args: &[String]) -> LoomResult<()> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        print_channel_help();
+        return Ok(());
+    }
+    let root = root_from(take_value(args, "--root").as_deref())?;
+    let format = take_value(args, "--format").unwrap_or_else(|| {
+        if std::io::stdout().is_terminal() {
+            "human".to_string()
+        } else {
+            "json".to_string()
+        }
+    });
+    let mut records = list_channel_health(&root)?;
+    if let Some(agent) = take_value(args, "--agent") {
+        let config = load_personal_agent_config(&agent)?;
+        records = filter_channel_health_for_agent(records, &config);
+    }
+    match format.as_str() {
+        "human" => {
+            print_startup_banner();
+            print_human(&render_channel_health_human(&records));
+        }
+        _ => print!("{}", render_channel_health_json(&records)),
     }
     Ok(())
 }
@@ -375,6 +438,44 @@ fn render_channel_connect_result(
         }
     }
     Ok(())
+}
+
+fn filter_channel_records_for_agent(
+    records: Vec<ChannelRecord>,
+    config: &super::personal_agent::PersonalAgentConfig,
+) -> Vec<ChannelRecord> {
+    let channel_ids = agent_channel_ids(config);
+    records
+        .into_iter()
+        .filter(|record| channel_ids.iter().any(|id| id == &record.channel_id))
+        .collect()
+}
+
+fn filter_channel_health_for_agent(
+    records: Vec<ChannelHealthRecord>,
+    config: &super::personal_agent::PersonalAgentConfig,
+) -> Vec<ChannelHealthRecord> {
+    let channel_ids = agent_channel_ids(config);
+    records
+        .into_iter()
+        .filter(|record| channel_ids.iter().any(|id| id == &record.channel_id))
+        .collect()
+}
+
+fn agent_channel_ids(config: &super::personal_agent::PersonalAgentConfig) -> Vec<String> {
+    let mut channel_ids = Vec::new();
+    if config.telegram_enabled {
+        channel_ids.push("telegram".to_string());
+    }
+    if config.webhook_enabled {
+        channel_ids.push(webhook_channel_id(&config.slug));
+    }
+    if let Some(target) = configured_delivery_target(config) {
+        if !channel_ids.iter().any(|id| id == &target.channel_id) {
+            channel_ids.push(target.channel_id);
+        }
+    }
+    channel_ids
 }
 
 fn handle_channel_send(args: &[String]) -> LoomResult<()> {
