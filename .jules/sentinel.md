@@ -1,0 +1,4 @@
+## 2024-05-09 - Prevent Timing Attack in HTTP Token Validation
+**Vulnerability:** The HTTP token validation inside `handle_runtime_service_http_request` (`crates/loom-shadow/src/lib.rs`) used a standard `!=` string comparison (`presented != expected`), which is vulnerable to timing attacks. An attacker could measure response times to guess the token character by character.
+**Learning:** For small or straightforward projects, using `std::hint::black_box` inside a manual loop with XOR (e.g., `result |= black_box(x ^ y)`) is a valid and preferred way to implement constant-time equality without introducing heavy external cryptography dependencies like the `subtle` crate.
+**Prevention:** Always use a constant-time comparison helper when comparing sensitive values like tokens, secrets, or passwords, ensuring the loop prevents compiler optimizations via `black_box`.
