@@ -365,11 +365,11 @@ pub fn run_wasm_guest(request: &WasmExecutionRequest) -> Result<WasmExecutionRes
             Ok(audit_root) => {
                 let root_hex = audit_root.merkle_root_hex();
                 let trace_len = audit_root.trace_len;
-                println!(
+                eprintln!(
                     "\n\x1b[1;32m[🛡️ PoGE PROTOCOL] Cryptographic Audit Root Settled:\x1b[0m \x1b[1;36m{}\x1b[0m",
                     root_hex
                 );
-                println!(
+                eprintln!(
                     "\x1b[1;32m[🛡️ PoGE PROTOCOL] Trace Length:\x1b[0m \x1b[1;36m{} events securely hashed.\x1b[0m\n",
                     trace_len
                 );

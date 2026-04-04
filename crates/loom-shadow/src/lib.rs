@@ -17,7 +17,7 @@ use loom_core::{
         render_wasm_fs_write_request_json, render_wasm_heartbeat_schedule_request_json,
         render_wasm_kv_get_request_json, render_wasm_kv_set_request_json,
         render_wasm_llm_inference_request_json, render_wasm_system_info_request_json,
-        render_wasm_terminal_exec_request_json, run_wasm_guest, HostBackend, WarrantPolicy,
+        render_wasm_terminal_exec_request_json, run_wasm_guest, HostBackend,
         WasmBrowserNavigateRequest, WasmExecutionRequest, WasmExecutionResult, WasmFsReadRequest,
         WasmFsWriteRequest, WasmGuestSource, WasmHeartbeatScheduleKind,
         WasmHeartbeatScheduleRequest, WasmHostBuilder, WasmHostSecurityContext, WasmKvGetRequest,
@@ -1492,6 +1492,14 @@ fn run_shadow_backend_wasmtime(request: &ShadowRunRequest) -> ShadowResult<Shado
         "shadow:{}:{}:{}",
         request.org_id, request.agent_id, request.action_type
     );
+    let start_ms = current_epoch_ms();
+    let mut interceptor = PoGEInterceptor::new_validated(
+        request.warrant.clone(),
+        shadow_wasmtime_module_digest(&request.module_name, &request.wasm_bytes),
+        session_label.clone(),
+        start_ms,
+    )
+    .map_err(|error| format!("invalid kernel warrant: {}", error))?;
     let result = run_wasm_guest(&WasmExecutionRequest {
         host,
         source: WasmGuestSource::WasmBytes {
@@ -1502,10 +1510,29 @@ fn run_shadow_backend_wasmtime(request: &ShadowRunRequest) -> ShadowResult<Shado
         entrypoint_args: vec![],
         memory_probe: None,
         fuel_budget: request.fuel_budget,
-        warrant: Some(request.warrant.clone()),
-        warrant_policy: WarrantPolicy::RequireVerified,
-        session_label: Some(session_label),
     })?;
+    let end_ms = current_epoch_ms();
+    let response_json = result
+        .host_response_json
+        .clone()
+        .unwrap_or_else(|| "null".to_string());
+    let host_calls = if result.host_calls.is_empty() {
+        vec!["loom.wasm.execute".to_string()]
+    } else {
+        result.host_calls.clone()
+    };
+    for host_call in &host_calls {
+        interceptor
+            .record_event(
+                HostCallKind::Extension,
+                end_ms,
+                host_call.as_bytes(),
+                response_json.as_bytes(),
+                result.entrypoint_result.unwrap_or(0) != 0,
+            )
+            .map_err(|error| error.to_string())?;
+    }
+    let audit_root = interceptor.finalize().map_err(|error| error.to_string())?;
 
     let runtime_dir = ensure_runtime_dir(&request.root)?;
     let shadow_dir = ensure_shadow_dir(&request.root)?;
@@ -1531,17 +1558,17 @@ fn run_shadow_backend_wasmtime(request: &ShadowRunRequest) -> ShadowResult<Shado
         entrypoint: result.entrypoint,
         entrypoint_result: result.entrypoint_result,
         host_backend: result.host_backend,
-        warrant_binding_status: result.warrant_binding_status,
-        warrant_id_hex: result.warrant_id_hex,
-        poge_merkle_root_hex: result.poge_merkle_root_hex,
-        poge_trace_len: result.poge_trace_len,
-        poge_witness_digest_hex: result.poge_witness_digest_hex,
-        poge_session_label: result.poge_session_label,
-        poge_epoch_start_ms: result.poge_epoch_start_ms,
-        poge_epoch_end_ms: result.poge_epoch_end_ms,
-        poge_module_digest_hex: result.poge_module_digest_hex,
-        host_calls: result.host_calls,
-        host_response_json: result.host_response_json,
+        warrant_binding_status: "verified".to_string(),
+        warrant_id_hex: Some(format!("0x{}", hex::encode(audit_root.warrant_id))),
+        poge_merkle_root_hex: Some(audit_root.merkle_root_hex()),
+        poge_trace_len: Some(audit_root.trace_len),
+        poge_witness_digest_hex: Some(audit_root.witness_digest_hex()),
+        poge_session_label: Some(audit_root.session_label.clone()),
+        poge_epoch_start_ms: Some(audit_root.epoch_start_ms),
+        poge_epoch_end_ms: Some(audit_root.epoch_end_ms),
+        poge_module_digest_hex: Some(format!("0x{}", hex::encode(audit_root.module_digest))),
+        host_calls,
+        host_response_json: Some(response_json),
     };
 
     persist_shadow_run_capture(&capture)?;
@@ -2587,6 +2614,16 @@ fn shadow_run_capture_value(capture: &ShadowRunCapture) -> Value {
         "parity_latest_path": capture.parity_latest_path.display().to_string(),
         "note": backend_note,
     })
+}
+
+fn shadow_wasmtime_module_digest(module_name: &str, wasm_bytes: &[u8]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"MERIDIAN_SHADOW_WASMTIME_BACKEND_V1\x00");
+    hasher.update((module_name.len() as u32).to_be_bytes());
+    hasher.update(module_name.as_bytes());
+    hasher.update((wasm_bytes.len() as u64).to_be_bytes());
+    hasher.update(wasm_bytes);
+    hasher.finalize().into()
 }
 
 fn shadow_command_module_digest(program: &str, args: &[String]) -> [u8; 32] {
@@ -11157,9 +11194,6 @@ fn dispatch_wasm_worker(
         entrypoint_args: vec![],
         memory_probe: None,
         fuel_budget,
-        warrant: None,
-        warrant_policy: WarrantPolicy::AllowDevelopmentDummy,
-        session_label: None,
     };
 
     match run_wasm_guest(&request) {
