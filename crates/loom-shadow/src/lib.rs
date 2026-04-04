@@ -8920,6 +8920,7 @@ pub fn render_shadow_report(root: &Path) -> ShadowResult<String> {
     let runtime_event = fs::read_to_string(&runtime_event_path).ok();
     let parity_path = ensure_parity_dir(root)?.join("latest.json");
     let parity = fs::read_to_string(&parity_path).ok();
+    let parity_capture = load_shadow_run_capture(&parity_path);
     let zk_path = artifact_root(root)?.join("zk").join("latest.json");
     let zk = fs::read_to_string(&zk_path).ok();
     let zk_latest = load_zk_proof_artifact(&zk_path);
@@ -8990,7 +8991,13 @@ pub fn render_shadow_report(root: &Path) -> ShadowResult<String> {
             runtime_event
         ));
     }
-    if let Some(parity) = parity.as_ref() {
+    if let Some(parity_capture) = parity_capture.as_ref() {
+        out.push_str(&render_shadow_run_summary(
+            "Parity latest",
+            &parity_path,
+            parity_capture,
+        ));
+    } else if let Some(parity) = parity.as_ref() {
         out.push_str(&format!(
             "\nParity latest\n=============\nsource: {}\n\n{}\n",
             parity_path.display(),
@@ -9234,6 +9241,28 @@ fn grpc_action_diagnostics_from_value(value: &Value) -> ShadowGrpcActionDiagnost
             .and_then(Value::as_i64)
             .map(|code| code as i32),
     }
+}
+
+fn grpc_action_diagnostics_to_value(diagnostics: &ShadowGrpcActionDiagnostics) -> Value {
+    serde_json::json!({
+        "status": diagnostics.status,
+        "captured_at": diagnostics.captured_at,
+        "grpc_target": diagnostics.grpc_target,
+        "grpc_rpc": diagnostics.grpc_rpc,
+        "grpc_transport": diagnostics.grpc_transport,
+        "grpc_allow_unknown_fields": diagnostics.grpc_allow_unknown_fields,
+        "grpc_max_time_seconds": diagnostics.grpc_max_time_seconds,
+        "grpc_schema": diagnostics.grpc_schema,
+        "grpc_request_id": diagnostics.grpc_request_id,
+        "grpc_action_kind": diagnostics.grpc_action_kind,
+        "grpc_action_objective": diagnostics.grpc_action_objective,
+        "grpc_action_skill": diagnostics.grpc_action_skill,
+        "grpc_proto_count": diagnostics.grpc_proto_count,
+        "grpc_protoset_count": diagnostics.grpc_protoset_count,
+        "grpc_import_path_count": diagnostics.grpc_import_path_count,
+        "grpc_authority": diagnostics.grpc_authority,
+        "exit_code": diagnostics.exit_code,
+    })
 }
 
 fn render_shadow_run_summary(title: &str, source: &Path, capture: &ShadowRunCapture) -> String {
@@ -9568,9 +9597,9 @@ pub fn render_shadow_grpc_action_diagnostics_json(
     }
     let latest_path = ensure_shadow_grpc_action_dir(root)?.join("latest.json");
     let stream_path = ensure_shadow_grpc_action_dir(root)?.join("stream.jsonl");
-    let latest_value = load_artifact_json(&latest_path);
+    let latest = load_grpc_action_diagnostics_artifact(&latest_path);
     let stream_contents = fs::read_to_string(&stream_path).ok();
-    let mut recent_values = stream_contents
+    let mut recent = stream_contents
         .as_deref()
         .map(|contents| {
             contents
@@ -9580,21 +9609,25 @@ pub fn render_shadow_grpc_action_diagnostics_json(
                     if trimmed.is_empty() {
                         return None;
                     }
-                    serde_json::from_str::<Value>(trimmed).ok()
+                    let value = serde_json::from_str::<Value>(trimmed).ok()?;
+                    Some(grpc_action_diagnostics_from_value(&value))
                 })
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    if recent_values.len() > limit {
-        recent_values = recent_values.split_off(recent_values.len() - limit);
+    if recent.len() > limit {
+        recent = recent.split_off(recent.len() - limit);
     }
     let payload = serde_json::json!({
-        "status": if latest_value.is_some() || !recent_values.is_empty() { "ok" } else { "not_started" },
+        "status": if latest.is_some() || !recent.is_empty() { "ok" } else { "not_started" },
         "latest_path": latest_path.display().to_string(),
         "stream_path": stream_path.display().to_string(),
         "limit": limit,
-        "latest": latest_value,
-        "recent": recent_values,
+        "latest": latest.as_ref().map(grpc_action_diagnostics_to_value),
+        "recent": recent
+            .iter()
+            .map(grpc_action_diagnostics_to_value)
+            .collect::<Vec<_>>(),
     });
     serde_json::to_string_pretty(&payload).map_err(io_err)
 }
@@ -14980,6 +15013,156 @@ print(json.dumps({'id': agent_id, 'name': 'Atlas', 'org_id': org_id, 'role': 'an
             report
         );
         assert!(!report.contains("\"proof_backend\": \"sp1\""), "{}", report);
+    }
+
+    #[test]
+    fn shadow_grpc_diagnostics_json_uses_typed_models() {
+        let root = temp_path("loom-shadow-grpc-diag-typed");
+        let diagnostics_dir = ensure_shadow_grpc_action_dir(&root).expect("grpc diag dir");
+        let latest_path = diagnostics_dir.join("latest.json");
+        let stream_path = diagnostics_dir.join("stream.jsonl");
+        fs::write(
+            &latest_path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": "grpc_action_executed",
+                "captured_at": "2026-04-04T00:00:00Z",
+                "grpc_target": "grpc://127.0.0.1:9000",
+                "grpc_rpc": "meridian.a2a.action.v1.ActionService/ExecuteAction",
+                "grpc_transport": "plaintext",
+                "grpc_allow_unknown_fields": true,
+                "grpc_max_time_seconds": 20,
+                "grpc_schema": "proto_inline",
+                "grpc_request_id": "req_typed_latest",
+                "grpc_action_kind": "research",
+                "grpc_action_objective": "typed parse",
+                "grpc_action_skill": "atlas",
+                "grpc_proto_count": 1,
+                "grpc_protoset_count": 1,
+                "grpc_import_path_count": 1,
+                "grpc_authority": "localhost",
+                "exit_code": 0
+            }))
+            .expect("latest json"),
+        )
+        .expect("write latest");
+        fs::write(
+            &stream_path,
+            format!(
+                "{}\n{}\n",
+                serde_json::json!({
+                    "status": "grpc_action_executed",
+                    "captured_at": "2026-04-04T00:00:00Z",
+                    "grpc_target": "grpc://127.0.0.1:9000",
+                    "grpc_rpc": "meridian.a2a.action.v1.ActionService/ExecuteAction",
+                    "grpc_transport": "plaintext",
+                    "grpc_allow_unknown_fields": true,
+                    "grpc_max_time_seconds": 20,
+                    "grpc_schema": "proto_inline",
+                    "grpc_request_id": "req_typed_stream_1",
+                    "grpc_action_kind": "research",
+                    "grpc_action_objective": "typed parse",
+                    "grpc_action_skill": "atlas",
+                    "grpc_proto_count": 1,
+                    "grpc_protoset_count": 1,
+                    "grpc_import_path_count": 1,
+                    "grpc_authority": "localhost",
+                    "exit_code": 0
+                }),
+                serde_json::json!({
+                    "status": "grpc_action_executed",
+                    "captured_at": "2026-04-04T00:00:01Z",
+                    "grpc_target": "grpc://127.0.0.1:9000",
+                    "grpc_rpc": "meridian.a2a.action.v1.ActionService/ExecuteAction",
+                    "grpc_transport": "plaintext",
+                    "grpc_allow_unknown_fields": false,
+                    "grpc_max_time_seconds": 20,
+                    "grpc_schema": "proto_inline",
+                    "grpc_request_id": "req_typed_stream_2",
+                    "grpc_action_kind": "research",
+                    "grpc_action_objective": "typed parse",
+                    "grpc_action_skill": "atlas",
+                    "grpc_proto_count": 1,
+                    "grpc_protoset_count": 1,
+                    "grpc_import_path_count": 1,
+                    "grpc_authority": "localhost",
+                    "exit_code": 0
+                })
+            ),
+        )
+        .expect("write stream");
+
+        let rendered = render_shadow_grpc_action_diagnostics_json(&root, 1).expect("render json");
+        let value: Value = serde_json::from_str(&rendered).expect("parse json");
+        assert_eq!(value.get("status").and_then(Value::as_str), Some("ok"));
+        assert_eq!(
+            value
+                .pointer("/latest/grpc_request_id")
+                .and_then(Value::as_str),
+            Some("req_typed_latest")
+        );
+        assert_eq!(
+            value
+                .pointer("/recent/0/grpc_request_id")
+                .and_then(Value::as_str),
+            Some("req_typed_stream_2")
+        );
+    }
+
+    #[test]
+    fn shadow_report_loads_typed_settlement_alias_fields() {
+        let root = temp_path("loom-shadow-settlement-alias");
+        fs::create_dir_all(&root).expect("root");
+        init_workspace(&root, "embedded", None, "org_demo").expect("init workspace");
+        let shadow_dir = ensure_shadow_dir(&root).expect("shadow dir");
+        fs::write(
+            shadow_dir.join("decision.json"),
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": "decision_captured",
+                "overall_decision": "allow",
+                "agent_id": "agent_atlas",
+                "org_id": "org_demo"
+            }))
+            .expect("decision json"),
+        )
+        .expect("write decision");
+
+        let artifacts_root = artifact_root(&root).expect("artifact root");
+        let settlement_path = artifacts_root.join("settlement").join("latest.json");
+        fs::create_dir_all(settlement_path.parent().expect("settlement dir"))
+            .expect("settlement dir");
+        fs::write(
+            &settlement_path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": "zk_settlement_captured",
+                "captured_at": "2026-04-04T00:00:02Z",
+                "proof_backend": "sp1",
+                "proof_status": "prepared",
+                "proof_id": "zkp_alias",
+                "court_status": "clear",
+                "authority_status": "allowed",
+                "treasury_status": "committed",
+                "settlement_status": "prepared",
+                "reservation_id": "bud_alias",
+                "actual_cost_usd": 0.025,
+                "witness_digest_hex": "0xabc",
+                "poge_merkle_root_hex": "0xdef"
+            }))
+            .expect("settlement json"),
+        )
+        .expect("write settlement");
+
+        let report = render_shadow_report(&root).expect("shadow report");
+        assert!(
+            report.contains("proof_id:           zkp_alias"),
+            "{}",
+            report
+        );
+        assert!(
+            report.contains("reservation_id:     bud_alias"),
+            "{}",
+            report
+        );
+        assert!(report.contains("poge_merkle_root:   0xdef"), "{}", report);
     }
 
     fn temp_path(prefix: &str) -> PathBuf {
