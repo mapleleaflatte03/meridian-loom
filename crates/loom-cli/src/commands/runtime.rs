@@ -80,8 +80,8 @@ pub(crate) fn handle_doctor(args: &[String]) -> LoomResult<()> {
                 let trimmed = checks_json.trim_end();
                 if trimmed.ends_with(']') {
                     // Wrap in object with fix_results
-                    print!(
-                        "{{\"checks\":{},\"fix_results\":{:?}}}\n",
+                    println!(
+                        "{{\"checks\":{},\"fix_results\":{:?}}}",
                         trimmed, fix_results
                     );
                 } else {
@@ -406,6 +406,7 @@ pub(crate) fn handle_envelope(args: &[String]) -> LoomResult<()> {
 
 pub(crate) fn handle_shadow(args: &[String]) -> LoomResult<()> {
     match args.first().map(String::as_str) {
+        Some("run") => handle_shadow_run(&args[1..]),
         Some("report") => {
             let root = root_from(take_value(args, "--root").as_deref())?;
             print_human(&render_shadow_report(&root)?);
@@ -556,7 +557,8 @@ pub(crate) fn handle_shadow(args: &[String]) -> LoomResult<()> {
             Ok(())
         }
         _ => Err(
-            "shadow supports 'preflight', 'decide', 'enforce', 'compare', and 'report'".to_string(),
+            "shadow supports 'run', 'preflight', 'decide', 'enforce', 'compare', and 'report'"
+                .to_string(),
         ),
     }
 }
@@ -570,4 +572,612 @@ pub(crate) fn handle_parity(args: &[String]) -> LoomResult<()> {
         }
         _ => Err("parity supports 'report'".to_string()),
     }
+}
+
+fn handle_shadow_run(args: &[String]) -> LoomResult<()> {
+    let backend = take_value(args, "--backend").unwrap_or_else(|| "wasmtime".to_string());
+    let root = root_from(take_value(args, "--root").as_deref())?;
+    let config = read_config(&root)?;
+    let kernel_path = take_value(args, "--kernel-path")
+        .ok_or_else(|| "shadow run requires --kernel-path".to_string())?;
+    let agent_id = required_flag(args, "--agent-id")?;
+    let org_id = take_value(args, "--org-id").unwrap_or_else(|| config.org_id.clone());
+    let action_type =
+        take_value(args, "--action-type").unwrap_or_else(|| "wasm_shadow".to_string());
+    let resource = take_value(args, "--resource").unwrap_or_else(|| "wasm_run".to_string());
+    let module_source =
+        take_value(args, "--module").unwrap_or_else(|| "builtin:minimal".to_string());
+    let entrypoint = take_value(args, "--entrypoint").unwrap_or_else(|| "run".to_string());
+    let fuel_budget = take_value(args, "--fuel-budget")
+        .map(|raw| {
+            raw.parse::<u64>()
+                .map_err(|e| format!("invalid --fuel-budget '{}': {}", raw, e))
+        })
+        .transpose()?
+        .unwrap_or(100_000);
+    let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+    let warrant_file = take_value(args, "--warrant-file")
+        .ok_or_else(|| "shadow run requires --warrant-file".to_string())?;
+    let warrant = read_kernel_warrant(Path::new(&warrant_file))?;
+    let backend_kind = match backend.as_str() {
+        "wasmtime" => loom_shadow::ShadowBackendKind::Wasmtime,
+        "command" => loom_shadow::ShadowBackendKind::Command,
+        "http" => loom_shadow::ShadowBackendKind::Http,
+        "mcp" => loom_shadow::ShadowBackendKind::Mcp,
+        "a2a" => loom_shadow::ShadowBackendKind::A2a,
+        "a2a_action" | "a2a-action" => loom_shadow::ShadowBackendKind::A2aAction,
+        "grpc_action" | "grpc-action" => loom_shadow::ShadowBackendKind::GrpcAction,
+        other => {
+            return Err(format!(
+                "shadow run currently supports --backend wasmtime|command|http|mcp|a2a|a2a_action|grpc_action, got '{}'",
+                other
+            ))
+        }
+    };
+    let command_program = if matches!(backend_kind, loom_shadow::ShadowBackendKind::Command) {
+        Some(required_flag(args, "--command")?)
+    } else {
+        None
+    };
+    let command_args = if matches!(backend_kind, loom_shadow::ShadowBackendKind::Command) {
+        take_values(args, "--arg")
+    } else {
+        Vec::new()
+    };
+    let http_url = if matches!(
+        backend_kind,
+        loom_shadow::ShadowBackendKind::Http
+            | loom_shadow::ShadowBackendKind::Mcp
+            | loom_shadow::ShadowBackendKind::A2a
+            | loom_shadow::ShadowBackendKind::A2aAction
+            | loom_shadow::ShadowBackendKind::GrpcAction
+    ) {
+        Some(required_flag(args, "--url")?)
+    } else {
+        None
+    };
+    let http_method = if matches!(backend_kind, loom_shadow::ShadowBackendKind::Http) {
+        Some(take_value(args, "--method").unwrap_or_else(|| "GET".to_string()))
+    } else if matches!(backend_kind, loom_shadow::ShadowBackendKind::GrpcAction) {
+        let grpc_service = take_value(args, "--grpc-service")
+            .unwrap_or_else(|| "meridian.runtime.v1.ActionService".to_string());
+        let grpc_method =
+            take_value(args, "--grpc-method").unwrap_or_else(|| "SubmitAction".to_string());
+        let grpc_service = grpc_service.trim();
+        let grpc_method = grpc_method.trim();
+        if grpc_service.is_empty() || grpc_method.is_empty() {
+            return Err(
+                "shadow run --backend grpc_action requires non-empty --grpc-service and --grpc-method"
+                    .to_string(),
+            );
+        }
+        Some(format!("{}/{}", grpc_service, grpc_method))
+    } else if matches!(
+        backend_kind,
+        loom_shadow::ShadowBackendKind::Mcp
+            | loom_shadow::ShadowBackendKind::A2a
+            | loom_shadow::ShadowBackendKind::A2aAction
+    ) {
+        Some("POST".to_string())
+    } else {
+        None
+    };
+    let mut http_headers = if matches!(
+        backend_kind,
+        loom_shadow::ShadowBackendKind::Http
+            | loom_shadow::ShadowBackendKind::Mcp
+            | loom_shadow::ShadowBackendKind::A2a
+            | loom_shadow::ShadowBackendKind::A2aAction
+            | loom_shadow::ShadowBackendKind::GrpcAction
+    ) {
+        parse_shadow_http_headers(&take_values(args, "--header"))?
+    } else {
+        Vec::new()
+    };
+    if matches!(backend_kind, loom_shadow::ShadowBackendKind::GrpcAction) {
+        let force_plaintext = has_flag(args, "--grpc-plaintext");
+        let force_tls = has_flag(args, "--grpc-tls");
+        if force_plaintext && force_tls {
+            return Err(
+                "shadow run --backend grpc_action does not allow both --grpc-plaintext and --grpc-tls"
+                    .to_string(),
+            );
+        }
+        if force_plaintext {
+            http_headers.push(("x-loom-grpc-plaintext".to_string(), "true".to_string()));
+        } else if force_tls {
+            http_headers.push(("x-loom-grpc-plaintext".to_string(), "false".to_string()));
+        }
+        if has_flag(args, "--grpc-allow-unknown-fields") {
+            http_headers.push((
+                "x-loom-grpc-allow-unknown-fields".to_string(),
+                "true".to_string(),
+            ));
+        }
+        if let Some(timeout_raw) = take_value(args, "--grpc-timeout-seconds") {
+            let timeout_seconds = timeout_raw.parse::<u64>().map_err(|error| {
+                format!(
+                    "invalid --grpc-timeout-seconds '{}': {}",
+                    timeout_raw, error
+                )
+            })?;
+            if !(1..=120).contains(&timeout_seconds) {
+                return Err(
+                    "shadow run --backend grpc_action requires --grpc-timeout-seconds between 1 and 120"
+                        .to_string(),
+                );
+            }
+            http_headers.push((
+                "x-loom-grpc-max-time-seconds".to_string(),
+                timeout_seconds.to_string(),
+            ));
+        }
+        if let Some(authority) = take_value(args, "--grpc-authority") {
+            let authority = authority.trim();
+            if authority.is_empty() {
+                return Err(
+                    "shadow run --backend grpc_action received empty --grpc-authority".to_string(),
+                );
+            }
+            http_headers.push(("x-loom-grpc-authority".to_string(), authority.to_string()));
+        }
+        for import_path in take_values(args, "--grpc-import-path") {
+            let import_path = import_path.trim();
+            if import_path.is_empty() {
+                return Err(
+                    "shadow run --backend grpc_action received empty --grpc-import-path"
+                        .to_string(),
+                );
+            }
+            http_headers.push((
+                "x-loom-grpc-import-path".to_string(),
+                import_path.to_string(),
+            ));
+        }
+        for proto in take_values(args, "--grpc-proto") {
+            let proto = proto.trim();
+            if proto.is_empty() {
+                return Err(
+                    "shadow run --backend grpc_action received empty --grpc-proto".to_string(),
+                );
+            }
+            http_headers.push(("x-loom-grpc-proto".to_string(), proto.to_string()));
+        }
+        for protoset in take_values(args, "--grpc-protoset") {
+            let protoset = protoset.trim();
+            if protoset.is_empty() {
+                return Err(
+                    "shadow run --backend grpc_action received empty --grpc-protoset".to_string(),
+                );
+            }
+            http_headers.push(("x-loom-grpc-protoset".to_string(), protoset.to_string()));
+        }
+    }
+    let http_body_json = if matches!(backend_kind, loom_shadow::ShadowBackendKind::Http) {
+        take_value(args, "--body-json")
+    } else if matches!(backend_kind, loom_shadow::ShadowBackendKind::Mcp) {
+        let mcp_method =
+            take_value(args, "--mcp-method").unwrap_or_else(|| "tools/list".to_string());
+        let mcp_request_id = take_value(args, "--mcp-request-id")
+            .unwrap_or_else(|| format!("loom-shadow-mcp-{}", chrono_like_timestamp()));
+        let mcp_params_json =
+            take_value(args, "--mcp-params-json").unwrap_or_else(|| "{}".to_string());
+        let mcp_tool = take_value(args, "--mcp-tool");
+        Some(build_shadow_mcp_request_json(
+            &mcp_method,
+            &mcp_request_id,
+            &mcp_params_json,
+            mcp_tool.as_deref(),
+        )?)
+    } else if matches!(backend_kind, loom_shadow::ShadowBackendKind::A2a) {
+        let a2a_method =
+            take_value(args, "--a2a-method").unwrap_or_else(|| "message/send".to_string());
+        let a2a_request_id = take_value(args, "--a2a-request-id")
+            .unwrap_or_else(|| format!("loom-shadow-a2a-{}", chrono_like_timestamp()));
+        let a2a_params_json =
+            take_value(args, "--a2a-params-json").unwrap_or_else(|| "{}".to_string());
+        let a2a_skill = take_value(args, "--a2a-skill");
+        Some(build_shadow_a2a_request_json(
+            &a2a_method,
+            &a2a_request_id,
+            &a2a_params_json,
+            a2a_skill.as_deref(),
+        )?)
+    } else if matches!(backend_kind, loom_shadow::ShadowBackendKind::A2aAction) {
+        let a2a_action_request_id = take_value(args, "--a2a-action-request-id")
+            .unwrap_or_else(|| format!("loom-shadow-a2a-action-{}", chrono_like_timestamp()));
+        let a2a_action_kind =
+            take_value(args, "--a2a-action-kind").unwrap_or_else(|| action_type.clone());
+        let a2a_action_objective = take_value(args, "--a2a-action-objective")
+            .unwrap_or_else(|| format!("execute {} on {}", action_type, resource));
+        let a2a_context_json =
+            take_value(args, "--a2a-context-json").unwrap_or_else(|| "{}".to_string());
+        let a2a_constraints_json =
+            take_value(args, "--a2a-constraints-json").unwrap_or_else(|| "{}".to_string());
+        let a2a_memory_json =
+            take_value(args, "--a2a-memory-json").unwrap_or_else(|| "[]".to_string());
+        let a2a_skill = take_value(args, "--a2a-skill");
+        Some(build_shadow_semantic_action_request_json(
+            "a2a_action",
+            &agent_id,
+            &org_id,
+            &warrant.id,
+            &a2a_action_request_id,
+            &a2a_action_kind,
+            &a2a_action_objective,
+            &a2a_context_json,
+            &a2a_constraints_json,
+            &a2a_memory_json,
+            a2a_skill.as_deref(),
+        )?)
+    } else if matches!(backend_kind, loom_shadow::ShadowBackendKind::GrpcAction) {
+        let grpc_action_request_id = take_value(args, "--grpc-action-request-id")
+            .unwrap_or_else(|| format!("loom-shadow-grpc-action-{}", chrono_like_timestamp()));
+        let grpc_action_kind =
+            take_value(args, "--grpc-action-kind").unwrap_or_else(|| action_type.clone());
+        let grpc_action_objective = take_value(args, "--grpc-action-objective")
+            .unwrap_or_else(|| format!("execute {} on {}", action_type, resource));
+        let grpc_context_json =
+            take_value(args, "--grpc-context-json").unwrap_or_else(|| "{}".to_string());
+        let grpc_constraints_json =
+            take_value(args, "--grpc-constraints-json").unwrap_or_else(|| "{}".to_string());
+        let grpc_memory_json =
+            take_value(args, "--grpc-memory-json").unwrap_or_else(|| "[]".to_string());
+        let grpc_skill = take_value(args, "--grpc-skill");
+        Some(build_shadow_semantic_action_request_json(
+            "grpc_action",
+            &agent_id,
+            &org_id,
+            &warrant.id,
+            &grpc_action_request_id,
+            &grpc_action_kind,
+            &grpc_action_objective,
+            &grpc_context_json,
+            &grpc_constraints_json,
+            &grpc_memory_json,
+            grpc_skill.as_deref(),
+        )?)
+    } else {
+        None
+    };
+    let wasm_bytes = if matches!(backend_kind, loom_shadow::ShadowBackendKind::Wasmtime) {
+        resolve_shadow_module_bytes(&module_source)?
+    } else {
+        Vec::new()
+    };
+    let effective_module_name = if let Some(program) = command_program.as_ref() {
+        format!("command:{}", program)
+    } else if matches!(backend_kind, loom_shadow::ShadowBackendKind::Mcp) {
+        let method = take_value(args, "--mcp-method").unwrap_or_else(|| "tools/list".to_string());
+        if let Some(url) = http_url.as_ref() {
+            format!("mcp:{}:{}", method, url)
+        } else {
+            module_source
+        }
+    } else if matches!(backend_kind, loom_shadow::ShadowBackendKind::A2a) {
+        let method = take_value(args, "--a2a-method").unwrap_or_else(|| "message/send".to_string());
+        if let Some(url) = http_url.as_ref() {
+            format!("a2a:{}:{}", method, url)
+        } else {
+            module_source
+        }
+    } else if matches!(backend_kind, loom_shadow::ShadowBackendKind::A2aAction) {
+        let action_kind =
+            take_value(args, "--a2a-action-kind").unwrap_or_else(|| action_type.clone());
+        if let Some(url) = http_url.as_ref() {
+            format!("a2a_action:{}:{}", action_kind, url)
+        } else {
+            module_source
+        }
+    } else if matches!(backend_kind, loom_shadow::ShadowBackendKind::GrpcAction) {
+        let action_kind =
+            take_value(args, "--grpc-action-kind").unwrap_or_else(|| action_type.clone());
+        if let Some(url) = http_url.as_ref() {
+            format!(
+                "grpc_action:{}:{}:{}",
+                http_method
+                    .as_deref()
+                    .unwrap_or("meridian.runtime.v1.ActionService/SubmitAction"),
+                action_kind,
+                url
+            )
+        } else {
+            module_source
+        }
+    } else if let Some(url) = http_url.as_ref() {
+        format!(
+            "http:{}:{}",
+            http_method.as_deref().unwrap_or("GET").to_uppercase(),
+            url
+        )
+    } else {
+        module_source
+    };
+    let capture = loom_shadow::run_shadow_backend(&loom_shadow::ShadowRunRequest {
+        root: root.clone(),
+        kernel_path: PathBuf::from(&kernel_path),
+        backend: backend_kind,
+        agent_id,
+        org_id,
+        action_type,
+        resource,
+        module_name: effective_module_name,
+        entrypoint,
+        fuel_budget,
+        warrant,
+        wasm_bytes,
+        command_program,
+        command_args,
+        http_url,
+        http_method,
+        http_headers,
+        http_body_json,
+    })?;
+
+    if format == "json" {
+        println!("{}", loom_shadow::render_shadow_run_capture_json(&capture));
+    } else {
+        print_human(&loom_shadow::render_shadow_run_capture_human(
+            &capture,
+            &root,
+            Path::new(&kernel_path),
+        ));
+    }
+    Ok(())
+}
+
+fn resolve_shadow_module_bytes(module_source: &str) -> LoomResult<Vec<u8>> {
+    match module_source {
+        "builtin:minimal" => Ok(crate::commands::wasm::builtin_minimal_wasm_module()),
+        "builtin:system.info" => loom_core::wasm_host::builtin_system_info_guest_bytes(
+            &loom_core::wasm_host::render_wasm_system_info_request_json(
+                &loom_core::wasm_host::WasmSystemInfoRequest::default(),
+            ),
+        ),
+        "builtin:terminal.exec" => {
+            let request = loom_core::wasm_host::WasmTerminalExecRequest {
+                argv: vec!["echo".to_string(), "loom-shadow".to_string()],
+                ..loom_core::wasm_host::WasmTerminalExecRequest::default()
+            };
+            loom_core::wasm_host::builtin_terminal_exec_guest_bytes(
+                &loom_core::wasm_host::render_wasm_terminal_exec_request_json(&request),
+            )
+        }
+        value if value.starts_with("wasm:") => {
+            fs::read(value.trim_start_matches("wasm:")).map_err(|e| e.to_string())
+        }
+        other => Err(format!("unsupported shadow module '{}'", other)),
+    }
+}
+
+fn read_kernel_warrant(path: &Path) -> LoomResult<loom_poge::KernelWarrant> {
+    let raw = fs::read_to_string(path)
+        .map_err(|e| format!("failed to read warrant file {}: {}", path.display(), e))?;
+    let value: Value = serde_json::from_str(&raw)
+        .map_err(|e| format!("invalid warrant json {}: {}", path.display(), e))?;
+    Ok(loom_poge::KernelWarrant {
+        id: decode_hex_fixed::<32>(
+            value
+                .get("id_hex")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "warrant file missing id_hex".to_string())?,
+            "id_hex",
+        )?,
+        scope_cbor: hex::decode(
+            value
+                .get("scope_cbor_hex")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "warrant file missing scope_cbor_hex".to_string())?,
+        )
+        .map_err(|e| format!("invalid scope_cbor_hex: {}", e))?,
+        expiry_epoch_ms: value
+            .get("expiry_epoch_ms")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| "warrant file missing expiry_epoch_ms".to_string())?,
+        kernel_sig: decode_hex_fixed::<64>(
+            value
+                .get("kernel_sig_hex")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "warrant file missing kernel_sig_hex".to_string())?,
+            "kernel_sig_hex",
+        )?,
+        kernel_pub: decode_hex_fixed::<32>(
+            value
+                .get("kernel_pub_hex")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "warrant file missing kernel_pub_hex".to_string())?,
+            "kernel_pub_hex",
+        )?,
+    })
+}
+
+fn decode_hex_fixed<const N: usize>(value: &str, label: &str) -> LoomResult<[u8; N]> {
+    let trimmed = value.trim().trim_start_matches("0x");
+    let bytes = hex::decode(trimmed).map_err(|e| format!("invalid {}: {}", label, e))?;
+    if bytes.len() != N {
+        return Err(format!(
+            "{} expected {} bytes, got {}",
+            label,
+            N,
+            bytes.len()
+        ));
+    }
+    let mut out = [0u8; N];
+    out.copy_from_slice(&bytes);
+    Ok(out)
+}
+
+fn parse_shadow_http_headers(values: &[String]) -> LoomResult<Vec<(String, String)>> {
+    values
+        .iter()
+        .map(|value| {
+            let (name, raw_value) = value
+                .split_once(':')
+                .ok_or_else(|| format!("invalid --header '{}': expected Name: Value", value))?;
+            let name = name.trim();
+            let header_value = raw_value.trim();
+            if name.is_empty() {
+                return Err(format!(
+                    "invalid --header '{}': header name is empty",
+                    value
+                ));
+            }
+            Ok((name.to_string(), header_value.to_string()))
+        })
+        .collect()
+}
+
+fn build_shadow_mcp_request_json(
+    method: &str,
+    request_id: &str,
+    params_json: &str,
+    tool_name: Option<&str>,
+) -> LoomResult<String> {
+    let mut params: Value = serde_json::from_str(params_json)
+        .map_err(|error| format!("invalid --mcp-params-json: {error}"))?;
+    if method == "tools/call" {
+        match &mut params {
+            Value::Object(map) => {
+                if let Some(tool) = tool_name.filter(|value| !value.trim().is_empty()) {
+                    map.entry("name".to_string())
+                        .or_insert_with(|| Value::String(tool.trim().to_string()));
+                }
+                if map
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .trim()
+                    .is_empty()
+                {
+                    return Err(
+                        "shadow run --backend mcp with --mcp-method tools/call requires --mcp-tool or params.name"
+                            .to_string(),
+                    );
+                }
+            }
+            _ => {
+                return Err(
+                    "shadow run --backend mcp expects --mcp-params-json to be a JSON object"
+                        .to_string(),
+                )
+            }
+        }
+    }
+    let payload = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": method,
+        "params": params,
+    });
+    serde_json::to_string(&payload)
+        .map_err(|error| format!("failed to serialize mcp request json: {error}"))
+}
+
+fn build_shadow_a2a_request_json(
+    method: &str,
+    request_id: &str,
+    params_json: &str,
+    skill_name: Option<&str>,
+) -> LoomResult<String> {
+    let mut params: Value = serde_json::from_str(params_json)
+        .map_err(|error| format!("invalid --a2a-params-json: {error}"))?;
+    let params_map = params.as_object_mut().ok_or_else(|| {
+        "shadow run --backend a2a expects --a2a-params-json to be a JSON object".to_string()
+    })?;
+    if let Some(skill) = skill_name.map(str::trim).filter(|value| !value.is_empty()) {
+        params_map
+            .entry("skill".to_string())
+            .or_insert_with(|| Value::String(skill.to_string()));
+    }
+    let payload = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": method,
+        "params": params,
+    });
+    serde_json::to_string(&payload)
+        .map_err(|error| format!("failed to serialize a2a request json: {error}"))
+}
+
+fn build_shadow_semantic_action_request_json(
+    backend_label: &str,
+    agent_id: &str,
+    org_id: &str,
+    warrant_id: &[u8; 32],
+    request_id: &str,
+    action_kind: &str,
+    action_objective: &str,
+    context_json: &str,
+    constraints_json: &str,
+    memory_json: &str,
+    skill_name: Option<&str>,
+) -> LoomResult<String> {
+    let context: Value = serde_json::from_str(context_json)
+        .map_err(|error| format!("invalid context JSON: {error}"))?;
+    if !context.is_object() {
+        return Err(format!(
+            "shadow run --backend {} expects context JSON to be a JSON object",
+            backend_label
+        ));
+    }
+    let constraints: Value = serde_json::from_str(constraints_json)
+        .map_err(|error| format!("invalid constraints JSON: {error}"))?;
+    if !constraints.is_object() {
+        return Err(format!(
+            "shadow run --backend {} expects constraints JSON to be a JSON object",
+            backend_label
+        ));
+    }
+    let recall_refs: Value = serde_json::from_str(memory_json)
+        .map_err(|error| format!("invalid memory JSON: {error}"))?;
+    if !recall_refs.is_array() {
+        return Err(format!(
+            "shadow run --backend {} expects memory JSON to be a JSON array",
+            backend_label
+        ));
+    }
+    let action_kind = action_kind.trim();
+    if action_kind.is_empty() {
+        return Err(format!(
+            "shadow run --backend {} requires non-empty action kind",
+            backend_label
+        ));
+    }
+    let action_objective = action_objective.trim();
+    if action_objective.is_empty() {
+        return Err(format!(
+            "shadow run --backend {} requires non-empty action objective",
+            backend_label
+        ));
+    }
+    let mut action = serde_json::Map::new();
+    action.insert("kind".to_string(), Value::String(action_kind.to_string()));
+    action.insert(
+        "objective".to_string(),
+        Value::String(action_objective.to_string()),
+    );
+    if let Some(skill) = skill_name.map(str::trim).filter(|value| !value.is_empty()) {
+        action.insert("skill".to_string(), Value::String(skill.to_string()));
+    }
+    let payload = serde_json::json!({
+        "schema": "meridian.a2a.action.v1",
+        "request_id": request_id,
+        "actor": {
+            "agent_id": agent_id,
+            "org_id": org_id,
+        },
+        "action": action,
+        "context": context,
+        "memory": {
+            "recall_refs": recall_refs,
+        },
+        "constraints": constraints,
+        "governance": {
+            "warrant_id_hex": format!("0x{}", hex::encode(warrant_id)),
+            "proof_required": true,
+            "settlement_mode": "treasury_gated",
+        }
+    });
+    serde_json::to_string(&payload)
+        .map_err(|error| format!("failed to serialize semantic action request json: {error}"))
 }

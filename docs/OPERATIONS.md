@@ -83,6 +83,83 @@ loom parity report --root "$LOOM_ROOT"
 loom shadow report --root "$LOOM_ROOT"
 ```
 
+Rehearse the warrant-bound shadow lane and prepare zk settlement artifacts:
+
+```bash
+loom shadow run \
+  --backend wasmtime \
+  --root "$LOOM_ROOT" \
+  --kernel-path "$MERIDIAN_KERNEL_PATH" \
+  --agent-id agent_atlas \
+  --org-id "$MERIDIAN_ORG_ID" \
+  --action-type research \
+  --resource system_info \
+  --module builtin:system.info \
+  --warrant-file ./shadow-warrant.json \
+  --format human
+
+loom job settle \
+  --zk \
+  --root "$LOOM_ROOT" \
+  --kernel-path "$MERIDIAN_KERNEL_PATH" \
+  --actual-cost-usd 0.05 \
+  --format human
+```
+
+Run semantic gRPC action transport (same governance/proof contract, different transport):
+
+```bash
+loom shadow run \
+  --backend grpc_action \
+  --root "$LOOM_ROOT" \
+  --kernel-path "$MERIDIAN_KERNEL_PATH" \
+  --agent-id agent_atlas \
+  --org-id "$MERIDIAN_ORG_ID" \
+  --action-type shadow_grpc_action \
+  --resource external_grpc_action \
+  --warrant-file ./shadow-warrant.json \
+  --url 127.0.0.1:50051 \
+  --grpc-service meridian.runtime.v1.ActionService \
+  --grpc-method SubmitAction \
+  --grpc-action-kind research.deliver \
+  --grpc-action-objective "deliver governed runtime diff" \
+  --grpc-context-json '{"lane":"trust_ops"}' \
+  --grpc-constraints-json '{"max_latency_ms":12000}' \
+  --grpc-memory-json '["mem://pattern/trust-ops-summary-v3"]' \
+  --grpc-plaintext \
+  --grpc-timeout-seconds 10 \
+  --grpc-allow-unknown-fields \
+  --format human
+```
+
+`grpc_action` notes:
+
+- Requires `grpcurl` in `PATH`, or set `LOOM_SHADOW_GRPCURL_BIN=/path/to/grpcurl`.
+- Optional transport flags:
+  - `--grpc-authority`
+  - repeated `--grpc-import-path`
+  - repeated `--grpc-proto`
+  - repeated `--grpc-protoset`
+  - `--grpc-timeout-seconds` (1..120)
+  - `--grpc-allow-unknown-fields`
+  - `--grpc-plaintext` / `--grpc-tls`
+- RPC formatting is strict: service + method must resolve to exactly one
+  `<Service>/<Method>` segment pair.
+- `shadow report` now prints typed gRPC diagnostics for the latest
+  `grpc_action` run (target/rpc/transport/timeout/proto-protoset counts).
+- The same diagnostics are persisted as typed artifacts at
+  `artifacts/shadow/grpc_action/latest.json` (+ `stream.jsonl`) under the
+  runtime root.
+- `parity report` also renders this typed diagnostics block, so operator review
+  can stay in one place.
+
+The settlement slice is bounded on purpose:
+
+- `shadow run` requires a verified warrant file
+- `job settle --zk` binds to the PoGE witness digest from the latest shadow run
+- Court and Treasury are checked before settlement is marked prepared
+- chain finality is not claimed until a chain adapter confirms submission
+
 ## Common failures
 
 - `401 unauthorized`: token mismatch between service start and HTTP client

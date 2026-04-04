@@ -177,6 +177,98 @@ What you should see:
 - audit/parity artifact paths
 - one obvious next step if the run degraded
 
+### 1b. Rehearse a warrant-bound shadow run and prepare zk settlement
+
+Use this when you want the stricter `shadow -> proof -> settlement` path instead
+of the general `action execute` path.
+
+```bash
+loom shadow run \
+  --backend wasmtime \
+  --root "$LOOM_ROOT" \
+  --kernel-path "$MERIDIAN_KERNEL_PATH" \
+  --agent-id agent_atlas \
+  --org-id "$MERIDIAN_ORG_ID" \
+  --action-type research \
+  --resource system_info \
+  --module builtin:system.info \
+  --warrant-file ./shadow-warrant.json \
+  --format human
+
+loom job settle \
+  --zk \
+  --root "$LOOM_ROOT" \
+  --kernel-path "$MERIDIAN_KERNEL_PATH" \
+  --actual-cost-usd 0.05 \
+  --format human
+
+loom parity report --root "$LOOM_ROOT"
+loom shadow report --root "$LOOM_ROOT"
+```
+
+What this proves:
+
+- the Wasmtime guest ran under a verified warrant
+- PoGE produced a witness-bound Merkle receipt
+- Court and Treasury were checked before settlement preparation
+- parity and shadow reports can both see the new proof/settlement artifacts
+
+### 1c. Rehearse semantic gRPC action transport with governed proof
+
+This lane keeps the same semantic contract (`meridian.a2a.action.v1`) but
+executes over a gRPC unary transport adapter (`grpcurl`).
+
+```bash
+loom shadow run \
+  --backend grpc_action \
+  --root "$LOOM_ROOT" \
+  --kernel-path "$MERIDIAN_KERNEL_PATH" \
+  --agent-id agent_atlas \
+  --org-id "$MERIDIAN_ORG_ID" \
+  --action-type shadow_grpc_action \
+  --resource external_grpc_action \
+  --warrant-file ./shadow-warrant.json \
+  --url 127.0.0.1:50051 \
+  --grpc-service meridian.runtime.v1.ActionService \
+  --grpc-method SubmitAction \
+  --grpc-action-kind research.deliver \
+  --grpc-action-objective "deliver governed runtime diff" \
+  --grpc-context-json '{"lane":"trust_ops"}' \
+  --grpc-constraints-json '{"max_latency_ms":12000}' \
+  --grpc-memory-json '["mem://pattern/trust-ops-summary-v3"]' \
+  --grpc-plaintext \
+  --grpc-timeout-seconds 10 \
+  --grpc-allow-unknown-fields \
+  --format human
+
+loom job settle \
+  --zk \
+  --root "$LOOM_ROOT" \
+  --kernel-path "$MERIDIAN_KERNEL_PATH" \
+  --actual-cost-usd 0.05 \
+  --format human
+```
+
+Notes:
+
+- Requires a `grpcurl`-compatible binary in `PATH`, or set
+  `LOOM_SHADOW_GRPCURL_BIN` to an explicit path.
+- Optional flags: `--grpc-authority`, repeated `--grpc-import-path`,
+  repeated `--grpc-proto`, repeated `--grpc-protoset`,
+  `--grpc-timeout-seconds` (1..120),
+  `--grpc-allow-unknown-fields`, and `--grpc-tls` override.
+- RPC format is strict: `--grpc-service` and `--grpc-method` are combined into
+  `<Service>/<Method>` and must not contain extra `/` segments.
+- `shadow report` renders typed gRPC diagnostics (`grpc_target`, `grpc_rpc`,
+  transport mode, timeout, proto/protoset counts) for the latest governed run.
+- Typed diagnostics are persisted at
+  `artifacts/shadow/grpc_action/latest.json` (+ `stream.jsonl`) under your
+  runtime root.
+- Both `shadow report` and `parity report` surface the typed gRPC diagnostics
+  block from that artifact.
+- Proof and settlement artifacts are generated the same way as other shadow
+  backends.
+
 ### 2. Run bounded browser navigation and inspect proof
 
 ```bash
