@@ -281,6 +281,13 @@ fn collect_service_ingress_records(root: &Path) -> LoomResult<Vec<ServiceIngress
     fs::create_dir_all(&request_dir).map_err(io_err)?;
     fs::create_dir_all(&receipt_dir).map_err(io_err)?;
 
+    let receipt_files: std::collections::HashSet<_> = fs::read_dir(&receipt_dir)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name())
+        .collect();
+
     let mut records = Vec::new();
     for entry in fs::read_dir(&request_dir).map_err(io_err)? {
         let path = entry.map_err(io_err)?.path();
@@ -293,8 +300,8 @@ fn collect_service_ingress_records(root: &Path) -> LoomResult<Vec<ServiceIngress
         let request_id = value_string_value(&request, "request_id", "");
         let receipt_path = path
             .file_name()
-            .map(|name| receipt_dir.join(name))
-            .filter(|candidate| candidate.exists());
+            .filter(|name| receipt_files.contains(*name))
+            .map(|name| receipt_dir.join(name));
         let receipt = if let Some(receipt_path) = &receipt_path {
             let raw = fs::read_to_string(receipt_path).map_err(io_err)?;
             Some(
