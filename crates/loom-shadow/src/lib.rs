@@ -9196,36 +9196,20 @@ fn load_grpc_action_diagnostics(capture: &ShadowRunCapture) -> Option<ShadowGrpc
     }
     let raw = capture.host_response_json.as_deref()?;
     let value: Value = serde_json::from_str(raw).ok()?;
-    Some(ShadowGrpcActionDiagnostics {
-        status: value_string(value.get("status")),
-        captured_at: capture.captured_at.clone(),
-        grpc_target: value_string(value.get("grpc_target")),
-        grpc_rpc: value_string(value.get("grpc_rpc")),
-        grpc_transport: value_string(value.get("grpc_transport")),
-        grpc_allow_unknown_fields: value
-            .get("grpc_allow_unknown_fields")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        grpc_max_time_seconds: value.get("grpc_max_time_seconds").and_then(Value::as_u64),
-        grpc_schema: value_string(value.get("grpc_schema")),
-        grpc_request_id: value_string(value.get("grpc_request_id")),
-        grpc_action_kind: value_string(value.get("grpc_action_kind")),
-        grpc_action_objective: value_string(value.get("grpc_action_objective")),
-        grpc_action_skill: value_string(value.get("grpc_action_skill")),
-        grpc_proto_count: value.get("grpc_proto_count").and_then(Value::as_u64),
-        grpc_protoset_count: value.get("grpc_protoset_count").and_then(Value::as_u64),
-        grpc_import_path_count: value.get("grpc_import_path_count").and_then(Value::as_u64),
-        grpc_authority: value_string(value.get("grpc_authority")),
-        exit_code: value
-            .get("exit_code")
-            .and_then(Value::as_i64)
-            .map(|code| code as i32),
-    })
+    let mut diagnostics = grpc_action_diagnostics_from_value(&value);
+    if diagnostics.captured_at.is_empty() {
+        diagnostics.captured_at = capture.captured_at.clone();
+    }
+    Some(diagnostics)
 }
 
 fn load_grpc_action_diagnostics_artifact(path: &Path) -> Option<ShadowGrpcActionDiagnostics> {
     let value = load_artifact_json(path)?;
-    Some(ShadowGrpcActionDiagnostics {
+    Some(grpc_action_diagnostics_from_value(&value))
+}
+
+fn grpc_action_diagnostics_from_value(value: &Value) -> ShadowGrpcActionDiagnostics {
+    ShadowGrpcActionDiagnostics {
         status: value_string(value.get("status")),
         captured_at: value_string(value.get("captured_at")),
         grpc_target: value_string(value.get("grpc_target")),
@@ -9249,7 +9233,7 @@ fn load_grpc_action_diagnostics_artifact(path: &Path) -> Option<ShadowGrpcAction
             .get("exit_code")
             .and_then(Value::as_i64)
             .map(|code| code as i32),
-    })
+    }
 }
 
 fn render_shadow_run_summary(title: &str, source: &Path, capture: &ShadowRunCapture) -> String {
@@ -9467,6 +9451,152 @@ fn render_grpc_action_diagnostics_summary(
             .map(|value| value.to_string())
             .unwrap_or_else(|| "(none)".to_string()),
     )
+}
+
+pub fn render_shadow_grpc_action_diagnostics_report(
+    root: &Path,
+    limit: usize,
+) -> ShadowResult<String> {
+    if limit == 0 {
+        return Err("shadow grpc diagnostics report requires limit >= 1".to_string());
+    }
+    let latest_path = ensure_shadow_grpc_action_dir(root)?.join("latest.json");
+    let stream_path = ensure_shadow_grpc_action_dir(root)?.join("stream.jsonl");
+    let latest = load_grpc_action_diagnostics_artifact(&latest_path);
+    let stream_contents = fs::read_to_string(&stream_path).ok();
+    let mut recent = stream_contents
+        .as_deref()
+        .map(|contents| {
+            contents
+                .lines()
+                .filter_map(|line| {
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() {
+                        return None;
+                    }
+                    let value: Value = serde_json::from_str(trimmed).ok()?;
+                    Some(grpc_action_diagnostics_from_value(&value))
+                })
+                .filter(|entry| {
+                    !entry.status.is_empty()
+                        || !entry.grpc_target.is_empty()
+                        || !entry.grpc_rpc.is_empty()
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if recent.len() > limit {
+        recent = recent.split_off(recent.len() - limit);
+    }
+    let mut out = String::from(
+        "Meridian Loom // SHADOW GRPC DIAGNOSTICS\n========================================\nphase:       typed grpc diagnostics operator surface\nboundary:    shows persisted grpc_action transport diagnostics only\n",
+    );
+    if latest.is_none() && recent.is_empty() {
+        out.push_str(&format!(
+            "\nCurrent state\n=============\nstatus:      not_started\nmeaning:     no grpc_action diagnostics artifacts captured yet\nsource:      {}\n\nRecommended next step\n=====================\n1. loom shadow run --backend grpc_action --root {} --kernel-path /opt/meridian-kernel --agent-id agent_atlas --warrant-file ./shadow-warrant.json --url grpc://grpcb.in:9000 --grpc-service grpcbin.GRPCBin --grpc-method DummyUnary --format human\n2. loom shadow grpc-diagnostics --root {} --limit {}\n",
+            latest_path.display(),
+            root.display(),
+            root.display(),
+            limit,
+        ));
+        return Ok(out);
+    }
+    if let Some(latest) = latest.as_ref() {
+        out.push_str(&render_grpc_action_diagnostics_summary(
+            &latest_path,
+            latest,
+        ));
+    } else {
+        out.push_str(&format!(
+            "\nGrpc action diagnostics latest\n==============================\nsource: {}\nstatus:                  missing\n",
+            latest_path.display(),
+        ));
+    }
+    out.push_str(&format!(
+        "\nGrpc action diagnostics recent\n==============================\nsource: typed grpc diagnostics stream @ {}\nlimit: {}\ncount: {}\n",
+        stream_path.display(),
+        limit,
+        recent.len(),
+    ));
+    if recent.is_empty() {
+        out.push_str("status:                  no_stream_entries\n");
+    } else {
+        for (index, entry) in recent.iter().enumerate() {
+            out.push_str(&format!(
+                "entry[{index}]: captured_at={} status={} rpc={} target={} transport={} exit={}\n",
+                if entry.captured_at.is_empty() {
+                    "(none)"
+                } else {
+                    entry.captured_at.as_str()
+                },
+                if entry.status.is_empty() {
+                    "(none)"
+                } else {
+                    entry.status.as_str()
+                },
+                if entry.grpc_rpc.is_empty() {
+                    "(none)"
+                } else {
+                    entry.grpc_rpc.as_str()
+                },
+                if entry.grpc_target.is_empty() {
+                    "(none)"
+                } else {
+                    entry.grpc_target.as_str()
+                },
+                if entry.grpc_transport.is_empty() {
+                    "(none)"
+                } else {
+                    entry.grpc_transport.as_str()
+                },
+                entry
+                    .exit_code
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "(none)".to_string()),
+            ));
+        }
+    }
+    Ok(out)
+}
+
+pub fn render_shadow_grpc_action_diagnostics_json(
+    root: &Path,
+    limit: usize,
+) -> ShadowResult<String> {
+    if limit == 0 {
+        return Err("shadow grpc diagnostics json requires limit >= 1".to_string());
+    }
+    let latest_path = ensure_shadow_grpc_action_dir(root)?.join("latest.json");
+    let stream_path = ensure_shadow_grpc_action_dir(root)?.join("stream.jsonl");
+    let latest_value = load_artifact_json(&latest_path);
+    let stream_contents = fs::read_to_string(&stream_path).ok();
+    let mut recent_values = stream_contents
+        .as_deref()
+        .map(|contents| {
+            contents
+                .lines()
+                .filter_map(|line| {
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() {
+                        return None;
+                    }
+                    serde_json::from_str::<Value>(trimmed).ok()
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if recent_values.len() > limit {
+        recent_values = recent_values.split_off(recent_values.len() - limit);
+    }
+    let payload = serde_json::json!({
+        "status": if latest_value.is_some() || !recent_values.is_empty() { "ok" } else { "not_started" },
+        "latest_path": latest_path.display().to_string(),
+        "stream_path": stream_path.display().to_string(),
+        "limit": limit,
+        "latest": latest_value,
+        "recent": recent_values,
+    });
+    serde_json::to_string_pretty(&payload).map_err(io_err)
 }
 
 pub fn render_parity_report(root: &Path) -> ShadowResult<String> {

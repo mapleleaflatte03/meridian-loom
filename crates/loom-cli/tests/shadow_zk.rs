@@ -1418,6 +1418,50 @@ fn shadow_run_grpc_action_backend_writes_typed_report_artifacts() {
         "parity report should include grpc rpc diagnostics section\n{}",
         parity_report
     );
+
+    let diagnostics_report = harness.run_ok(&[
+        "shadow",
+        "grpc-diagnostics",
+        "--root",
+        harness.root_str(),
+        "--limit",
+        "5",
+    ]);
+    assert!(
+        diagnostics_report.contains("SHADOW GRPC DIAGNOSTICS"),
+        "shadow grpc diagnostics report should render header\n{}",
+        diagnostics_report
+    );
+    assert!(
+        diagnostics_report.contains("entry[0]:"),
+        "shadow grpc diagnostics report should render stream entries\n{}",
+        diagnostics_report
+    );
+    let diagnostics_operator_json = harness.json_ok(&[
+        "shadow",
+        "grpc-diagnostics",
+        "--root",
+        harness.root_str(),
+        "--limit",
+        "5",
+        "--format",
+        "json",
+    ]);
+    assert_eq!(
+        diagnostics_operator_json
+            .get("status")
+            .and_then(Value::as_str),
+        Some("ok")
+    );
+    assert!(
+        diagnostics_operator_json
+            .get("recent")
+            .and_then(Value::as_array)
+            .map(|entries| !entries.is_empty())
+            .unwrap_or(false),
+        "shadow grpc diagnostics json should include recent entries: {}",
+        diagnostics_operator_json
+    );
 }
 
 #[test]

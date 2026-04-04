@@ -419,6 +419,7 @@ Runtime rehearsal\n\
   loom shadow enforce --agent-id ID --action-type TYPE --resource RESOURCE [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
   loom shadow compare --primary FILE [--shadow FILE] [--root PATH] [--format human|json]\n\
   loom shadow report [--root PATH]\n\
+  loom shadow grpc-diagnostics [--root PATH] [--limit N] [--format human|json]\n\
   loom parity report [--root PATH]\n\
 \n\
 \n\

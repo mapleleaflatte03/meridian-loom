@@ -17,6 +17,9 @@ use loom_core::{
     provider_router, recurring, recurring_executor, schedules, service_ingress_runtime,
     service_runtime, session_provenance, skill_lifecycle, skills,
 };
+use loom_shadow::{
+    render_shadow_grpc_action_diagnostics_json, render_shadow_grpc_action_diagnostics_report,
+};
 
 pub(crate) fn handle_init(args: &[String]) -> LoomResult<()> {
     let mode = take_value(args, "--mode").unwrap_or_else(|| "standalone".to_string());
@@ -407,6 +410,29 @@ pub(crate) fn handle_envelope(args: &[String]) -> LoomResult<()> {
 pub(crate) fn handle_shadow(args: &[String]) -> LoomResult<()> {
     match args.first().map(String::as_str) {
         Some("run") => handle_shadow_run(&args[1..]),
+        Some("grpc-diagnostics") | Some("grpc_diagnostics") => {
+            let root = root_from(take_value(args, "--root").as_deref())?;
+            let limit = take_value(args, "--limit")
+                .map(|raw| {
+                    raw.parse::<usize>()
+                        .map_err(|error| format!("invalid --limit '{}': {}", raw, error))
+                })
+                .transpose()?
+                .unwrap_or(10);
+            if limit == 0 {
+                return Err("shadow grpc-diagnostics requires --limit >= 1".to_string());
+            }
+            let format = take_value(args, "--format").unwrap_or_else(|| "human".to_string());
+            if format == "json" {
+                print!(
+                    "{}",
+                    render_shadow_grpc_action_diagnostics_json(&root, limit)?
+                );
+            } else {
+                print_human(&render_shadow_grpc_action_diagnostics_report(&root, limit)?);
+            }
+            Ok(())
+        }
         Some("report") => {
             let root = root_from(take_value(args, "--root").as_deref())?;
             print_human(&render_shadow_report(&root)?);
@@ -557,8 +583,7 @@ pub(crate) fn handle_shadow(args: &[String]) -> LoomResult<()> {
             Ok(())
         }
         _ => Err(
-            "shadow supports 'run', 'preflight', 'decide', 'enforce', 'compare', and 'report'"
-                .to_string(),
+            "shadow supports 'run', 'grpc-diagnostics', 'preflight', 'decide', 'enforce', 'compare', and 'report'".to_string(),
         ),
     }
 }

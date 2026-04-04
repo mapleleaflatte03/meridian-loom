@@ -153,6 +153,8 @@ loom shadow run \
   runtime root.
 - `parity report` also renders this typed diagnostics block, so operator review
   can stay in one place.
+- `loom shadow grpc-diagnostics --root "$LOOM_ROOT" --limit 20` renders the
+  typed diagnostics stream/history directly.
 
 The settlement slice is bounded on purpose:
 

@@ -268,6 +268,8 @@ Notes:
   runtime root.
 - Both `shadow report` and `parity report` surface the typed gRPC diagnostics
   block from that artifact.
+- Use `loom shadow grpc-diagnostics --root "$LOOM_ROOT" --limit 20` for a
+  stream/history operator view.
 - Proof and settlement artifacts are generated the same way as other shadow
   backends.
 - `job settle --zk` accepts `--zk-backend` (currently `sp1`).
