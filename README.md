@@ -88,8 +88,18 @@ loom run-agent diagnose my-assistant
 loom run-agent watch my-assistant --once
 loom status --root "$LOOM_ROOT"
 loom memory receipts --root "$LOOM_ROOT" --limit 10
+loom memory fork agent_my-assistant --branch warm-start --target-agent-id agent_my-assistant_lab --root "$LOOM_ROOT"
+loom memory graph inspect <fork-root-or-id> --limit 5 --root "$LOOM_ROOT"
+loom memory graph lineage <fork-root-or-id> --node-id <node-id> --direction both --root "$LOOM_ROOT"
+loom memory replay <fork-root-or-id> --target-agent-id agent_my-assistant_lab --root "$LOOM_ROOT"
+loom memory replay <fork-root-or-id> --target-agent-id agent_my-assistant_lab --node-id <node-id> --root "$LOOM_ROOT"
+loom memory graph export <fork-root-or-id> --planner atlas --node-id <node-id> --objective "next research sprint plan" --root "$LOOM_ROOT"
 loom channel health --root "$LOOM_ROOT" --agent my-assistant --history-limit 5 --diagnostic-limit 5
 loom channel deliveries --root "$LOOM_ROOT" --include-archived
+loom breed agent_atlas agent_quill --agent-id agent_atlas --mutation-rate 0.15 --root "$LOOM_ROOT" --kernel-path "$MERIDIAN_KERNEL_PATH"
+loom init-nation --charter "Shadow Era Charter" --org-id "$MERIDIAN_ORG_ID" --root "$LOOM_ROOT" --kernel-path "$MERIDIAN_KERNEL_PATH"
+loom connect scaffold --name grpc_action_adapter --transport grpc --action-schema meridian.a2a.action.v1 --root "$LOOM_ROOT"
+loom connect list --root "$LOOM_ROOT"
 ```
 
 If the loop exits and the supervision policy says it should come back, reconcile it:
@@ -120,9 +130,9 @@ The full end-to-end flow lives in [docs/QUICKSTART.md](docs/QUICKSTART.md).
   - `loom run-agent inspect`
   - `loom run-agent reconcile`
   - `loom channel connect/list/health/test`
-  - `loom memory receipts`
+  - `loom memory receipts/fork/replay`
 - Queue, job, audit, parity, and runtime-service surfaces on disk
-- Memory receipts for write/read/remove/prune operations
+- Memory receipts for write/read/remove/prune/fork/replay operations
 - Proof of Governed Execution (PoGE) contract and receipt architecture
 
 ## Quickstart: three copy-paste examples
@@ -273,13 +283,194 @@ Notes:
 - Proof and settlement artifacts are generated the same way as other shadow
   backends.
 - `job settle --zk` accepts `--zk-backend` (currently `sp1`).
+
+### 1d. Rehearse embodied gRPC physical action transport (Direction 5)
+
+This lane keeps warrant/governance/PoGE semantics and switches transport +
+schema to embodied physical actions (`meridian.embodied.action.v1`).
+
+```bash
+loom shadow run \
+  --backend grpc_physical \
+  --root "$LOOM_ROOT" \
+  --kernel-path "$MERIDIAN_KERNEL_PATH" \
+  --agent-id agent_atlas \
+  --org-id "$MERIDIAN_ORG_ID" \
+  --action-type shadow_grpc_physical \
+  --resource external_grpc_physical \
+  --warrant-file ./shadow-warrant.json \
+  --url 127.0.0.1:50051 \
+  --grpc-service meridian.embodied.action.v1.PhysicalActionService \
+  --grpc-method Execute \
+  --grpc-action-kind physical.move \
+  --grpc-action-objective "move robot to staging point" \
+  --physical-robot-id unitree.go2 \
+  --physical-target warehouse.aisle-7 \
+  --physical-command move_to_pose \
+  --physical-safety-class restricted \
+  --physical-dry-run \
+  --grpc-physical-lifecycle stream \
+  --grpc-physical-ack-required \
+  --grpc-physical-ack-timeout-seconds 5 \
+  --grpc-physical-cancel-on-ack-timeout \
+  --grpc-plaintext \
+  --grpc-timeout-seconds 10 \
+  --format human
+```
+
+Embodied notes:
+
+- `grpc_physical` requires:
+  `--physical-robot-id`, `--physical-target`, `--physical-command`,
+  `--physical-safety-class`.
+- Request schema is strict and validated as
+  `meridian.embodied.action.v1` before transport execution.
+- Typed embodied diagnostics are persisted under
+  `artifacts/shadow/grpc_action/latest.json` (+ `stream.jsonl`) and include:
+  `grpc_physical_robot_id`, `grpc_physical_target`,
+  `grpc_physical_command`, `grpc_physical_safety_class`,
+  `grpc_physical_dry_run`.
+- Stream lifecycle controls are available for richer embodied contracts:
+  `--grpc-physical-lifecycle unary|stream`,
+  `--grpc-physical-ack-required`,
+  `--grpc-physical-ack-timeout-seconds`,
+  `--grpc-physical-cancel-on-ack-timeout`,
+  `--grpc-physical-cancel-after-seconds`.
+- Typed diagnostics now persist lifecycle fields:
+  `grpc_lifecycle_mode`, `grpc_lifecycle_ack_required`,
+  `grpc_lifecycle_ack_received`, `grpc_lifecycle_cancelled`,
+  `grpc_lifecycle_cancel_reason`.
+- `shadow report` and `parity report` both render these physical fields from
+  typed artifacts.
+
+### 1d.5. Rehearse embodied A2A physical action transport
+
+Use this when you want embodied semantic governance with an A2A HTTP transport
+contract (`meridian.a2a.physical.v1`).
+
+```bash
+loom shadow run \
+  --backend a2a_physical \
+  --root "$LOOM_ROOT" \
+  --kernel-path "$MERIDIAN_KERNEL_PATH" \
+  --agent-id agent_atlas \
+  --org-id "$MERIDIAN_ORG_ID" \
+  --action-type shadow_a2a_physical \
+  --resource external_a2a_physical \
+  --warrant-file ./shadow-warrant.json \
+  --url http://127.0.0.1:8088/shadow-a2a-physical \
+  --header "x-shadow-test: enabled" \
+  --a2a-physical-method message/send \
+  --a2a-physical-request-id shadow-a2a-physical-test \
+  --a2a-physical-kind physical.move \
+  --a2a-physical-objective "dispatch embodied lane" \
+  --a2a-physical-skill atlas_motion \
+  --physical-robot-id unitree.go2 \
+  --physical-target warehouse.aisle-7 \
+  --physical-command move_to_pose \
+  --physical-safety-class restricted \
+  --physical-dry-run \
+  --grpc-context-json '{}' \
+  --grpc-constraints-json '{}' \
+  --grpc-memory-json '[]' \
+  --format human
+```
+
+### 1e. Rehearse embodied ROS2 physical action transport
+
+This lane keeps the same semantic embodied request (`meridian.embodied.action.v1`)
+and executes through a ROS2 service bridge (`ros2 service call`).
+
+```bash
+loom shadow run \
+  --backend ros2_physical \
+  --root "$LOOM_ROOT" \
+  --kernel-path "$MERIDIAN_KERNEL_PATH" \
+  --agent-id agent_atlas \
+  --org-id "$MERIDIAN_ORG_ID" \
+  --action-type shadow_ros2_physical \
+  --resource external_ros2_physical \
+  --warrant-file ./shadow-warrant.json \
+  --ros2-service /meridian/physical_action/execute \
+  --ros2-type meridian_embodied_msgs/srv/ExecutePhysicalAction \
+  --ros2-timeout-seconds 20 \
+  --ros2-physical-kind physical.move \
+  --ros2-physical-objective "move robot to staging point" \
+  --physical-robot-id unitree.go2 \
+  --physical-target warehouse.aisle-7 \
+  --physical-command move_to_pose \
+  --physical-safety-class restricted \
+  --physical-dry-run \
+  --format human
+```
+
+ROS2 notes:
+
+- Requires a `ros2` CLI binary in `PATH`, or set `LOOM_SHADOW_ROS2_BIN`.
+- Supports two execution modes:
+  - `--ros2-mode service` (default) with `--ros2-service` + `--ros2-type`.
+  - `--ros2-mode action` with `--ros2-action-name` + `--ros2-action-type`
+    and optional `--ros2-action-feedback`,
+    `--ros2-action-cancel-after-seconds`.
+- Operator diagnostics persist transport metadata (`transport_kind=ros2`,
+  `ros2_mode`, service/action endpoint+type, timeout) together with embodied
+  action fields.
+
+ROS2 action mode example:
+
+```bash
+loom shadow run \
+  --backend ros2_physical \
+  --root "$LOOM_ROOT" \
+  --kernel-path "$MERIDIAN_KERNEL_PATH" \
+  --agent-id agent_atlas \
+  --org-id "$MERIDIAN_ORG_ID" \
+  --action-type shadow_ros2_physical \
+  --resource external_ros2_physical \
+  --warrant-file ./shadow-warrant.json \
+  --ros2-mode action \
+  --ros2-action-name /meridian/physical_action/goal \
+  --ros2-action-type meridian_embodied_msgs/action/ExecutePhysicalAction \
+  --ros2-action-feedback \
+  --ros2-action-cancel-after-seconds 5 \
+  --ros2-timeout-seconds 20 \
+  --ros2-physical-kind physical.move \
+  --ros2-physical-objective "move robot to staging point" \
+  --physical-robot-id unitree.go2 \
+  --physical-target warehouse.aisle-7 \
+  --physical-command move_to_pose \
+  --physical-safety-class restricted \
+  --physical-dry-run \
+  --format human
+```
 - One-command acceptance lane for `shadow run -> job settle --zk -> reports`:
 
 ```bash
 ./scripts/acceptance_shadow_zk.sh
 # or
 make acceptance-shadow-zk
+
+# full lane (core flow + typed report assertions)
+./scripts/acceptance_shadow_zk_lane.sh
+# or
+make acceptance-shadow-zk-lane
+
+# embodied core lane (ros2_physical -> settle --zk -> reports)
+./scripts/acceptance_shadow_embodied_zk.sh
+# or
+make acceptance-shadow-zk-embodied
 ```
+
+Phase 1 merge gate (Direction 1 + 2 only):
+
+```bash
+./scripts/acceptance_shadow_zk_lane.sh
+cargo test -p loom-shadow
+cargo test -p meridian-loom --test shadow_zk
+```
+
+Swarm economy acceptance is intentionally excluded from the Phase 1 gate and
+should be run only in the Direction 4 phase.
 
 ### 2. Run bounded browser navigation and inspect proof
 
