@@ -17,7 +17,7 @@ use loom_core::{
         render_wasm_fs_write_request_json, render_wasm_heartbeat_schedule_request_json,
         render_wasm_kv_get_request_json, render_wasm_kv_set_request_json,
         render_wasm_llm_inference_request_json, render_wasm_system_info_request_json,
-        render_wasm_terminal_exec_request_json, run_wasm_guest, HostBackend,
+        render_wasm_terminal_exec_request_json, run_wasm_guest, HostBackend, WarrantPolicy,
         WasmBrowserNavigateRequest, WasmExecutionRequest, WasmExecutionResult, WasmFsReadRequest,
         WasmFsWriteRequest, WasmGuestSource, WasmHeartbeatScheduleKind,
         WasmHeartbeatScheduleRequest, WasmHostBuilder, WasmHostSecurityContext, WasmKvGetRequest,
@@ -36,6 +36,7 @@ use event_schema::{
     canonical_execution_id, canonical_job_id, canonical_parity_id, render_artifact_refs_human,
     render_artifact_refs_json, ArtifactRefSpec, RuntimeEventSpec, RuntimeEventV1,
 };
+use loom_poge::{HostCallKind, KernelWarrant, PoGEInterceptor};
 use policy_queue::{classify_action, PolicyClass};
 use proof_views::render_proof_first_status_human;
 use reservations::{
@@ -46,6 +47,7 @@ use scheduler_state::{
     transition_job, update_job_metadata, JobStatus, SchedulerState,
 };
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{self, ErrorKind, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream, ToSocketAddrs};
@@ -54,6 +56,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use ureq::ResponseExt;
 
 pub type ShadowResult<T> = Result<T, String>;
 
@@ -162,6 +165,83 @@ pub struct RuntimeExecutionCapture {
     pub reference_probe_note: String,
     pub parity_status: String,
     pub parity_reason: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ShadowBackendKind {
+    Wasmtime,
+    Command,
+    Http,
+    Mcp,
+    A2a,
+    A2aAction,
+    GrpcAction,
+}
+
+impl ShadowBackendKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Wasmtime => "wasmtime",
+            Self::Command => "command",
+            Self::Http => "http",
+            Self::Mcp => "mcp",
+            Self::A2a => "a2a",
+            Self::A2aAction => "a2a_action",
+            Self::GrpcAction => "grpc_action",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ShadowRunRequest {
+    pub root: PathBuf,
+    pub kernel_path: PathBuf,
+    pub backend: ShadowBackendKind,
+    pub agent_id: String,
+    pub org_id: String,
+    pub action_type: String,
+    pub resource: String,
+    pub module_name: String,
+    pub entrypoint: String,
+    pub fuel_budget: u64,
+    pub warrant: KernelWarrant,
+    pub wasm_bytes: Vec<u8>,
+    pub command_program: Option<String>,
+    pub command_args: Vec<String>,
+    pub http_url: Option<String>,
+    pub http_method: Option<String>,
+    pub http_headers: Vec<(String, String)>,
+    pub http_body_json: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ShadowRunCapture {
+    pub execution_path: PathBuf,
+    pub shadow_latest_path: PathBuf,
+    pub parity_latest_path: PathBuf,
+    pub parity_stream_path: PathBuf,
+    pub status: String,
+    pub captured_at: String,
+    pub backend: String,
+    pub agent_id: String,
+    pub org_id: String,
+    pub action_type: String,
+    pub resource: String,
+    pub module_name: String,
+    pub entrypoint: String,
+    pub entrypoint_result: Option<i32>,
+    pub host_backend: String,
+    pub warrant_binding_status: String,
+    pub warrant_id_hex: Option<String>,
+    pub poge_merkle_root_hex: Option<String>,
+    pub poge_trace_len: Option<u32>,
+    pub poge_witness_digest_hex: Option<String>,
+    pub poge_session_label: Option<String>,
+    pub poge_epoch_start_ms: Option<u64>,
+    pub poge_epoch_end_ms: Option<u64>,
+    pub poge_module_digest_hex: Option<String>,
+    pub host_calls: Vec<String>,
+    pub host_response_json: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1242,6 +1322,1459 @@ pub fn capture_runtime_execution(
         },
     )?;
     Ok(capture)
+}
+
+trait ShadowBackendPlugin {
+    fn id(&self) -> &'static str;
+    fn run(&self, request: &ShadowRunRequest) -> ShadowResult<ShadowRunCapture>;
+}
+
+struct WasmtimeShadowBackendPlugin;
+struct CommandShadowBackendPlugin;
+struct HttpShadowBackendPlugin;
+struct McpShadowBackendPlugin;
+struct A2aShadowBackendPlugin;
+struct A2aActionShadowBackendPlugin;
+struct GrpcActionShadowBackendPlugin;
+
+impl ShadowBackendPlugin for WasmtimeShadowBackendPlugin {
+    fn id(&self) -> &'static str {
+        ShadowBackendKind::Wasmtime.as_str()
+    }
+
+    fn run(&self, request: &ShadowRunRequest) -> ShadowResult<ShadowRunCapture> {
+        run_shadow_backend_wasmtime(request)
+    }
+}
+
+impl ShadowBackendPlugin for CommandShadowBackendPlugin {
+    fn id(&self) -> &'static str {
+        ShadowBackendKind::Command.as_str()
+    }
+
+    fn run(&self, request: &ShadowRunRequest) -> ShadowResult<ShadowRunCapture> {
+        run_shadow_backend_command(request)
+    }
+}
+
+impl ShadowBackendPlugin for HttpShadowBackendPlugin {
+    fn id(&self) -> &'static str {
+        ShadowBackendKind::Http.as_str()
+    }
+
+    fn run(&self, request: &ShadowRunRequest) -> ShadowResult<ShadowRunCapture> {
+        run_shadow_backend_http(request)
+    }
+}
+
+impl ShadowBackendPlugin for McpShadowBackendPlugin {
+    fn id(&self) -> &'static str {
+        ShadowBackendKind::Mcp.as_str()
+    }
+
+    fn run(&self, request: &ShadowRunRequest) -> ShadowResult<ShadowRunCapture> {
+        run_shadow_backend_mcp(request)
+    }
+}
+
+impl ShadowBackendPlugin for A2aShadowBackendPlugin {
+    fn id(&self) -> &'static str {
+        ShadowBackendKind::A2a.as_str()
+    }
+
+    fn run(&self, request: &ShadowRunRequest) -> ShadowResult<ShadowRunCapture> {
+        run_shadow_backend_a2a(request)
+    }
+}
+
+impl ShadowBackendPlugin for A2aActionShadowBackendPlugin {
+    fn id(&self) -> &'static str {
+        ShadowBackendKind::A2aAction.as_str()
+    }
+
+    fn run(&self, request: &ShadowRunRequest) -> ShadowResult<ShadowRunCapture> {
+        run_shadow_backend_a2a_action(request)
+    }
+}
+
+impl ShadowBackendPlugin for GrpcActionShadowBackendPlugin {
+    fn id(&self) -> &'static str {
+        ShadowBackendKind::GrpcAction.as_str()
+    }
+
+    fn run(&self, request: &ShadowRunRequest) -> ShadowResult<ShadowRunCapture> {
+        run_shadow_backend_grpc_action(request)
+    }
+}
+
+static WASMTIME_SHADOW_BACKEND_PLUGIN: WasmtimeShadowBackendPlugin = WasmtimeShadowBackendPlugin;
+static COMMAND_SHADOW_BACKEND_PLUGIN: CommandShadowBackendPlugin = CommandShadowBackendPlugin;
+static HTTP_SHADOW_BACKEND_PLUGIN: HttpShadowBackendPlugin = HttpShadowBackendPlugin;
+static MCP_SHADOW_BACKEND_PLUGIN: McpShadowBackendPlugin = McpShadowBackendPlugin;
+static A2A_SHADOW_BACKEND_PLUGIN: A2aShadowBackendPlugin = A2aShadowBackendPlugin;
+static A2A_ACTION_SHADOW_BACKEND_PLUGIN: A2aActionShadowBackendPlugin =
+    A2aActionShadowBackendPlugin;
+static GRPC_ACTION_SHADOW_BACKEND_PLUGIN: GrpcActionShadowBackendPlugin =
+    GrpcActionShadowBackendPlugin;
+
+fn resolve_shadow_backend_plugin(kind: &ShadowBackendKind) -> &'static dyn ShadowBackendPlugin {
+    match kind {
+        ShadowBackendKind::Wasmtime => &WASMTIME_SHADOW_BACKEND_PLUGIN,
+        ShadowBackendKind::Command => &COMMAND_SHADOW_BACKEND_PLUGIN,
+        ShadowBackendKind::Http => &HTTP_SHADOW_BACKEND_PLUGIN,
+        ShadowBackendKind::Mcp => &MCP_SHADOW_BACKEND_PLUGIN,
+        ShadowBackendKind::A2a => &A2A_SHADOW_BACKEND_PLUGIN,
+        ShadowBackendKind::A2aAction => &A2A_ACTION_SHADOW_BACKEND_PLUGIN,
+        ShadowBackendKind::GrpcAction => &GRPC_ACTION_SHADOW_BACKEND_PLUGIN,
+    }
+}
+
+pub fn run_shadow_backend(request: &ShadowRunRequest) -> ShadowResult<ShadowRunCapture> {
+    let plugin = resolve_shadow_backend_plugin(&request.backend);
+    debug_assert_eq!(plugin.id(), request.backend.as_str());
+    plugin.run(request)
+}
+
+pub fn render_shadow_run_capture_human(
+    capture: &ShadowRunCapture,
+    root: &Path,
+    kernel_path: &Path,
+) -> String {
+    format!(
+        "Meridian Loom // SHADOW RUN\n===========================\nbackend:              {}\nagent_id:             {}\norg_id:               {}\naction_type:          {}\nresource:             {}\nmodule_name:          {}\nentrypoint:           {}\nentrypoint_result:    {}\nwarrant_binding:      {}\nwarrant_id:           {}\npoge_merkle_root:     {}\npoge_trace_len:       {}\npoge_witness_digest:  {}\nexecution_path:       {}\nshadow_latest_path:   {}\nparity_latest_path:   {}\n\nNext\n====\n1. loom parity report --root {}\n2. loom shadow report --root {}\n3. loom job settle --zk --root {} --kernel-path {}\n",
+        capture.backend,
+        capture.agent_id,
+        capture.org_id,
+        capture.action_type,
+        capture.resource,
+        capture.module_name,
+        capture.entrypoint,
+        capture
+            .entrypoint_result
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "null".to_string()),
+        capture.warrant_binding_status,
+        capture.warrant_id_hex.as_deref().unwrap_or("(none)"),
+        capture
+            .poge_merkle_root_hex
+            .as_deref()
+            .unwrap_or("(none)"),
+        capture
+            .poge_trace_len
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "0".to_string()),
+        capture
+            .poge_witness_digest_hex
+            .as_deref()
+            .unwrap_or("(none)"),
+        capture.execution_path.display(),
+        capture.shadow_latest_path.display(),
+        capture.parity_latest_path.display(),
+        root.display(),
+        root.display(),
+        root.display(),
+        kernel_path.display(),
+    )
+}
+
+pub fn render_shadow_run_capture_json(capture: &ShadowRunCapture) -> String {
+    serde_json::to_string_pretty(&shadow_run_capture_value(capture))
+        .unwrap_or_else(|_| "{}".to_string())
+}
+
+fn run_shadow_backend_wasmtime(request: &ShadowRunRequest) -> ShadowResult<ShadowRunCapture> {
+    let host = WasmHostBuilder::new()
+        .with_profile_name("shadow/wasmtime".to_string())
+        .with_backend(HostBackend::WasmtimeReady)
+        .build()
+        .map_err(|errors| format!("invalid wasm host config: {}", errors.join("; ")))?;
+    let session_label = format!(
+        "shadow:{}:{}:{}",
+        request.org_id, request.agent_id, request.action_type
+    );
+    let result = run_wasm_guest(&WasmExecutionRequest {
+        host,
+        source: WasmGuestSource::WasmBytes {
+            name: request.module_name.clone(),
+            bytes: request.wasm_bytes.clone(),
+        },
+        entrypoint: request.entrypoint.clone(),
+        entrypoint_args: vec![],
+        memory_probe: None,
+        fuel_budget: request.fuel_budget,
+        warrant: Some(request.warrant.clone()),
+        warrant_policy: WarrantPolicy::RequireVerified,
+        session_label: Some(session_label),
+    })?;
+
+    let runtime_dir = ensure_runtime_dir(&request.root)?;
+    let shadow_dir = ensure_shadow_dir(&request.root)?;
+    let parity_dir = ensure_parity_dir(&request.root)?;
+    let execution_path = runtime_dir.join("last_execution.json");
+    let shadow_latest_path = shadow_dir.join("latest.json");
+    let parity_latest_path = parity_dir.join("latest.json");
+    let parity_stream_path = parity_dir.join("stream.jsonl");
+
+    let capture = ShadowRunCapture {
+        execution_path: execution_path.clone(),
+        shadow_latest_path: shadow_latest_path.clone(),
+        parity_latest_path: parity_latest_path.clone(),
+        parity_stream_path: parity_stream_path.clone(),
+        status: "shadow_run_captured".to_string(),
+        captured_at: timestamp_now(),
+        backend: request.backend.as_str().to_string(),
+        agent_id: request.agent_id.clone(),
+        org_id: request.org_id.clone(),
+        action_type: request.action_type.clone(),
+        resource: request.resource.clone(),
+        module_name: result.module_name,
+        entrypoint: result.entrypoint,
+        entrypoint_result: result.entrypoint_result,
+        host_backend: result.host_backend,
+        warrant_binding_status: result.warrant_binding_status,
+        warrant_id_hex: result.warrant_id_hex,
+        poge_merkle_root_hex: result.poge_merkle_root_hex,
+        poge_trace_len: result.poge_trace_len,
+        poge_witness_digest_hex: result.poge_witness_digest_hex,
+        poge_session_label: result.poge_session_label,
+        poge_epoch_start_ms: result.poge_epoch_start_ms,
+        poge_epoch_end_ms: result.poge_epoch_end_ms,
+        poge_module_digest_hex: result.poge_module_digest_hex,
+        host_calls: result.host_calls,
+        host_response_json: result.host_response_json,
+    };
+
+    persist_shadow_run_capture(&capture)?;
+    Ok(capture)
+}
+
+fn run_shadow_backend_command(request: &ShadowRunRequest) -> ShadowResult<ShadowRunCapture> {
+    let program = request
+        .command_program
+        .as_ref()
+        .ok_or_else(|| "shadow command backend requires command_program".to_string())?;
+    let session_label = format!(
+        "shadow:{}:{}:{}",
+        request.org_id, request.agent_id, request.action_type
+    );
+    let start_ms = current_epoch_ms();
+    let mut interceptor = PoGEInterceptor::new_validated(
+        request.warrant.clone(),
+        shadow_command_module_digest(program, &request.command_args),
+        session_label.clone(),
+        start_ms,
+    )
+    .map_err(|error| format!("invalid kernel warrant: {}", error))?;
+    let command_request_json = serde_json::json!({
+        "program": program,
+        "args": request.command_args,
+    });
+    let command_input_bytes = serde_json::to_vec(&command_request_json).map_err(io_err)?;
+    let output = Command::new(program)
+        .args(&request.command_args)
+        .output()
+        .map_err(|error| format!("failed to execute external command {}: {}", program, error))?;
+    let exit_code = output.status.code();
+    let response_payload = serde_json::json!({
+        "status": if output.status.success() { "ok" } else { "error" },
+        "exit_code": exit_code,
+        "stdout": String::from_utf8_lossy(&output.stdout),
+        "stderr": String::from_utf8_lossy(&output.stderr),
+    });
+    let response_json = serde_json::to_string_pretty(&response_payload).map_err(io_err)?;
+    interceptor
+        .record_event(
+            HostCallKind::Extension,
+            start_ms,
+            &command_input_bytes,
+            response_json.as_bytes(),
+            !output.status.success(),
+        )
+        .map_err(|error| error.to_string())?;
+    let audit_root = interceptor.finalize().map_err(|error| error.to_string())?;
+    let capture = ShadowRunCapture {
+        execution_path: ensure_runtime_dir(&request.root)?.join("last_execution.json"),
+        shadow_latest_path: ensure_shadow_dir(&request.root)?.join("latest.json"),
+        parity_latest_path: ensure_parity_dir(&request.root)?.join("latest.json"),
+        parity_stream_path: ensure_parity_dir(&request.root)?.join("stream.jsonl"),
+        status: "shadow_run_captured".to_string(),
+        captured_at: timestamp_now(),
+        backend: request.backend.as_str().to_string(),
+        agent_id: request.agent_id.clone(),
+        org_id: request.org_id.clone(),
+        action_type: request.action_type.clone(),
+        resource: request.resource.clone(),
+        module_name: request.module_name.clone(),
+        entrypoint: request.entrypoint.clone(),
+        entrypoint_result: exit_code,
+        host_backend: "external_command".to_string(),
+        warrant_binding_status: "verified".to_string(),
+        warrant_id_hex: Some(format!("0x{}", hex::encode(audit_root.warrant_id))),
+        poge_merkle_root_hex: Some(audit_root.merkle_root_hex()),
+        poge_trace_len: Some(audit_root.trace_len),
+        poge_witness_digest_hex: Some(audit_root.witness_digest_hex()),
+        poge_session_label: Some(audit_root.session_label.clone()),
+        poge_epoch_start_ms: Some(audit_root.epoch_start_ms),
+        poge_epoch_end_ms: Some(audit_root.epoch_end_ms),
+        poge_module_digest_hex: Some(format!("0x{}", hex::encode(audit_root.module_digest))),
+        host_calls: vec!["command.exec".to_string()],
+        host_response_json: Some(response_json),
+    };
+
+    persist_shadow_run_capture(&capture)?;
+    Ok(capture)
+}
+
+fn run_shadow_backend_http(request: &ShadowRunRequest) -> ShadowResult<ShadowRunCapture> {
+    let url = request
+        .http_url
+        .as_ref()
+        .ok_or_else(|| "shadow http backend requires http_url".to_string())?;
+    let method = request
+        .http_method
+        .as_deref()
+        .unwrap_or("GET")
+        .trim()
+        .to_uppercase();
+    let session_label = format!(
+        "shadow:{}:{}:{}",
+        request.org_id, request.agent_id, request.action_type
+    );
+    let start_ms = current_epoch_ms();
+    let mut interceptor = PoGEInterceptor::new_validated(
+        request.warrant.clone(),
+        shadow_http_module_digest(
+            &method,
+            url,
+            &request.http_headers,
+            request.http_body_json.as_deref(),
+        ),
+        session_label.clone(),
+        start_ms,
+    )
+    .map_err(|error| format!("invalid kernel warrant: {}", error))?;
+    let request_payload = serde_json::json!({
+        "method": method,
+        "url": url,
+        "headers": request.http_headers,
+        "body_json": request.http_body_json,
+    });
+    let request_bytes = serde_json::to_vec(&request_payload).map_err(io_err)?;
+
+    let timeout_ms = 5_000_u64;
+    let response_limit = 65_536_u64;
+    let mut response = match method.as_str() {
+        "GET" => {
+            let mut builder = ureq::get(url)
+                .config()
+                .timeout_global(Some(Duration::from_millis(timeout_ms)))
+                .http_status_as_error(false)
+                .build();
+            for (header_name, header_value) in &request.http_headers {
+                builder = builder.header(header_name, header_value);
+            }
+            builder.call()
+        }
+        "POST" => {
+            let mut builder = ureq::post(url)
+                .config()
+                .timeout_global(Some(Duration::from_millis(timeout_ms)))
+                .http_status_as_error(false)
+                .build();
+            for (header_name, header_value) in &request.http_headers {
+                builder = builder.header(header_name, header_value);
+            }
+            if request.http_body_json.is_some() {
+                builder = builder.header("content-type", "application/json");
+            }
+            builder.send(request.http_body_json.clone().unwrap_or_default())
+        }
+        other => {
+            return Err(format!(
+                "shadow http backend currently supports GET|POST, got '{}'",
+                other
+            ));
+        }
+    }
+    .map_err(|error| {
+        format!(
+            "failed to execute external http request {} {}: {}",
+            method, url, error
+        )
+    })?;
+
+    let http_status = response.status().as_u16();
+    let final_url = response.get_uri().to_string();
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .map(|value| String::from_utf8_lossy(value.as_bytes()).into_owned())
+        .unwrap_or_default();
+    let body_excerpt = response
+        .body_mut()
+        .with_config()
+        .limit(response_limit)
+        .lossy_utf8(true)
+        .read_to_string()
+        .unwrap_or_else(|error| format!("[body read failed: {error}]"));
+    let response_payload = serde_json::json!({
+        "status": if (200..400).contains(&http_status) { "ok" } else { "error" },
+        "method": method,
+        "url": url,
+        "final_url": final_url,
+        "http_status": http_status,
+        "content_type": content_type,
+        "body_excerpt_utf8": body_excerpt,
+    });
+    let response_json = serde_json::to_string_pretty(&response_payload).map_err(io_err)?;
+    interceptor
+        .record_event(
+            HostCallKind::WebFetch,
+            start_ms,
+            &request_bytes,
+            response_json.as_bytes(),
+            !(200..400).contains(&http_status),
+        )
+        .map_err(|error| error.to_string())?;
+    let audit_root = interceptor.finalize().map_err(|error| error.to_string())?;
+    let capture = ShadowRunCapture {
+        execution_path: ensure_runtime_dir(&request.root)?.join("last_execution.json"),
+        shadow_latest_path: ensure_shadow_dir(&request.root)?.join("latest.json"),
+        parity_latest_path: ensure_parity_dir(&request.root)?.join("latest.json"),
+        parity_stream_path: ensure_parity_dir(&request.root)?.join("stream.jsonl"),
+        status: "shadow_run_captured".to_string(),
+        captured_at: timestamp_now(),
+        backend: request.backend.as_str().to_string(),
+        agent_id: request.agent_id.clone(),
+        org_id: request.org_id.clone(),
+        action_type: request.action_type.clone(),
+        resource: request.resource.clone(),
+        module_name: request.module_name.clone(),
+        entrypoint: request.entrypoint.clone(),
+        entrypoint_result: Some(http_status as i32),
+        host_backend: "external_http".to_string(),
+        warrant_binding_status: "verified".to_string(),
+        warrant_id_hex: Some(format!("0x{}", hex::encode(audit_root.warrant_id))),
+        poge_merkle_root_hex: Some(audit_root.merkle_root_hex()),
+        poge_trace_len: Some(audit_root.trace_len),
+        poge_witness_digest_hex: Some(audit_root.witness_digest_hex()),
+        poge_session_label: Some(audit_root.session_label.clone()),
+        poge_epoch_start_ms: Some(audit_root.epoch_start_ms),
+        poge_epoch_end_ms: Some(audit_root.epoch_end_ms),
+        poge_module_digest_hex: Some(format!("0x{}", hex::encode(audit_root.module_digest))),
+        host_calls: vec!["http.fetch".to_string()],
+        host_response_json: Some(response_json),
+    };
+
+    persist_shadow_run_capture(&capture)?;
+    Ok(capture)
+}
+
+fn run_shadow_backend_mcp(request: &ShadowRunRequest) -> ShadowResult<ShadowRunCapture> {
+    let url = request
+        .http_url
+        .as_deref()
+        .ok_or_else(|| "shadow mcp backend requires http_url".to_string())?;
+    let request_json = request
+        .http_body_json
+        .as_deref()
+        .ok_or_else(|| "shadow mcp backend requires mcp request body".to_string())?;
+    let request_payload: Value = serde_json::from_str(request_json)
+        .map_err(|error| format!("invalid mcp request json: {error}"))?;
+    let mcp_method = request_payload
+        .get("method")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown")
+        .to_string();
+    let mcp_request_id = request_payload
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let timeout_ms = 5_000_u64;
+    let response_limit = 32 * 1024;
+
+    let mut interceptor = PoGEInterceptor::new(
+        request.warrant.clone(),
+        shadow_mcp_module_digest(url, &request.http_headers, request_json),
+        format!(
+            "shadow:{}:{}:{}:{}",
+            request.org_id, request.agent_id, request.action_type, request.resource
+        ),
+    );
+
+    let request_bytes = request_json.as_bytes().to_vec();
+    let start_ms = current_epoch_ms();
+    let mut builder = ureq::post(url)
+        .config()
+        .timeout_global(Some(Duration::from_millis(timeout_ms)))
+        .http_status_as_error(false)
+        .build();
+    let mut has_content_type = false;
+    for (header_name, header_value) in &request.http_headers {
+        if header_name.eq_ignore_ascii_case("content-type") {
+            has_content_type = true;
+        }
+        builder = builder.header(header_name, header_value);
+    }
+    if !has_content_type {
+        builder = builder.header("content-type", "application/json");
+    }
+    let mut response = builder.send(request_json.to_string()).map_err(|error| {
+        format!(
+            "failed to execute external mcp request POST {}: {}",
+            url, error
+        )
+    })?;
+
+    let http_status = response.status().as_u16();
+    let final_url = response.get_uri().to_string();
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .map(|value| String::from_utf8_lossy(value.as_bytes()).into_owned())
+        .unwrap_or_default();
+    let body_excerpt = response
+        .body_mut()
+        .with_config()
+        .limit(response_limit)
+        .lossy_utf8(true)
+        .read_to_string()
+        .unwrap_or_else(|error| format!("[body read failed: {error}]"));
+    let response_payload = serde_json::json!({
+        "status": if (200..400).contains(&http_status) { "ok" } else { "error" },
+        "url": url,
+        "final_url": final_url,
+        "http_status": http_status,
+        "content_type": content_type,
+        "mcp_method": mcp_method,
+        "mcp_request_id": mcp_request_id,
+        "body_excerpt_utf8": body_excerpt,
+    });
+    let response_json = serde_json::to_string_pretty(&response_payload).map_err(io_err)?;
+    interceptor
+        .record_event(
+            HostCallKind::WebFetch,
+            start_ms,
+            &request_bytes,
+            response_json.as_bytes(),
+            !(200..400).contains(&http_status),
+        )
+        .map_err(|error| error.to_string())?;
+    let audit_root = interceptor.finalize().map_err(|error| error.to_string())?;
+    let capture = ShadowRunCapture {
+        execution_path: ensure_runtime_dir(&request.root)?.join("last_execution.json"),
+        shadow_latest_path: ensure_shadow_dir(&request.root)?.join("latest.json"),
+        parity_latest_path: ensure_parity_dir(&request.root)?.join("latest.json"),
+        parity_stream_path: ensure_parity_dir(&request.root)?.join("stream.jsonl"),
+        status: "shadow_run_captured".to_string(),
+        captured_at: timestamp_now(),
+        backend: request.backend.as_str().to_string(),
+        agent_id: request.agent_id.clone(),
+        org_id: request.org_id.clone(),
+        action_type: request.action_type.clone(),
+        resource: request.resource.clone(),
+        module_name: request.module_name.clone(),
+        entrypoint: request.entrypoint.clone(),
+        entrypoint_result: Some(http_status as i32),
+        host_backend: "external_mcp".to_string(),
+        warrant_binding_status: "verified".to_string(),
+        warrant_id_hex: Some(format!("0x{}", hex::encode(audit_root.warrant_id))),
+        poge_merkle_root_hex: Some(audit_root.merkle_root_hex()),
+        poge_trace_len: Some(audit_root.trace_len),
+        poge_witness_digest_hex: Some(audit_root.witness_digest_hex()),
+        poge_session_label: Some(audit_root.session_label.clone()),
+        poge_epoch_start_ms: Some(audit_root.epoch_start_ms),
+        poge_epoch_end_ms: Some(audit_root.epoch_end_ms),
+        poge_module_digest_hex: Some(format!("0x{}", hex::encode(audit_root.module_digest))),
+        host_calls: vec!["mcp.call".to_string()],
+        host_response_json: Some(response_json),
+    };
+
+    persist_shadow_run_capture(&capture)?;
+    Ok(capture)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct A2aSemanticActionRequest {
+    request_id: String,
+    action_kind: String,
+    action_objective: String,
+    action_skill: String,
+    actor_agent_id: String,
+    actor_org_id: String,
+    governance_warrant_id_hex: String,
+}
+
+fn parse_semantic_a2a_action_request(request_json: &str) -> ShadowResult<A2aSemanticActionRequest> {
+    let request_payload: Value = serde_json::from_str(request_json)
+        .map_err(|error| format!("invalid a2a action request json: {error}"))?;
+    let schema = value_string(request_payload.get("schema"));
+    if schema != "meridian.a2a.action.v1" {
+        return Err(format!(
+            "invalid a2a action schema '{}': expected meridian.a2a.action.v1",
+            schema
+        ));
+    }
+    let request_id = value_string(request_payload.get("request_id"));
+    if request_id.is_empty() {
+        return Err("a2a action request missing request_id".to_string());
+    }
+    let actor = request_payload
+        .get("actor")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "a2a action request missing actor object".to_string())?;
+    let actor_agent_id = value_string(actor.get("agent_id"));
+    let actor_org_id = value_string(actor.get("org_id"));
+    if actor_agent_id.is_empty() || actor_org_id.is_empty() {
+        return Err("a2a action actor requires non-empty agent_id and org_id".to_string());
+    }
+    let action = request_payload
+        .get("action")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "a2a action request missing action object".to_string())?;
+    let action_kind = value_string(action.get("kind"));
+    let action_objective = value_string(action.get("objective"));
+    if action_kind.is_empty() || action_objective.is_empty() {
+        return Err("a2a action requires non-empty action.kind and action.objective".to_string());
+    }
+    let action_skill = value_string(action.get("skill"));
+    let governance = request_payload
+        .get("governance")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "a2a action request missing governance object".to_string())?;
+    let governance_warrant_id_hex = value_string(governance.get("warrant_id_hex"));
+    if governance_warrant_id_hex.is_empty() {
+        return Err("a2a action governance requires warrant_id_hex".to_string());
+    }
+    Ok(A2aSemanticActionRequest {
+        request_id,
+        action_kind,
+        action_objective,
+        action_skill,
+        actor_agent_id,
+        actor_org_id,
+        governance_warrant_id_hex,
+    })
+}
+
+fn run_shadow_backend_a2a(request: &ShadowRunRequest) -> ShadowResult<ShadowRunCapture> {
+    let url = request
+        .http_url
+        .as_deref()
+        .ok_or_else(|| "shadow a2a backend requires http_url".to_string())?;
+    let request_json = request
+        .http_body_json
+        .as_deref()
+        .ok_or_else(|| "shadow a2a backend requires a2a request body".to_string())?;
+    let request_payload: Value = serde_json::from_str(request_json)
+        .map_err(|error| format!("invalid a2a request json: {error}"))?;
+    let a2a_method = request_payload
+        .get("method")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown")
+        .to_string();
+    let a2a_request_id = request_payload
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let a2a_skill = request_payload
+        .get("params")
+        .and_then(|value| value.get("skill"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let timeout_ms = 5_000_u64;
+    let response_limit = 32 * 1024;
+
+    let mut interceptor = PoGEInterceptor::new(
+        request.warrant.clone(),
+        shadow_a2a_module_digest(url, &request.http_headers, request_json),
+        format!(
+            "shadow:{}:{}:{}:{}",
+            request.org_id, request.agent_id, request.action_type, request.resource
+        ),
+    );
+
+    let request_bytes = request_json.as_bytes().to_vec();
+    let start_ms = current_epoch_ms();
+    let mut builder = ureq::post(url)
+        .config()
+        .timeout_global(Some(Duration::from_millis(timeout_ms)))
+        .http_status_as_error(false)
+        .build();
+    let mut has_content_type = false;
+    for (header_name, header_value) in &request.http_headers {
+        if header_name.eq_ignore_ascii_case("content-type") {
+            has_content_type = true;
+        }
+        builder = builder.header(header_name, header_value);
+    }
+    if !has_content_type {
+        builder = builder.header("content-type", "application/json");
+    }
+    let mut response = builder.send(request_json.to_string()).map_err(|error| {
+        format!(
+            "failed to execute external a2a request POST {}: {}",
+            url, error
+        )
+    })?;
+
+    let http_status = response.status().as_u16();
+    let final_url = response.get_uri().to_string();
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .map(|value| String::from_utf8_lossy(value.as_bytes()).into_owned())
+        .unwrap_or_default();
+    let body_excerpt = response
+        .body_mut()
+        .with_config()
+        .limit(response_limit)
+        .lossy_utf8(true)
+        .read_to_string()
+        .unwrap_or_else(|error| format!("[body read failed: {error}]"));
+    let response_payload = serde_json::json!({
+        "status": if (200..400).contains(&http_status) { "ok" } else { "error" },
+        "url": url,
+        "final_url": final_url,
+        "http_status": http_status,
+        "content_type": content_type,
+        "a2a_method": a2a_method,
+        "a2a_request_id": a2a_request_id,
+        "a2a_skill": a2a_skill,
+        "body_excerpt_utf8": body_excerpt,
+    });
+    let response_json = serde_json::to_string_pretty(&response_payload).map_err(io_err)?;
+    interceptor
+        .record_event(
+            HostCallKind::WebFetch,
+            start_ms,
+            &request_bytes,
+            response_json.as_bytes(),
+            !(200..400).contains(&http_status),
+        )
+        .map_err(|error| error.to_string())?;
+    let audit_root = interceptor.finalize().map_err(|error| error.to_string())?;
+    let host_call = if a2a_method.starts_with("message/") {
+        "a2a.message"
+    } else {
+        "a2a.call"
+    };
+    let capture = ShadowRunCapture {
+        execution_path: ensure_runtime_dir(&request.root)?.join("last_execution.json"),
+        shadow_latest_path: ensure_shadow_dir(&request.root)?.join("latest.json"),
+        parity_latest_path: ensure_parity_dir(&request.root)?.join("latest.json"),
+        parity_stream_path: ensure_parity_dir(&request.root)?.join("stream.jsonl"),
+        status: "shadow_run_captured".to_string(),
+        captured_at: timestamp_now(),
+        backend: request.backend.as_str().to_string(),
+        agent_id: request.agent_id.clone(),
+        org_id: request.org_id.clone(),
+        action_type: request.action_type.clone(),
+        resource: request.resource.clone(),
+        module_name: request.module_name.clone(),
+        entrypoint: request.entrypoint.clone(),
+        entrypoint_result: Some(http_status as i32),
+        host_backend: "external_a2a".to_string(),
+        warrant_binding_status: "verified".to_string(),
+        warrant_id_hex: Some(format!("0x{}", hex::encode(audit_root.warrant_id))),
+        poge_merkle_root_hex: Some(audit_root.merkle_root_hex()),
+        poge_trace_len: Some(audit_root.trace_len),
+        poge_witness_digest_hex: Some(audit_root.witness_digest_hex()),
+        poge_session_label: Some(audit_root.session_label.clone()),
+        poge_epoch_start_ms: Some(audit_root.epoch_start_ms),
+        poge_epoch_end_ms: Some(audit_root.epoch_end_ms),
+        poge_module_digest_hex: Some(format!("0x{}", hex::encode(audit_root.module_digest))),
+        host_calls: vec![host_call.to_string()],
+        host_response_json: Some(response_json),
+    };
+
+    persist_shadow_run_capture(&capture)?;
+    Ok(capture)
+}
+
+fn run_shadow_backend_a2a_action(request: &ShadowRunRequest) -> ShadowResult<ShadowRunCapture> {
+    let url = request
+        .http_url
+        .as_deref()
+        .ok_or_else(|| "shadow a2a_action backend requires http_url".to_string())?;
+    let request_json = request.http_body_json.as_deref().ok_or_else(|| {
+        "shadow a2a_action backend requires semantic action request body".to_string()
+    })?;
+    let action_request = parse_semantic_a2a_action_request(request_json)?;
+    if action_request.actor_agent_id != request.agent_id
+        || action_request.actor_org_id != request.org_id
+    {
+        return Err(format!(
+            "a2a action actor mismatch: payload actor={}/{} but run requested {}/{}",
+            action_request.actor_agent_id,
+            action_request.actor_org_id,
+            request.agent_id,
+            request.org_id
+        ));
+    }
+    let expected_warrant = format!("0x{}", hex::encode(request.warrant.id));
+    if !action_request
+        .governance_warrant_id_hex
+        .trim()
+        .eq_ignore_ascii_case(&expected_warrant)
+    {
+        return Err(format!(
+            "a2a action warrant mismatch: payload={} expected={}",
+            action_request.governance_warrant_id_hex, expected_warrant
+        ));
+    }
+
+    let timeout_ms = 5_000_u64;
+    let response_limit = 32 * 1024;
+    let mut interceptor = PoGEInterceptor::new(
+        request.warrant.clone(),
+        shadow_a2a_action_module_digest(url, &request.http_headers, request_json),
+        format!(
+            "shadow:{}:{}:{}:{}",
+            request.org_id, request.agent_id, request.action_type, request.resource
+        ),
+    );
+
+    let request_bytes = request_json.as_bytes().to_vec();
+    let start_ms = current_epoch_ms();
+    let mut builder = ureq::post(url)
+        .config()
+        .timeout_global(Some(Duration::from_millis(timeout_ms)))
+        .http_status_as_error(false)
+        .build();
+    let mut has_content_type = false;
+    for (header_name, header_value) in &request.http_headers {
+        if header_name.eq_ignore_ascii_case("content-type") {
+            has_content_type = true;
+        }
+        builder = builder.header(header_name, header_value);
+    }
+    if !has_content_type {
+        builder = builder.header("content-type", "application/json");
+    }
+    let mut response = builder.send(request_json.to_string()).map_err(|error| {
+        format!(
+            "failed to execute external a2a semantic action POST {}: {}",
+            url, error
+        )
+    })?;
+
+    let http_status = response.status().as_u16();
+    let final_url = response.get_uri().to_string();
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .map(|value| String::from_utf8_lossy(value.as_bytes()).into_owned())
+        .unwrap_or_default();
+    let body_excerpt = response
+        .body_mut()
+        .with_config()
+        .limit(response_limit)
+        .lossy_utf8(true)
+        .read_to_string()
+        .unwrap_or_else(|error| format!("[body read failed: {error}]"));
+    let response_payload = serde_json::json!({
+        "status": if (200..400).contains(&http_status) { "ok" } else { "error" },
+        "url": url,
+        "final_url": final_url,
+        "http_status": http_status,
+        "content_type": content_type,
+        "a2a_schema": "meridian.a2a.action.v1",
+        "a2a_request_id": action_request.request_id,
+        "a2a_action_kind": action_request.action_kind,
+        "a2a_action_objective": action_request.action_objective,
+        "a2a_action_skill": action_request.action_skill,
+        "body_excerpt_utf8": body_excerpt,
+    });
+    let response_json = serde_json::to_string_pretty(&response_payload).map_err(io_err)?;
+    interceptor
+        .record_event(
+            HostCallKind::WebFetch,
+            start_ms,
+            &request_bytes,
+            response_json.as_bytes(),
+            !(200..400).contains(&http_status),
+        )
+        .map_err(|error| error.to_string())?;
+    let audit_root = interceptor.finalize().map_err(|error| error.to_string())?;
+    let capture = ShadowRunCapture {
+        execution_path: ensure_runtime_dir(&request.root)?.join("last_execution.json"),
+        shadow_latest_path: ensure_shadow_dir(&request.root)?.join("latest.json"),
+        parity_latest_path: ensure_parity_dir(&request.root)?.join("latest.json"),
+        parity_stream_path: ensure_parity_dir(&request.root)?.join("stream.jsonl"),
+        status: "shadow_run_captured".to_string(),
+        captured_at: timestamp_now(),
+        backend: request.backend.as_str().to_string(),
+        agent_id: request.agent_id.clone(),
+        org_id: request.org_id.clone(),
+        action_type: request.action_type.clone(),
+        resource: request.resource.clone(),
+        module_name: request.module_name.clone(),
+        entrypoint: request.entrypoint.clone(),
+        entrypoint_result: Some(http_status as i32),
+        host_backend: "external_a2a_action".to_string(),
+        warrant_binding_status: "verified".to_string(),
+        warrant_id_hex: Some(format!("0x{}", hex::encode(audit_root.warrant_id))),
+        poge_merkle_root_hex: Some(audit_root.merkle_root_hex()),
+        poge_trace_len: Some(audit_root.trace_len),
+        poge_witness_digest_hex: Some(audit_root.witness_digest_hex()),
+        poge_session_label: Some(audit_root.session_label.clone()),
+        poge_epoch_start_ms: Some(audit_root.epoch_start_ms),
+        poge_epoch_end_ms: Some(audit_root.epoch_end_ms),
+        poge_module_digest_hex: Some(format!("0x{}", hex::encode(audit_root.module_digest))),
+        host_calls: vec!["a2a.action.submit".to_string()],
+        host_response_json: Some(response_json),
+    };
+
+    persist_shadow_run_capture(&capture)?;
+    Ok(capture)
+}
+
+fn parse_grpc_target_from_url(raw: &str) -> ShadowResult<(String, bool)> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("grpc_action target is empty".to_string());
+    }
+    let (without_scheme, plaintext) = if let Some(rest) = trimmed.strip_prefix("https://") {
+        (rest, false)
+    } else if let Some(rest) = trimmed.strip_prefix("http://") {
+        (rest, true)
+    } else if let Some(rest) = trimmed.strip_prefix("grpcs://") {
+        (rest, false)
+    } else if let Some(rest) = trimmed.strip_prefix("grpc://") {
+        (rest, true)
+    } else {
+        (trimmed, true)
+    };
+    let target = without_scheme
+        .split('/')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if target.is_empty() {
+        return Err(format!(
+            "invalid grpc_action target '{}': expected host:port or scheme://host:port",
+            raw
+        ));
+    }
+    Ok((target, plaintext))
+}
+
+fn run_shadow_backend_grpc_action(request: &ShadowRunRequest) -> ShadowResult<ShadowRunCapture> {
+    let target_url = request
+        .http_url
+        .as_deref()
+        .ok_or_else(|| "shadow grpc_action backend requires http_url target".to_string())?;
+    let request_json = request.http_body_json.as_deref().ok_or_else(|| {
+        "shadow grpc_action backend requires semantic action request body".to_string()
+    })?;
+    let action_request = parse_semantic_a2a_action_request(request_json)?;
+    if action_request.actor_agent_id != request.agent_id
+        || action_request.actor_org_id != request.org_id
+    {
+        return Err(format!(
+            "grpc_action actor mismatch: payload actor={}/{} but run requested {}/{}",
+            action_request.actor_agent_id,
+            action_request.actor_org_id,
+            request.agent_id,
+            request.org_id
+        ));
+    }
+    let expected_warrant = format!("0x{}", hex::encode(request.warrant.id));
+    if !action_request
+        .governance_warrant_id_hex
+        .trim()
+        .eq_ignore_ascii_case(&expected_warrant)
+    {
+        return Err(format!(
+            "grpc_action warrant mismatch: payload={} expected={}",
+            action_request.governance_warrant_id_hex, expected_warrant
+        ));
+    }
+
+    let grpc_rpc = request
+        .http_method
+        .as_deref()
+        .unwrap_or("meridian.runtime.v1.ActionService/SubmitAction")
+        .trim()
+        .to_string();
+    let Some((grpc_service, grpc_method)) = grpc_rpc.split_once('/') else {
+        return Err(format!(
+            "invalid grpc_action rpc '{}': expected <Service>/<Method>",
+            grpc_rpc
+        ));
+    };
+    if grpc_service.trim().is_empty()
+        || grpc_method.trim().is_empty()
+        || grpc_method.contains('/')
+        || grpc_service.contains(' ')
+        || grpc_method.contains(' ')
+    {
+        return Err(format!(
+            "invalid grpc_action rpc '{}': expected <Service>/<Method> without spaces",
+            grpc_rpc
+        ));
+    }
+    let (grpc_target, inferred_plaintext) = parse_grpc_target_from_url(target_url)?;
+
+    let mut grpc_headers = Vec::new();
+    let mut grpc_proto_files = Vec::new();
+    let mut grpc_protosets = Vec::new();
+    let mut grpc_import_paths = Vec::new();
+    let mut grpc_authority = String::new();
+    let mut grpc_plaintext_override: Option<bool> = None;
+    let mut grpc_allow_unknown_fields = false;
+    let mut grpc_max_time_seconds = 5_u64;
+    for (name, value) in &request.http_headers {
+        let lower = name.to_ascii_lowercase();
+        match lower.as_str() {
+            "x-loom-grpc-proto" => grpc_proto_files.push(value.clone()),
+            "x-loom-grpc-protoset" => grpc_protosets.push(value.clone()),
+            "x-loom-grpc-import-path" => grpc_import_paths.push(value.clone()),
+            "x-loom-grpc-authority" => {
+                grpc_authority = value.trim().to_string();
+            }
+            "x-loom-grpc-plaintext" => {
+                let normalized = value.trim().to_ascii_lowercase();
+                if normalized == "true" || normalized == "1" || normalized == "yes" {
+                    grpc_plaintext_override = Some(true);
+                } else if normalized == "false" || normalized == "0" || normalized == "no" {
+                    grpc_plaintext_override = Some(false);
+                } else {
+                    return Err(format!(
+                        "invalid x-loom-grpc-plaintext value '{}': expected true/false",
+                        value
+                    ));
+                }
+            }
+            "x-loom-grpc-allow-unknown-fields" => {
+                let normalized = value.trim().to_ascii_lowercase();
+                if normalized == "true" || normalized == "1" || normalized == "yes" {
+                    grpc_allow_unknown_fields = true;
+                } else if normalized == "false" || normalized == "0" || normalized == "no" {
+                    grpc_allow_unknown_fields = false;
+                } else {
+                    return Err(format!(
+                        "invalid x-loom-grpc-allow-unknown-fields value '{}': expected true/false",
+                        value
+                    ));
+                }
+            }
+            "x-loom-grpc-max-time-seconds" => {
+                let parsed = value.trim().parse::<u64>().map_err(|error| {
+                    format!(
+                        "invalid x-loom-grpc-max-time-seconds value '{}': {}",
+                        value, error
+                    )
+                })?;
+                if !(1..=120).contains(&parsed) {
+                    return Err(format!(
+                        "invalid x-loom-grpc-max-time-seconds value '{}': expected 1..120",
+                        value
+                    ));
+                }
+                grpc_max_time_seconds = parsed;
+            }
+            _ => grpc_headers.push((name.clone(), value.clone())),
+        }
+    }
+    let plaintext = grpc_plaintext_override.unwrap_or(inferred_plaintext);
+
+    let start_ms = current_epoch_ms();
+    let mut interceptor = PoGEInterceptor::new_validated(
+        request.warrant.clone(),
+        shadow_grpc_action_module_digest(
+            &grpc_target,
+            &grpc_rpc,
+            &request.http_headers,
+            request_json,
+        ),
+        format!(
+            "shadow:{}:{}:{}:{}",
+            request.org_id, request.agent_id, request.action_type, request.resource
+        ),
+        start_ms,
+    )
+    .map_err(|error| format!("invalid kernel warrant: {}", error))?;
+    let request_bytes = request_json.as_bytes().to_vec();
+
+    let grpcurl_bin =
+        std::env::var("LOOM_SHADOW_GRPCURL_BIN").unwrap_or_else(|_| "grpcurl".to_string());
+    let mut command = Command::new(&grpcurl_bin);
+    command
+        .arg("-max-time")
+        .arg(grpc_max_time_seconds.to_string());
+    if plaintext {
+        command.arg("-plaintext");
+    }
+    if grpc_allow_unknown_fields {
+        command.arg("-allow-unknown-fields");
+    }
+    for (name, value) in &grpc_headers {
+        command.arg("-H").arg(format!("{}: {}", name, value));
+    }
+    if !grpc_authority.is_empty() {
+        command.arg("-authority").arg(&grpc_authority);
+    }
+    for import_path in &grpc_import_paths {
+        command.arg("-import-path").arg(import_path);
+    }
+    for proto in &grpc_proto_files {
+        command.arg("-proto").arg(proto);
+    }
+    for protoset in &grpc_protosets {
+        command.arg("-protoset").arg(protoset);
+    }
+    command.arg("-d").arg(request_json);
+    command.arg(&grpc_target).arg(&grpc_rpc);
+    let output = command.output().map_err(|error| match error.kind() {
+        ErrorKind::NotFound => format!(
+            "failed to execute grpc_action: '{}' not found. Install grpcurl or set LOOM_SHADOW_GRPCURL_BIN to a grpcurl-compatible binary",
+            grpcurl_bin
+        ),
+        _ => format!(
+            "failed to execute grpc_action via {} for {} {}: {}",
+            grpcurl_bin, grpc_target, grpc_rpc, error
+        ),
+    })?;
+    let exit_code = output.status.code();
+    let stdout_text = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr_text = String::from_utf8_lossy(&output.stderr).to_string();
+    let response_payload = serde_json::json!({
+        "status": if output.status.success() { "ok" } else { "error" },
+        "grpc_target": grpc_target,
+        "grpc_rpc": grpc_rpc,
+        "grpc_transport": if plaintext { "plaintext" } else { "tls" },
+        "grpc_allow_unknown_fields": grpc_allow_unknown_fields,
+        "grpc_max_time_seconds": grpc_max_time_seconds,
+        "grpc_schema": "meridian.a2a.action.v1",
+        "grpc_request_id": action_request.request_id,
+        "grpc_action_kind": action_request.action_kind,
+        "grpc_action_objective": action_request.action_objective,
+        "grpc_action_skill": action_request.action_skill,
+        "grpc_proto_count": grpc_proto_files.len(),
+        "grpc_protoset_count": grpc_protosets.len(),
+        "grpc_import_path_count": grpc_import_paths.len(),
+        "grpc_authority": grpc_authority,
+        "exit_code": exit_code,
+        "stdout_excerpt_utf8": stdout_text,
+        "stderr_excerpt_utf8": stderr_text,
+    });
+    let response_json = serde_json::to_string_pretty(&response_payload).map_err(io_err)?;
+    interceptor
+        .record_event(
+            HostCallKind::Extension,
+            start_ms,
+            &request_bytes,
+            response_json.as_bytes(),
+            !output.status.success(),
+        )
+        .map_err(|error| error.to_string())?;
+    let audit_root = interceptor.finalize().map_err(|error| error.to_string())?;
+    let capture = ShadowRunCapture {
+        execution_path: ensure_runtime_dir(&request.root)?.join("last_execution.json"),
+        shadow_latest_path: ensure_shadow_dir(&request.root)?.join("latest.json"),
+        parity_latest_path: ensure_parity_dir(&request.root)?.join("latest.json"),
+        parity_stream_path: ensure_parity_dir(&request.root)?.join("stream.jsonl"),
+        status: "shadow_run_captured".to_string(),
+        captured_at: timestamp_now(),
+        backend: request.backend.as_str().to_string(),
+        agent_id: request.agent_id.clone(),
+        org_id: request.org_id.clone(),
+        action_type: request.action_type.clone(),
+        resource: request.resource.clone(),
+        module_name: request.module_name.clone(),
+        entrypoint: request.entrypoint.clone(),
+        entrypoint_result: exit_code,
+        host_backend: "external_grpc_action".to_string(),
+        warrant_binding_status: "verified".to_string(),
+        warrant_id_hex: Some(format!("0x{}", hex::encode(audit_root.warrant_id))),
+        poge_merkle_root_hex: Some(audit_root.merkle_root_hex()),
+        poge_trace_len: Some(audit_root.trace_len),
+        poge_witness_digest_hex: Some(audit_root.witness_digest_hex()),
+        poge_session_label: Some(audit_root.session_label.clone()),
+        poge_epoch_start_ms: Some(audit_root.epoch_start_ms),
+        poge_epoch_end_ms: Some(audit_root.epoch_end_ms),
+        poge_module_digest_hex: Some(format!("0x{}", hex::encode(audit_root.module_digest))),
+        host_calls: vec!["grpc.action.submit".to_string()],
+        host_response_json: Some(response_json),
+    };
+
+    persist_shadow_run_capture(&capture)?;
+    persist_shadow_grpc_action_diagnostics(&request.root, &capture, &response_payload)?;
+    Ok(capture)
+}
+
+fn persist_shadow_run_capture(capture: &ShadowRunCapture) -> ShadowResult<()> {
+    let rendered = render_shadow_run_capture_json(capture);
+    fs::write(&capture.execution_path, &rendered).map_err(io_err)?;
+    fs::write(&capture.shadow_latest_path, &rendered).map_err(io_err)?;
+    fs::write(&capture.parity_latest_path, &rendered).map_err(io_err)?;
+    ensure_private_file(&capture.execution_path)?;
+    ensure_private_file(&capture.shadow_latest_path)?;
+    ensure_private_file(&capture.parity_latest_path)?;
+
+    let stream_entry = serde_json::to_string(&serde_json::json!({
+        "timestamp": &capture.captured_at,
+        "source": "shadow_run",
+        "backend": &capture.backend,
+        "agent_id": &capture.agent_id,
+        "org_id": &capture.org_id,
+        "action_type": &capture.action_type,
+        "resource": &capture.resource,
+        "warrant_binding_status": &capture.warrant_binding_status,
+        "poge_merkle_root_hex": &capture.poge_merkle_root_hex,
+        "artifact_path": capture.parity_latest_path.display().to_string(),
+    }))
+    .map_err(io_err)?;
+    append_line(&capture.parity_stream_path, &format!("{}\n", stream_entry))
+}
+
+fn shadow_run_capture_value(capture: &ShadowRunCapture) -> Value {
+    let backend_note = match capture.backend.as_str() {
+        "wasmtime" => {
+            "shadow run executed through the governed wasmtime backend with warrant-bound PoGE receipts"
+        }
+        "command" => {
+            "shadow run executed through the governed command backend with warrant-bound PoGE receipts"
+        }
+        "http" => {
+            "shadow run executed through the governed http backend with warrant-bound PoGE receipts"
+        }
+        "mcp" => {
+            "shadow run executed through the governed mcp backend with warrant-bound PoGE receipts"
+        }
+        "a2a" => {
+            "shadow run executed through the governed a2a backend with warrant-bound PoGE receipts"
+        }
+        "a2a_action" => {
+            "shadow run executed through the governed a2a semantic action backend with warrant-bound PoGE receipts"
+        }
+        "grpc_action" => {
+            "shadow run executed through the governed grpc semantic action backend with warrant-bound PoGE receipts"
+        }
+        _ => "shadow run executed through a governed backend with warrant-bound PoGE receipts",
+    };
+    serde_json::json!({
+        "status": &capture.status,
+        "backend": &capture.backend,
+        "captured_at": &capture.captured_at,
+        "agent_id": &capture.agent_id,
+        "org_id": &capture.org_id,
+        "action_type": &capture.action_type,
+        "resource": &capture.resource,
+        "module_name": &capture.module_name,
+        "entrypoint": &capture.entrypoint,
+        "entrypoint_result": capture.entrypoint_result,
+        "host_backend": &capture.host_backend,
+        "warrant_binding_status": &capture.warrant_binding_status,
+        "warrant_id_hex": &capture.warrant_id_hex,
+        "poge_merkle_root_hex": &capture.poge_merkle_root_hex,
+        "poge_trace_len": capture.poge_trace_len,
+        "poge_witness_digest_hex": &capture.poge_witness_digest_hex,
+        "poge_session_label": &capture.poge_session_label,
+        "poge_epoch_start_ms": capture.poge_epoch_start_ms,
+        "poge_epoch_end_ms": capture.poge_epoch_end_ms,
+        "poge_module_digest_hex": &capture.poge_module_digest_hex,
+        "host_calls": &capture.host_calls,
+        "host_response_json": &capture.host_response_json,
+        "execution_path": capture.execution_path.display().to_string(),
+        "shadow_latest_path": capture.shadow_latest_path.display().to_string(),
+        "parity_latest_path": capture.parity_latest_path.display().to_string(),
+        "note": backend_note,
+    })
+}
+
+fn shadow_command_module_digest(program: &str, args: &[String]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"MERIDIAN_SHADOW_COMMAND_BACKEND_V1\x00");
+    hasher.update((program.len() as u32).to_be_bytes());
+    hasher.update(program.as_bytes());
+    hasher.update((args.len() as u32).to_be_bytes());
+    for arg in args {
+        hasher.update((arg.len() as u32).to_be_bytes());
+        hasher.update(arg.as_bytes());
+    }
+    hasher.finalize().into()
+}
+
+fn shadow_http_module_digest(
+    method: &str,
+    url: &str,
+    headers: &[(String, String)],
+    body_json: Option<&str>,
+) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"MERIDIAN_SHADOW_HTTP_BACKEND_V1\x00");
+    hasher.update((method.len() as u32).to_be_bytes());
+    hasher.update(method.as_bytes());
+    hasher.update((url.len() as u32).to_be_bytes());
+    hasher.update(url.as_bytes());
+    hasher.update((headers.len() as u32).to_be_bytes());
+    for (name, value) in headers {
+        hasher.update((name.len() as u32).to_be_bytes());
+        hasher.update(name.as_bytes());
+        hasher.update((value.len() as u32).to_be_bytes());
+        hasher.update(value.as_bytes());
+    }
+    let body = body_json.unwrap_or_default();
+    hasher.update((body.len() as u32).to_be_bytes());
+    hasher.update(body.as_bytes());
+    hasher.finalize().into()
+}
+
+fn shadow_mcp_module_digest(url: &str, headers: &[(String, String)], body_json: &str) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"MERIDIAN_SHADOW_MCP_BACKEND_V1\x00");
+    hasher.update((url.len() as u32).to_be_bytes());
+    hasher.update(url.as_bytes());
+    hasher.update((headers.len() as u32).to_be_bytes());
+    for (name, value) in headers {
+        hasher.update((name.len() as u32).to_be_bytes());
+        hasher.update(name.as_bytes());
+        hasher.update((value.len() as u32).to_be_bytes());
+        hasher.update(value.as_bytes());
+    }
+    hasher.update((body_json.len() as u32).to_be_bytes());
+    hasher.update(body_json.as_bytes());
+    hasher.finalize().into()
+}
+
+fn shadow_a2a_module_digest(url: &str, headers: &[(String, String)], body_json: &str) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"MERIDIAN_SHADOW_A2A_BACKEND_V1\x00");
+    hasher.update((url.len() as u32).to_be_bytes());
+    hasher.update(url.as_bytes());
+    hasher.update((headers.len() as u32).to_be_bytes());
+    for (name, value) in headers {
+        hasher.update((name.len() as u32).to_be_bytes());
+        hasher.update(name.as_bytes());
+        hasher.update((value.len() as u32).to_be_bytes());
+        hasher.update(value.as_bytes());
+    }
+    hasher.update((body_json.len() as u32).to_be_bytes());
+    hasher.update(body_json.as_bytes());
+    hasher.finalize().into()
+}
+
+fn shadow_a2a_action_module_digest(
+    url: &str,
+    headers: &[(String, String)],
+    body_json: &str,
+) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"MERIDIAN_SHADOW_A2A_ACTION_BACKEND_V1\x00");
+    hasher.update((url.len() as u32).to_be_bytes());
+    hasher.update(url.as_bytes());
+    hasher.update((headers.len() as u32).to_be_bytes());
+    for (name, value) in headers {
+        hasher.update((name.len() as u32).to_be_bytes());
+        hasher.update(name.as_bytes());
+        hasher.update((value.len() as u32).to_be_bytes());
+        hasher.update(value.as_bytes());
+    }
+    hasher.update((body_json.len() as u32).to_be_bytes());
+    hasher.update(body_json.as_bytes());
+    hasher.finalize().into()
+}
+
+fn shadow_grpc_action_module_digest(
+    grpc_target: &str,
+    grpc_rpc: &str,
+    headers: &[(String, String)],
+    body_json: &str,
+) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"MERIDIAN_SHADOW_GRPC_ACTION_BACKEND_V1\x00");
+    hasher.update((grpc_target.len() as u32).to_be_bytes());
+    hasher.update(grpc_target.as_bytes());
+    hasher.update((grpc_rpc.len() as u32).to_be_bytes());
+    hasher.update(grpc_rpc.as_bytes());
+    hasher.update((headers.len() as u32).to_be_bytes());
+    for (name, value) in headers {
+        hasher.update((name.len() as u32).to_be_bytes());
+        hasher.update(name.as_bytes());
+        hasher.update((value.len() as u32).to_be_bytes());
+        hasher.update(value.as_bytes());
+    }
+    hasher.update((body_json.len() as u32).to_be_bytes());
+    hasher.update(body_json.as_bytes());
+    hasher.finalize().into()
+}
+
+fn persist_shadow_grpc_action_diagnostics(
+    root: &Path,
+    capture: &ShadowRunCapture,
+    response_payload: &Value,
+) -> ShadowResult<()> {
+    let diagnostics_dir = ensure_shadow_grpc_action_dir(root)?;
+    let latest_path = diagnostics_dir.join("latest.json");
+    let stream_path = diagnostics_dir.join("stream.jsonl");
+    let mut diagnostics_value = response_payload.clone();
+    if let Some(map) = diagnostics_value.as_object_mut() {
+        map.insert(
+            "captured_at".to_string(),
+            Value::String(capture.captured_at.clone()),
+        );
+        map.insert(
+            "backend".to_string(),
+            Value::String(capture.backend.clone()),
+        );
+        map.insert(
+            "host_backend".to_string(),
+            Value::String(capture.host_backend.clone()),
+        );
+        map.insert(
+            "agent_id".to_string(),
+            Value::String(capture.agent_id.clone()),
+        );
+        map.insert("org_id".to_string(), Value::String(capture.org_id.clone()));
+        map.insert(
+            "action_type".to_string(),
+            Value::String(capture.action_type.clone()),
+        );
+        map.insert(
+            "resource".to_string(),
+            Value::String(capture.resource.clone()),
+        );
+        map.insert(
+            "warrant_binding_status".to_string(),
+            Value::String(capture.warrant_binding_status.clone()),
+        );
+        if let Some(warrant_id) = capture.warrant_id_hex.as_ref() {
+            map.insert(
+                "warrant_id_hex".to_string(),
+                Value::String(warrant_id.clone()),
+            );
+        }
+        if let Some(merkle_root) = capture.poge_merkle_root_hex.as_ref() {
+            map.insert(
+                "poge_merkle_root_hex".to_string(),
+                Value::String(merkle_root.clone()),
+            );
+        }
+        if let Some(witness_digest) = capture.poge_witness_digest_hex.as_ref() {
+            map.insert(
+                "poge_witness_digest_hex".to_string(),
+                Value::String(witness_digest.clone()),
+            );
+        }
+        map.insert(
+            "execution_path".to_string(),
+            Value::String(capture.execution_path.display().to_string()),
+        );
+    }
+    let rendered = serde_json::to_string_pretty(&diagnostics_value).map_err(io_err)?;
+    fs::write(&latest_path, rendered).map_err(io_err)?;
+    ensure_private_file(&latest_path)?;
+    let stream_entry = serde_json::to_string(&diagnostics_value).map_err(io_err)?;
+    append_line(&stream_path, &format!("{}\n", stream_entry))?;
+    ensure_private_file(&stream_path)?;
+    Ok(())
 }
 
 struct EventIds {
@@ -4778,7 +6311,7 @@ fn send_runtime_service_request(socket_path: &Path, request: &str) -> ShadowResu
         }
     }
     Err(io_err(last_error.unwrap_or_else(|| {
-        io::Error::new(ErrorKind::Other, "runtime service socket connection failed")
+        io::Error::other("runtime service socket connection failed")
     })))
 }
 
@@ -4816,7 +6349,7 @@ fn send_runtime_service_http_request(
     }
     if !payload.is_empty() {
         request.push_str("Content-Type: application/json\r\n");
-        request.push_str(&format!("Content-Length: {}\r\n", payload.as_bytes().len()));
+        request.push_str(&format!("Content-Length: {}\r\n", payload.len()));
     } else {
         request.push_str("Content-Length: 0\r\n");
     }
@@ -5290,7 +6823,7 @@ fn mcp_tools_list(root: &Path, _kernel_path: Option<&Path>) -> String {
     let config = read_config(root).ok();
     let org_id = config
         .as_ref()
-        .and_then(|c| Some(c.org_id.clone()))
+        .map(|c| c.org_id.clone())
         .unwrap_or_else(|| "unknown".to_string());
     let mut tools = Vec::new();
     // Core tool: submit an action through the governed pipeline
@@ -5704,7 +7237,7 @@ fn parse_http_request(raw: &str) -> ShadowResult<HttpRequest> {
         }
     }
     if let Some(expected) = content_length {
-        let actual = body.as_bytes().len();
+        let actual = body.len();
         if actual != expected {
             return Err(format!(
                 "http request content-length mismatch: declared {} bytes but received {}",
@@ -5737,7 +7270,7 @@ fn build_http_response(status_code: u16, body: &str) -> String {
         "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
         status_code,
         status_text,
-        body.as_bytes().len(),
+        body.len(),
         body
     )
 }
@@ -7415,25 +8948,96 @@ pub fn render_compare_json(summary: &ComparisonSummary) -> String {
     )
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ShadowZkProofArtifact {
+    status: String,
+    proof_backend: String,
+    proof_mode: String,
+    proof_id: String,
+    verification_status: String,
+    warrant_binding_status: String,
+    warrant_id_hex: String,
+    merkle_root_hex: String,
+    witness_digest_hex: String,
+    trace_len: u32,
+    epoch_start_ms: u64,
+    epoch_end_ms: u64,
+    session_label: String,
+    captured_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct ShadowSettlementArtifact {
+    status: String,
+    captured_at: String,
+    proof_backend: String,
+    proof_status: String,
+    proof_id: String,
+    court_status: String,
+    authority_status: String,
+    treasury_status: String,
+    settlement_status: String,
+    reservation_id: Option<String>,
+    actual_cost_usd: Option<f64>,
+    witness_digest_hex: Option<String>,
+    merkle_root_hex: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ShadowGrpcActionDiagnostics {
+    status: String,
+    captured_at: String,
+    grpc_target: String,
+    grpc_rpc: String,
+    grpc_transport: String,
+    grpc_allow_unknown_fields: bool,
+    grpc_max_time_seconds: Option<u64>,
+    grpc_schema: String,
+    grpc_request_id: String,
+    grpc_action_kind: String,
+    grpc_action_objective: String,
+    grpc_action_skill: String,
+    grpc_proto_count: Option<u64>,
+    grpc_protoset_count: Option<u64>,
+    grpc_import_path_count: Option<u64>,
+    grpc_authority: String,
+    exit_code: Option<i32>,
+}
+
 pub fn render_shadow_report(root: &Path) -> ShadowResult<String> {
     let report_path = ensure_shadow_dir(root)?.join("latest.json");
     let contents = fs::read_to_string(&report_path).ok();
+    let shadow_latest = load_shadow_run_capture(&report_path);
     let reference_path = ensure_shadow_dir(root)?.join("reference.json");
     let reference = fs::read_to_string(&reference_path).ok();
     let decision_path = ensure_shadow_dir(root)?.join("decision.json");
     let decision = fs::read_to_string(&decision_path).ok();
     let runtime_path = ensure_runtime_dir(root)?.join("last_execution.json");
     let runtime = fs::read_to_string(&runtime_path).ok();
+    let runtime_capture = load_shadow_run_capture(&runtime_path);
     let runtime_event_path = runtime_event_latest_path(root)?;
     let runtime_event = fs::read_to_string(&runtime_event_path).ok();
     let parity_path = ensure_parity_dir(root)?.join("latest.json");
     let parity = fs::read_to_string(&parity_path).ok();
+    let parity_capture = load_shadow_run_capture(&parity_path);
+    let zk_path = artifact_root(root)?.join("zk").join("latest.json");
+    let zk = fs::read_to_string(&zk_path).ok();
+    let zk_latest = load_zk_proof_artifact(&zk_path);
+    let settlement_path = artifact_root(root)?.join("settlement").join("latest.json");
+    let settlement = fs::read_to_string(&settlement_path).ok();
+    let settlement_latest = load_settlement_artifact(&settlement_path);
+    let grpc_diagnostics_path = ensure_shadow_grpc_action_dir(root)?.join("latest.json");
+    let grpc_diagnostics = fs::read_to_string(&grpc_diagnostics_path).ok();
+    let grpc_diagnostics_latest = load_grpc_action_diagnostics_artifact(&grpc_diagnostics_path);
     if contents.is_none()
         && reference.is_none()
         && decision.is_none()
         && runtime.is_none()
         && runtime_event.is_none()
         && parity.is_none()
+        && zk.is_none()
+        && settlement.is_none()
+        && grpc_diagnostics.is_none()
     {
         return Err(format!(
             "could not read any shadow artifacts under {}",
@@ -7443,9 +9047,14 @@ pub fn render_shadow_report(root: &Path) -> ShadowResult<String> {
     let mut out = String::from(
         "Meridian Loom // SHADOW REPORT\n==============================\nphase:       experimental shadow + parity surface\nboundary:    report artifacts are real; governed runtime is not\n",
     );
-    let stale_latest = contents
+    let stale_latest = shadow_latest
         .as_ref()
-        .map(|value| value.contains("\"status\": \"not_started\""))
+        .map(|value| value.status == "not_started")
+        .or_else(|| {
+            contents
+                .as_ref()
+                .map(|value| value.contains("\"status\": \"not_started\""))
+        })
         .unwrap_or(false);
     let no_newer_artifacts =
         runtime.is_none() && parity.is_none() && decision.is_none() && reference.is_none();
@@ -7461,7 +9070,13 @@ pub fn render_shadow_report(root: &Path) -> ShadowResult<String> {
         return Ok(out);
     }
 
-    if let Some(runtime) = runtime.as_ref() {
+    if let Some(runtime_capture) = runtime_capture.as_ref() {
+        out.push_str(&render_shadow_run_summary(
+            "Runtime execution",
+            &runtime_path,
+            runtime_capture,
+        ));
+    } else if let Some(runtime) = runtime.as_ref() {
         out.push_str(&format!(
             "Runtime execution\n=================\nsource: {}\n\n{}\n",
             runtime_path.display(),
@@ -7475,11 +9090,60 @@ pub fn render_shadow_report(root: &Path) -> ShadowResult<String> {
             runtime_event
         ));
     }
-    if let Some(parity) = parity.as_ref() {
+    if let Some(parity_capture) = parity_capture.as_ref() {
+        out.push_str(&render_shadow_run_summary(
+            "Parity latest",
+            &parity_path,
+            parity_capture,
+        ));
+    } else if let Some(parity) = parity.as_ref() {
         out.push_str(&format!(
             "\nParity latest\n=============\nsource: {}\n\n{}\n",
             parity_path.display(),
             parity
+        ));
+    }
+    if let Some(zk_latest) = zk_latest.as_ref() {
+        out.push_str(&render_zk_proof_summary(&zk_path, zk_latest));
+    } else if let Some(zk) = zk.as_ref() {
+        out.push_str(&format!(
+            "\nZK proof latest\n===============\nsource: {}\n\n{}\n",
+            zk_path.display(),
+            zk
+        ));
+    }
+    if let Some(settlement_latest) = settlement_latest.as_ref() {
+        out.push_str(&render_settlement_summary(
+            &settlement_path,
+            settlement_latest,
+        ));
+    } else if let Some(settlement) = settlement.as_ref() {
+        out.push_str(&format!(
+            "\nSettlement latest\n=================\nsource: {}\n\n{}\n",
+            settlement_path.display(),
+            settlement
+        ));
+    }
+    if let Some(grpc_diagnostics_latest) = grpc_diagnostics_latest.as_ref() {
+        out.push_str(&render_grpc_action_diagnostics_summary(
+            &grpc_diagnostics_path,
+            grpc_diagnostics_latest,
+        ));
+    } else if let Some(runtime_capture) = runtime_capture
+        .as_ref()
+        .and_then(load_grpc_action_diagnostics)
+    {
+        out.push_str(&render_grpc_action_diagnostics_summary(
+            &runtime_path,
+            &runtime_capture,
+        ));
+    } else if let Some(shadow_capture) = shadow_latest
+        .as_ref()
+        .and_then(load_grpc_action_diagnostics)
+    {
+        out.push_str(&render_grpc_action_diagnostics_summary(
+            &report_path,
+            &shadow_capture,
         ));
     }
     if let Some(decision) = decision.as_ref() {
@@ -7496,7 +9160,13 @@ pub fn render_shadow_report(root: &Path) -> ShadowResult<String> {
             reference
         ));
     }
-    if let Some(contents) = contents.as_ref() {
+    if let Some(shadow_latest) = shadow_latest.as_ref() {
+        out.push_str(&render_shadow_run_summary(
+            "Shadow latest",
+            &report_path,
+            shadow_latest,
+        ));
+    } else if let Some(contents) = contents.as_ref() {
         let label = if stale_latest && (runtime.is_some() || parity.is_some()) {
             "Legacy shadow marker"
         } else {
@@ -7520,10 +9190,552 @@ pub fn render_shadow_report(root: &Path) -> ShadowResult<String> {
     Ok(out)
 }
 
+fn load_shadow_run_capture(path: &Path) -> Option<ShadowRunCapture> {
+    let value = load_artifact_json(path)?;
+    if value.get("status").and_then(Value::as_str) != Some("shadow_run_captured") {
+        return None;
+    }
+    Some(ShadowRunCapture {
+        execution_path: PathBuf::from(value_string(value.get("execution_path"))),
+        shadow_latest_path: PathBuf::from(value_string(value.get("shadow_latest_path"))),
+        parity_latest_path: PathBuf::from(value_string(value.get("parity_latest_path"))),
+        parity_stream_path: path
+            .parent()
+            .map(|parent| parent.join("stream.jsonl"))
+            .unwrap_or_else(|| PathBuf::from("stream.jsonl")),
+        status: value_string(value.get("status")),
+        captured_at: value_string(value.get("captured_at")),
+        backend: value_string(value.get("backend")),
+        agent_id: value_string(value.get("agent_id")),
+        org_id: value_string(value.get("org_id")),
+        action_type: value_string(value.get("action_type")),
+        resource: value_string(value.get("resource")),
+        module_name: value_string(value.get("module_name")),
+        entrypoint: value_string(value.get("entrypoint")),
+        entrypoint_result: value
+            .get("entrypoint_result")
+            .and_then(Value::as_i64)
+            .map(|value| value as i32),
+        host_backend: value_string(value.get("host_backend")),
+        warrant_binding_status: value_string(value.get("warrant_binding_status")),
+        warrant_id_hex: optional_value_string(value.get("warrant_id_hex")),
+        poge_merkle_root_hex: optional_value_string(value.get("poge_merkle_root_hex")),
+        poge_trace_len: value
+            .get("poge_trace_len")
+            .and_then(Value::as_u64)
+            .map(|value| value as u32),
+        poge_witness_digest_hex: optional_value_string(value.get("poge_witness_digest_hex")),
+        poge_session_label: optional_value_string(value.get("poge_session_label")),
+        poge_epoch_start_ms: value.get("poge_epoch_start_ms").and_then(Value::as_u64),
+        poge_epoch_end_ms: value.get("poge_epoch_end_ms").and_then(Value::as_u64),
+        poge_module_digest_hex: optional_value_string(value.get("poge_module_digest_hex")),
+        host_calls: value_string_vec(value.get("host_calls")),
+        host_response_json: optional_value_string(value.get("host_response_json")),
+    })
+}
+
+fn load_zk_proof_artifact(path: &Path) -> Option<ShadowZkProofArtifact> {
+    let value = load_artifact_json(path)?;
+    Some(ShadowZkProofArtifact {
+        status: value_string(value.get("status")),
+        proof_backend: value_string(value.get("proof_backend")),
+        proof_mode: value_string(value.get("proof_mode")),
+        proof_id: value_string(value.get("proof_id")),
+        verification_status: value_string(value.get("verification_status")),
+        warrant_binding_status: value_string(value.get("warrant_binding_status")),
+        warrant_id_hex: value_string(value.get("warrant_id_hex")),
+        merkle_root_hex: value_string(value.get("poge_merkle_root_hex")),
+        witness_digest_hex: value_string(value.get("witness_digest_hex")),
+        trace_len: value
+            .get("poge_trace_len")
+            .and_then(Value::as_u64)
+            .unwrap_or_default() as u32,
+        epoch_start_ms: value
+            .get("poge_epoch_start_ms")
+            .and_then(Value::as_u64)
+            .unwrap_or_default(),
+        epoch_end_ms: value
+            .get("poge_epoch_end_ms")
+            .and_then(Value::as_u64)
+            .unwrap_or_default(),
+        session_label: value_string(value.get("poge_session_label")),
+        captured_at: value_string(value.get("captured_at")),
+    })
+}
+
+fn load_settlement_artifact(path: &Path) -> Option<ShadowSettlementArtifact> {
+    let value = load_artifact_json(path)?;
+    Some(ShadowSettlementArtifact {
+        status: value_string(value.get("status")),
+        captured_at: value_string(value.get("captured_at")),
+        proof_backend: value_string(value.get("proof_backend")),
+        proof_status: value_string(value.get("proof_status")),
+        proof_id: value_string(value.get("proof_id")),
+        court_status: value_string(value.get("court_status")),
+        authority_status: value_string(value.get("authority_status")),
+        treasury_status: value_string(value.get("treasury_status")),
+        settlement_status: value_string(value.get("settlement_status")),
+        reservation_id: optional_value_string(value.get("reservation_id")),
+        actual_cost_usd: value.get("actual_cost_usd").and_then(Value::as_f64),
+        witness_digest_hex: optional_value_string(value.get("witness_digest_hex")),
+        merkle_root_hex: optional_value_string(value.get("poge_merkle_root_hex")),
+    })
+}
+
+fn load_artifact_json(path: &Path) -> Option<Value> {
+    let raw = fs::read_to_string(path).ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+fn optional_value_string(value: Option<&Value>) -> Option<String> {
+    let rendered = value_string(value);
+    if rendered.is_empty() || rendered == "null" {
+        None
+    } else {
+        Some(rendered)
+    }
+}
+
+fn load_grpc_action_diagnostics(capture: &ShadowRunCapture) -> Option<ShadowGrpcActionDiagnostics> {
+    if capture.backend != "grpc_action" && capture.host_backend != "external_grpc_action" {
+        return None;
+    }
+    let raw = capture.host_response_json.as_deref()?;
+    let value: Value = serde_json::from_str(raw).ok()?;
+    let mut diagnostics = grpc_action_diagnostics_from_value(&value);
+    if diagnostics.captured_at.is_empty() {
+        diagnostics.captured_at = capture.captured_at.clone();
+    }
+    Some(diagnostics)
+}
+
+fn load_grpc_action_diagnostics_artifact(path: &Path) -> Option<ShadowGrpcActionDiagnostics> {
+    let value = load_artifact_json(path)?;
+    Some(grpc_action_diagnostics_from_value(&value))
+}
+
+fn grpc_action_diagnostics_from_value(value: &Value) -> ShadowGrpcActionDiagnostics {
+    ShadowGrpcActionDiagnostics {
+        status: value_string(value.get("status")),
+        captured_at: value_string(value.get("captured_at")),
+        grpc_target: value_string(value.get("grpc_target")),
+        grpc_rpc: value_string(value.get("grpc_rpc")),
+        grpc_transport: value_string(value.get("grpc_transport")),
+        grpc_allow_unknown_fields: value
+            .get("grpc_allow_unknown_fields")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        grpc_max_time_seconds: value.get("grpc_max_time_seconds").and_then(Value::as_u64),
+        grpc_schema: value_string(value.get("grpc_schema")),
+        grpc_request_id: value_string(value.get("grpc_request_id")),
+        grpc_action_kind: value_string(value.get("grpc_action_kind")),
+        grpc_action_objective: value_string(value.get("grpc_action_objective")),
+        grpc_action_skill: value_string(value.get("grpc_action_skill")),
+        grpc_proto_count: value.get("grpc_proto_count").and_then(Value::as_u64),
+        grpc_protoset_count: value.get("grpc_protoset_count").and_then(Value::as_u64),
+        grpc_import_path_count: value.get("grpc_import_path_count").and_then(Value::as_u64),
+        grpc_authority: value_string(value.get("grpc_authority")),
+        exit_code: value
+            .get("exit_code")
+            .and_then(Value::as_i64)
+            .map(|code| code as i32),
+    }
+}
+
+fn grpc_action_diagnostics_to_value(diagnostics: &ShadowGrpcActionDiagnostics) -> Value {
+    serde_json::json!({
+        "status": diagnostics.status,
+        "captured_at": diagnostics.captured_at,
+        "grpc_target": diagnostics.grpc_target,
+        "grpc_rpc": diagnostics.grpc_rpc,
+        "grpc_transport": diagnostics.grpc_transport,
+        "grpc_allow_unknown_fields": diagnostics.grpc_allow_unknown_fields,
+        "grpc_max_time_seconds": diagnostics.grpc_max_time_seconds,
+        "grpc_schema": diagnostics.grpc_schema,
+        "grpc_request_id": diagnostics.grpc_request_id,
+        "grpc_action_kind": diagnostics.grpc_action_kind,
+        "grpc_action_objective": diagnostics.grpc_action_objective,
+        "grpc_action_skill": diagnostics.grpc_action_skill,
+        "grpc_proto_count": diagnostics.grpc_proto_count,
+        "grpc_protoset_count": diagnostics.grpc_protoset_count,
+        "grpc_import_path_count": diagnostics.grpc_import_path_count,
+        "grpc_authority": diagnostics.grpc_authority,
+        "exit_code": diagnostics.exit_code,
+    })
+}
+
+fn render_shadow_run_summary(title: &str, source: &Path, capture: &ShadowRunCapture) -> String {
+    let host_calls = if capture.host_calls.is_empty() {
+        "(none)".to_string()
+    } else {
+        capture.host_calls.join(", ")
+    };
+    let source_label = match title {
+        "Runtime execution" => "typed runtime execution",
+        "Shadow latest" => "typed shadow capture",
+        "Parity latest" => "typed parity capture",
+        _ => "typed shadow artifact",
+    };
+    let mut output = format!(
+        "\n{}\n{}\nsource: {} @ {}\nstatus:      {}\nbackend:     {}\nagent_id:    {}\norg_id:      {}\naction_type: {}\nresource:    {}\nmodule_name: {}\nentrypoint:  {}\nresult:      {}\nhost_backend:{}\nwarrant:     {}\npoge_root:   {}\nwitness:     {}\nhost_calls:  {}\n",
+        title,
+        "=".repeat(title.len()),
+        source_label,
+        source.display(),
+        capture.status,
+        capture.backend,
+        capture.agent_id,
+        capture.org_id,
+        capture.action_type,
+        capture.resource,
+        capture.module_name,
+        capture.entrypoint,
+        capture
+            .entrypoint_result
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "null".to_string()),
+        capture.host_backend,
+        capture.warrant_binding_status,
+        capture
+            .poge_merkle_root_hex
+            .as_deref()
+            .unwrap_or("(none)"),
+        capture
+            .poge_witness_digest_hex
+            .as_deref()
+            .unwrap_or("(none)"),
+        host_calls,
+    );
+    if let Some(diag) = load_grpc_action_diagnostics(capture) {
+        output.push_str(&format!(
+            "grpc_target: {}\ngrpc_rpc:    {}\ngrpc_status: {}\ngrpc_transport: {}\ngrpc_allow_unknown_fields: {}\ngrpc_max_time_seconds: {}\ngrpc_proto_count: {}\ngrpc_protoset_count: {}\ngrpc_import_path_count: {}\ngrpc_authority: {}\ngrpc_schema: {}\ngrpc_request_id: {}\ngrpc_action_kind: {}\ngrpc_action_objective: {}\ngrpc_action_skill: {}\ngrpc_exit_code: {}\n",
+            if diag.grpc_target.is_empty() { "(none)" } else { diag.grpc_target.as_str() },
+            if diag.grpc_rpc.is_empty() { "(none)" } else { diag.grpc_rpc.as_str() },
+            if diag.status.is_empty() { "(none)" } else { diag.status.as_str() },
+            if diag.grpc_transport.is_empty() { "(none)" } else { diag.grpc_transport.as_str() },
+            if diag.grpc_allow_unknown_fields { "true" } else { "false" },
+            diag.grpc_max_time_seconds
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "(none)".to_string()),
+            diag.grpc_proto_count
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "(none)".to_string()),
+            diag.grpc_protoset_count
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "(none)".to_string()),
+            diag.grpc_import_path_count
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "(none)".to_string()),
+            if diag.grpc_authority.is_empty() { "(none)" } else { diag.grpc_authority.as_str() },
+            if diag.grpc_schema.is_empty() { "(none)" } else { diag.grpc_schema.as_str() },
+            if diag.grpc_request_id.is_empty() { "(none)" } else { diag.grpc_request_id.as_str() },
+            if diag.grpc_action_kind.is_empty() { "(none)" } else { diag.grpc_action_kind.as_str() },
+            if diag.grpc_action_objective.is_empty() { "(none)" } else { diag.grpc_action_objective.as_str() },
+            if diag.grpc_action_skill.is_empty() { "(none)" } else { diag.grpc_action_skill.as_str() },
+            diag.exit_code
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "(none)".to_string()),
+        ));
+    }
+    output
+}
+
+fn render_zk_proof_summary(path: &Path, artifact: &ShadowZkProofArtifact) -> String {
+    format!(
+        "\nZK proof latest\n===============\nsource: typed zk proof @ {}\nstatus:             {}\nproof_backend:      {}\nproof_mode:         {}\nproof_id:           {}\nverification:       {}\nwarrant_binding:    {}\nwarrant_id:         {}\npoge_merkle_root:   {}\nwitness_digest:     {}\ntrace_len:          {}\nsession_label:      {}\ncaptured_at:        {}\n",
+        path.display(),
+        artifact.status,
+        artifact.proof_backend,
+        artifact.proof_mode,
+        artifact.proof_id,
+        artifact.verification_status,
+        artifact.warrant_binding_status,
+        artifact.warrant_id_hex,
+        artifact.merkle_root_hex,
+        artifact.witness_digest_hex,
+        artifact.trace_len,
+        artifact.session_label,
+        artifact.captured_at,
+    )
+}
+
+fn render_settlement_summary(path: &Path, artifact: &ShadowSettlementArtifact) -> String {
+    format!(
+        "\nSettlement latest\n=================\nsource: typed settlement artifact @ {}\nstatus:             {}\nproof_backend:      {}\nproof_status:       {}\nproof_id:           {}\ncourt_status:       {}\nauthority_status:   {}\ntreasury_status:    {}\nsettlement_status:  {}\nreservation_id:     {}\nactual_cost_usd:    {}\nwitness_digest:     {}\npoge_merkle_root:   {}\ncaptured_at:        {}\n",
+        path.display(),
+        artifact.status,
+        artifact.proof_backend,
+        artifact.proof_status,
+        artifact.proof_id,
+        artifact.court_status,
+        artifact.authority_status,
+        artifact.treasury_status,
+        artifact.settlement_status,
+        artifact
+            .reservation_id
+            .as_deref()
+            .unwrap_or("(none)"),
+        artifact
+            .actual_cost_usd
+            .map(|value| format!("{:.6}", value))
+            .unwrap_or_else(|| "(none)".to_string()),
+        artifact
+            .witness_digest_hex
+            .as_deref()
+            .unwrap_or("(none)"),
+        artifact
+            .merkle_root_hex
+            .as_deref()
+            .unwrap_or("(none)"),
+        artifact.captured_at,
+    )
+}
+
+fn render_grpc_action_diagnostics_summary(
+    path: &Path,
+    artifact: &ShadowGrpcActionDiagnostics,
+) -> String {
+    format!(
+        "\nGrpc action diagnostics latest\n==============================\nsource: typed grpc diagnostics @ {}\nstatus:                  {}\ncaptured_at:             {}\ngrpc_target:             {}\ngrpc_rpc:                {}\ngrpc_transport:          {}\ngrpc_allow_unknown:      {}\ngrpc_max_time_seconds:   {}\ngrpc_proto_count:        {}\ngrpc_protoset_count:     {}\ngrpc_import_path_count:  {}\ngrpc_authority:          {}\ngrpc_schema:             {}\ngrpc_request_id:         {}\ngrpc_action_kind:        {}\ngrpc_action_objective:   {}\ngrpc_action_skill:       {}\ngrpc_exit_code:          {}\n",
+        path.display(),
+        if artifact.status.is_empty() {
+            "(none)"
+        } else {
+            artifact.status.as_str()
+        },
+        if artifact.captured_at.is_empty() {
+            "(none)"
+        } else {
+            artifact.captured_at.as_str()
+        },
+        if artifact.grpc_target.is_empty() {
+            "(none)"
+        } else {
+            artifact.grpc_target.as_str()
+        },
+        if artifact.grpc_rpc.is_empty() {
+            "(none)"
+        } else {
+            artifact.grpc_rpc.as_str()
+        },
+        if artifact.grpc_transport.is_empty() {
+            "(none)"
+        } else {
+            artifact.grpc_transport.as_str()
+        },
+        if artifact.grpc_allow_unknown_fields {
+            "true"
+        } else {
+            "false"
+        },
+        artifact
+            .grpc_max_time_seconds
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "(none)".to_string()),
+        artifact
+            .grpc_proto_count
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "(none)".to_string()),
+        artifact
+            .grpc_protoset_count
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "(none)".to_string()),
+        artifact
+            .grpc_import_path_count
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "(none)".to_string()),
+        if artifact.grpc_authority.is_empty() {
+            "(none)"
+        } else {
+            artifact.grpc_authority.as_str()
+        },
+        if artifact.grpc_schema.is_empty() {
+            "(none)"
+        } else {
+            artifact.grpc_schema.as_str()
+        },
+        if artifact.grpc_request_id.is_empty() {
+            "(none)"
+        } else {
+            artifact.grpc_request_id.as_str()
+        },
+        if artifact.grpc_action_kind.is_empty() {
+            "(none)"
+        } else {
+            artifact.grpc_action_kind.as_str()
+        },
+        if artifact.grpc_action_objective.is_empty() {
+            "(none)"
+        } else {
+            artifact.grpc_action_objective.as_str()
+        },
+        if artifact.grpc_action_skill.is_empty() {
+            "(none)"
+        } else {
+            artifact.grpc_action_skill.as_str()
+        },
+        artifact
+            .exit_code
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "(none)".to_string()),
+    )
+}
+
+pub fn render_shadow_grpc_action_diagnostics_report(
+    root: &Path,
+    limit: usize,
+) -> ShadowResult<String> {
+    if limit == 0 {
+        return Err("shadow grpc diagnostics report requires limit >= 1".to_string());
+    }
+    let latest_path = ensure_shadow_grpc_action_dir(root)?.join("latest.json");
+    let stream_path = ensure_shadow_grpc_action_dir(root)?.join("stream.jsonl");
+    let latest = load_grpc_action_diagnostics_artifact(&latest_path);
+    let stream_contents = fs::read_to_string(&stream_path).ok();
+    let mut recent = stream_contents
+        .as_deref()
+        .map(|contents| {
+            contents
+                .lines()
+                .filter_map(|line| {
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() {
+                        return None;
+                    }
+                    let value: Value = serde_json::from_str(trimmed).ok()?;
+                    Some(grpc_action_diagnostics_from_value(&value))
+                })
+                .filter(|entry| {
+                    !entry.status.is_empty()
+                        || !entry.grpc_target.is_empty()
+                        || !entry.grpc_rpc.is_empty()
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if recent.len() > limit {
+        recent = recent.split_off(recent.len() - limit);
+    }
+    let mut out = String::from(
+        "Meridian Loom // SHADOW GRPC DIAGNOSTICS\n========================================\nphase:       typed grpc diagnostics operator surface\nboundary:    shows persisted grpc_action transport diagnostics only\n",
+    );
+    if latest.is_none() && recent.is_empty() {
+        out.push_str(&format!(
+            "\nCurrent state\n=============\nstatus:      not_started\nmeaning:     no grpc_action diagnostics artifacts captured yet\nsource:      {}\n\nRecommended next step\n=====================\n1. loom shadow run --backend grpc_action --root {} --kernel-path /opt/meridian-kernel --agent-id agent_atlas --warrant-file ./shadow-warrant.json --url grpc://grpcb.in:9000 --grpc-service grpcbin.GRPCBin --grpc-method DummyUnary --format human\n2. loom shadow grpc-diagnostics --root {} --limit {}\n",
+            latest_path.display(),
+            root.display(),
+            root.display(),
+            limit,
+        ));
+        return Ok(out);
+    }
+    if let Some(latest) = latest.as_ref() {
+        out.push_str(&render_grpc_action_diagnostics_summary(
+            &latest_path,
+            latest,
+        ));
+    } else {
+        out.push_str(&format!(
+            "\nGrpc action diagnostics latest\n==============================\nsource: {}\nstatus:                  missing\n",
+            latest_path.display(),
+        ));
+    }
+    out.push_str(&format!(
+        "\nGrpc action diagnostics recent\n==============================\nsource: typed grpc diagnostics stream @ {}\nlimit: {}\ncount: {}\n",
+        stream_path.display(),
+        limit,
+        recent.len(),
+    ));
+    if recent.is_empty() {
+        out.push_str("status:                  no_stream_entries\n");
+    } else {
+        for (index, entry) in recent.iter().enumerate() {
+            out.push_str(&format!(
+                "entry[{index}]: captured_at={} status={} rpc={} target={} transport={} exit={}\n",
+                if entry.captured_at.is_empty() {
+                    "(none)"
+                } else {
+                    entry.captured_at.as_str()
+                },
+                if entry.status.is_empty() {
+                    "(none)"
+                } else {
+                    entry.status.as_str()
+                },
+                if entry.grpc_rpc.is_empty() {
+                    "(none)"
+                } else {
+                    entry.grpc_rpc.as_str()
+                },
+                if entry.grpc_target.is_empty() {
+                    "(none)"
+                } else {
+                    entry.grpc_target.as_str()
+                },
+                if entry.grpc_transport.is_empty() {
+                    "(none)"
+                } else {
+                    entry.grpc_transport.as_str()
+                },
+                entry
+                    .exit_code
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "(none)".to_string()),
+            ));
+        }
+    }
+    Ok(out)
+}
+
+pub fn render_shadow_grpc_action_diagnostics_json(
+    root: &Path,
+    limit: usize,
+) -> ShadowResult<String> {
+    if limit == 0 {
+        return Err("shadow grpc diagnostics json requires limit >= 1".to_string());
+    }
+    let latest_path = ensure_shadow_grpc_action_dir(root)?.join("latest.json");
+    let stream_path = ensure_shadow_grpc_action_dir(root)?.join("stream.jsonl");
+    let latest = load_grpc_action_diagnostics_artifact(&latest_path);
+    let stream_contents = fs::read_to_string(&stream_path).ok();
+    let mut recent = stream_contents
+        .as_deref()
+        .map(|contents| {
+            contents
+                .lines()
+                .filter_map(|line| {
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() {
+                        return None;
+                    }
+                    let value = serde_json::from_str::<Value>(trimmed).ok()?;
+                    Some(grpc_action_diagnostics_from_value(&value))
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if recent.len() > limit {
+        recent = recent.split_off(recent.len() - limit);
+    }
+    let payload = serde_json::json!({
+        "status": if latest.is_some() || !recent.is_empty() { "ok" } else { "not_started" },
+        "latest_path": latest_path.display().to_string(),
+        "stream_path": stream_path.display().to_string(),
+        "limit": limit,
+        "latest": latest.as_ref().map(grpc_action_diagnostics_to_value),
+        "recent": recent
+            .iter()
+            .map(grpc_action_diagnostics_to_value)
+            .collect::<Vec<_>>(),
+    });
+    serde_json::to_string_pretty(&payload).map_err(io_err)
+}
+
 pub fn render_parity_report(root: &Path) -> ShadowResult<String> {
     let parity_dir = ensure_parity_dir(root)?;
     let report_path = parity_dir.join("latest.json");
     let contents = fs::read_to_string(&report_path).ok();
+    let parity_capture = load_shadow_run_capture(&report_path);
     let stream_path = parity_dir.join("stream.jsonl");
     let stream = fs::read_to_string(&stream_path).ok();
     let reference_latest_path = parity_dir.join("reference_latest.json");
@@ -7542,6 +9754,16 @@ pub fn render_parity_report(root: &Path) -> ShadowResult<String> {
     let reference_probe = fs::read_to_string(&reference_probe_path).ok();
     let reference_probe_stream_path = parity_dir.join("reference_probe_stream.jsonl");
     let reference_probe_stream = fs::read_to_string(&reference_probe_stream_path).ok();
+    let zk_latest_path = artifact_root(root)?.join("zk").join("latest.json");
+    let zk_latest = fs::read_to_string(&zk_latest_path).ok();
+    let zk_artifact = load_zk_proof_artifact(&zk_latest_path);
+    let settlement_latest_path = artifact_root(root)?.join("settlement").join("latest.json");
+    let settlement_latest = fs::read_to_string(&settlement_latest_path).ok();
+    let settlement_artifact = load_settlement_artifact(&settlement_latest_path);
+    let grpc_diagnostics_latest_path = ensure_shadow_grpc_action_dir(root)?.join("latest.json");
+    let grpc_diagnostics_latest = fs::read_to_string(&grpc_diagnostics_latest_path).ok();
+    let grpc_diagnostics_artifact =
+        load_grpc_action_diagnostics_artifact(&grpc_diagnostics_latest_path);
     if contents.is_none()
         && stream.is_none()
         && reference_latest.is_none()
@@ -7552,6 +9774,9 @@ pub fn render_parity_report(root: &Path) -> ShadowResult<String> {
         && event_stream.is_none()
         && reference_probe.is_none()
         && reference_probe_stream.is_none()
+        && zk_latest.is_none()
+        && settlement_latest.is_none()
+        && grpc_diagnostics_latest.is_none()
     {
         return Ok(format!(
             "Meridian Loom // PARITY REPORT\n===============================\nphase:       runtime-side parity surface\nboundary:    parity artifacts appear only after runtime rehearsal\n\nCurrent state\n=============\nstatus:      not_started\nmeaning:     no parity stream, parity report, or live reference probe has been captured yet\n\nRecommended next step\n=====================\n1. loom action execute --agent-id agent_atlas --action-type research --resource web_search --kernel-path /opt/meridian-kernel --root {}\n2. loom shadow report --root {}\n3. Re-run loom parity report after runtime rehearsal artifacts exist.\n",
@@ -7559,10 +9784,22 @@ pub fn render_parity_report(root: &Path) -> ShadowResult<String> {
             root.display(),
         ));
     }
+    let parity_latest_section = parity_capture
+        .as_ref()
+        .map(|capture| render_shadow_run_summary("Parity latest", &report_path, capture))
+        .unwrap_or_else(|| {
+            format!(
+                "Parity latest\n=============\nsource: {}\n\n{}\n",
+                report_path.display(),
+                contents.unwrap_or_else(|| {
+                    "{\n  \"status\": \"missing\",\n  \"note\": \"latest parity report has not been captured yet\"\n}\n"
+                        .to_string()
+                })
+            )
+        });
     let mut out = format!(
-        "Meridian Loom // PARITY REPORT\n===============================\nphase:       runtime-side parity surface\nboundary:    action-level parity now compares Loom runtime events to the reference adapter; live host probe remains supplementary\n\nParity latest\n=============\nsource: {}\n\n{}\nParity stream\n=============\nsource: {}\n\n{}\n",
-        report_path.display(),
-        contents.unwrap_or_else(|| "{\n  \"status\": \"missing\",\n  \"note\": \"latest parity report has not been captured yet\"\n}\n".to_string()),
+        "Meridian Loom // PARITY REPORT\n===============================\nphase:       runtime-side parity surface\nboundary:    action-level parity now compares Loom runtime events to the reference adapter; live host probe remains supplementary\n{}\nParity stream\n=============\nsource: {}\n\n{}\n",
+        parity_latest_section,
         stream_path.display(),
         stream.unwrap_or_else(|| "# parity stream not captured yet\n".to_string()),
     );
@@ -7688,6 +9925,66 @@ pub fn render_parity_report(root: &Path) -> ShadowResult<String> {
                     .to_string()
             }),
     );
+    out.push_str(
+        &zk_artifact
+            .as_ref()
+            .map(|artifact| render_zk_proof_summary(&zk_latest_path, artifact))
+            .or_else(|| {
+                zk_latest.as_ref().map(|contents| {
+                    format!(
+                        "ZK proof latest\n===============\nsource: {}\n\n{}\n",
+                        zk_latest_path.display(),
+                        contents
+                    )
+                })
+            })
+            .unwrap_or_else(|| {
+                "ZK proof latest\n===============\nsource: (not captured)\n\n".to_string()
+            }),
+    );
+    out.push_str(
+        &settlement_artifact
+            .as_ref()
+            .map(|artifact| render_settlement_summary(&settlement_latest_path, artifact))
+            .or_else(|| {
+                settlement_latest.as_ref().map(|contents| {
+                    format!(
+                        "Settlement latest\n=================\nsource: {}\n\n{}\n",
+                        settlement_latest_path.display(),
+                        contents
+                    )
+                })
+            })
+            .unwrap_or_else(|| {
+                "Settlement latest\n=================\nsource: (not captured)\n\n".to_string()
+            }),
+    );
+    out.push_str(
+        &grpc_diagnostics_artifact
+            .as_ref()
+            .map(|artifact| {
+                render_grpc_action_diagnostics_summary(&grpc_diagnostics_latest_path, artifact)
+            })
+            .or_else(|| {
+                parity_capture
+                    .as_ref()
+                    .and_then(load_grpc_action_diagnostics)
+                    .map(|artifact| render_grpc_action_diagnostics_summary(&report_path, &artifact))
+            })
+            .or_else(|| {
+                grpc_diagnostics_latest.as_ref().map(|contents| {
+                    format!(
+                        "Grpc action diagnostics latest\n==============================\nsource: {}\n\n{}\n",
+                        grpc_diagnostics_latest_path.display(),
+                        contents
+                    )
+                })
+            })
+            .unwrap_or_else(|| {
+                "Grpc action diagnostics latest\n==============================\nsource: (not captured)\n\n"
+                    .to_string()
+            }),
+    );
 
     Ok(out)
 }
@@ -7800,6 +10097,12 @@ fn ensure_shadow_dir(root: &Path) -> ShadowResult<PathBuf> {
     let shadow_dir = artifact_root(root)?.join("shadow");
     ensure_private_dir(&shadow_dir)?;
     Ok(shadow_dir)
+}
+
+fn ensure_shadow_grpc_action_dir(root: &Path) -> ShadowResult<PathBuf> {
+    let diagnostics_dir = ensure_shadow_dir(root)?.join("grpc_action");
+    ensure_private_dir(&diagnostics_dir)?;
+    Ok(diagnostics_dir)
 }
 
 fn ensure_runtime_dir(root: &Path) -> ShadowResult<PathBuf> {
@@ -8726,9 +11029,9 @@ fn dispatch_python_worker(
     let output = Command::new("python3")
         .arg(&worker_entry)
         .arg("--input")
-        .arg(&worker_request_path)
+        .arg(worker_request_path)
         .arg("--output")
-        .arg(&worker_result_path)
+        .arg(worker_result_path)
         .output()
         .map_err(io_err)?;
 
@@ -8745,7 +11048,7 @@ fn dispatch_python_worker(
         log_contents.push_str(stderr.trim());
         log_contents.push('\n');
     }
-    fs::write(&worker_log_path, log_contents).map_err(io_err)?;
+    fs::write(worker_log_path, log_contents).map_err(io_err)?;
 
     if output.status.success() && worker_result_path.exists() {
         Ok(WorkerExecutionCapture {
@@ -8854,6 +11157,9 @@ fn dispatch_wasm_worker(
         entrypoint_args: vec![],
         memory_probe: None,
         fuel_budget,
+        warrant: None,
+        warrant_policy: WarrantPolicy::AllowDevelopmentDummy,
+        session_label: None,
     };
 
     match run_wasm_guest(&request) {
@@ -10415,9 +12721,7 @@ fn extract_json_number(section: &str, key: &str) -> Option<f64> {
     let after = &section[idx + key.len()..];
     let colon = after.find(':')?;
     let rest = after[colon + 1..].trim_start();
-    let end = rest
-        .find(|c: char| c == ',' || c == '\n' || c == '}')
-        .unwrap_or(rest.len());
+    let end = rest.find([',', '\n', '}']).unwrap_or(rest.len());
     rest[..end].trim().parse::<f64>().ok()
 }
 
@@ -10553,10 +12857,24 @@ fn timestamp_now() -> String {
         .to_string()
 }
 
+fn current_epoch_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::{Signature, Signer, SigningKey};
+    use loom_core::wasm_host::{
+        builtin_system_info_guest_bytes, render_wasm_system_info_request_json,
+        WasmSystemInfoRequest,
+    };
     use loom_core::{init_workspace, ActionEnvelope, AgentIdentityResolution};
+    use loom_poge::KernelWarrant;
+    use sha2::{Digest, Sha256};
 
     #[test]
     fn records_preflight_and_renders_report() {
@@ -10936,6 +13254,23 @@ mod tests {
         assert!(report.contains("status:      not_started"));
         assert!(report.contains("loom action execute"));
         assert!(report.contains("loom shadow report"));
+    }
+
+    #[test]
+    fn shadow_backend_plugin_registry_covers_all_backends() {
+        let cases = [
+            ShadowBackendKind::Wasmtime,
+            ShadowBackendKind::Command,
+            ShadowBackendKind::Http,
+            ShadowBackendKind::Mcp,
+            ShadowBackendKind::A2a,
+            ShadowBackendKind::A2aAction,
+            ShadowBackendKind::GrpcAction,
+        ];
+        for case in cases.iter() {
+            let plugin = resolve_shadow_backend_plugin(case);
+            assert_eq!(plugin.id(), case.as_str());
+        }
     }
 
     #[test]
@@ -11753,9 +14088,7 @@ if __name__ == '__main__':
         let commitments_path = root.join("commitments_snapshot.json");
         fs::write(
             &commitments_path,
-            format!(
-                "{{\n  \"bound_org_id\": \"org_alpha\",\n  \"commitments\": [\n    {{\n      \"commitment_id\": \"commit_demo\",\n      \"source_institution_id\": \"org_alpha\",\n      \"delivery_refs\": [\n        {{\n          \"message_type\": \"execution_request\",\n          \"envelope_id\": \"fedenv_demo\",\n          \"receipt_id\": \"fedrcpt_demo\",\n          \"adapter_envelope\": {{\n            \"agent_id\": \"atlas\",\n            \"action_type\": \"federated_execution\",\n            \"resource\": \"host_beta/shared_brief_review\",\n            \"estimated_cost_usd\": 0.10,\n            \"run_id\": \"run_import_demo\",\n            \"session_id\": \"sess_import_demo\",\n            \"details\": {{\n              \"message_type\": \"execution_request\",\n              \"commitment_id\": \"commit_demo\"\n            }}\n          }}\n        }}\n      ]\n    }}\n  ]\n}}\n"
-            ),
+            "{\n  \"bound_org_id\": \"org_alpha\",\n  \"commitments\": [\n    {\n      \"commitment_id\": \"commit_demo\",\n      \"source_institution_id\": \"org_alpha\",\n      \"delivery_refs\": [\n        {\n          \"message_type\": \"execution_request\",\n          \"envelope_id\": \"fedenv_demo\",\n          \"receipt_id\": \"fedrcpt_demo\",\n          \"adapter_envelope\": {\n            \"agent_id\": \"atlas\",\n            \"action_type\": \"federated_execution\",\n            \"resource\": \"host_beta/shared_brief_review\",\n            \"estimated_cost_usd\": 0.10,\n            \"run_id\": \"run_import_demo\",\n            \"session_id\": \"sess_import_demo\",\n            \"details\": {\n              \"message_type\": \"execution_request\",\n              \"commitment_id\": \"commit_demo\"\n            }\n          }\n        }\n      ]\n    }\n  ]\n}\n",
         )
         .expect("write commitments snapshot");
 
@@ -12448,6 +14781,506 @@ print(json.dumps({'id': agent_id, 'name': 'Atlas', 'org_id': org_id, 'role': 'an
         assert!(json.contains(r#""status": "queue_run_until_empty_complete""#));
     }
 
+    #[test]
+    fn shadow_backend_run_wasmtime_records_verified_warrant_artifacts() {
+        let root = temp_path("loom-shadow-backend-run");
+        fs::create_dir_all(&root).expect("root");
+        let kernel_root = temp_path("loom-shadow-backend-run-kernel");
+        scaffold_queue_kernel(&kernel_root, "shadow backend fixture", 0.5);
+        init_workspace(
+            &root,
+            "embedded",
+            Some(kernel_root.to_string_lossy().as_ref()),
+            "org_demo",
+        )
+        .expect("init workspace");
+
+        let capture = run_shadow_backend(&ShadowRunRequest {
+            root: root.clone(),
+            kernel_path: kernel_root.clone(),
+            backend: ShadowBackendKind::Wasmtime,
+            agent_id: "agent_atlas".to_string(),
+            org_id: "org_demo".to_string(),
+            action_type: "research".to_string(),
+            resource: "system_info".to_string(),
+            module_name: "builtin:system.info".to_string(),
+            entrypoint: "run".to_string(),
+            fuel_budget: 100_000,
+            warrant: signed_shadow_warrant(u64::MAX - 10),
+            wasm_bytes: builtin_system_info_guest_bytes(&render_wasm_system_info_request_json(
+                &WasmSystemInfoRequest::default(),
+            ))
+            .expect("builtin system info guest"),
+            command_program: None,
+            command_args: Vec::new(),
+            http_url: None,
+            http_method: None,
+            http_headers: Vec::new(),
+            http_body_json: None,
+        })
+        .expect("shadow backend run");
+
+        assert_eq!(capture.status, "shadow_run_captured");
+        assert_eq!(capture.warrant_binding_status, "verified");
+        assert!(capture.shadow_latest_path.exists());
+        assert!(capture.parity_latest_path.exists());
+        assert!(capture.execution_path.exists());
+        assert!(capture
+            .poge_merkle_root_hex
+            .as_deref()
+            .unwrap_or_default()
+            .starts_with("0x"));
+
+        let report = render_shadow_report(&root).expect("shadow report");
+        assert!(report.contains("Runtime execution"));
+        assert!(report.contains("verified"));
+    }
+
+    #[test]
+    fn shadow_backend_run_rejects_invalid_warrant() {
+        let root = temp_path("loom-shadow-backend-invalid-warrant");
+        fs::create_dir_all(&root).expect("root");
+        let kernel_root = temp_path("loom-shadow-backend-invalid-warrant-kernel");
+        scaffold_queue_kernel(&kernel_root, "shadow backend invalid warrant", 0.5);
+        init_workspace(
+            &root,
+            "embedded",
+            Some(kernel_root.to_string_lossy().as_ref()),
+            "org_demo",
+        )
+        .expect("init workspace");
+
+        let mut warrant = signed_shadow_warrant(u64::MAX - 10);
+        warrant.kernel_sig[0] ^= 0xFF;
+        let error = run_shadow_backend(&ShadowRunRequest {
+            root,
+            kernel_path: kernel_root,
+            backend: ShadowBackendKind::Wasmtime,
+            agent_id: "agent_atlas".to_string(),
+            org_id: "org_demo".to_string(),
+            action_type: "research".to_string(),
+            resource: "system_info".to_string(),
+            module_name: "builtin:system.info".to_string(),
+            entrypoint: "run".to_string(),
+            fuel_budget: 100_000,
+            warrant,
+            wasm_bytes: builtin_system_info_guest_bytes(&render_wasm_system_info_request_json(
+                &WasmSystemInfoRequest::default(),
+            ))
+            .expect("builtin system info guest"),
+            command_program: None,
+            command_args: Vec::new(),
+            http_url: None,
+            http_method: None,
+            http_headers: Vec::new(),
+            http_body_json: None,
+        })
+        .expect_err("invalid warrant should fail");
+
+        assert!(
+            error.contains("invalid") || error.contains("Warrant"),
+            "{}",
+            error
+        );
+    }
+
+    #[test]
+    fn shadow_backend_run_command_records_external_process_artifacts() {
+        let root = temp_path("loom-shadow-backend-command");
+        fs::create_dir_all(&root).expect("root");
+        let kernel_root = temp_path("loom-shadow-backend-command-kernel");
+        scaffold_queue_kernel(&kernel_root, "shadow backend command fixture", 0.5);
+        init_workspace(
+            &root,
+            "embedded",
+            Some(kernel_root.to_string_lossy().as_ref()),
+            "org_demo",
+        )
+        .expect("init workspace");
+
+        let capture = run_shadow_backend(&ShadowRunRequest {
+            root,
+            kernel_path: kernel_root,
+            backend: ShadowBackendKind::Command,
+            agent_id: "agent_atlas".to_string(),
+            org_id: "org_demo".to_string(),
+            action_type: "research".to_string(),
+            resource: "command_exec".to_string(),
+            module_name: "command:/bin/echo".to_string(),
+            entrypoint: "command".to_string(),
+            fuel_budget: 100_000,
+            warrant: signed_shadow_warrant(u64::MAX - 10),
+            wasm_bytes: Vec::new(),
+            command_program: Some("/bin/echo".to_string()),
+            command_args: vec!["shadow-command".to_string()],
+            http_url: None,
+            http_method: None,
+            http_headers: Vec::new(),
+            http_body_json: None,
+        })
+        .expect("shadow command backend run");
+
+        assert_eq!(capture.status, "shadow_run_captured");
+        assert_eq!(capture.backend, "command");
+        assert_eq!(capture.host_backend, "external_command");
+        assert_eq!(capture.warrant_binding_status, "verified");
+        assert!(capture
+            .host_response_json
+            .as_deref()
+            .unwrap_or_default()
+            .contains("shadow-command"));
+        assert!(capture
+            .poge_merkle_root_hex
+            .as_deref()
+            .unwrap_or_default()
+            .starts_with("0x"));
+    }
+
+    #[test]
+    fn shadow_backend_run_http_records_external_fetch_artifacts() {
+        let root = temp_path("loom-shadow-backend-http");
+        fs::create_dir_all(&root).expect("root");
+        let kernel_root = temp_path("loom-shadow-backend-http-kernel");
+        scaffold_queue_kernel(&kernel_root, "shadow backend http fixture", 0.5);
+        init_workspace(
+            &root,
+            "embedded",
+            Some(kernel_root.to_string_lossy().as_ref()),
+            "org_demo",
+        )
+        .expect("init workspace");
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind http listener");
+        let http_url = format!(
+            "http://{}/shadow-http",
+            listener.local_addr().expect("listener addr")
+        );
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept http connection");
+            let mut buf = [0_u8; 4096];
+            let n = stream.read(&mut buf).expect("read request");
+            let request = String::from_utf8_lossy(&buf[..n]).to_string();
+            assert!(
+                request.starts_with("GET /shadow-http HTTP/1.1"),
+                "{}",
+                request
+            );
+            assert!(request.contains("x-shadow-test: enabled"), "{}", request);
+            let response =
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 17\r\nConnection: close\r\n\r\n{\"status\":\"ok\"}";
+            stream
+                .write_all(response.as_bytes())
+                .expect("write response");
+        });
+
+        let capture = run_shadow_backend(&ShadowRunRequest {
+            root,
+            kernel_path: kernel_root,
+            backend: ShadowBackendKind::Http,
+            agent_id: "agent_atlas".to_string(),
+            org_id: "org_demo".to_string(),
+            action_type: "research".to_string(),
+            resource: "http_fetch".to_string(),
+            module_name: format!("http:GET:{}", http_url),
+            entrypoint: "fetch".to_string(),
+            fuel_budget: 100_000,
+            warrant: signed_shadow_warrant(u64::MAX - 10),
+            wasm_bytes: Vec::new(),
+            command_program: None,
+            command_args: Vec::new(),
+            http_url: Some(http_url.clone()),
+            http_method: Some("GET".to_string()),
+            http_headers: vec![("x-shadow-test".to_string(), "enabled".to_string())],
+            http_body_json: None,
+        })
+        .expect("shadow http backend run");
+
+        server.join().expect("join http fixture");
+
+        assert_eq!(capture.status, "shadow_run_captured");
+        assert_eq!(capture.backend, "http");
+        assert_eq!(capture.host_backend, "external_http");
+        assert_eq!(capture.warrant_binding_status, "verified");
+        assert_eq!(capture.entrypoint_result, Some(200));
+        assert_eq!(capture.host_calls, vec!["http.fetch".to_string()]);
+        assert!(capture
+            .host_response_json
+            .as_deref()
+            .unwrap_or_default()
+            .contains("\"http_status\": 200"));
+        assert!(capture
+            .poge_merkle_root_hex
+            .as_deref()
+            .unwrap_or_default()
+            .starts_with("0x"));
+    }
+
+    #[test]
+    fn shadow_report_prefers_typed_shadow_and_settlement_views() {
+        let root = temp_path("loom-shadow-report-typed");
+        fs::create_dir_all(&root).expect("root");
+        let kernel_root = temp_path("loom-shadow-report-typed-kernel");
+        scaffold_queue_kernel(&kernel_root, "shadow report typed fixture", 0.5);
+        init_workspace(
+            &root,
+            "embedded",
+            Some(kernel_root.to_string_lossy().as_ref()),
+            "org_demo",
+        )
+        .expect("init workspace");
+
+        let capture = run_shadow_backend(&ShadowRunRequest {
+            root: root.clone(),
+            kernel_path: kernel_root.clone(),
+            backend: ShadowBackendKind::Wasmtime,
+            agent_id: "agent_atlas".to_string(),
+            org_id: "org_demo".to_string(),
+            action_type: "research".to_string(),
+            resource: "system_info".to_string(),
+            module_name: "builtin:system.info".to_string(),
+            entrypoint: "run".to_string(),
+            fuel_budget: 100_000,
+            warrant: signed_shadow_warrant(u64::MAX - 10),
+            wasm_bytes: builtin_system_info_guest_bytes(&render_wasm_system_info_request_json(
+                &WasmSystemInfoRequest::default(),
+            ))
+            .expect("builtin system info guest"),
+            command_program: None,
+            command_args: Vec::new(),
+            http_url: None,
+            http_method: None,
+            http_headers: Vec::new(),
+            http_body_json: None,
+        })
+        .expect("shadow backend run");
+
+        let artifacts_root = artifact_root(&root).expect("artifact root");
+        let zk_path = artifacts_root.join("zk").join("latest.json");
+        let settlement_path = artifacts_root.join("settlement").join("latest.json");
+        fs::create_dir_all(zk_path.parent().expect("zk dir")).expect("zk dir");
+        fs::create_dir_all(settlement_path.parent().expect("settlement dir"))
+            .expect("settlement dir");
+        fs::write(
+            &zk_path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": "zk_proof_prepared",
+                "proof_backend": "sp1",
+                "proof_mode": "bounded_adapter",
+                "proof_id": "zkp_shadowtyped",
+                "captured_at": "123456",
+                "verification_status": "witness_bound",
+                "agent_id": "agent_atlas",
+                "org_id": "org_demo",
+                "action_type": "research",
+                "resource": "system_info",
+                "warrant_binding_status": "verified",
+                "warrant_id_hex": capture.warrant_id_hex,
+                "poge_merkle_root_hex": capture.poge_merkle_root_hex,
+                "witness_digest_hex": capture.poge_witness_digest_hex,
+                "poge_trace_len": capture.poge_trace_len,
+                "poge_epoch_start_ms": capture.poge_epoch_start_ms,
+                "poge_epoch_end_ms": capture.poge_epoch_end_ms,
+                "poge_session_label": capture.poge_session_label,
+                "runtime_execution_path": capture.execution_path.display().to_string(),
+                "kernel_path": kernel_root.display().to_string()
+            }))
+            .expect("zk json"),
+        )
+        .expect("write zk");
+        fs::write(
+            &settlement_path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": "zk_settlement_captured",
+                "captured_at": "123457",
+                "proof_backend": "sp1",
+                "proof_status": "prepared",
+                "proof_id": "zkp_shadowtyped",
+                "court_status": "clear",
+                "court_reason": "clear",
+                "court_restrictions": [],
+                "authority_status": "allowed",
+                "authority_reason": "ok",
+                "treasury_status": "committed",
+                "treasury_reason": "committed",
+                "reservation_id": "bud_shadow",
+                "settlement_status": "prepared",
+                "agent_id": "agent_atlas",
+                "org_id": "org_demo",
+                "action_type": "research",
+                "resource": "system_info",
+                "actual_cost_usd": 0.05,
+                "warrant_id_hex": capture.warrant_id_hex,
+                "witness_digest_hex": capture.poge_witness_digest_hex,
+                "poge_merkle_root_hex": capture.poge_merkle_root_hex,
+                "runtime_execution_path": capture.execution_path.display().to_string(),
+                "zk_proof_path": zk_path.display().to_string(),
+                "kernel_path": kernel_root.display().to_string()
+            }))
+            .expect("settlement json"),
+        )
+        .expect("write settlement");
+
+        let report = render_shadow_report(&root).expect("shadow report");
+        assert!(report.contains("backend:     wasmtime"), "{}", report);
+        assert!(report.contains("proof_backend:      sp1"), "{}", report);
+        assert!(
+            report.contains("settlement_status:  prepared"),
+            "{}",
+            report
+        );
+        assert!(!report.contains("\"proof_backend\": \"sp1\""), "{}", report);
+    }
+
+    #[test]
+    fn shadow_grpc_diagnostics_json_uses_typed_models() {
+        let root = temp_path("loom-shadow-grpc-diag-typed");
+        let diagnostics_dir = ensure_shadow_grpc_action_dir(&root).expect("grpc diag dir");
+        let latest_path = diagnostics_dir.join("latest.json");
+        let stream_path = diagnostics_dir.join("stream.jsonl");
+        fs::write(
+            &latest_path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": "grpc_action_executed",
+                "captured_at": "2026-04-04T00:00:00Z",
+                "grpc_target": "grpc://127.0.0.1:9000",
+                "grpc_rpc": "meridian.a2a.action.v1.ActionService/ExecuteAction",
+                "grpc_transport": "plaintext",
+                "grpc_allow_unknown_fields": true,
+                "grpc_max_time_seconds": 20,
+                "grpc_schema": "proto_inline",
+                "grpc_request_id": "req_typed_latest",
+                "grpc_action_kind": "research",
+                "grpc_action_objective": "typed parse",
+                "grpc_action_skill": "atlas",
+                "grpc_proto_count": 1,
+                "grpc_protoset_count": 1,
+                "grpc_import_path_count": 1,
+                "grpc_authority": "localhost",
+                "exit_code": 0
+            }))
+            .expect("latest json"),
+        )
+        .expect("write latest");
+        fs::write(
+            &stream_path,
+            format!(
+                "{}\n{}\n",
+                serde_json::json!({
+                    "status": "grpc_action_executed",
+                    "captured_at": "2026-04-04T00:00:00Z",
+                    "grpc_target": "grpc://127.0.0.1:9000",
+                    "grpc_rpc": "meridian.a2a.action.v1.ActionService/ExecuteAction",
+                    "grpc_transport": "plaintext",
+                    "grpc_allow_unknown_fields": true,
+                    "grpc_max_time_seconds": 20,
+                    "grpc_schema": "proto_inline",
+                    "grpc_request_id": "req_typed_stream_1",
+                    "grpc_action_kind": "research",
+                    "grpc_action_objective": "typed parse",
+                    "grpc_action_skill": "atlas",
+                    "grpc_proto_count": 1,
+                    "grpc_protoset_count": 1,
+                    "grpc_import_path_count": 1,
+                    "grpc_authority": "localhost",
+                    "exit_code": 0
+                }),
+                serde_json::json!({
+                    "status": "grpc_action_executed",
+                    "captured_at": "2026-04-04T00:00:01Z",
+                    "grpc_target": "grpc://127.0.0.1:9000",
+                    "grpc_rpc": "meridian.a2a.action.v1.ActionService/ExecuteAction",
+                    "grpc_transport": "plaintext",
+                    "grpc_allow_unknown_fields": false,
+                    "grpc_max_time_seconds": 20,
+                    "grpc_schema": "proto_inline",
+                    "grpc_request_id": "req_typed_stream_2",
+                    "grpc_action_kind": "research",
+                    "grpc_action_objective": "typed parse",
+                    "grpc_action_skill": "atlas",
+                    "grpc_proto_count": 1,
+                    "grpc_protoset_count": 1,
+                    "grpc_import_path_count": 1,
+                    "grpc_authority": "localhost",
+                    "exit_code": 0
+                })
+            ),
+        )
+        .expect("write stream");
+
+        let rendered = render_shadow_grpc_action_diagnostics_json(&root, 1).expect("render json");
+        let value: Value = serde_json::from_str(&rendered).expect("parse json");
+        assert_eq!(value.get("status").and_then(Value::as_str), Some("ok"));
+        assert_eq!(
+            value
+                .pointer("/latest/grpc_request_id")
+                .and_then(Value::as_str),
+            Some("req_typed_latest")
+        );
+        assert_eq!(
+            value
+                .pointer("/recent/0/grpc_request_id")
+                .and_then(Value::as_str),
+            Some("req_typed_stream_2")
+        );
+    }
+
+    #[test]
+    fn shadow_report_loads_typed_settlement_alias_fields() {
+        let root = temp_path("loom-shadow-settlement-alias");
+        fs::create_dir_all(&root).expect("root");
+        init_workspace(&root, "embedded", None, "org_demo").expect("init workspace");
+        let shadow_dir = ensure_shadow_dir(&root).expect("shadow dir");
+        fs::write(
+            shadow_dir.join("decision.json"),
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": "decision_captured",
+                "overall_decision": "allow",
+                "agent_id": "agent_atlas",
+                "org_id": "org_demo"
+            }))
+            .expect("decision json"),
+        )
+        .expect("write decision");
+
+        let artifacts_root = artifact_root(&root).expect("artifact root");
+        let settlement_path = artifacts_root.join("settlement").join("latest.json");
+        fs::create_dir_all(settlement_path.parent().expect("settlement dir"))
+            .expect("settlement dir");
+        fs::write(
+            &settlement_path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": "zk_settlement_captured",
+                "captured_at": "2026-04-04T00:00:02Z",
+                "proof_backend": "sp1",
+                "proof_status": "prepared",
+                "proof_id": "zkp_alias",
+                "court_status": "clear",
+                "authority_status": "allowed",
+                "treasury_status": "committed",
+                "settlement_status": "prepared",
+                "reservation_id": "bud_alias",
+                "actual_cost_usd": 0.025,
+                "witness_digest_hex": "0xabc",
+                "poge_merkle_root_hex": "0xdef"
+            }))
+            .expect("settlement json"),
+        )
+        .expect("write settlement");
+
+        let report = render_shadow_report(&root).expect("shadow report");
+        assert!(
+            report.contains("proof_id:           zkp_alias"),
+            "{}",
+            report
+        );
+        assert!(
+            report.contains("reservation_id:     bud_alias"),
+            "{}",
+            report
+        );
+        assert!(report.contains("poge_merkle_root:   0xdef"), "{}", report);
+    }
+
     fn temp_path(prefix: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
             "{}-{}",
@@ -12457,6 +15290,28 @@ print(json.dumps({'id': agent_id, 'name': 'Atlas', 'org_id': org_id, 'role': 'an
                 .unwrap_or_default()
                 .as_nanos()
         ))
+    }
+
+    fn signed_shadow_warrant(expiry_epoch_ms: u64) -> KernelWarrant {
+        let signer = SigningKey::from_bytes(&[17u8; 32]);
+        let mut id = [0u8; 32];
+        for (index, slot) in id.iter_mut().enumerate() {
+            *slot = (index as u8).wrapping_mul(5).wrapping_add(3);
+        }
+        let scope_cbor = vec![0xA1, 0x66, b's', b'h', b'a', b'd', b'o', b'w', 0xF5];
+        let scope_hash: [u8; 32] = Sha256::digest(&scope_cbor).into();
+        let mut message = Vec::with_capacity(32 + 32 + 8);
+        message.extend_from_slice(&id);
+        message.extend_from_slice(&scope_hash);
+        message.extend_from_slice(&expiry_epoch_ms.to_be_bytes());
+        let signature: Signature = signer.sign(&message);
+        KernelWarrant {
+            id,
+            scope_cbor,
+            expiry_epoch_ms,
+            kernel_sig: signature.to_bytes(),
+            kernel_pub: signer.verifying_key().to_bytes(),
+        }
     }
 
     fn sample_identity() -> AgentIdentityResolution {
