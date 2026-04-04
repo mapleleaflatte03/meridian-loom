@@ -544,6 +544,127 @@ fn job_settle_zk_prepares_artifacts_from_latest_shadow_run() {
 }
 
 #[test]
+fn acceptance_shadow_zk_one_command_lane() {
+    let harness = Harness::new("shadow_zk_acceptance_lane");
+    let warrant_path = harness.home.join("shadow-warrant.json");
+    write_signed_warrant(&warrant_path);
+
+    let capture = harness.json_ok(&[
+        "shadow",
+        "run",
+        "--backend",
+        "wasmtime",
+        "--root",
+        harness.root_str(),
+        "--kernel-path",
+        harness.kernel_str(),
+        "--agent-id",
+        "agent_atlas",
+        "--org-id",
+        "org_demo",
+        "--action-type",
+        "research",
+        "--resource",
+        "system_info",
+        "--module",
+        "builtin:system.info",
+        "--warrant-file",
+        warrant_path.to_str().expect("warrant path"),
+        "--format",
+        "json",
+    ]);
+    assert_eq!(
+        capture.get("status").and_then(Value::as_str),
+        Some("shadow_run_captured")
+    );
+    assert_eq!(
+        capture
+            .get("warrant_binding_status")
+            .and_then(Value::as_str),
+        Some("verified")
+    );
+
+    let settlement = harness.json_ok(&[
+        "job",
+        "settle",
+        "--zk",
+        "--zk-backend",
+        "sp1",
+        "--root",
+        harness.root_str(),
+        "--kernel-path",
+        harness.kernel_str(),
+        "--actual-cost-usd",
+        "0.05",
+        "--format",
+        "json",
+    ]);
+    assert_eq!(
+        settlement.get("status").and_then(Value::as_str),
+        Some("zk_settlement_captured")
+    );
+    assert_eq!(
+        settlement.get("settlement_status").and_then(Value::as_str),
+        Some("prepared")
+    );
+    assert_eq!(
+        settlement.get("treasury_status").and_then(Value::as_str),
+        Some("committed")
+    );
+    assert!(settlement
+        .get("proof_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .starts_with("zkp_"));
+
+    let shadow_report = harness.run_ok(&["shadow", "report", "--root", harness.root_str()]);
+    assert!(
+        shadow_report.contains("Runtime execution"),
+        "{}",
+        shadow_report
+    );
+    assert!(
+        shadow_report.contains("warrant:     verified"),
+        "{}",
+        shadow_report
+    );
+    assert!(
+        shadow_report.contains("ZK proof latest"),
+        "{}",
+        shadow_report
+    );
+    assert!(
+        shadow_report.contains("Settlement latest"),
+        "{}",
+        shadow_report
+    );
+
+    let parity_report = harness.run_ok(&["parity", "report", "--root", harness.root_str()]);
+    assert!(parity_report.contains("Parity latest"), "{}", parity_report);
+    assert!(
+        parity_report.contains("Action parity summary"),
+        "{}",
+        parity_report
+    );
+    assert!(
+        parity_report.contains("ZK proof latest"),
+        "{}",
+        parity_report
+    );
+    assert!(
+        parity_report.contains("Settlement latest"),
+        "{}",
+        parity_report
+    );
+
+    assert!(harness.root.join("artifacts/zk/latest.json").exists());
+    assert!(harness
+        .root
+        .join("artifacts/settlement/latest.json")
+        .exists());
+}
+
+#[test]
 fn job_settle_zk_rejects_unknown_backend() {
     let harness = Harness::new("shadow_settle_unknown_backend");
     let warrant_path = harness.home.join("shadow-warrant.json");

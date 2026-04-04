@@ -273,6 +273,13 @@ Notes:
 - Proof and settlement artifacts are generated the same way as other shadow
   backends.
 - `job settle --zk` accepts `--zk-backend` (currently `sp1`).
+- One-command acceptance lane for `shadow run -> job settle --zk -> reports`:
+
+```bash
+./scripts/acceptance_shadow_zk.sh
+# or
+make acceptance-shadow-zk
+```
 
 ### 2. Run bounded browser navigation and inspect proof
 

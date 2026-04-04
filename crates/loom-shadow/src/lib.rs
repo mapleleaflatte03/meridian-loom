@@ -1324,16 +1324,115 @@ pub fn capture_runtime_execution(
     Ok(capture)
 }
 
-pub fn run_shadow_backend(request: &ShadowRunRequest) -> ShadowResult<ShadowRunCapture> {
-    match request.backend {
-        ShadowBackendKind::Wasmtime => run_shadow_backend_wasmtime(request),
-        ShadowBackendKind::Command => run_shadow_backend_command(request),
-        ShadowBackendKind::Http => run_shadow_backend_http(request),
-        ShadowBackendKind::Mcp => run_shadow_backend_mcp(request),
-        ShadowBackendKind::A2a => run_shadow_backend_a2a(request),
-        ShadowBackendKind::A2aAction => run_shadow_backend_a2a_action(request),
-        ShadowBackendKind::GrpcAction => run_shadow_backend_grpc_action(request),
+trait ShadowBackendPlugin {
+    fn id(&self) -> &'static str;
+    fn run(&self, request: &ShadowRunRequest) -> ShadowResult<ShadowRunCapture>;
+}
+
+struct WasmtimeShadowBackendPlugin;
+struct CommandShadowBackendPlugin;
+struct HttpShadowBackendPlugin;
+struct McpShadowBackendPlugin;
+struct A2aShadowBackendPlugin;
+struct A2aActionShadowBackendPlugin;
+struct GrpcActionShadowBackendPlugin;
+
+impl ShadowBackendPlugin for WasmtimeShadowBackendPlugin {
+    fn id(&self) -> &'static str {
+        ShadowBackendKind::Wasmtime.as_str()
     }
+
+    fn run(&self, request: &ShadowRunRequest) -> ShadowResult<ShadowRunCapture> {
+        run_shadow_backend_wasmtime(request)
+    }
+}
+
+impl ShadowBackendPlugin for CommandShadowBackendPlugin {
+    fn id(&self) -> &'static str {
+        ShadowBackendKind::Command.as_str()
+    }
+
+    fn run(&self, request: &ShadowRunRequest) -> ShadowResult<ShadowRunCapture> {
+        run_shadow_backend_command(request)
+    }
+}
+
+impl ShadowBackendPlugin for HttpShadowBackendPlugin {
+    fn id(&self) -> &'static str {
+        ShadowBackendKind::Http.as_str()
+    }
+
+    fn run(&self, request: &ShadowRunRequest) -> ShadowResult<ShadowRunCapture> {
+        run_shadow_backend_http(request)
+    }
+}
+
+impl ShadowBackendPlugin for McpShadowBackendPlugin {
+    fn id(&self) -> &'static str {
+        ShadowBackendKind::Mcp.as_str()
+    }
+
+    fn run(&self, request: &ShadowRunRequest) -> ShadowResult<ShadowRunCapture> {
+        run_shadow_backend_mcp(request)
+    }
+}
+
+impl ShadowBackendPlugin for A2aShadowBackendPlugin {
+    fn id(&self) -> &'static str {
+        ShadowBackendKind::A2a.as_str()
+    }
+
+    fn run(&self, request: &ShadowRunRequest) -> ShadowResult<ShadowRunCapture> {
+        run_shadow_backend_a2a(request)
+    }
+}
+
+impl ShadowBackendPlugin for A2aActionShadowBackendPlugin {
+    fn id(&self) -> &'static str {
+        ShadowBackendKind::A2aAction.as_str()
+    }
+
+    fn run(&self, request: &ShadowRunRequest) -> ShadowResult<ShadowRunCapture> {
+        run_shadow_backend_a2a_action(request)
+    }
+}
+
+impl ShadowBackendPlugin for GrpcActionShadowBackendPlugin {
+    fn id(&self) -> &'static str {
+        ShadowBackendKind::GrpcAction.as_str()
+    }
+
+    fn run(&self, request: &ShadowRunRequest) -> ShadowResult<ShadowRunCapture> {
+        run_shadow_backend_grpc_action(request)
+    }
+}
+
+static WASMTIME_SHADOW_BACKEND_PLUGIN: WasmtimeShadowBackendPlugin = WasmtimeShadowBackendPlugin;
+static COMMAND_SHADOW_BACKEND_PLUGIN: CommandShadowBackendPlugin = CommandShadowBackendPlugin;
+static HTTP_SHADOW_BACKEND_PLUGIN: HttpShadowBackendPlugin = HttpShadowBackendPlugin;
+static MCP_SHADOW_BACKEND_PLUGIN: McpShadowBackendPlugin = McpShadowBackendPlugin;
+static A2A_SHADOW_BACKEND_PLUGIN: A2aShadowBackendPlugin = A2aShadowBackendPlugin;
+static A2A_ACTION_SHADOW_BACKEND_PLUGIN: A2aActionShadowBackendPlugin =
+    A2aActionShadowBackendPlugin;
+static GRPC_ACTION_SHADOW_BACKEND_PLUGIN: GrpcActionShadowBackendPlugin =
+    GrpcActionShadowBackendPlugin;
+
+fn resolve_shadow_backend_plugin(kind: &ShadowBackendKind) -> &'static dyn ShadowBackendPlugin {
+    match kind {
+        ShadowBackendKind::Wasmtime => &WASMTIME_SHADOW_BACKEND_PLUGIN,
+        ShadowBackendKind::Command => &COMMAND_SHADOW_BACKEND_PLUGIN,
+        ShadowBackendKind::Http => &HTTP_SHADOW_BACKEND_PLUGIN,
+        ShadowBackendKind::Mcp => &MCP_SHADOW_BACKEND_PLUGIN,
+        ShadowBackendKind::A2a => &A2A_SHADOW_BACKEND_PLUGIN,
+        ShadowBackendKind::A2aAction => &A2A_ACTION_SHADOW_BACKEND_PLUGIN,
+        ShadowBackendKind::GrpcAction => &GRPC_ACTION_SHADOW_BACKEND_PLUGIN,
+    }
+}
+
+pub fn run_shadow_backend(request: &ShadowRunRequest) -> ShadowResult<ShadowRunCapture> {
+    let plugin = resolve_shadow_backend_plugin(&request.backend);
+    debug_assert_eq!(plugin.id(), request.backend.as_str());
+    plugin.run(request)
 }
 
 pub fn render_shadow_run_capture_human(
@@ -13155,6 +13254,23 @@ mod tests {
         assert!(report.contains("status:      not_started"));
         assert!(report.contains("loom action execute"));
         assert!(report.contains("loom shadow report"));
+    }
+
+    #[test]
+    fn shadow_backend_plugin_registry_covers_all_backends() {
+        let cases = [
+            ShadowBackendKind::Wasmtime,
+            ShadowBackendKind::Command,
+            ShadowBackendKind::Http,
+            ShadowBackendKind::Mcp,
+            ShadowBackendKind::A2a,
+            ShadowBackendKind::A2aAction,
+            ShadowBackendKind::GrpcAction,
+        ];
+        for case in cases.iter() {
+            let plugin = resolve_shadow_backend_plugin(case);
+            assert_eq!(plugin.id(), case.as_str());
+        }
     }
 
     #[test]

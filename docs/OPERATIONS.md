@@ -164,6 +164,14 @@ The settlement slice is bounded on purpose:
 - Court and Treasury are checked before settlement is marked prepared
 - chain finality is not claimed until a chain adapter confirms submission
 
+Acceptance lane (one command):
+
+```bash
+./scripts/acceptance_shadow_zk.sh
+# or
+make acceptance-shadow-zk
+```
+
 ## Common failures
 
 - `401 unauthorized`: token mismatch between service start and HTTP client
