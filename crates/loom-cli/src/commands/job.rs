@@ -5,6 +5,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[derive(Clone, Debug)]
+pub(crate) struct JobSettleZkCapture {
+    pub settlement_payload: Value,
+    pub zk_latest_path: PathBuf,
+    pub settlement_latest_path: PathBuf,
+}
+
 pub(crate) fn handle_job(args: &[String]) -> LoomResult<()> {
     match args.first().map(String::as_str) {
         Some("list") => {
@@ -64,7 +71,33 @@ fn handle_job_settle(args: &[String]) -> LoomResult<()> {
         .unwrap_or_else(|| "sp1".to_string())
         .parse::<ZkProofBackend>()
         .map_err(|error| format!("invalid --zk-backend: {}", error))?;
-    let config = read_config(&root)?;
+    let capture = settle_latest_execution_with_zk(&root, &kernel_path, actual_cost_usd, zk_backend)?;
+
+    if format == "json" {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&capture.settlement_payload)
+                .map_err(|error| error.to_string())?
+        );
+    } else {
+        print_human(&render_job_settle_zk_human(
+            &capture.settlement_payload,
+            &capture.zk_latest_path,
+            &capture.settlement_latest_path,
+            &root,
+        ));
+    }
+
+    Ok(())
+}
+
+pub(crate) fn settle_latest_execution_with_zk(
+    root: &Path,
+    kernel_path: &str,
+    actual_cost_usd: f64,
+    zk_backend: ZkProofBackend,
+) -> LoomResult<JobSettleZkCapture> {
+    let config = read_config(root)?;
     let runtime_execution_path = root
         .join(&config.state_dir)
         .join("runtime")
@@ -99,11 +132,11 @@ fn handle_job_settle(args: &[String]) -> LoomResult<()> {
     }
 
     let agent_refs =
-        resolve_settlement_agent_refs(&root, &kernel_path, &requested_agent_ref, &org_id)?;
+        resolve_settlement_agent_refs(root, kernel_path, &requested_agent_ref, &org_id)?;
     let audit_root = audit_root_from_execution(&execution)?;
     let proof = ZkPoGEProof::prepare(&audit_root, &warrant_binding_status, zk_backend);
     let captured_at = chrono_like_timestamp();
-    let kernel_path_buf = PathBuf::from(&kernel_path);
+    let kernel_path_buf = PathBuf::from(kernel_path);
     let court = query_court_status(&kernel_path_buf, &agent_refs.authority_agent_ref, &org_id)?;
     let authority =
         query_authority_status(&kernel_path_buf, &agent_refs.authority_agent_ref, &org_id)?;
@@ -254,30 +287,58 @@ fn handle_job_settle(args: &[String]) -> LoomResult<()> {
     write_pretty_json(&settlement_latest_path, &settlement_payload)?;
     append_jsonl(&settlement_stream_path, &settlement_payload)?;
 
-    if format == "json" {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&settlement_payload).map_err(|error| error.to_string())?
-        );
-    } else {
-        print_human(&format!(
-            "Meridian Loom // JOB SETTLE ZK\n===============================\nstatus:             {}\nproof_backend:      {}\ncourt_status:       {}\nauthority_status:   {}\ntreasury_status:    {}\nsettlement_status:  {}\nreservation_id:     {}\nwitness_digest:     {}\nzk_proof_path:      {}\nsettlement_path:    {}\n\nNext\n====\n1. loom shadow report --root {}\n2. loom parity report --root {}\n",
-            settlement_payload.get("status").and_then(Value::as_str).unwrap_or("unknown"),
-            settlement_payload.get("proof_backend").and_then(Value::as_str).unwrap_or("unknown"),
-            settlement_payload.get("court_status").and_then(Value::as_str).unwrap_or("unknown"),
-            settlement_payload.get("authority_status").and_then(Value::as_str).unwrap_or("unknown"),
-            settlement_payload.get("treasury_status").and_then(Value::as_str).unwrap_or("unknown"),
-            settlement_payload.get("settlement_status").and_then(Value::as_str).unwrap_or("unknown"),
-            settlement_payload.get("reservation_id").and_then(Value::as_str).unwrap_or("(none)"),
-            settlement_payload.get("witness_digest_hex").and_then(Value::as_str).unwrap_or("(missing)"),
-            zk_latest_path.display(),
-            settlement_latest_path.display(),
-            root.display(),
-            root.display(),
-        ));
-    }
+    Ok(JobSettleZkCapture {
+        settlement_payload,
+        zk_latest_path,
+        settlement_latest_path,
+    })
+}
 
-    Ok(())
+fn render_job_settle_zk_human(
+    settlement_payload: &Value,
+    zk_latest_path: &Path,
+    settlement_latest_path: &Path,
+    root: &Path,
+) -> String {
+    format!(
+        "Meridian Loom // JOB SETTLE ZK\n===============================\nstatus:             {}\nproof_backend:      {}\ncourt_status:       {}\nauthority_status:   {}\ntreasury_status:    {}\nsettlement_status:  {}\nreservation_id:     {}\nwitness_digest:     {}\nzk_proof_path:      {}\nsettlement_path:    {}\n\nNext\n====\n1. loom shadow report --root {}\n2. loom parity report --root {}\n",
+        settlement_payload
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown"),
+        settlement_payload
+            .get("proof_backend")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown"),
+        settlement_payload
+            .get("court_status")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown"),
+        settlement_payload
+            .get("authority_status")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown"),
+        settlement_payload
+            .get("treasury_status")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown"),
+        settlement_payload
+            .get("settlement_status")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown"),
+        settlement_payload
+            .get("reservation_id")
+            .and_then(Value::as_str)
+            .unwrap_or("(none)"),
+        settlement_payload
+            .get("witness_digest_hex")
+            .and_then(Value::as_str)
+            .unwrap_or("(missing)"),
+        zk_latest_path.display(),
+        settlement_latest_path.display(),
+        root.display(),
+        root.display(),
+    )
 }
 
 #[derive(Clone, Debug)]

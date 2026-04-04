@@ -127,6 +127,7 @@ fn run() -> LoomResult<()> {
         "capsule" => commands::runtime::handle_capsule(&args[1..]),
         "capability" => commands::capability::handle_capability(&args[1..]),
         "job" => commands::job::handle_job(&args[1..]),
+        "swarm" => commands::swarm::handle_swarm(&args[1..]),
         "output" => commands::output::handle_output(&args[1..]),
         "queue" => commands::queue::handle_queue(&args[1..]),
         "agent" => commands::runtime::handle_agent(&args[1..]),
@@ -401,6 +402,7 @@ Runtime rehearsal\n\
 -----------------\n\
   loom action enqueue --agent-id ID [--capability NAME] [--action-type TYPE] [--resource RESOURCE] [--payload-json JSON] [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
   loom action execute --agent-id ID [--capability NAME] [--gap-class CLASS] [--goal TEXT] [--action-type TYPE] [--resource RESOURCE] [--payload-json JSON] [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
+  loom swarm run --agent-id ID --kernel-path PATH --warrant-file FILE --actual-cost-usd USD --settle-zk [--action-type TYPE] [--resource RESOURCE] [--module builtin:system.info|builtin:minimal|builtin:terminal.exec|wasm:PATH] [--estimated-cost-usd USD] [--zk-backend sp1] [--org-id ORG] [--root PATH] [--format human|json]\n\
   loom service start [--root PATH] [--kernel-path PATH] [--socket PATH] [--http-address HOST:PORT] [--service-token TOKEN] [--commitments-source PATH|URL] [--workspace-token TOKEN] [--max-jobs N] [--poll-seconds N] [--iterations N] [--foreground] [--format human|json]\n\
   loom service status [--root PATH] [--socket PATH] [--format human|json]\n\
   loom service submit --agent-id ID [--capability NAME] [--gap-class CLASS] [--goal TEXT] [--action-type TYPE] [--resource RESOURCE] [--payload-json JSON] [--estimated-cost-usd USD] [--run-id ID] [--session-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--socket PATH] [--http-url URL] [--service-token TOKEN] [--format human|json]\n\
