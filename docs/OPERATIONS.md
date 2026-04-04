@@ -100,6 +100,7 @@ loom shadow run \
 
 loom job settle \
   --zk \
+  --zk-backend sp1 \
   --root "$LOOM_ROOT" \
   --kernel-path "$MERIDIAN_KERNEL_PATH" \
   --actual-cost-usd 0.05 \
@@ -157,6 +158,7 @@ The settlement slice is bounded on purpose:
 
 - `shadow run` requires a verified warrant file
 - `job settle --zk` binds to the PoGE witness digest from the latest shadow run
+- `job settle --zk --zk-backend ...` currently supports `sp1`
 - Court and Treasury are checked before settlement is marked prepared
 - chain finality is not claimed until a chain adapter confirms submission
 

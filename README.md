@@ -197,6 +197,7 @@ loom shadow run \
 
 loom job settle \
   --zk \
+  --zk-backend sp1 \
   --root "$LOOM_ROOT" \
   --kernel-path "$MERIDIAN_KERNEL_PATH" \
   --actual-cost-usd 0.05 \
@@ -243,6 +244,7 @@ loom shadow run \
 
 loom job settle \
   --zk \
+  --zk-backend sp1 \
   --root "$LOOM_ROOT" \
   --kernel-path "$MERIDIAN_KERNEL_PATH" \
   --actual-cost-usd 0.05 \
@@ -268,6 +270,7 @@ Notes:
   block from that artifact.
 - Proof and settlement artifacts are generated the same way as other shadow
   backends.
+- `job settle --zk` accepts `--zk-backend` (currently `sp1`).
 
 ### 2. Run bounded browser navigation and inspect proof
 

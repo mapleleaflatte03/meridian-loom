@@ -544,6 +544,63 @@ fn job_settle_zk_prepares_artifacts_from_latest_shadow_run() {
 }
 
 #[test]
+fn job_settle_zk_rejects_unknown_backend() {
+    let harness = Harness::new("shadow_settle_unknown_backend");
+    let warrant_path = harness.home.join("shadow-warrant.json");
+    write_signed_warrant(&warrant_path);
+    harness.run_ok(&[
+        "shadow",
+        "run",
+        "--backend",
+        "wasmtime",
+        "--root",
+        harness.root_str(),
+        "--kernel-path",
+        harness.kernel_str(),
+        "--agent-id",
+        "agent_atlas",
+        "--org-id",
+        "org_demo",
+        "--action-type",
+        "research",
+        "--resource",
+        "system_info",
+        "--module",
+        "builtin:system.info",
+        "--warrant-file",
+        warrant_path.to_str().expect("warrant path"),
+        "--format",
+        "json",
+    ]);
+
+    let output = harness.run_output(&[
+        "job",
+        "settle",
+        "--zk",
+        "--zk-backend",
+        "risc0",
+        "--root",
+        harness.root_str(),
+        "--kernel-path",
+        harness.kernel_str(),
+        "--actual-cost-usd",
+        "0.05",
+        "--format",
+        "json",
+    ]);
+    assert!(
+        !output.status.success(),
+        "job settle should reject unknown --zk-backend"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("invalid --zk-backend") && stderr.contains("supported backends: sp1"),
+        "stderr was: {}",
+        stderr
+    );
+}
+
+#[test]
 fn job_settle_zk_blocks_when_court_restricts_settle() {
     let harness = Harness::with_settlement_restriction("shadow_settle_blocked");
     let warrant_path = harness.home.join("shadow-warrant.json");

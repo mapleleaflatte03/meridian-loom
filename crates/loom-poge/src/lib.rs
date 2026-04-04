@@ -4,7 +4,11 @@
 //! binary Merkle tree construction, and audit-root finalization for
 //! EVM-compatible on-chain settlement.
 
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use sha2::{Digest, Sha256};
+
+pub mod sp1;
+pub use sp1::{ParseZkProofBackendError, ZkPoGEProof, ZkProofBackend};
 
 // ---------------------------------------------------------------------------
 // Error type
@@ -53,7 +57,7 @@ impl std::error::Error for PoGEError {}
 /// `id || scope_hash || expiry_epoch_ms`) before being accepted by the
 /// [`PoGEInterceptor`]. The signature verification algorithm is Ed25519 using
 /// the Kernel's published long-term key.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KernelWarrant {
     /// Globally unique 32-byte identifier. Used as a binding tag in every
     /// [`HostCallReceipt`] produced under this warrant.
@@ -70,6 +74,34 @@ pub struct KernelWarrant {
 
     /// Public key that produced `kernel_sig`.
     pub kernel_pub: [u8; 32],
+}
+
+impl KernelWarrant {
+    /// Returns the message bytes that the Kernel signs for this warrant.
+    ///
+    /// Wire format:
+    /// `warrant_id || sha256(scope_cbor) || expiry_epoch_ms_be`
+    pub fn signing_message(&self) -> Vec<u8> {
+        let scope_hash: [u8; 32] = Sha256::digest(&self.scope_cbor).into();
+        let mut message = Vec::with_capacity(32 + 32 + 8);
+        message.extend_from_slice(&self.id);
+        message.extend_from_slice(&scope_hash);
+        message.extend_from_slice(&self.expiry_epoch_ms.to_be_bytes());
+        message
+    }
+
+    /// Validate expiry and Ed25519 signature for the warrant.
+    pub fn validate_at(&self, epoch_ms: u64) -> Result<(), PoGEError> {
+        if epoch_ms > self.expiry_epoch_ms {
+            return Err(PoGEError::WarrantExpired);
+        }
+        let verifying_key = VerifyingKey::from_bytes(&self.kernel_pub)
+            .map_err(|_| PoGEError::WarrantSignatureInvalid)?;
+        let signature = Signature::from_bytes(&self.kernel_sig);
+        verifying_key
+            .verify(&self.signing_message(), &signature)
+            .map_err(|_| PoGEError::WarrantSignatureInvalid)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -186,6 +218,7 @@ pub const MAX_TRACE_RECEIPTS: usize = 65_535; // u16::MAX
 
 /// An ordered, bounded collection of [`HostCallReceipt`]s produced during a
 /// single governed execution session.
+#[derive(Debug)]
 pub struct PoGETrace {
     /// Pre-allocated fixed-capacity buffer.
     receipts: Vec<HostCallReceipt>,
@@ -385,6 +418,25 @@ impl PoGEAuditRoot {
     pub fn merkle_root_hex(&self) -> String {
         format!("0x{}", hex::encode(self.merkle_root))
     }
+
+    /// Returns a compact witness digest that binds the finalized audit root.
+    pub fn witness_digest(&self) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        hasher.update(b"POGE_ZK_WITNESS_v1\x00");
+        hasher.update(self.merkle_root);
+        hasher.update(self.warrant_id);
+        hasher.update(self.trace_len.to_be_bytes());
+        hasher.update(self.epoch_start_ms.to_be_bytes());
+        hasher.update(self.epoch_end_ms.to_be_bytes());
+        hasher.update(self.module_digest);
+        hasher.update((self.session_label.len() as u32).to_be_bytes());
+        hasher.update(self.session_label.as_bytes());
+        hasher.finalize().into()
+    }
+
+    pub fn witness_digest_hex(&self) -> String {
+        format!("0x{}", hex::encode(self.witness_digest()))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -397,6 +449,7 @@ impl PoGEAuditRoot {
 /// 1. `PoGEInterceptor::new(warrant, module_digest, label)`
 /// 2. Call `record_event()` from each Wasmtime host-function shim.
 /// 3. Call `finalize()` to obtain the [`PoGEAuditRoot`].
+#[derive(Debug)]
 pub struct PoGEInterceptor {
     warrant: KernelWarrant,
     module_digest: [u8; 32],
@@ -421,6 +474,17 @@ impl PoGEInterceptor {
         }
     }
 
+    /// Create a new interceptor only after warrant validation succeeds.
+    pub fn new_validated(
+        warrant: KernelWarrant,
+        module_digest: [u8; 32],
+        session_label: impl Into<String>,
+        now_epoch_ms: u64,
+    ) -> Result<Self, PoGEError> {
+        warrant.validate_at(now_epoch_ms)?;
+        Ok(Self::new(warrant, module_digest, session_label))
+    }
+
     /// Compute the receipt for a host-call event and append it to the trace.
     ///
     /// Hot-path entry point called from every Wasmtime shim.
@@ -432,6 +496,9 @@ impl PoGEInterceptor {
         output_bytes: &[u8],
         is_error: bool,
     ) -> Result<HostCallReceipt, PoGEError> {
+        if dispatch_epoch_ms > self.warrant.expiry_epoch_ms {
+            return Err(PoGEError::WarrantExpired);
+        }
         let event = HostCallEvent {
             kind,
             sequence: self.sequence,
@@ -517,6 +584,16 @@ impl PoGEInterceptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::{Signature, Signer, SigningKey};
+
+    fn warrant_message(id: [u8; 32], scope_cbor: &[u8], expiry_epoch_ms: u64) -> Vec<u8> {
+        let scope_hash: [u8; 32] = Sha256::digest(scope_cbor).into();
+        let mut message = Vec::with_capacity(32 + 32 + 8);
+        message.extend_from_slice(&id);
+        message.extend_from_slice(&scope_hash);
+        message.extend_from_slice(&expiry_epoch_ms.to_be_bytes());
+        message
+    }
 
     // -----------------------------------------------------------------------
     // Helpers
@@ -542,6 +619,24 @@ mod tests {
             *b = i as u8;
         }
         make_warrant(id)
+    }
+
+    fn signed_warrant(expiry_epoch_ms: u64) -> KernelWarrant {
+        let seed = [7u8; 32];
+        let signer = SigningKey::from_bytes(&seed);
+        let mut id = [0u8; 32];
+        for (index, slot) in id.iter_mut().enumerate() {
+            *slot = (index as u8).wrapping_mul(3).wrapping_add(1);
+        }
+        let scope_cbor = vec![0xA1, 0x63, b'w', b'e', b'b', 0xF5];
+        let signature: Signature = signer.sign(&warrant_message(id, &scope_cbor, expiry_epoch_ms));
+        KernelWarrant {
+            id,
+            scope_cbor,
+            expiry_epoch_ms,
+            kernel_sig: signature.to_bytes(),
+            kernel_pub: signer.verifying_key().to_bytes(),
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -830,8 +925,8 @@ mod tests {
         let expected = {
             let mut h = Sha256::new();
             h.update(MERKLE_BRANCH_TAG);
-            h.update(&leaf0);
-            h.update(&leaf1);
+            h.update(leaf0);
+            h.update(leaf1);
             let out: [u8; 32] = h.finalize().into();
             out
         };
@@ -1061,6 +1156,43 @@ mod tests {
         let root = interceptor.finalize().unwrap();
         assert_eq!(root.trace_len, 10);
         assert_ne!(root.merkle_root, [0u8; 32]);
+    }
+
+    #[test]
+    fn validated_interceptor_accepts_signed_warrant() {
+        let warrant = signed_warrant(u64::MAX - 10);
+        let mut interceptor =
+            PoGEInterceptor::new_validated(warrant.clone(), [0x11; 32], "validated", 42)
+                .expect("validated interceptor");
+        interceptor
+            .record_event(
+                HostCallKind::SystemInfo,
+                43,
+                b"{}",
+                br#"{"hostname":"loom"}"#,
+                false,
+            )
+            .expect("record");
+        let audit_root = interceptor.finalize().expect("finalize");
+        assert_eq!(audit_root.warrant_id, warrant.id);
+        assert_eq!(audit_root.trace_len, 1);
+    }
+
+    #[test]
+    fn validated_interceptor_rejects_expired_warrant() {
+        let warrant = signed_warrant(10);
+        let error = PoGEInterceptor::new_validated(warrant, [0u8; 32], "expired", 11)
+            .expect_err("expired warrant should fail");
+        assert_eq!(error, PoGEError::WarrantExpired);
+    }
+
+    #[test]
+    fn validated_interceptor_rejects_invalid_signature() {
+        let mut warrant = signed_warrant(u64::MAX - 10);
+        warrant.kernel_sig[0] ^= 0xFF;
+        let error = PoGEInterceptor::new_validated(warrant, [0u8; 32], "invalid", 1)
+            .expect_err("invalid signature should fail");
+        assert_eq!(error, PoGEError::WarrantSignatureInvalid);
     }
 
     // -----------------------------------------------------------------------
