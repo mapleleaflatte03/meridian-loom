@@ -55,6 +55,17 @@ use std::process::Command;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+fn constant_time_eq(a: &str, b: &str) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut result = 0;
+    for (x, y) in a.bytes().zip(b.bytes()) {
+        result |= std::hint::black_box(x ^ y);
+    }
+    result == 0
+}
+
 pub type ShadowResult<T> = Result<T, String>;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -4846,7 +4857,7 @@ fn handle_runtime_service_http_request(
             .strip_prefix("Bearer ")
             .unwrap_or_default()
             .to_string();
-        if presented != expected {
+        if !constant_time_eq(&presented, expected) {
             let payload = "{\"status\":\"unauthorized\",\"note\":\"service token required for this HTTP surface\"}\n".to_string();
             return Ok(RuntimeServiceReply {
                 status: "unauthorized".to_string(),
