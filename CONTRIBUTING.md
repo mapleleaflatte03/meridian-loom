@@ -19,7 +19,7 @@ This lane runs the one-command first-proof surface and validates the local runti
 
 1. Create a focused branch.
 2. Add tests first.
-3. Implement the smallest vertical slice.
+3. Implement the smallest scoped change.
 4. Run the related acceptance lane(s).
 5. Keep migration + rollback notes in README/doc updates.
 

@@ -834,7 +834,7 @@ pub fn import_legacy_v1_plugin_skill_subset(
             path: plugin_spec.manifest_path.display().to_string(),
             reason: "multiple_skill_roots".to_string(),
             detail: format!(
-                "legacy_v1.plugin.json declares {} skills roots; this tranche supports only one",
+                "legacy_v1.plugin.json declares {} skills roots; this import mode supports only one",
                 plugin_spec.skill_roots.len()
             ),
         });
@@ -856,7 +856,7 @@ pub fn import_legacy_v1_plugin_skill_subset(
             reason: "config_gated_skills_not_supported".to_string(),
             detail: if skill_root_spec.gate_detail.is_empty() {
                 format!(
-                    "skills root {} is config-gated and this tranche does not support config-gated skills",
+                    "skills root {} is config-gated and this import mode does not support config-gated skills",
                     skill_root_spec.raw_path
                 )
             } else {
@@ -2252,7 +2252,7 @@ fn parse_legacy_v1_plugin_skill_root_entry(
                 || map.contains_key("gated");
             let gate_detail = if config_gated {
                 format!(
-                    "skills root {} is config-gated and this tranche does not support config-gated skills",
+                    "skills root {} is config-gated and this import mode does not support config-gated skills",
                     raw_path
                 )
             } else {

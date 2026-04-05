@@ -120,7 +120,7 @@ pub(crate) fn handle_nation(args: &[String]) -> LoomResult<()> {
         "gateway_total_channels": gateway.total_channel_count,
         "gateway_enabled_channels": gateway.enabled_channel_count,
         "artifact_path": summary_path.display().to_string(),
-        "note": "direction7.1 vertical slice: runtime + institution + hot wallet + seed agents + gateway",
+        "note": "one-command nation bootstrap: runtime + institution + hot wallet + seed agents + gateway",
     });
     std::fs::write(
         &summary_path,
@@ -163,7 +163,7 @@ USAGE:
   loom init-nation --charter \"My Company\" [--org-id ORG] [--name NAME] [--root PATH] [--kernel-path PATH] [--format human|json]
 
 PURPOSE:
-  Direction 7.1 one-command vertical slice:
+  One-command bootstrap:
   runtime + institution + treasury hot wallet + 7 seed agents + simple gateway sync.
 ",
     );
@@ -317,7 +317,7 @@ if wallet is None or account is None:
             actor_id=actor_id,
             org_id=org_id,
             label="Loom Nation Treasury Hot Account",
-            purpose="Direction 7.1 init-nation settlement source",
+            purpose="init-nation settlement source",
             status="active",
         )
 print(json.dumps({

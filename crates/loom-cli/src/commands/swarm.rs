@@ -21,8 +21,7 @@ fn handle_swarm_run(args: &[String]) -> LoomResult<()> {
     let kernel_path = required_flag(args, "--kernel-path")?;
     let agent_id = required_flag(args, "--agent-id")?;
     let org_id = take_value(args, "--org-id").unwrap_or_else(|| config.org_id.clone());
-    let action_type =
-        take_value(args, "--action-type").unwrap_or_else(|| "research".to_string());
+    let action_type = take_value(args, "--action-type").unwrap_or_else(|| "research".to_string());
     let resource = take_value(args, "--resource").unwrap_or_else(|| "system_info".to_string());
     let module_source =
         take_value(args, "--module").unwrap_or_else(|| "builtin:system.info".to_string());
@@ -193,7 +192,7 @@ fn handle_swarm_run(args: &[String]) -> LoomResult<()> {
             "zk_latest_path": settlement.zk_latest_path.display().to_string(),
             "settlement_latest_path": settlement.settlement_latest_path.display().to_string(),
         },
-        "note": "one-command swarm vertical slice: enqueue -> run queue -> shadow proof -> settle --zk",
+        "note": "one-command swarm flow: enqueue -> run queue -> shadow proof -> settle --zk",
     });
     write_pretty_json(&swarm_latest_path, &payload)?;
     append_jsonl(&swarm_stream_path, &payload)?;
@@ -205,7 +204,7 @@ fn handle_swarm_run(args: &[String]) -> LoomResult<()> {
         );
     } else {
         print_human(&format!(
-            "Meridian Loom // SWARM RUN\n===========================\nstatus:             {}\nproof_backend:      {}\nsettlement_status:  {}\ntreasury_status:    {}\nreservation_id:     {}\nqueue_before:       {}\nqueue_after:        {}\nprocessed_jobs:     {}\nfailed_jobs:        {}\nshadow_warrant:     {}\nwitness_digest:     {}\nswarm_latest_path:  {}\n\nNext\n====\n1. loom shadow report --root {}\n2. loom parity report --root {}\n3. inspect {}\n",
+            "Meridian Loom // SWARM RUN\n===========================\nstatus:             {}\nproof_backend:      {}\nsettlement_status:  {}\ntreasury_status:    {}\nreservation_id:     {}\nqueue_before:       {}\nqueue_after:        {}\nprocessed_jobs:     {}\nfailed_jobs:        {}\nshadow_warrant:     {}\nwitness_digest:     {}\nswarm_latest_path:  {}\n\nNext\n====\n- loom shadow report --root {}\n- loom parity report --root {}\n- inspect {}\n",
             payload.get("status").and_then(Value::as_str).unwrap_or("unknown"),
             payload.get("proof_backend").and_then(Value::as_str).unwrap_or("unknown"),
             payload.get("settlement_status").and_then(Value::as_str).unwrap_or("unknown"),

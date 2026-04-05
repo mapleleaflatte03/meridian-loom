@@ -334,7 +334,7 @@ make acceptance-shadow-zk-lane
 make acceptance-shadow-zk-embodied
 ```
 
-Phase 1 merge gate (Direction 1 + 2):
+Core merge gate (Shadow + ZK path):
 
 ```bash
 ./scripts/acceptance_shadow_zk_lane.sh
@@ -342,8 +342,8 @@ cargo test -p loom-shadow
 cargo test -p meridian-loom --test shadow_zk
 ```
 
-Swarm acceptance (`acceptance_swarm_lane.sh`) is Phase 2+ and intentionally
-excluded from the Phase 1 gate.
+Swarm acceptance (`acceptance_swarm_lane.sh`) is a separate lane and is
+intentionally excluded from this core gate.
 
 ## Sovereign evolution lanes
 

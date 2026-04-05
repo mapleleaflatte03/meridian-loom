@@ -66,7 +66,7 @@ pub(crate) fn handle_breed(args: &[String]) -> LoomResult<()> {
         "mutation_signature": dna.mutation_signature,
         "dna_artifact_path": dna_path.display().to_string(),
         "latest_artifact_path": latest_path.display().to_string(),
-        "note": "direction6.1 vertical slice dna artifact",
+        "note": "governed dna artifact persisted",
     });
     let rendered = serde_json::to_string_pretty(&payload).map_err(|error| error.to_string())?;
     std::fs::write(&dna_path, rendered.clone() + "\n").map_err(|error| error.to_string())?;
@@ -82,8 +82,7 @@ USAGE:
   loom breed <parent1> <parent2> --agent-id ID --kernel-path PATH [--org-id ORG] [--mutation-rate 0.10] [--root PATH] [--format human|json]
 
 PURPOSE:
-  Direction 6.1 vertical slice:
-  deterministic crossover + mutation, Court/Authority gated, DNA artifact persisted.
+  Deterministic crossover + mutation, Court/Authority gated, DNA artifact persisted.
 ",
     );
 }
@@ -152,7 +151,11 @@ fn print_breed_payload(payload: Value, format: &str) -> LoomResult<()> {
     Ok(())
 }
 
-fn query_breed_court_status(kernel_path: &Path, agent_id: &str, org_id: &str) -> LoomResult<CourtStatus> {
+fn query_breed_court_status(
+    kernel_path: &Path,
+    agent_id: &str,
+    org_id: &str,
+) -> LoomResult<CourtStatus> {
     let script = r#"
 import json, pathlib, sys
 kernel_path, agent_id, org_id = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -167,7 +170,10 @@ print(json.dumps({
     "restrictions": restrictions,
 }))
 "#;
-    let value = run_python_json(script, &[kernel_path.to_str().unwrap_or(""), agent_id, org_id])?;
+    let value = run_python_json(
+        script,
+        &[kernel_path.to_str().unwrap_or(""), agent_id, org_id],
+    )?;
     let restrictions = value
         .get("restrictions")
         .and_then(Value::as_array)
@@ -211,7 +217,10 @@ print(json.dumps({
     "reason": reason,
 }))
 "#;
-    let value = run_python_json(script, &[kernel_path.to_str().unwrap_or(""), agent_id, org_id])?;
+    let value = run_python_json(
+        script,
+        &[kernel_path.to_str().unwrap_or(""), agent_id, org_id],
+    )?;
     Ok(AuthorityStatus {
         status: value
             .get("status")
@@ -238,7 +247,10 @@ if agent is None:
     raise SystemExit(f"agent not found: {agent_id}")
 print(json.dumps(agent))
 "#;
-    run_python_json(script, &[kernel_path.to_str().unwrap_or(""), agent_id, org_id])
+    run_python_json(
+        script,
+        &[kernel_path.to_str().unwrap_or(""), agent_id, org_id],
+    )
 }
 
 fn build_dna_record(
