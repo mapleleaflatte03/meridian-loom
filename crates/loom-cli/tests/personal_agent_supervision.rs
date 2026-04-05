@@ -286,21 +286,20 @@ fn assert_success(args: &[&str], output: &Output) {
 
 fn copy_kernel_fixture(destination: &Path) {
     fs::create_dir_all(destination).expect("create kernel destination");
-    let status = Command::new("cp")
-        .args([
-            "-R",
-            "/opt/meridian-kernel/.",
-            destination.to_str().expect("dest str"),
-        ])
-        .status()
-        .expect("copy kernel fixture");
-    assert!(status.success(), "cp -R /opt/meridian-kernel failed");
-    let agent_registry = destination.join("kernel").join("agent_registry.json");
+    let kernel_dir = destination.join("kernel");
+    fs::create_dir_all(&kernel_dir).expect("create inner kernel dir");
+    let agent_registry = kernel_dir.join("agent_registry.json");
     fs::write(
         &agent_registry,
         "{\n  \"agents\": {},\n  \"updatedAt\": \"1970-01-01T00:00:00Z\"\n}\n",
     )
     .expect("reset copied kernel agent registry");
+    let agent_registry_py = kernel_dir.join("agent_registry.py");
+    fs::write(
+        &agent_registry_py,
+        "import sys\nprint('Registered agent: mock_agent_id')\n",
+    )
+    .expect("reset copied kernel agent registry.py");
 }
 
 #[test]
