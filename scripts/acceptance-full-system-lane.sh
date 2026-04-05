@@ -26,7 +26,6 @@ RUNTIME_ROOT="${WORK_DIR}/runtime"
 KERNEL_PATH="${WORK_DIR}/kernel-fixture"
 LOG_DIR="${WORK_DIR}/logs"
 WARRANT_FILE="${WORK_DIR}/full-system-warrant.json"
-GRPC_SHIM="${WORK_DIR}/grpcurl-physical-shim.sh"
 REQUESTED_ORG_HINT="org_full_system"
 ACTIVE_ORG_ID="${REQUESTED_ORG_HINT}"
 
@@ -465,20 +464,6 @@ with open(path, "w", encoding="utf-8") as handle:
 PY
 }
 
-create_grpc_physical_shim() {
-  cat >"${GRPC_SHIM}" <<'BASH'
-#!/usr/bin/env bash
-set -euo pipefail
-mode="${LOOM_GRPC_PHYSICAL_SHIM_MODE:-ack}"
-if [[ "${mode}" == "timeout" ]]; then
-  printf '{"status":"ok","lifecycle_status":"ack_timeout","ack_received":false,"stream_event_count":2}\n'
-else
-  printf '{"status":"ok","lifecycle_status":"acknowledged","ack_received":true,"stream_event_count":4}\n'
-fi
-BASH
-  chmod +x "${GRPC_SHIM}"
-}
-
 extract_json_field() {
   local file="$1"
   local query="$2"
@@ -573,7 +558,6 @@ echo "kernel_path=${KERNEL_PATH}"
 
 create_kernel_fixture
 create_warrant
-create_grpc_physical_shim
 
 # 1) init-nation
 run_step "1" "nation.init" \
@@ -646,7 +630,6 @@ SUMMARY_ROWS+=("3|connect.scaffold|PASS|adapter_id=$(extract_json_field "${CURRE
 
 # 4) shadow run grpc_physical
 run_step "4" "shadow.grpc_physical" \
-  env LOOM_SHADOW_GRPCURL_BIN="${GRPC_SHIM}" LOOM_GRPC_PHYSICAL_SHIM_MODE="ack" \
   "${LOOM_BIN}" shadow run \
   --backend grpc_physical \
   --root "${RUNTIME_ROOT}" \
@@ -701,7 +684,7 @@ assert_json "${PHYSICAL_GOV_FILE}" '.authority_status == "allowed"' "physical au
 assert_json "${PHYSICAL_GOV_FILE}" '.treasury_status == "allowed"' "physical treasury check failed"
 SUMMARY_ROWS+=("4|shadow.grpc_physical|PASS|warrant=verified; treasury=allowed; court=clear; authority=allowed")
 
-# 5) memory fork (compat shim if command unavailable)
+# 5) memory fork (native)
 CURRENT_STEP="5"
 CURRENT_COMPONENT="memory.fork"
 CURRENT_LOG="${LOG_DIR}/step_5_memory_fork.log"
@@ -712,23 +695,15 @@ CURRENT_LOG="${LOG_DIR}/step_5_memory_fork.log"
   "${LOOM_BIN}" memory write --root "${RUNTIME_ROOT}" --agent-id agent_atlas --category research --key pattern --content "v2" --source full-system --format json
   "${LOOM_BIN}" memory write --root "${RUNTIME_ROOT}" --agent-id agent_atlas --category research --key insight --content "portable" --source full-system --format json
   echo "+ ${LOOM_BIN} memory fork agent_atlas --branch full-system --target-agent-id agent_quill ..."
-  if "${LOOM_BIN}" memory fork agent_atlas --branch full-system --target-agent-id agent_quill --root "${RUNTIME_ROOT}" --format json; then
-    :
-  else
-    echo "[compat] memory fork command unavailable in current CLI; using graph-inspect source reference compatibility lane."
-    "${LOOM_BIN}" memory graph inspect agent_atlas --direction both --limit 20 --root "${RUNTIME_ROOT}" --format json
-    echo '{"status":"memory_fork_compat","source_ref":"agent_atlas","note":"compat fallback because memory fork command is not available in this build"}'
-  fi
+  "${LOOM_BIN}" memory fork agent_atlas --branch full-system --target-agent-id agent_quill --root "${RUNTIME_ROOT}" --format json
 } 2>&1 | tee "${CURRENT_LOG}"
 
-if ! tail -n 1 "${CURRENT_LOG}" | jq -e '.status == "memory_fork_compat" or .status == "memory_fork_created" or .status == "memory_forked"' >/dev/null 2>&1; then
-  fail_now "memory fork step did not produce compatible fork status"
-fi
-MEMORY_SOURCE_REF="$(tail -n 1 "${CURRENT_LOG}" | jq -r '.source_ref // "agent_atlas"')"
+assert_json "${CURRENT_LOG}" '.status == "memory_fork_created" or .status == "memory_forked"' "memory fork step did not produce native fork status"
+MEMORY_SOURCE_REF="$(extract_json_field "${CURRENT_LOG}" '.source_ref // "agent_atlas"')"
 if [[ -z "${MEMORY_SOURCE_REF}" || "${MEMORY_SOURCE_REF}" == "null" ]]; then
   MEMORY_SOURCE_REF="agent_atlas"
 fi
-SUMMARY_ROWS+=("5|memory.fork|PASS|source_ref=${MEMORY_SOURCE_REF}; mode=compat_or_native")
+SUMMARY_ROWS+=("5|memory.fork|PASS|source_ref=${MEMORY_SOURCE_REF}; mode=native")
 
 # 6) memory replay
 run_step "6" "memory.replay" \

@@ -407,3 +407,61 @@ fn memory_replay_subgraph_replays_selected_nodes_when_allowed() {
         "target memory should receive replayed entries"
     );
 }
+
+#[test]
+fn memory_fork_creates_native_artifact_and_target_entries() {
+    let harness = Harness::new("fork_native", false);
+    write_memory_series(&harness, "agent_source");
+
+    let fork = harness.json_ok(&[
+        "memory",
+        "fork",
+        "agent_source",
+        "--target-agent-id",
+        "agent_target",
+        "--branch",
+        "full-system",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    assert_eq!(
+        fork.get("status").and_then(Value::as_str),
+        Some("memory_fork_created")
+    );
+    assert!(
+        fork.get("forked_entries")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            >= 1
+    );
+    let artifact_path = PathBuf::from(
+        fork.get("artifact_path")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+    );
+    assert!(
+        artifact_path.exists(),
+        "memory fork artifact should exist: {}",
+        artifact_path.display()
+    );
+
+    let target_entries = harness.json_ok(&[
+        "memory",
+        "search",
+        "--root",
+        harness.root_str(),
+        "--agent-id",
+        "agent_target",
+        "--category",
+        "research",
+        "--format",
+        "json",
+    ]);
+    let entries = target_entries.as_array().expect("target entries");
+    assert!(
+        !entries.is_empty(),
+        "target memory should receive forked entries"
+    );
+}

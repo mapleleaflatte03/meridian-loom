@@ -512,3 +512,78 @@ fn shadow_run_grpc_physical_requires_physical_fields() {
         stderr
     );
 }
+
+#[test]
+fn shadow_run_grpc_physical_gracefully_degrades_when_grpcurl_missing() {
+    let harness = Harness::new("grpc_physical_missing_grpcurl");
+    let warrant_path = harness.home.join("shadow-warrant.json");
+    write_signed_warrant(&warrant_path);
+
+    let capture = harness.json_ok_with_env(
+        &[
+            "shadow",
+            "run",
+            "--backend",
+            "grpc_physical",
+            "--root",
+            harness.root_str(),
+            "--kernel-path",
+            harness.kernel_str(),
+            "--agent-id",
+            "agent_atlas",
+            "--org-id",
+            "org_demo",
+            "--action-type",
+            "shadow_grpc_physical",
+            "--resource",
+            "external_grpc_physical",
+            "--warrant-file",
+            warrant_path.to_str().expect("warrant path"),
+            "--url",
+            "grpc://127.0.0.1:50051",
+            "--grpc-service",
+            "meridian.embodied.action.v1.PhysicalActionService",
+            "--grpc-method",
+            "Execute",
+            "--grpc-action-kind",
+            "physical.move",
+            "--grpc-action-objective",
+            "move robot to staging point",
+            "--physical-robot-id",
+            "unitree.go2",
+            "--physical-target",
+            "warehouse.aisle-7",
+            "--physical-command",
+            "move_to_pose",
+            "--physical-safety-class",
+            "restricted",
+            "--grpc-physical-lifecycle",
+            "stream",
+            "--grpc-physical-ack-required",
+            "--grpc-physical-ack-timeout-seconds",
+            "5",
+            "--format",
+            "json",
+        ],
+        &[("LOOM_SHADOW_GRPCURL_BIN", "/tmp/does-not-exist-grpcurl")],
+    );
+    assert_eq!(
+        capture.get("status").and_then(Value::as_str),
+        Some("shadow_run_captured")
+    );
+    assert_eq!(
+        capture
+            .get("warrant_binding_status")
+            .and_then(Value::as_str),
+        Some("verified")
+    );
+    let response = capture
+        .get("host_response_json")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    assert!(
+        response.contains("grpc_physical_transport_unavailable"),
+        "host response should report graceful transport fallback: {}",
+        response
+    );
+}

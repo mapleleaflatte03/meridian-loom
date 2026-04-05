@@ -2945,25 +2945,56 @@ fn run_shadow_backend_grpc_physical(request: &ShadowRunRequest) -> ShadowResult<
     }
     command.arg("-d").arg(request_json);
     command.arg(&grpc_target).arg(&grpc_rpc);
-    let output = command.output().map_err(|error| match error.kind() {
-        ErrorKind::NotFound => format!(
-            "failed to execute grpc_physical: '{}' not found. Install grpcurl or set LOOM_SHADOW_GRPCURL_BIN to a grpcurl-compatible binary",
-            grpcurl_bin
-        ),
-        _ => format!(
-            "failed to execute grpc_physical via {} for {} {}: {}",
-            grpcurl_bin, grpc_target, grpc_rpc, error
-        ),
-    })?;
-    let exit_code = output.status.code();
-    let stdout_text = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr_text = String::from_utf8_lossy(&output.stderr).to_string();
-    let stdout_json: Value = serde_json::from_str(&stdout_text).unwrap_or_else(|_| {
-        serde_json::json!({
-            "status": if output.status.success() { "ok" } else { "error" },
-            "stdout_excerpt_utf8": stdout_text,
-        })
-    });
+    let (command_success, exit_code, stdout_text, stderr_text, stdout_json, transport_fallback) =
+        match command.output() {
+            Ok(output) => {
+                let stdout_text = String::from_utf8_lossy(&output.stdout).to_string();
+                let stderr_text = String::from_utf8_lossy(&output.stderr).to_string();
+                let stdout_json: Value = serde_json::from_str(&stdout_text).unwrap_or_else(|_| {
+                    serde_json::json!({
+                        "status": if output.status.success() { "ok" } else { "error" },
+                        "stdout_excerpt_utf8": stdout_text,
+                    })
+                });
+                (
+                    output.status.success(),
+                    output.status.code(),
+                    stdout_text,
+                    stderr_text,
+                    stdout_json,
+                    None::<String>,
+                )
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                let fallback_reason = "grpcurl_not_found".to_string();
+                let stderr_text = format!(
+                    "grpc_physical fallback: '{}' not found; run degraded capture without transport execution",
+                    grpcurl_bin
+                );
+                let stdout_json = serde_json::json!({
+                    "status": "grpc_physical_transport_unavailable",
+                    "reason": fallback_reason,
+                    "ack_received": !lifecycle_ack_required,
+                    "lifecycle_status": "transport_unavailable",
+                    "stream_event_count": 0,
+                    "transport_backend": "missing_grpcurl",
+                });
+                (
+                    false,
+                    Some(127),
+                    String::new(),
+                    stderr_text,
+                    stdout_json,
+                    Some(fallback_reason),
+                )
+            }
+            Err(error) => {
+                return Err(format!(
+                    "failed to execute grpc_physical via {} for {} {}: {}",
+                    grpcurl_bin, grpc_target, grpc_rpc, error
+                ));
+            }
+        };
     let ack_received = stdout_json
         .get("ack_received")
         .and_then(Value::as_bool)
@@ -2982,7 +3013,9 @@ fn run_shadow_backend_grpc_physical(request: &ShadowRunRequest) -> ShadowResult<
     let lifecycle_status = value_string(stdout_json.get("lifecycle_status"));
     let lifecycle_stream_event_count = stdout_json.get("stream_event_count").and_then(Value::as_u64);
     let lifecycle_ack_latency_ms = stdout_json.get("ack_latency_ms").and_then(Value::as_u64);
-    let remediation_action = if lifecycle_cancelled {
+    let remediation_action = if let Some(reason) = transport_fallback.as_deref() {
+        format!("transport_unavailable:{}:{}", reason, remediation_profile)
+    } else if lifecycle_cancelled {
         format!(
             "cancelled:{}:{}",
             if lifecycle_cancel_reason.is_empty() {
@@ -2998,10 +3031,17 @@ fn run_shadow_backend_grpc_physical(request: &ShadowRunRequest) -> ShadowResult<
         "none".to_string()
     };
     let response_payload = serde_json::json!({
-        "status": if output.status.success() { "grpc_physical_executed" } else { "grpc_physical_error" },
+        "status": if command_success {
+            "grpc_physical_executed"
+        } else if transport_fallback.is_some() {
+            "grpc_physical_transport_unavailable"
+        } else {
+            "grpc_physical_error"
+        },
         "grpc_target": grpc_target,
         "grpc_rpc": grpc_rpc,
         "grpc_transport": if plaintext { "plaintext" } else { "tls" },
+        "grpc_transport_fallback": transport_fallback,
         "grpc_allow_unknown_fields": grpc_allow_unknown_fields,
         "grpc_max_time_seconds": grpc_max_time_seconds,
         "grpc_schema": "meridian.embodied.action.v1",
@@ -3042,7 +3082,7 @@ fn run_shadow_backend_grpc_physical(request: &ShadowRunRequest) -> ShadowResult<
             start_ms,
             &request_bytes,
             response_json.as_bytes(),
-            !output.status.success(),
+            !command_success,
         )
         .map_err(|error| error.to_string())?;
     let audit_root = interceptor.finalize().map_err(|error| error.to_string())?;

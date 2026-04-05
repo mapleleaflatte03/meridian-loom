@@ -354,6 +354,7 @@ Bootstrap\n\
   loom memory search --agent-id ID [--category NAME] [--key-prefix PREFIX] [--root PATH] [--format human|json]\n\
   loom memory receipts [--agent-id ID] [--limit N] [--root PATH] [--format human|json]\n\
   loom memory graph inspect <source-ref> [--node-id ID] [--direction ancestors|descendants|both] [--limit N] [--root PATH] [--format human|json]\n\
+  loom memory fork <source-ref> --target-agent-id ID [--branch NAME] [--node-id ID] [--direction ancestors|descendants|both] [--limit N] [--root PATH] [--format human|json]\n\
   loom memory replay <source-ref> --target-agent-id ID --kernel-path PATH [--org-id ORG] [--node-id ID] [--direction ancestors|descendants|both] [--limit N] [--root PATH] [--format human|json]\n\
   loom memory write --agent-id ID --category NAME --key KEY --content TEXT [--source NAME] [--root PATH] [--format human|json]\n\
   loom memory remove --agent-id ID --category NAME --key KEY [--root PATH] [--format human|json]\n\

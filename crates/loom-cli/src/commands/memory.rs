@@ -15,6 +15,7 @@ pub(crate) fn handle_memory(args: &[String]) -> LoomResult<()> {
     match args.first().map(String::as_str) {
         Some("status") | Some("overview") => handle_memory_overview(&args[1..]),
         Some("graph") => handle_memory_graph(&args[1..]),
+        Some("fork") => handle_memory_fork(&args[1..]),
         Some("replay") => handle_memory_replay(&args[1..]),
         Some("search") => handle_memory_search(&args[1..]),
         Some("receipts") => handle_memory_receipts(&args[1..]),
@@ -22,7 +23,7 @@ pub(crate) fn handle_memory(args: &[String]) -> LoomResult<()> {
         Some("remove") => handle_memory_remove(&args[1..]),
         Some("prune") => handle_memory_prune(&args[1..]),
         _ => Err(
-            "memory supports 'status', 'overview', 'graph', 'replay', 'search', 'receipts', 'write', 'remove', and 'prune'"
+            "memory supports 'status', 'overview', 'graph', 'fork', 'replay', 'search', 'receipts', 'write', 'remove', and 'prune'"
                 .to_string(),
         ),
     }
@@ -87,6 +88,110 @@ fn handle_memory_graph_inspect(args: &[String]) -> LoomResult<()> {
             print_human(&render_memory_graph_inspect_human(&view));
         }
         _ => print!("{}", render_memory_graph_inspect_json(&view)),
+    }
+    Ok(())
+}
+
+fn handle_memory_fork(args: &[String]) -> LoomResult<()> {
+    let source_ref = args
+        .first()
+        .cloned()
+        .ok_or_else(|| "memory fork requires <source-ref>".to_string())?;
+    let target_agent_id = required_flag(args, "--target-agent-id")?;
+    let branch = take_value(args, "--branch").unwrap_or_else(|| "main".to_string());
+    let root = root_from(take_value(args, "--root").as_deref())?;
+    let format = output_format(args);
+    let focus_node_id = take_value(args, "--node-id");
+    let direction = MemoryLineageDirection::parse(
+        take_value(args, "--direction")
+            .unwrap_or_else(|| "both".to_string())
+            .as_str(),
+    )?;
+    let limit = take_value(args, "--limit")
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(25);
+
+    let service = MemoryService::with_defaults(&root);
+    let selection = service.select_replay_entries(
+        &source_ref,
+        focus_node_id.as_deref(),
+        direction.clone(),
+        limit,
+    )?;
+
+    let fork_source = format!("memory_fork:{}:{}", selection.source_ref, branch);
+    let mut forked_entries = 0usize;
+    for entry in &selection.selected_entries {
+        service.write(
+            &target_agent_id,
+            &entry.category,
+            &entry.key,
+            &entry.content,
+            &fork_source,
+        )?;
+        forked_entries += 1;
+    }
+
+    let artifact_dir = root.join("artifacts/memory/forks");
+    std::fs::create_dir_all(&artifact_dir).map_err(|error| error.to_string())?;
+    let fork_artifact_path = artifact_dir.join(format!(
+        "{}_to_{}_{}.json",
+        sanitize_token(&selection.source_ref),
+        sanitize_token(&target_agent_id),
+        chrono_like_timestamp(),
+    ));
+    let latest_artifact_path = artifact_dir.join("latest.json");
+    let payload = json!({
+        "status": "memory_fork_created",
+        "source_ref": selection.source_ref,
+        "target_agent_id": target_agent_id,
+        "branch": branch,
+        "direction": direction.as_str(),
+        "focus_node_id": selection.focus_node_id,
+        "mode": selection.mode,
+        "selected_node_ids": selection.selected_node_ids,
+        "selected_category_keys": selection.selected_category_keys.iter().map(|(category, key)| {
+            json!({"category": category, "key": key})
+        }).collect::<Vec<_>>(),
+        "selected_entries": selection.selected_entries.len(),
+        "forked_entries": forked_entries,
+        "total_graph_nodes": selection.total_graph_nodes,
+        "artifact_path": fork_artifact_path.display().to_string(),
+        "latest_artifact_path": latest_artifact_path.display().to_string(),
+        "note": "native memory fork lane created from governed replay selection",
+    });
+    let rendered = serde_json::to_string_pretty(&payload).map_err(|error| error.to_string())?;
+    std::fs::write(&fork_artifact_path, rendered.clone() + "\n").map_err(|error| error.to_string())?;
+    std::fs::write(&latest_artifact_path, rendered + "\n").map_err(|error| error.to_string())?;
+    print_memory_fork_payload(payload, &format)
+}
+
+fn print_memory_fork_payload(payload: Value, format: &str) -> LoomResult<()> {
+    match format {
+        "human" => {
+            print_startup_banner();
+            print_human(&format!(
+                "status:            {}\nsource_ref:        {}\ntarget_agent_id:   {}\nbranch:            {}\ndirection:         {}\nmode:              {}\nselected_entries:  {}\nforked_entries:    {}\nartifact_path:     {}\nlatest_artifact:   {}\nnote:              {}\n",
+                payload.get("status").and_then(Value::as_str).unwrap_or("unknown"),
+                payload.get("source_ref").and_then(Value::as_str).unwrap_or(""),
+                payload.get("target_agent_id").and_then(Value::as_str).unwrap_or(""),
+                payload.get("branch").and_then(Value::as_str).unwrap_or(""),
+                payload.get("direction").and_then(Value::as_str).unwrap_or("both"),
+                payload.get("mode").and_then(Value::as_str).unwrap_or("(n/a)"),
+                payload.get("selected_entries").and_then(Value::as_u64).unwrap_or(0),
+                payload.get("forked_entries").and_then(Value::as_u64).unwrap_or(0),
+                payload.get("artifact_path").and_then(Value::as_str).unwrap_or(""),
+                payload
+                    .get("latest_artifact_path")
+                    .and_then(Value::as_str)
+                    .unwrap_or(""),
+                payload.get("note").and_then(Value::as_str).unwrap_or(""),
+            ));
+        }
+        _ => print!(
+            "{}\n",
+            serde_json::to_string_pretty(&payload).map_err(|error| error.to_string())?
+        ),
     }
     Ok(())
 }
