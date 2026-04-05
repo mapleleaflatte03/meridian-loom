@@ -315,6 +315,12 @@ if payload.get("total_adapters", 0) < 5:
     raise SystemExit(f"expected total_adapters >= 5, got {payload.get('total_adapters')}")
 if payload.get("overall_status") not in {"healthy", "degraded"}:
     raise SystemExit(f"unexpected overall_status: {payload.get('overall_status')}")
+rows = payload.get("adapters") or []
+if len(rows) < 5:
+    raise SystemExit(f"expected at least 5 scorecard rows, got {len(rows)}")
+for row in rows:
+    if row.get("security_posture_ok") is not True:
+        raise SystemExit(f"expected security_posture_ok=true for {row.get('adapter_id')}")
 PY
 
 echo "[loom-acceptance] PASS connect ecosystem lane"

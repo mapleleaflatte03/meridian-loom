@@ -9,6 +9,7 @@ Operator-first adapter templates for the priority connect transports:
 - `webhook.sample.json`
 
 These are contract-shape examples for `loom connect scaffold|validate|enable|test|health`.
+Each scaffold now includes a governed `security_profile` baseline and transport guard checks.
 Operator retention + KPI surfaces:
 
 - `loom connect metrics --adapter-id ...`
@@ -24,5 +25,7 @@ Acceptance lanes:
 - `scripts/acceptance_connect_browser_lane.sh`
 - `scripts/acceptance_connect_shell_lane.sh`
 - `scripts/acceptance_connect_webhook_lane.sh`
+- `scripts/acceptance_connect_failure_injection_lane.sh`
+- `scripts/acceptance_connect_security_lane.sh`
 
 They do not include provider-specific defaults or secrets.

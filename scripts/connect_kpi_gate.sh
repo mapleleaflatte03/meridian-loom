@@ -11,6 +11,7 @@ UPTIME_TARGET=0.995
 FALLBACK_TARGET=0.98
 SETTLEMENT_MAX_MS=5000
 REQUIRE_SETTLEMENT_LATENCY=false
+SKIP_SECURITY_CHECK=false
 MIN_TEST_EVENTS=20
 ADAPTER_IDS=()
 
@@ -25,6 +26,7 @@ Options:
   --fallback-target <ratio>         Target fallback success ratio (default: 0.98)
   --settlement-max-ms <n>           Max settlement latency in ms (default: 5000)
   --require-settlement-latency      Fail when settlement latency is unavailable
+  --skip-security-check             Skip connect validate security posture gate
   --min-test-events <n>             Minimum tests_total before KPI gating applies (default: 20)
 USAGE
 }
@@ -45,6 +47,8 @@ while [[ $# -gt 0 ]]; do
       SETTLEMENT_MAX_MS="${2:-}"; shift 2 ;;
     --require-settlement-latency)
       REQUIRE_SETTLEMENT_LATENCY=true; shift ;;
+    --skip-security-check)
+      SKIP_SECURITY_CHECK=true; shift ;;
     --min-test-events)
       MIN_TEST_EVENTS="${2:-}"; shift 2 ;;
     --help|-h)
@@ -106,6 +110,37 @@ print(f"{adapter_id}: tests_total={tests_total} uptime={uptime:.4f} fallback_suc
 PY
   then
     FAILURES=$((FAILURES + 1))
+  fi
+
+  if [[ "${SKIP_SECURITY_CHECK}" != "true" ]]; then
+    VALIDATE_JSON="$("${LOOM_BIN}" connect validate \
+      --adapter-id "${ADAPTER_ID}" \
+      --root "${ROOT}" \
+      --format json || true)"
+    if ! python3 - <<'PY' "${VALIDATE_JSON}" "${ADAPTER_ID}"
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+adapter_id = sys.argv[2]
+
+if payload.get("status") != "connect_validated":
+    raise SystemExit(f"{adapter_id}: unexpected validate status {payload.get('status')}")
+
+checks = payload.get("checks") or []
+if len(checks) != 1:
+    raise SystemExit(f"{adapter_id}: expected exactly one validate check row")
+row = checks[0]
+if not bool(row.get("security_posture_ok")):
+    raise SystemExit(f"{adapter_id}: security_posture_ok=false")
+if not bool(row.get("valid")):
+    raise SystemExit(f"{adapter_id}: validate row marked invalid")
+
+print(f"{adapter_id}: security_posture_ok=true")
+PY
+    then
+      FAILURES=$((FAILURES + 1))
+    fi
   fi
 done
 

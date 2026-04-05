@@ -196,6 +196,30 @@ fn connect_scaffold_creates_manifest_with_poge_standard_fields() {
             .and_then(Value::as_bool),
         Some(true)
     );
+    assert_eq!(
+        manifest
+            .pointer("/security_profile/mode")
+            .and_then(Value::as_str),
+        Some("governed_default")
+    );
+    assert_eq!(
+        manifest
+            .pointer("/security_profile/allow_plaintext_secrets")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        manifest
+            .pointer("/security_profile/require_warrant")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        manifest
+            .pointer("/security_profile/require_treasury_gate")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
 }
 
 #[test]
@@ -404,6 +428,110 @@ fn connect_validate_migrates_registry_v1_to_v2_additive_shape() {
             .and_then(Value::as_str),
         Some("connect_runtime_contract_v2")
     );
+}
+
+#[test]
+fn connect_validate_rejects_unsafe_security_matrix_for_priority_transports() {
+    let harness = Harness::new("validate_security_matrix");
+    let adapters = [
+        ("telegram_secure_adapter", "telegram"),
+        ("discord_secure_adapter", "discord"),
+        ("browser_secure_adapter", "browser"),
+        ("shell_secure_adapter", "shell"),
+        ("webhook_secure_adapter", "webhook"),
+    ];
+    for (name, transport) in adapters {
+        harness.run_ok(&[
+            "connect",
+            "scaffold",
+            "--name",
+            name,
+            "--transport",
+            transport,
+            "--action-schema",
+            "meridian.runtime.v1",
+            "--root",
+            harness.root_str(),
+            "--format",
+            "json",
+        ]);
+    }
+
+    let registry_path = Path::new(harness.root_str()).join("state/connect/registry.json");
+    let mut registry: Value =
+        serde_json::from_str(&fs::read_to_string(&registry_path).expect("read registry"))
+            .expect("parse registry");
+    let items = registry
+        .get_mut("adapters")
+        .and_then(Value::as_array_mut)
+        .expect("adapters");
+    for adapter in items {
+        let adapter_id = adapter
+            .get("adapter_id")
+            .and_then(Value::as_str)
+            .expect("adapter_id");
+        match adapter_id {
+            "telegram-secure-adapter" => {
+                adapter["security_profile"]["allow_plaintext_secrets"] = Value::Bool(true);
+            }
+            "discord-secure-adapter" => {
+                adapter["security_profile"]["max_payload_bytes"] = Value::Number(0_u64.into());
+            }
+            "browser-secure-adapter" => {
+                adapter["transport_profile"]["sandbox"] = Value::String("none".to_string());
+            }
+            "shell-secure-adapter" => {
+                adapter["transport_profile"]["execution_mode"] =
+                    Value::String("unrestricted".to_string());
+            }
+            "webhook-secure-adapter" => {
+                adapter["transport_profile"]["method"] = Value::String("GET".to_string());
+            }
+            _ => {}
+        }
+    }
+    fs::write(
+        &registry_path,
+        serde_json::to_string_pretty(&registry).expect("serialize registry"),
+    )
+    .expect("write registry");
+
+    let output = harness.run_output(&[
+        "connect",
+        "validate",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    assert!(
+        !output.status.success(),
+        "expected validation failure for unsafe security matrix"
+    );
+    let payload: Value = serde_json::from_slice(&output.stdout).expect("parse validate payload");
+    assert_eq!(
+        payload.get("status").and_then(Value::as_str),
+        Some("connect_validated")
+    );
+    assert_eq!(
+        payload.get("validation_status").and_then(Value::as_str),
+        Some("fail")
+    );
+    assert_eq!(
+        payload.get("invalid_adapters").and_then(Value::as_u64),
+        Some(5)
+    );
+    let checks = payload
+        .get("checks")
+        .and_then(Value::as_array)
+        .expect("checks");
+    assert_eq!(checks.len(), 5);
+    assert!(checks.iter().all(|item| {
+        item.get("security_posture_ok")
+            .and_then(Value::as_bool)
+            .map(|value| !value)
+            .unwrap_or(false)
+    }));
 }
 
 #[test]
@@ -1347,6 +1475,153 @@ fn connect_scorecard_fix_applies_remediation_for_degraded_adapter() {
     assert!(
         lifecycle_history.contains("\"action\":\"scorecard_fix\""),
         "expected scorecard_fix lifecycle action in history"
+    );
+}
+
+#[test]
+fn connect_scorecard_fix_applies_security_baseline_for_priority_transports() {
+    let harness = Harness::new("scorecard_security_fix");
+    let adapters = [
+        ("telegram_security_adapter", "telegram"),
+        ("discord_security_adapter", "discord"),
+        ("browser_security_adapter", "browser"),
+        ("shell_security_adapter", "shell"),
+        ("webhook_security_adapter", "webhook"),
+    ];
+
+    for (name, transport) in adapters {
+        let adapter_id = name.replace('_', "-");
+        harness.run_ok(&[
+            "connect",
+            "scaffold",
+            "--name",
+            name,
+            "--transport",
+            transport,
+            "--action-schema",
+            "meridian.runtime.v1",
+            "--root",
+            harness.root_str(),
+            "--format",
+            "json",
+        ]);
+        harness.run_ok(&[
+            "connect",
+            "enable",
+            "--adapter-id",
+            adapter_id.as_str(),
+            "--root",
+            harness.root_str(),
+            "--format",
+            "json",
+        ]);
+        harness.run_ok(&[
+            "connect",
+            "test",
+            "--adapter-id",
+            adapter_id.as_str(),
+            "--root",
+            harness.root_str(),
+            "--format",
+            "json",
+        ]);
+        harness.run_ok(&[
+            "connect",
+            "health",
+            "--adapter-id",
+            adapter_id.as_str(),
+            "--root",
+            harness.root_str(),
+            "--format",
+            "json",
+        ]);
+    }
+
+    let registry_path = Path::new(harness.root_str()).join("state/connect/registry.json");
+    let mut registry: Value =
+        serde_json::from_str(&fs::read_to_string(&registry_path).expect("read registry"))
+            .expect("parse registry");
+    let items = registry
+        .get_mut("adapters")
+        .and_then(Value::as_array_mut)
+        .expect("adapters");
+    for adapter in items {
+        let adapter_id = adapter
+            .get("adapter_id")
+            .and_then(Value::as_str)
+            .expect("adapter_id");
+        match adapter_id {
+            "telegram-security-adapter" => {
+                adapter["security_profile"]["allow_plaintext_secrets"] = Value::Bool(true);
+            }
+            "discord-security-adapter" => {
+                adapter["security_profile"]["max_payload_bytes"] = Value::Number(0_u64.into());
+            }
+            "browser-security-adapter" => {
+                adapter["transport_profile"]["sandbox"] = Value::String("none".to_string());
+            }
+            "shell-security-adapter" => {
+                adapter["transport_profile"]["execution_mode"] =
+                    Value::String("unrestricted".to_string());
+            }
+            "webhook-security-adapter" => {
+                adapter["transport_profile"]["method"] = Value::String("GET".to_string());
+            }
+            _ => {}
+        }
+    }
+    fs::write(
+        &registry_path,
+        serde_json::to_string_pretty(&registry).expect("serialize registry"),
+    )
+    .expect("write registry");
+
+    let scorecard = harness.json_ok(&[
+        "connect",
+        "scorecard",
+        "--retention-days",
+        "30",
+        "--fix",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    assert_eq!(
+        scorecard.get("status").and_then(Value::as_str),
+        Some("connect_scorecard")
+    );
+    assert_eq!(
+        scorecard.get("overall_status").and_then(Value::as_str),
+        Some("degraded")
+    );
+    let remediation_actions = scorecard
+        .get("remediation_actions")
+        .and_then(Value::as_array)
+        .expect("remediation actions");
+    let security_actions = remediation_actions
+        .iter()
+        .filter(|item| {
+            item.get("action").and_then(Value::as_str) == Some("apply_security_baseline")
+        })
+        .count();
+    assert!(
+        security_actions >= 5,
+        "expected at least five apply_security_baseline actions, got {}",
+        security_actions
+    );
+
+    let validated = harness.json_ok(&[
+        "connect",
+        "validate",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    assert_eq!(
+        validated.get("validation_status").and_then(Value::as_str),
+        Some("pass")
     );
 }
 

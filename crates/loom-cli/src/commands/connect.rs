@@ -20,6 +20,11 @@ const CONNECT_HEALTH_EVENT_SCHEMA: &str = "meridian.connect.health_event.v1";
 const CONNECT_LIFECYCLE_EVENT_SCHEMA: &str = "meridian.connect.lifecycle_event.v1";
 const DEFAULT_RECONNECT_ATTEMPTS_MAX: u64 = 3;
 const DEFAULT_DIAGNOSTIC_RETENTION_DAYS: u64 = 30;
+const DEFAULT_SECURITY_MAX_PAYLOAD_BYTES: u64 = 262_144;
+const SECURITY_MAX_PAYLOAD_BYTES_LIMIT: u64 = 1_048_576;
+const SECURITY_PROFILE_SCHEMA: &str = "connect_security_profile_v1";
+const SECURITY_FAILURE_POLICY_DEFAULT: &str = "fallback_local_queue";
+const SECURITY_FAILURE_POLICIES: [&str; 3] = ["fallback_local_queue", "shadow_mode", "deny"];
 const SUPPORTED_TRANSPORTS: [&str; 10] = [
     "telegram", "discord", "browser", "shell", "webhook", "grpc", "a2a", "mcp", "http", "ros2",
 ];
@@ -74,7 +79,7 @@ COMMANDS:
   health   --adapter-id ID [--root ROOT] [--format human|json]
   diagnostics --adapter-id ID [--limit N] [--root ROOT] [--format human|json]
   metrics  --adapter-id ID [--retention-days DAYS] [--root ROOT] [--format human|json]
-  scorecard [--retention-days DAYS] [--root ROOT] [--format human|json]
+  scorecard [--retention-days DAYS] [--fix] [--root ROOT] [--format human|json]
   prune    --adapter-id ID [--retention-days DAYS] [--root ROOT] [--format human|json]"
     );
 }
@@ -128,6 +133,7 @@ fn handle_connect_scaffold(args: &[String]) -> LoomResult<()> {
         "diagnostics": default_adapter_diagnostics(),
         "fallback": default_fallback_policy(),
         "poge_standard": poge_standard_profile(),
+        "security_profile": security_profile_for(transport.as_str()),
         "transport_profile": transport_profile_for(transport.as_str()),
     });
     upsert_adapter(&mut registry, manifest.clone())?;
@@ -263,7 +269,12 @@ fn handle_connect_validate(args: &[String]) -> LoomResult<()> {
             .and_then(Value::as_str)
             .map(|value| value == CONNECT_RUNTIME_CONTRACT_V2)
             .unwrap_or(false);
-        let valid = transport_ok && schema_ok && runtime_contract_ok;
+        let security_checks = evaluate_adapter_security(&adapter);
+        let security_posture_ok = security_checks
+            .get("valid")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let valid = transport_ok && schema_ok && runtime_contract_ok && security_posture_ok;
         if !valid {
             invalid += 1;
         }
@@ -272,6 +283,8 @@ fn handle_connect_validate(args: &[String]) -> LoomResult<()> {
             "transport_ok": transport_ok,
             "action_schema_ok": schema_ok,
             "runtime_contract_ok": runtime_contract_ok,
+            "security_posture_ok": security_posture_ok,
+            "security_checks": security_checks,
             "valid": valid,
         }));
     }
@@ -834,7 +847,14 @@ fn handle_connect_scorecard(args: &[String]) -> LoomResult<()> {
             .and_then(Value::as_u64)
             .unwrap_or(DEFAULT_DIAGNOSTIC_RETENTION_DAYS);
         let retention_days = parse_retention_days(args, configured_retention)?;
-        let row = compute_connect_metrics_payload(&root, &adapter_id, retention_days)?;
+        let security_checks = evaluate_adapter_security(&adapter);
+        let security_posture_ok = security_checks
+            .get("valid")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let mut row = compute_connect_metrics_payload(&root, &adapter_id, retention_days)?;
+        row["security_posture_ok"] = Value::Bool(security_posture_ok);
+        row["security_checks"] = security_checks.clone();
         let uptime_met = row
             .get("target_uptime_met")
             .and_then(Value::as_bool)
@@ -843,17 +863,30 @@ fn handle_connect_scorecard(args: &[String]) -> LoomResult<()> {
             .get("target_fallback_success_met")
             .and_then(Value::as_bool)
             .unwrap_or(false);
-        if !(uptime_met && fallback_met) {
+        if !(uptime_met && fallback_met && security_posture_ok) {
             degraded = degraded.saturating_add(1);
             if apply_fix {
-                if let Some(action) =
-                    apply_scorecard_fix(&root, &mut mutable_registry, &adapter_id)?
-                {
-                    remediations_applied = remediations_applied.saturating_add(1);
-                    remediation_actions.push(json!({
-                        "adapter_id": adapter_id,
-                        "action": action,
-                    }));
+                if !security_posture_ok {
+                    if let Some(action) =
+                        apply_security_baseline(&root, &mut mutable_registry, &adapter_id)?
+                    {
+                        remediations_applied = remediations_applied.saturating_add(1);
+                        remediation_actions.push(json!({
+                            "adapter_id": adapter_id,
+                            "action": action,
+                        }));
+                    }
+                }
+                if !(uptime_met && fallback_met) {
+                    if let Some(action) =
+                        apply_scorecard_fix(&root, &mut mutable_registry, &adapter_id)?
+                    {
+                        remediations_applied = remediations_applied.saturating_add(1);
+                        remediation_actions.push(json!({
+                            "adapter_id": adapter_id,
+                            "action": action,
+                        }));
+                    }
                 }
             }
         }
@@ -1049,6 +1082,33 @@ fn apply_scorecard_fix(
         "scorecard remediation reset reconnect state",
     );
     Ok(Some("reset_reconnect_state".to_string()))
+}
+
+fn apply_security_baseline(
+    root: &Path,
+    registry: &mut Value,
+    adapter_id: &str,
+) -> LoomResult<Option<String>> {
+    let Some(adapter) = find_adapter_mut(registry, adapter_id) else {
+        return Ok(None);
+    };
+    let before = adapter.clone();
+    harden_adapter_security_profile(adapter);
+    if *adapter == before {
+        return Ok(None);
+    }
+    adapter["updated_at"] = Value::String(chrono_like_timestamp());
+    let _ = append_lifecycle_event(
+        root,
+        adapter_id,
+        adapter
+            .pointer("/lifecycle/state")
+            .and_then(Value::as_str)
+            .unwrap_or("init"),
+        "security_harden",
+        "scorecard remediation applied security baseline",
+    );
+    Ok(Some("apply_security_baseline".to_string()))
 }
 
 fn handle_connect_prune(args: &[String]) -> LoomResult<()> {
@@ -1684,6 +1744,8 @@ fn normalize_adapter(adapter: &mut Value) {
         diagnostics["history_retention_days"] =
             Value::Number(DEFAULT_DIAGNOSTIC_RETENTION_DAYS.into());
     }
+    ensure_adapter_security_defaults(adapter);
+    ensure_transport_profile_defaults(adapter);
 }
 
 fn find_adapter<'a>(registry: &'a Value, adapter_id: &str) -> Option<&'a Value> {
@@ -1800,6 +1862,277 @@ fn default_fallback_policy() -> Value {
         "max_reconnect_attempts": DEFAULT_RECONNECT_ATTEMPTS_MAX,
         "last_trigger_reason": "",
     })
+}
+
+fn security_profile_for(transport: &str) -> Value {
+    json!({
+        "schema_version": SECURITY_PROFILE_SCHEMA,
+        "mode": "governed_default",
+        "require_poge_receipts": true,
+        "require_warrant": true,
+        "require_authority": true,
+        "require_court": true,
+        "require_treasury_gate": true,
+        "allow_plaintext_secrets": false,
+        "max_payload_bytes": DEFAULT_SECURITY_MAX_PAYLOAD_BYTES,
+        "failure_policy": SECURITY_FAILURE_POLICY_DEFAULT,
+        "input_validation": "strict",
+        "redaction_policy": "metadata_only",
+        "transport_guard": transport,
+    })
+}
+
+fn ensure_adapter_security_defaults(adapter: &mut Value) {
+    let transport = adapter
+        .get("transport")
+        .and_then(Value::as_str)
+        .unwrap_or("http");
+    let defaults = security_profile_for(transport);
+    if !adapter
+        .get("security_profile")
+        .map(Value::is_object)
+        .unwrap_or(false)
+    {
+        adapter["security_profile"] = defaults;
+        return;
+    }
+    merge_missing_object_fields(&mut adapter["security_profile"], &defaults);
+}
+
+fn ensure_transport_profile_defaults(adapter: &mut Value) {
+    let transport = adapter
+        .get("transport")
+        .and_then(Value::as_str)
+        .unwrap_or("http");
+    let defaults = transport_profile_for(transport);
+    if !adapter
+        .get("transport_profile")
+        .map(Value::is_object)
+        .unwrap_or(false)
+    {
+        adapter["transport_profile"] = defaults;
+        return;
+    }
+    merge_missing_object_fields(&mut adapter["transport_profile"], &defaults);
+}
+
+fn merge_missing_object_fields(target: &mut Value, defaults: &Value) {
+    let Some(target_map) = target.as_object_mut() else {
+        *target = defaults.clone();
+        return;
+    };
+    let Some(default_map) = defaults.as_object() else {
+        return;
+    };
+    for (key, value) in default_map {
+        if !target_map.contains_key(key) {
+            target_map.insert(key.clone(), value.clone());
+        }
+    }
+}
+
+fn harden_adapter_security_profile(adapter: &mut Value) {
+    ensure_adapter_security_defaults(adapter);
+    ensure_transport_profile_defaults(adapter);
+    let transport = adapter
+        .get("transport")
+        .and_then(Value::as_str)
+        .unwrap_or("http")
+        .to_string();
+    let security = &mut adapter["security_profile"];
+    security["schema_version"] = Value::String(SECURITY_PROFILE_SCHEMA.to_string());
+    security["mode"] = Value::String("governed_default".to_string());
+    security["require_poge_receipts"] = Value::Bool(true);
+    security["require_warrant"] = Value::Bool(true);
+    security["require_authority"] = Value::Bool(true);
+    security["require_court"] = Value::Bool(true);
+    security["require_treasury_gate"] = Value::Bool(true);
+    security["allow_plaintext_secrets"] = Value::Bool(false);
+    let max_payload_bytes = security
+        .get("max_payload_bytes")
+        .and_then(Value::as_u64)
+        .filter(|value| (1..=SECURITY_MAX_PAYLOAD_BYTES_LIMIT).contains(value))
+        .unwrap_or(DEFAULT_SECURITY_MAX_PAYLOAD_BYTES);
+    security["max_payload_bytes"] = Value::Number(max_payload_bytes.into());
+    let failure_policy = security
+        .get("failure_policy")
+        .and_then(Value::as_str)
+        .filter(|value| SECURITY_FAILURE_POLICIES.contains(value))
+        .unwrap_or(SECURITY_FAILURE_POLICY_DEFAULT);
+    security["failure_policy"] = Value::String(failure_policy.to_string());
+    security["input_validation"] = Value::String("strict".to_string());
+    security["redaction_policy"] = Value::String("metadata_only".to_string());
+    security["transport_guard"] = Value::String(transport.clone());
+
+    let profile = &mut adapter["transport_profile"];
+    match transport.as_str() {
+        "telegram" | "discord" | "webhook" => {
+            profile["health_endpoint"] = Value::String("/health".to_string());
+        }
+        _ => {}
+    }
+    match transport.as_str() {
+        "browser" => {
+            profile["sandbox"] = Value::String("restricted".to_string());
+            profile["engine"] = Value::String("playwright_wrapper".to_string());
+        }
+        "shell" => {
+            profile["execution_mode"] = Value::String("restricted_executor".to_string());
+            profile["sandbox"] = Value::String("filesystem_guarded".to_string());
+        }
+        "webhook" => {
+            profile["method"] = Value::String("POST".to_string());
+            profile["content_type"] = Value::String("application/json".to_string());
+        }
+        _ => {}
+    }
+}
+
+fn evaluate_adapter_security(adapter: &Value) -> Value {
+    let transport = adapter
+        .get("transport")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let security = adapter.get("security_profile");
+    let security_present = security.map(Value::is_object).unwrap_or(false);
+    let mode_ok = security
+        .and_then(|value| value.get("mode"))
+        .and_then(Value::as_str)
+        .map(|value| value == "governed_default")
+        .unwrap_or(false);
+    let governance_requirements_ok = security
+        .map(|value| {
+            value
+                .get("require_poge_receipts")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+                && value
+                    .get("require_warrant")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                && value
+                    .get("require_authority")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                && value
+                    .get("require_court")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                && value
+                    .get("require_treasury_gate")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+        })
+        .unwrap_or(false);
+    let plaintext_secrets_blocked = security
+        .and_then(|value| value.get("allow_plaintext_secrets"))
+        .and_then(Value::as_bool)
+        .map(|value| !value)
+        .unwrap_or(false);
+    let payload_limit_ok = security
+        .and_then(|value| value.get("max_payload_bytes"))
+        .and_then(Value::as_u64)
+        .map(|value| (1..=SECURITY_MAX_PAYLOAD_BYTES_LIMIT).contains(&value))
+        .unwrap_or(false);
+    let failure_policy_ok = security
+        .and_then(|value| value.get("failure_policy"))
+        .and_then(Value::as_str)
+        .map(|value| SECURITY_FAILURE_POLICIES.contains(&value))
+        .unwrap_or(false);
+    let no_inline_secrets_ok = inline_secret_scan(adapter).is_empty();
+    let transport_security_ok = evaluate_transport_security(adapter, transport);
+    let valid = security_present
+        && mode_ok
+        && governance_requirements_ok
+        && plaintext_secrets_blocked
+        && payload_limit_ok
+        && failure_policy_ok
+        && no_inline_secrets_ok
+        && transport_security_ok;
+    json!({
+        "security_profile_present": security_present,
+        "mode_ok": mode_ok,
+        "governance_requirements_ok": governance_requirements_ok,
+        "plaintext_secrets_blocked": plaintext_secrets_blocked,
+        "payload_limit_ok": payload_limit_ok,
+        "failure_policy_ok": failure_policy_ok,
+        "no_inline_secrets_ok": no_inline_secrets_ok,
+        "transport_security_ok": transport_security_ok,
+        "valid": valid,
+    })
+}
+
+fn evaluate_transport_security(adapter: &Value, transport: &str) -> bool {
+    let profile = adapter.get("transport_profile").unwrap_or(&Value::Null);
+    match transport {
+        "telegram" | "discord" => profile
+            .get("health_endpoint")
+            .and_then(Value::as_str)
+            .map(|value| value == "/health")
+            .unwrap_or(false),
+        "browser" => profile
+            .get("sandbox")
+            .and_then(Value::as_str)
+            .map(|value| value == "restricted")
+            .unwrap_or(false),
+        "shell" => {
+            profile
+                .get("execution_mode")
+                .and_then(Value::as_str)
+                .map(|value| value == "restricted_executor")
+                .unwrap_or(false)
+                && profile
+                    .get("sandbox")
+                    .and_then(Value::as_str)
+                    .map(|value| value == "filesystem_guarded")
+                    .unwrap_or(false)
+        }
+        "webhook" => {
+            profile
+                .get("method")
+                .and_then(Value::as_str)
+                .map(|value| value.eq_ignore_ascii_case("POST"))
+                .unwrap_or(false)
+                && profile
+                    .get("health_endpoint")
+                    .and_then(Value::as_str)
+                    .map(|value| value == "/health")
+                    .unwrap_or(false)
+        }
+        _ => true,
+    }
+}
+
+fn inline_secret_scan(adapter: &Value) -> Vec<String> {
+    let mut hits = Vec::new();
+    let candidate_keys = [
+        "api_key",
+        "token",
+        "secret",
+        "access_token",
+        "bearer_token",
+        "webhook_secret",
+    ];
+    for key in candidate_keys {
+        if adapter
+            .get(key)
+            .and_then(Value::as_str)
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false)
+        {
+            hits.push(key.to_string());
+        }
+        if adapter
+            .get("transport_profile")
+            .and_then(|value| value.get(key))
+            .and_then(Value::as_str)
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false)
+        {
+            hits.push(format!("transport_profile.{}", key));
+        }
+    }
+    hits
 }
 
 fn append_lifecycle_event(
