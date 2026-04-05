@@ -121,6 +121,7 @@ fn run() -> LoomResult<()> {
         "binding" => commands::binding::handle_binding(&args[1..]),
         "breed" => commands::breed::handle_breed(&args[1..]),
         "channel" => commands::channel::handle_channel(&args[1..]),
+        "connect" => commands::connect::handle_connect(&args[1..]),
         "skill" => commands::skill::handle_skill(&args[1..]),
         "schedule" => commands::schedule::handle_schedule(&args[1..]),
         "heartbeat" => commands::heartbeat::handle_heartbeat(&args[1..]),
@@ -338,6 +339,8 @@ Bootstrap\n\
   loom channel disconnect telegram --agent NAME\n\
   loom channel disconnect webhook --agent NAME\n\
   loom channel test --agent NAME [--text TEXT] [--format human|json]\n\
+  loom connect scaffold --name NAME --transport grpc|a2a|mcp|http|ros2 --action-schema SCHEMA [--root PATH] [--format human|json]\n\
+  loom connect list [--root PATH] [--format human|json]\n\
   loom channel send --channel ID --recipient ID [--text TEXT|--file PATH] [--allow-receipt-hashes] [--allow-operator-diagnostics] [--root PATH] [--format human|json]\n\
   loom channel deliveries [--root PATH] [--limit N] [--include-archived|--archived-only] [--format human|json]\n\
   loom ingress status [--root PATH] [--format human|json]\n\

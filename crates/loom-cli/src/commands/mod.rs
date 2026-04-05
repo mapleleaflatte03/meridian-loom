@@ -3,6 +3,7 @@ pub(crate) mod binding;
 pub(crate) mod breed;
 pub(crate) mod capability;
 pub(crate) mod channel;
+pub(crate) mod connect;
 pub(crate) mod context;
 pub(crate) mod gateway;
 pub(crate) mod heartbeat;

@@ -8,7 +8,7 @@ ORG_ID ?= local_foundry
 RELEASE_DIR ?= $(ROOT)/dist
 PREFIX ?= $(HOME)/.local/share/meridian-loom
 
-.PHONY: build test init doctor health status start stop restart logs run-local package-release release-local docker-build docker-up docker-down install-local acceptance acceptance-container acceptance-shadow-zk acceptance-shadow-zk-embodied acceptance-shadow-zk-lane acceptance-swarm-zk-lane acceptance-memory-graph-lane acceptance-init-nation-lane acceptance-breed-lane acceptance-embodied-physical-lane verify-release
+.PHONY: build test init doctor health status start stop restart logs run-local package-release release-local docker-build docker-up docker-down install-local acceptance acceptance-container acceptance-shadow-zk acceptance-shadow-zk-embodied acceptance-shadow-zk-lane acceptance-swarm-zk-lane acceptance-memory-graph-lane acceptance-init-nation-lane acceptance-breed-lane acceptance-embodied-physical-lane acceptance-connect-lane verify-release
 
 build:
 	cargo build --release --workspace --locked
@@ -105,6 +105,9 @@ acceptance-breed-lane:
 
 acceptance-embodied-physical-lane:
 	./scripts/acceptance_embodied_physical_lane.sh
+
+acceptance-connect-lane:
+	./scripts/acceptance_connect_lane.sh
 
 verify-release:
 	./scripts/verify_release_local.sh --kernel-path "$(KERNEL_PATH)"
