@@ -366,7 +366,7 @@ Bootstrap\n\
   loom extension export --extension-id ID --out PATH [--root PATH] [--format human|json]\n\
   loom observe summary [--root PATH] [--fix-hints] [--format human|json]\n\
   loom observe alerts [--root PATH] [--fix-hints] [--format human|json]\n\
-  loom observe watch [--root PATH] [--iterations N] [--interval-seconds N] [--fix-hints] [--format human|json]\n\
+  loom observe watch [--root PATH] [--iterations N] [--interval-seconds N] [--follow] [--stream] [--fix-hints] [--format human|json]\n\
   loom channel send --channel ID --recipient ID [--text TEXT|--file PATH] [--allow-receipt-hashes] [--allow-operator-diagnostics] [--root PATH] [--format human|json]\n\
   loom channel deliveries [--root PATH] [--limit N] [--include-archived|--archived-only] [--format human|json]\n\
   loom ingress status [--root PATH] [--format human|json]\n\

@@ -1,4 +1,4 @@
-use std::io::IsTerminal;
+use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
@@ -9,6 +9,7 @@ use serde_json::{json, Value};
 const OBSERVABILITY_CONTRACT_VERSION: &str = "observability_contract_v1";
 const OBSERVABILITY_CONTRACT_PATH: &str = "state/observability/observability_contract_v1.json";
 const OBSERVABILITY_LATEST_ARTIFACT_PATH: &str = "artifacts/observability/latest.json";
+const OBSERVABILITY_ALERT_STREAM_PATH: &str = "state/observability/alerts_stream.jsonl";
 const ROUTE_TRACE_PATH: &str = "state/gateway/route_decision_trace.jsonl";
 const CONNECT_REGISTRY_PATH: &str = "state/connect/registry.json";
 const CONNECT_HEALTH_DIR: &str = "state/connect/health";
@@ -42,7 +43,7 @@ USAGE: loom observe <COMMAND> [OPTIONS]
 COMMANDS:
   summary [--root ROOT] [--fix-hints] [--format human|json]
   alerts  [--root ROOT] [--fix-hints] [--format human|json]
-  watch   [--root ROOT] [--iterations N] [--interval-seconds N] [--fix-hints] [--format human|json]"
+  watch   [--root ROOT] [--iterations N] [--interval-seconds N] [--follow] [--stream] [--fix-hints] [--format human|json]"
     );
 }
 
@@ -76,32 +77,89 @@ fn handle_observe_watch(args: &[String]) -> LoomResult<()> {
     let root = root_from(take_value(args, "--root").as_deref())?;
     let format = output_format(args);
     let include_fix_hints = has_flag(args, "--fix-hints");
-    let iterations = take_value(args, "--iterations")
-        .and_then(|raw| raw.parse::<usize>().ok())
-        .unwrap_or(5)
-        .max(1);
+    let stream_mode = has_flag(args, "--stream");
+    let follow_mode = has_flag(args, "--follow");
+    let iterations = if follow_mode {
+        take_value(args, "--iterations")
+            .and_then(|raw| raw.parse::<usize>().ok())
+            .unwrap_or(usize::MAX)
+    } else {
+        take_value(args, "--iterations")
+            .and_then(|raw| raw.parse::<usize>().ok())
+            .unwrap_or(5)
+            .max(1)
+    };
     let interval_seconds = take_value(args, "--interval-seconds")
         .and_then(|raw| raw.parse::<u64>().ok())
-        .unwrap_or(1)
-        .max(1);
+        .unwrap_or(1);
 
     let mut frames = Vec::new();
+    let mut emitted_frames = 0_u64;
     for index in 0..iterations {
         let payload = build_observability_payload(&root, include_fix_hints)?;
-        if format == "human" {
-            print_observe_payload(&payload, "human")?;
-        }
-        frames.push(json!({
+        persist_observability_payload(&root, &payload)?;
+        let frame = json!({
+            "status": "observe_watch_frame",
+            "contract_version": OBSERVABILITY_CONTRACT_VERSION,
             "iteration": index + 1,
             "observed_at": chrono_like_timestamp(),
             "overall_status": payload.get("overall_status").cloned().unwrap_or(Value::String("unknown".to_string())),
+            "alert_count": payload.get("alerts").and_then(Value::as_array).map(|items| items.len()).unwrap_or(0),
             "alerts": payload.get("alerts").cloned().unwrap_or_else(|| Value::Array(vec![])),
+            "fix_hints": payload.get("fix_hints").cloned().unwrap_or_else(|| Value::Array(vec![])),
             "components": payload.get("components").cloned().unwrap_or(Value::Null),
-        }));
+            "operator_view": {
+                "runtime_service_status": payload.pointer("/components/runtime_service/status").and_then(Value::as_str).unwrap_or("unknown"),
+                "queue_total_pending": payload.pointer("/components/queue/total_pending").and_then(Value::as_u64).unwrap_or(0),
+                "proof_chain_status": payload.pointer("/components/proof_chain/status").and_then(Value::as_str).unwrap_or("unknown"),
+                "connect_status": payload.pointer("/components/connect/status").and_then(Value::as_str).unwrap_or("unknown"),
+                "connect_summary": payload.pointer("/components/connect/operators_summary").and_then(Value::as_str).unwrap_or(""),
+            },
+            "stream_path": observability_alert_stream_path(&root).display().to_string(),
+        });
+        append_jsonl_event(&observability_alert_stream_path(&root), &frame)?;
+        emitted_frames = emitted_frames.saturating_add(1);
+
+        if stream_mode {
+            emit_observe_watch_frame(&frame, &format)?;
+        } else {
+            if format == "human" {
+                print_observe_payload(&payload, "human")?;
+            }
+            frames.push(frame);
+        }
         if index + 1 < iterations {
             thread::sleep(Duration::from_secs(interval_seconds));
         }
     }
+
+    if stream_mode {
+        let completion = json!({
+            "status": "observe_watch_complete",
+            "contract_version": OBSERVABILITY_CONTRACT_VERSION,
+            "iterations": if follow_mode { Value::Null } else { Value::Number((iterations as u64).into()) },
+            "interval_seconds": interval_seconds,
+            "emitted_frames": emitted_frames,
+            "stream_path": observability_alert_stream_path(&root).display().to_string(),
+        });
+        if format == "json" {
+            println!(
+                "{}",
+                serde_json::to_string(&completion).map_err(|error| error.to_string())?
+            );
+            std::io::stdout()
+                .flush()
+                .map_err(|error| error.to_string())?;
+        } else {
+            print_human(&format!(
+                "observe stream complete: frames={} path={}\n",
+                emitted_frames,
+                observability_alert_stream_path(&root).display()
+            ));
+        }
+        return Ok(());
+    }
+
     let payload = json!({
         "status": "observe_watch",
         "contract_version": OBSERVABILITY_CONTRACT_VERSION,
@@ -114,6 +172,116 @@ fn handle_observe_watch(args: &[String]) -> LoomResult<()> {
     } else {
         print_observe_payload(&payload, "json")
     }
+}
+
+fn emit_observe_watch_frame(frame: &Value, format: &str) -> LoomResult<()> {
+    match format {
+        "json" => {
+            println!(
+                "{}",
+                serde_json::to_string(frame).map_err(|error| error.to_string())?
+            );
+            std::io::stdout()
+                .flush()
+                .map_err(|error| error.to_string())?;
+        }
+        _ => {
+            print_human(&render_observe_watch_frame_human(frame));
+        }
+    }
+    Ok(())
+}
+
+fn render_observe_watch_frame_human(frame: &Value) -> String {
+    let mut lines = vec![
+        "Meridian Loom // OBSERVE STREAM".to_string(),
+        "==============================".to_string(),
+        format!(
+            "frame:               {}",
+            frame.get("iteration").and_then(Value::as_u64).unwrap_or(0)
+        ),
+        format!(
+            "observed_at:         {}",
+            frame
+                .get("observed_at")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+        ),
+        format!(
+            "overall_status:      {}",
+            frame
+                .get("overall_status")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+        ),
+        format!(
+            "alert_count:         {}",
+            frame
+                .get("alert_count")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+        ),
+        format!(
+            "service:             {}",
+            frame
+                .pointer("/operator_view/runtime_service_status")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+        ),
+        format!(
+            "queue_pending:       {}",
+            frame
+                .pointer("/operator_view/queue_total_pending")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+        ),
+        format!(
+            "proof_chain:         {}",
+            frame
+                .pointer("/operator_view/proof_chain_status")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+        ),
+        format!(
+            "connect:             {} ({})",
+            frame
+                .pointer("/operator_view/connect_status")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown"),
+            frame
+                .pointer("/operator_view/connect_summary")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+        ),
+        String::new(),
+        "alerts".to_string(),
+        "------".to_string(),
+    ];
+    let alerts = frame
+        .get("alerts")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if alerts.is_empty() {
+        lines.push("- none".to_string());
+    } else {
+        for item in alerts.iter().take(3) {
+            lines.push(format!(
+                "- [{}] {}: {}",
+                item.get("severity")
+                    .and_then(Value::as_str)
+                    .unwrap_or("info"),
+                item.get("code")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown"),
+                item.get("message").and_then(Value::as_str).unwrap_or("")
+            ));
+        }
+    }
+    lines.push(String::new());
+    lines.push("hint: use Ctrl+C to stop realtime stream".to_string());
+    lines.push(String::new());
+    lines.join("\n")
 }
 
 fn build_observability_payload(root: &Path, include_fix_hints: bool) -> LoomResult<Value> {
@@ -598,10 +766,32 @@ fn persist_observability_payload(root: &Path, payload: &Value) -> LoomResult<()>
     .map_err(|error| error.to_string())
 }
 
+fn append_jsonl_event(path: &Path, payload: &Value) -> LoomResult<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|error| error.to_string())?;
+    file.write_all(
+        serde_json::to_string(payload)
+            .map_err(|error| error.to_string())?
+            .as_bytes(),
+    )
+    .map_err(|error| error.to_string())?;
+    file.write_all(b"\n").map_err(|error| error.to_string())
+}
+
 fn observability_contract_path(root: &Path) -> PathBuf {
     root.join(OBSERVABILITY_CONTRACT_PATH)
 }
 
 fn observability_latest_artifact_path(root: &Path) -> PathBuf {
     root.join(OBSERVABILITY_LATEST_ARTIFACT_PATH)
+}
+
+fn observability_alert_stream_path(root: &Path) -> PathBuf {
+    root.join(OBSERVABILITY_ALERT_STREAM_PATH)
 }

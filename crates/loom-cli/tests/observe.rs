@@ -379,3 +379,79 @@ fn observe_summary_surfaces_connect_degraded_alerts_and_fix_hints() {
         .collect::<Vec<_>>();
     assert!(fix_codes.contains(&"connect_degraded"));
 }
+
+#[test]
+fn observe_watch_stream_emits_realtime_frames_and_persists_alert_stream() {
+    let harness = Harness::new("watch_stream");
+    let output = harness.run_ok(&[
+        "observe",
+        "watch",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+        "--stream",
+        "--iterations",
+        "2",
+        "--interval-seconds",
+        "0",
+        "--fix-hints",
+    ]);
+    let lines = output
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        lines.len(),
+        3,
+        "expected 2 frame lines + 1 completion line, got:\n{}",
+        output
+    );
+
+    for (index, line) in lines.iter().take(2).enumerate() {
+        let value: Value = serde_json::from_str(line).expect("parse frame json");
+        assert_eq!(
+            value.get("status").and_then(Value::as_str),
+            Some("observe_watch_frame")
+        );
+        assert_eq!(
+            value.get("iteration").and_then(Value::as_u64),
+            Some((index + 1) as u64)
+        );
+        assert!(
+            value
+                .get("alert_count")
+                .and_then(Value::as_u64)
+                .unwrap_or_default()
+                >= 1,
+            "expected alert_count >= 1 for frame {}",
+            index + 1
+        );
+    }
+
+    let completion: Value = serde_json::from_str(lines.get(2).copied().expect("completion line"))
+        .expect("parse completion json");
+    assert_eq!(
+        completion.get("status").and_then(Value::as_str),
+        Some("observe_watch_complete")
+    );
+    assert_eq!(
+        completion.get("emitted_frames").and_then(Value::as_u64),
+        Some(2)
+    );
+
+    let stream_path = harness.root.join("state/observability/alerts_stream.jsonl");
+    let stream_raw = fs::read_to_string(&stream_path).expect("read stream artifact");
+    let stream_lines = stream_raw
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect::<Vec<_>>();
+    assert_eq!(stream_lines.len(), 2, "expected two stream frame entries");
+    for line in stream_lines {
+        let value: Value = serde_json::from_str(line).expect("parse stream frame json");
+        assert_eq!(
+            value.get("status").and_then(Value::as_str),
+            Some("observe_watch_frame")
+        );
+    }
+}

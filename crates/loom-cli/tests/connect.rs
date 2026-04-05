@@ -1579,7 +1579,9 @@ fn connect_failure_injection_matrix_recovers_priority_transports() {
         let adapter_id = name.replace('_', "-");
         let adapter = items
             .iter()
-            .find(|item| item.get("adapter_id").and_then(Value::as_str) == Some(adapter_id.as_str()))
+            .find(|item| {
+                item.get("adapter_id").and_then(Value::as_str) == Some(adapter_id.as_str())
+            })
             .expect("adapter in registry after fix");
         assert_eq!(
             adapter
