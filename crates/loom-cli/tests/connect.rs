@@ -1071,6 +1071,42 @@ fn connect_prune_removes_stale_history_events() {
 }
 
 #[test]
+fn connect_scorecard_rejects_unexpected_argument_tokens() {
+    let harness = Harness::new("scorecard_unexpected");
+    let failure = harness.run_fail(&[
+        "connect",
+        "scorecard",
+        "--retention-days",
+        "30",
+        "--fix",
+        "???",
+        "--root",
+        harness.root_str(),
+    ]);
+    assert!(
+        failure.contains("unexpected argument '???' for `loom connect scorecard`"),
+        "unexpected failure output:\n{failure}"
+    );
+}
+
+#[test]
+fn connect_scorecard_empty_registry_returns_actionable_hint() {
+    let harness = Harness::new("scorecard_empty");
+    let failure = harness.run_fail(&[
+        "connect",
+        "scorecard",
+        "--retention-days",
+        "30",
+        "--root",
+        harness.root_str(),
+    ]);
+    assert!(
+        failure.contains("connect scorecard found no adapters; run `loom connect scaffold"),
+        "unexpected failure output:\n{failure}"
+    );
+}
+
+#[test]
 fn connect_scorecard_aggregates_adapter_kpis() {
     let harness = Harness::new("scorecard");
     for (name, transport) in [
@@ -1401,4 +1437,174 @@ fn connect_diagnostics_returns_recent_test_and_lifecycle_history() {
         diagnostics.get("health_snapshot").is_some(),
         "expected health snapshot in diagnostics payload"
     );
+}
+
+#[test]
+fn connect_failure_injection_matrix_recovers_priority_transports() {
+    let harness = Harness::new("failure_injection_matrix");
+    let adapters = [
+        ("telegram_fail_adapter", "telegram"),
+        ("discord_fail_adapter", "discord"),
+        ("browser_fail_adapter", "browser"),
+        ("shell_fail_adapter", "shell"),
+        ("webhook_fail_adapter", "webhook"),
+    ];
+
+    for (name, transport) in adapters {
+        let adapter_id = name.replace('_', "-");
+        harness.run_ok(&[
+            "connect",
+            "scaffold",
+            "--name",
+            name,
+            "--transport",
+            transport,
+            "--action-schema",
+            "meridian.runtime.v1",
+            "--root",
+            harness.root_str(),
+            "--format",
+            "json",
+        ]);
+        harness.run_ok(&[
+            "connect",
+            "enable",
+            "--adapter-id",
+            adapter_id.as_str(),
+            "--root",
+            harness.root_str(),
+            "--format",
+            "json",
+        ]);
+        harness.run_ok(&[
+            "connect",
+            "test",
+            "--adapter-id",
+            adapter_id.as_str(),
+            "--root",
+            harness.root_str(),
+            "--format",
+            "json",
+        ]);
+        harness.run_ok(&[
+            "connect",
+            "health",
+            "--adapter-id",
+            adapter_id.as_str(),
+            "--root",
+            harness.root_str(),
+            "--format",
+            "json",
+        ]);
+    }
+
+    let registry_path = Path::new(harness.root_str()).join("state/connect/registry.json");
+    let mut registry: Value =
+        serde_json::from_str(&fs::read_to_string(&registry_path).expect("read registry"))
+            .expect("parse registry");
+    let items = registry
+        .get_mut("adapters")
+        .and_then(Value::as_array_mut)
+        .expect("adapters");
+    for adapter in items {
+        adapter["action_schema"] = Value::String(String::new());
+    }
+    fs::write(
+        &registry_path,
+        serde_json::to_string_pretty(&registry).expect("serialize registry"),
+    )
+    .expect("write registry");
+
+    for (name, _) in adapters {
+        let adapter_id = name.replace('_', "-");
+        let fail_output = harness.run_fail(&[
+            "connect",
+            "test",
+            "--adapter-id",
+            adapter_id.as_str(),
+            "--root",
+            harness.root_str(),
+            "--format",
+            "json",
+        ]);
+        assert!(
+            fail_output.contains("missing_action_schema"),
+            "expected missing_action_schema for {adapter_id}, got:\n{fail_output}"
+        );
+        for _ in 0..4 {
+            let _ = harness.json_ok(&[
+                "connect",
+                "health",
+                "--adapter-id",
+                adapter_id.as_str(),
+                "--root",
+                harness.root_str(),
+                "--format",
+                "json",
+            ]);
+        }
+    }
+
+    let scorecard = harness.json_ok(&[
+        "connect",
+        "scorecard",
+        "--retention-days",
+        "30",
+        "--fix",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    assert_eq!(
+        scorecard.get("status").and_then(Value::as_str),
+        Some("connect_scorecard")
+    );
+    assert!(
+        scorecard
+            .get("remediations_applied")
+            .and_then(Value::as_u64)
+            .unwrap_or_default()
+            >= 5
+    );
+
+    let registry_after: Value =
+        serde_json::from_str(&fs::read_to_string(&registry_path).expect("read registry"))
+            .expect("parse registry");
+    let items = registry_after
+        .get("adapters")
+        .and_then(Value::as_array)
+        .expect("adapters");
+    for (name, _) in adapters {
+        let adapter_id = name.replace('_', "-");
+        let adapter = items
+            .iter()
+            .find(|item| item.get("adapter_id").and_then(Value::as_str) == Some(adapter_id.as_str()))
+            .expect("adapter in registry after fix");
+        assert_eq!(
+            adapter
+                .pointer("/lifecycle/reconnect_attempts")
+                .and_then(Value::as_u64),
+            Some(0),
+            "expected reconnect_attempts reset for {}",
+            adapter_id
+        );
+        assert_eq!(
+            adapter.pointer("/fallback/active").and_then(Value::as_bool),
+            Some(false),
+            "expected fallback reset for {}",
+            adapter_id
+        );
+
+        let lifecycle_path = Path::new(harness.root_str())
+            .join("state/connect/lifecycle")
+            .join(format!("{adapter_id}.jsonl"));
+        let lifecycle_history =
+            fs::read_to_string(&lifecycle_path).expect("read lifecycle after remediation");
+        assert!(
+            lifecycle_history.contains("\"action\":\"scorecard_fix\""),
+            "expected scorecard_fix lifecycle action for {}",
+            adapter_id
+        );
+    }
 }

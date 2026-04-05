@@ -799,6 +799,7 @@ fn handle_connect_diagnostics(args: &[String]) -> LoomResult<()> {
 }
 
 fn handle_connect_scorecard(args: &[String]) -> LoomResult<()> {
+    validate_connect_scorecard_args(args)?;
     let root = root_from(take_value(args, "--root").as_deref())?;
     let format = output_format(args);
     let apply_fix = has_flag(args, "--fix");
@@ -809,7 +810,9 @@ fn handle_connect_scorecard(args: &[String]) -> LoomResult<()> {
         .cloned()
         .unwrap_or_default();
     if adapters.is_empty() {
-        return Err("connect scorecard found no adapters".to_string());
+        return Err(
+            "connect scorecard found no adapters; run `loom connect scaffold --name telegram_adapter --transport telegram --action-schema meridian.runtime.v1` first".to_string(),
+        );
     }
 
     let mut rows = Vec::new();
@@ -873,6 +876,31 @@ fn handle_connect_scorecard(args: &[String]) -> LoomResult<()> {
     });
     persist_connect_latest_artifact(&root, &payload)?;
     print_connect_payload(&payload, &format)
+}
+
+fn validate_connect_scorecard_args(args: &[String]) -> LoomResult<()> {
+    let mut index = 0_usize;
+    while index < args.len() {
+        let token = args[index].as_str();
+        match token {
+            "--retention-days" | "--root" | "--format" => {
+                if index + 1 >= args.len() {
+                    return Err(format!("missing value for {}", token));
+                }
+                index += 2;
+            }
+            "--fix" => {
+                index += 1;
+            }
+            _ => {
+                return Err(format!(
+                    "unexpected argument '{}' for `loom connect scorecard`; use `loom connect scorecard --fix` (optional: --root ROOT, --format human|json, --retention-days DAYS)",
+                    token
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn compute_connect_metrics_payload(

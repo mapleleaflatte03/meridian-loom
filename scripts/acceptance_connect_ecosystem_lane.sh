@@ -230,7 +230,7 @@ if payload.get("recommended_action") != "shadow_or_local_queue":
     raise SystemExit(f"expected shadow_or_local_queue action, got {payload.get('recommended_action')}")
 PY
 
-SCORECARD_FIX_JSON="$(run_loom_json connect scorecard --retention-days 30 --fix --root "${ROOT_DIR}")"
+SCORECARD_FIX_JSON="$(run_loom_json connect scorecard --fix --root "${ROOT_DIR}")"
 python3 - <<'PY' "${SCORECARD_FIX_JSON}"
 import json
 import sys
@@ -264,7 +264,7 @@ lifecycle_path.write_text(
 )
 PY
 
-METRICS_JSON="$(run_loom_json connect metrics --adapter-id telegram-adapter --retention-days 30 --root "${ROOT_DIR}")"
+METRICS_JSON="$(run_loom_json connect metrics --adapter-id telegram-adapter --root "${ROOT_DIR}")"
 python3 - <<'PY' "${METRICS_JSON}"
 import json
 import sys
@@ -277,7 +277,7 @@ if payload.get("fallback_events", 0) < 1:
     raise SystemExit("expected fallback_events >= 1")
 PY
 
-PRUNE_JSON="$(run_loom_json connect prune --adapter-id telegram-adapter --retention-days 30 --root "${ROOT_DIR}")"
+PRUNE_JSON="$(run_loom_json connect prune --adapter-id telegram-adapter --root "${ROOT_DIR}")"
 python3 - <<'PY' "${PRUNE_JSON}" "${ROOT_DIR}"
 import json
 import pathlib
@@ -304,7 +304,7 @@ if not lifecycle_after.strip():
     raise SystemExit("lifecycle history should keep non-stale entries")
 PY
 
-SCORECARD_JSON="$(run_loom_json connect scorecard --retention-days 30 --root "${ROOT_DIR}")"
+SCORECARD_JSON="$(run_loom_json connect scorecard --root "${ROOT_DIR}")"
 python3 - <<'PY' "${SCORECARD_JSON}"
 import json
 import sys
