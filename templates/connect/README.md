@@ -1,0 +1,13 @@
+# Connect Templates (Lane A1)
+
+Operator-first adapter templates for the priority connect transports:
+
+- `telegram.sample.json`
+- `discord.sample.json`
+- `browser.sample.json`
+- `shell.sample.json`
+- `webhook.sample.json`
+
+These are contract-shape examples for `loom connect scaffold|validate|enable|test|health`.
+They do not include provider-specific defaults or secrets.
+

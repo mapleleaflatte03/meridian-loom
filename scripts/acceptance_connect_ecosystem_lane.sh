@@ -87,11 +87,11 @@ echo "[loom-acceptance] init runtime root"
 run_loom init --mode embedded --root "${ROOT_DIR}" --kernel-path "${KERNEL_DIR}" --org-id org_demo >/dev/null
 
 declare -a ADAPTERS=(
-  "grpc_adapter grpc"
-  "a2a_adapter a2a"
-  "mcp_adapter mcp"
-  "http_adapter http"
-  "ros2_adapter ros2"
+  "telegram_adapter telegram"
+  "discord_adapter discord"
+  "browser_adapter browser"
+  "shell_adapter shell"
+  "webhook_adapter webhook"
 )
 
 echo "[loom-acceptance] scaffold + validate + enable + test + health for all transports"
@@ -108,9 +108,9 @@ for pair in "${ADAPTERS[@]}"; do
 done
 
 echo "[loom-acceptance] assert disabled adapter test fail path"
-run_loom_json connect disable --adapter-id grpc-adapter --root "${ROOT_DIR}" >/dev/null
+run_loom_json connect disable --adapter-id telegram-adapter --root "${ROOT_DIR}" >/dev/null
 set +e
-FAIL_OUTPUT="$(run_loom_json connect test --adapter-id grpc-adapter --root "${ROOT_DIR}" 2>&1)"
+FAIL_OUTPUT="$(run_loom_json connect test --adapter-id telegram-adapter --root "${ROOT_DIR}" 2>&1)"
 FAIL_STATUS=$?
 set -e
 if [[ ${FAIL_STATUS} -eq 0 ]]; then
@@ -130,16 +130,24 @@ import pathlib
 import sys
 
 root = pathlib.Path(sys.argv[1])
-adapters = ["grpc-adapter", "a2a-adapter", "mcp-adapter", "http-adapter", "ros2-adapter"]
+adapters = ["telegram-adapter", "discord-adapter", "browser-adapter", "shell-adapter", "webhook-adapter"]
 for adapter in adapters:
     health_path = root / "state/connect/health" / f"{adapter}.json"
     tests_path = root / "state/connect/tests" / f"{adapter}.jsonl"
+    lifecycle_path = root / "state/connect/lifecycle" / f"{adapter}.jsonl"
     if not health_path.exists():
         raise SystemExit(f"missing health artifact: {health_path}")
     if not tests_path.exists():
         raise SystemExit(f"missing tests history: {tests_path}")
     if not tests_path.read_text().strip():
         raise SystemExit(f"empty tests history: {tests_path}")
+    if not lifecycle_path.exists():
+        raise SystemExit(f"missing lifecycle history: {lifecycle_path}")
+    if not lifecycle_path.read_text().strip():
+        raise SystemExit(f"empty lifecycle history: {lifecycle_path}")
+    health = json.loads(health_path.read_text())
+    if "lifecycle_state" not in health:
+        raise SystemExit(f"missing lifecycle_state in health snapshot: {health_path}")
 
 latest_path = root / "artifacts/connect/latest.json"
 if not latest_path.exists():
@@ -148,6 +156,59 @@ latest = json.loads(latest_path.read_text())
 if latest.get("status") not in {"connect_tested", "connect_health", "connect_disabled", "connect_enabled", "connect_validated", "connect_scaffolded"}:
     raise SystemExit(f"unexpected latest status: {latest.get('status')}")
 print("artifacts_ok")
+PY
+
+echo "[loom-acceptance] verify reconnect->fallback lifecycle semantics"
+python3 - <<'PY' "${ROOT_DIR}"
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+registry_path = root / "state/connect/registry.json"
+registry = json.loads(registry_path.read_text())
+for adapter in registry.get("adapters", []):
+    if adapter.get("adapter_id") == "discord-adapter":
+        adapter["action_schema"] = ""
+registry_path.write_text(json.dumps(registry, indent=2) + "\n")
+PY
+
+set +e
+DISCORD_FAIL="$(run_loom_json connect test --adapter-id discord-adapter --root "${ROOT_DIR}" 2>&1)"
+DISCORD_FAIL_STATUS=$?
+set -e
+if [[ ${DISCORD_FAIL_STATUS} -eq 0 ]]; then
+  echo "expected connect test fail for discord-adapter degraded action schema, but command succeeded" >&2
+  exit 1
+fi
+if [[ "${DISCORD_FAIL}" != *"missing_action_schema"* ]]; then
+  echo "expected missing_action_schema fail reason, got:" >&2
+  echo "${DISCORD_FAIL}" >&2
+  exit 1
+fi
+
+for _ in 1 2 3; do
+  HEALTH_JSON="$(run_loom_json connect health --adapter-id discord-adapter --root "${ROOT_DIR}")"
+  python3 - <<'PY' "${HEALTH_JSON}"
+import json
+import sys
+payload = json.loads(sys.argv[1])
+if payload.get("lifecycle_state") != "reconnecting":
+    raise SystemExit(f"expected reconnecting, got {payload.get('lifecycle_state')}")
+if payload.get("recommended_action") != "reconnect":
+    raise SystemExit(f"expected reconnect action, got {payload.get('recommended_action')}")
+PY
+done
+
+FINAL_HEALTH="$(run_loom_json connect health --adapter-id discord-adapter --root "${ROOT_DIR}")"
+python3 - <<'PY' "${FINAL_HEALTH}"
+import json
+import sys
+payload = json.loads(sys.argv[1])
+if payload.get("lifecycle_state") != "fallback":
+    raise SystemExit(f"expected fallback, got {payload.get('lifecycle_state')}")
+if payload.get("recommended_action") != "shadow_or_local_queue":
+    raise SystemExit(f"expected shadow_or_local_queue action, got {payload.get('recommended_action')}")
 PY
 
 echo "[loom-acceptance] PASS connect ecosystem lane"

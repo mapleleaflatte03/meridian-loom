@@ -167,10 +167,9 @@ fn connect_scaffold_creates_manifest_with_poge_standard_fields() {
         .get("manifest_path")
         .and_then(Value::as_str)
         .expect("manifest_path");
-    let manifest: Value = serde_json::from_str(
-        &fs::read_to_string(manifest_path).expect("read connect manifest"),
-    )
-    .expect("parse connect manifest");
+    let manifest: Value =
+        serde_json::from_str(&fs::read_to_string(manifest_path).expect("read connect manifest"))
+            .expect("parse connect manifest");
     assert_eq!(
         manifest.get("transport").and_then(Value::as_str),
         Some("grpc")
@@ -203,11 +202,11 @@ fn connect_scaffold_creates_manifest_with_poge_standard_fields() {
 fn connect_list_surfaces_all_supported_transport_profiles() {
     let harness = Harness::new("transport_list");
     for (name, transport) in [
-        ("grpc_adapter", "grpc"),
-        ("a2a_adapter", "a2a"),
-        ("mcp_adapter", "mcp"),
-        ("http_adapter", "http"),
-        ("ros2_adapter", "ros2"),
+        ("telegram_adapter", "telegram"),
+        ("discord_adapter", "discord"),
+        ("browser_adapter", "browser"),
+        ("shell_adapter", "shell"),
+        ("webhook_adapter", "webhook"),
     ] {
         harness.run_ok(&[
             "connect",
@@ -224,7 +223,14 @@ fn connect_list_surfaces_all_supported_transport_profiles() {
             "json",
         ]);
     }
-    let listed = harness.json_ok(&["connect", "list", "--root", harness.root_str(), "--format", "json"]);
+    let listed = harness.json_ok(&[
+        "connect",
+        "list",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
     let adapters = listed
         .get("adapters")
         .and_then(Value::as_array)
@@ -234,7 +240,7 @@ fn connect_list_surfaces_all_supported_transport_profiles() {
         .filter_map(|adapter| adapter.get("transport").and_then(Value::as_str))
         .map(|value| value.to_string())
         .collect::<BTreeSet<_>>();
-    let expected = ["grpc", "a2a", "mcp", "http", "ros2"]
+    let expected = ["telegram", "discord", "browser", "shell", "webhook"]
         .iter()
         .map(|value| value.to_string())
         .collect::<BTreeSet<_>>();
@@ -272,14 +278,23 @@ fn connect_scaffold_upserts_existing_adapter_without_duplicates() {
         "--format",
         "json",
     ]);
-    let listed = harness.json_ok(&["connect", "list", "--root", harness.root_str(), "--format", "json"]);
+    let listed = harness.json_ok(&[
+        "connect",
+        "list",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
     let adapters = listed
         .get("adapters")
         .and_then(Value::as_array)
         .expect("adapters array");
     let shared = adapters
         .iter()
-        .filter(|adapter| adapter.get("adapter_id").and_then(Value::as_str) == Some("shared-adapter"))
+        .filter(|adapter| {
+            adapter.get("adapter_id").and_then(Value::as_str) == Some("shared-adapter")
+        })
         .collect::<Vec<_>>();
     assert_eq!(shared.len(), 1, "expected single upserted adapter");
     assert_eq!(
@@ -543,7 +558,8 @@ fn connect_test_and_health_persist_history_and_latest_artifact() {
         .count();
     assert!(history_lines >= 1, "expected test history entries");
 
-    let health_path = Path::new(harness.root_str()).join("state/connect/health/history-adapter.json");
+    let health_path =
+        Path::new(harness.root_str()).join("state/connect/health/history-adapter.json");
     assert!(health_path.exists(), "missing health file");
     let persisted_health: Value =
         serde_json::from_str(&fs::read_to_string(&health_path).expect("read health json"))
@@ -570,11 +586,11 @@ fn connect_test_and_health_persist_history_and_latest_artifact() {
 fn connect_test_matrix_covers_all_transports_and_disabled_fail_path() {
     let harness = Harness::new("matrix");
     for (name, transport) in [
-        ("grpc_diag_adapter", "grpc"),
-        ("a2a_diag_adapter", "a2a"),
-        ("mcp_diag_adapter", "mcp"),
-        ("http_diag_adapter", "http"),
-        ("ros2_diag_adapter", "ros2"),
+        ("telegram_diag_adapter", "telegram"),
+        ("discord_diag_adapter", "discord"),
+        ("browser_diag_adapter", "browser"),
+        ("shell_diag_adapter", "shell"),
+        ("webhook_diag_adapter", "webhook"),
     ] {
         harness.run_ok(&[
             "connect",
@@ -610,14 +626,17 @@ fn connect_test_matrix_covers_all_transports_and_disabled_fail_path() {
             "--format",
             "json",
         ]);
-        assert_eq!(tested.get("test_status").and_then(Value::as_str), Some("pass"));
+        assert_eq!(
+            tested.get("test_status").and_then(Value::as_str),
+            Some("pass")
+        );
     }
 
     harness.run_ok(&[
         "connect",
         "disable",
         "--adapter-id",
-        "grpc-diag-adapter",
+        "telegram-diag-adapter",
         "--root",
         harness.root_str(),
         "--format",
@@ -627,7 +646,7 @@ fn connect_test_matrix_covers_all_transports_and_disabled_fail_path() {
         "connect",
         "test",
         "--adapter-id",
-        "grpc-diag-adapter",
+        "telegram-diag-adapter",
         "--root",
         harness.root_str(),
         "--format",
@@ -637,5 +656,121 @@ fn connect_test_matrix_covers_all_transports_and_disabled_fail_path() {
         failure.contains("disabled"),
         "expected disabled fail path, got:\n{}",
         failure
+    );
+}
+
+#[test]
+fn connect_health_escalates_reconnect_then_fallback_under_repeated_failures() {
+    let harness = Harness::new("reconnect_fallback");
+    harness.run_ok(&[
+        "connect",
+        "scaffold",
+        "--name",
+        "telegram_ops_adapter",
+        "--transport",
+        "telegram",
+        "--action-schema",
+        "meridian.runtime.v1",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    harness.run_ok(&[
+        "connect",
+        "enable",
+        "--adapter-id",
+        "telegram-ops-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+
+    let registry_path = Path::new(harness.root_str()).join("state/connect/registry.json");
+    let mut registry: Value =
+        serde_json::from_str(&fs::read_to_string(&registry_path).expect("read registry"))
+            .expect("parse registry");
+    let adapters = registry
+        .get_mut("adapters")
+        .and_then(Value::as_array_mut)
+        .expect("adapters");
+    let adapter = adapters
+        .iter_mut()
+        .find(|item| item.get("adapter_id").and_then(Value::as_str) == Some("telegram-ops-adapter"))
+        .expect("telegram adapter");
+    adapter["action_schema"] = Value::String(String::new());
+    fs::write(
+        &registry_path,
+        serde_json::to_string_pretty(&registry).expect("serialize registry"),
+    )
+    .expect("write registry");
+
+    let failed = harness.run_fail(&[
+        "connect",
+        "test",
+        "--adapter-id",
+        "telegram-ops-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    assert!(
+        failed.contains("missing_action_schema"),
+        "expected missing_action_schema failure, got:\n{}",
+        failed
+    );
+
+    for expected_attempt in 1..=3_u64 {
+        let health = harness.json_ok(&[
+            "connect",
+            "health",
+            "--adapter-id",
+            "telegram-ops-adapter",
+            "--root",
+            harness.root_str(),
+            "--format",
+            "json",
+        ]);
+        assert_eq!(
+            health.get("lifecycle_state").and_then(Value::as_str),
+            Some("reconnecting")
+        );
+        assert_eq!(
+            health.get("recommended_action").and_then(Value::as_str),
+            Some("reconnect")
+        );
+        assert_eq!(
+            health
+                .pointer("/lifecycle_metrics/reconnect_attempts")
+                .and_then(Value::as_u64),
+            Some(expected_attempt)
+        );
+        assert_eq!(
+            health
+                .pointer("/lifecycle_metrics/fallback_active")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+    }
+
+    let fallback = harness.json_ok(&[
+        "connect",
+        "health",
+        "--adapter-id",
+        "telegram-ops-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    assert_eq!(
+        fallback.get("lifecycle_state").and_then(Value::as_str),
+        Some("fallback")
+    );
+    assert_eq!(
+        fallback.get("recommended_action").and_then(Value::as_str),
+        Some("shadow_or_local_queue")
     );
 }

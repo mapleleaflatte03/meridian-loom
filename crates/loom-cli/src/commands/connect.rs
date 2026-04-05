@@ -9,6 +9,7 @@ const DEFAULT_CONNECT_REGISTRY_PATH: &str = "state/connect/registry.json";
 const DEFAULT_CONNECT_ADAPTERS_DIR: &str = "state/connect/adapters";
 const DEFAULT_CONNECT_HEALTH_DIR: &str = "state/connect/health";
 const DEFAULT_CONNECT_TESTS_DIR: &str = "state/connect/tests";
+const DEFAULT_CONNECT_LIFECYCLE_DIR: &str = "state/connect/lifecycle";
 const DEFAULT_CONNECT_LATEST_ARTIFACT_PATH: &str = "artifacts/connect/latest.json";
 const CONNECT_REGISTRY_SCHEMA_V1: &str = "meridian.connect.registry.v1";
 const CONNECT_REGISTRY_SCHEMA_V2: &str = "meridian.connect.registry.v2";
@@ -16,7 +17,14 @@ const CONNECT_ADAPTER_SCHEMA: &str = "meridian.connect.adapter.v1";
 const CONNECT_RUNTIME_CONTRACT_V2: &str = "connect_runtime_contract_v2";
 const CONNECT_TEST_EVENT_SCHEMA: &str = "meridian.connect.test_event.v1";
 const CONNECT_HEALTH_EVENT_SCHEMA: &str = "meridian.connect.health_event.v1";
-const SUPPORTED_TRANSPORTS: [&str; 5] = ["grpc", "a2a", "mcp", "http", "ros2"];
+const CONNECT_LIFECYCLE_EVENT_SCHEMA: &str = "meridian.connect.lifecycle_event.v1";
+const DEFAULT_RECONNECT_ATTEMPTS_MAX: u64 = 3;
+const DEFAULT_DIAGNOSTIC_RETENTION_DAYS: u64 = 30;
+const SUPPORTED_TRANSPORTS: [&str; 10] = [
+    "telegram", "discord", "browser", "shell", "webhook", "grpc", "a2a", "mcp", "http", "ros2",
+];
+const OPERATOR_PRIORITY_TRANSPORTS: [&str; 5] =
+    ["telegram", "discord", "browser", "shell", "webhook"];
 
 pub(crate) fn handle_connect(args: &[String]) -> LoomResult<()> {
     if args.is_empty()
@@ -52,7 +60,7 @@ Scaffold, validate, and operate Universal Connect adapter manifests.
 USAGE: loom connect <COMMAND> [OPTIONS]
 
 COMMANDS:
-  scaffold --name NAME --transport grpc|a2a|mcp|http|ros2 --action-schema SCHEMA
+  scaffold --name NAME --transport telegram|discord|browser|shell|webhook|grpc|a2a|mcp|http|ros2 --action-schema SCHEMA
            [--root ROOT] [--format human|json]
   list     [--root ROOT] [--format human|json]
   validate [--adapter-id ID] [--root ROOT] [--format human|json]
@@ -67,7 +75,9 @@ fn handle_connect_scaffold(args: &[String]) -> LoomResult<()> {
     let root = root_from(take_value(args, "--root").as_deref())?;
     let format = output_format(args);
     let name = required_flag(args, "--name")?;
-    let transport = required_flag(args, "--transport")?.trim().to_ascii_lowercase();
+    let transport = required_flag(args, "--transport")?
+        .trim()
+        .to_ascii_lowercase();
     let action_schema = required_flag(args, "--action-schema")?;
     validate_transport(&transport)?;
 
@@ -100,8 +110,15 @@ fn handle_connect_scaffold(args: &[String]) -> LoomResult<()> {
         "runtime_contract": CONNECT_RUNTIME_CONTRACT_V2,
         "lifecycle": {
             "enabled": false,
+            "state": "init",
+            "auth_state": "pending",
+            "last_transition_at": chrono_like_timestamp(),
+            "reconnect_attempts": 0,
+            "reconnect_attempts_max": DEFAULT_RECONNECT_ATTEMPTS_MAX,
+            "last_error": "",
         },
         "diagnostics": default_adapter_diagnostics(),
+        "fallback": default_fallback_policy(),
         "poge_standard": poge_standard_profile(),
         "transport_profile": transport_profile_for(transport.as_str()),
     });
@@ -143,9 +160,20 @@ fn handle_connect_scaffold(args: &[String]) -> LoomResult<()> {
         "registry_schema_version": CONNECT_REGISTRY_SCHEMA_V2,
         "poge_standard_profile": manifest.pointer("/poge_standard/profile").and_then(Value::as_str).unwrap_or(""),
         "supported_transports": SUPPORTED_TRANSPORTS,
+        "operator_priority_transports": OPERATOR_PRIORITY_TRANSPORTS,
         "note": "area10.1 connect lifecycle scaffold",
     });
     persist_connect_latest_artifact(&root, &payload)?;
+    let _ = append_lifecycle_event(
+        &root,
+        manifest
+            .get("adapter_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+        "init",
+        "scaffolded",
+        "adapter scaffolded with governed defaults",
+    );
     print_connect_payload(&payload, &format)
 }
 
@@ -164,6 +192,7 @@ fn handle_connect_list(args: &[String]) -> LoomResult<()> {
         "registry_schema_version": CONNECT_REGISTRY_SCHEMA_V2,
         "total_adapters": adapters.len(),
         "supported_transports": SUPPORTED_TRANSPORTS,
+        "operator_priority_transports": OPERATOR_PRIORITY_TRANSPORTS,
         "adapters": adapters,
         "note": "area10.1 universal connect lifecycle registry",
     });
@@ -279,20 +308,59 @@ fn handle_connect_toggle(args: &[String], enable: bool) -> LoomResult<()> {
         .ok_or_else(|| format!("adapter '{}' not found", adapter_id))?;
     let previous = adapter_enabled(adapter);
     set_adapter_enabled(adapter, enable);
-    adapter["status"] = Value::String(if enable {
-        "enabled".to_string()
+    let now = chrono_like_timestamp();
+    adapter["status"] = Value::String(if enable { "enabled" } else { "disabled" }.to_string());
+    adapter["updated_at"] = Value::String(now.clone());
+    let lifecycle = adapter_lifecycle_mut(adapter);
+    lifecycle["state"] = Value::String(if enable { "ready" } else { "disabled" }.to_string());
+    lifecycle["auth_state"] =
+        Value::String(if enable { "verified" } else { "disabled" }.to_string());
+    lifecycle["last_transition_at"] = Value::String(now);
+    if enable {
+        lifecycle["reconnect_attempts"] = Value::Number(0_u64.into());
+        lifecycle["last_error"] = Value::String(String::new());
+    }
+    let mode = if previous == enable {
+        "noop"
     } else {
-        "disabled".to_string()
-    });
-    adapter["updated_at"] = Value::String(chrono_like_timestamp());
-    let mode = if previous == enable { "noop" } else { "changed" };
+        "changed"
+    };
     persist_connect_registry(&root, &registry)?;
+    let transition_reason = if enable {
+        if mode == "noop" {
+            "adapter already enabled"
+        } else {
+            "adapter enabled and authenticated"
+        }
+    } else if mode == "noop" {
+        "adapter already disabled"
+    } else {
+        "adapter disabled by operator"
+    };
+    let _ = append_lifecycle_event(
+        &root,
+        &adapter_id,
+        if enable { "ready" } else { "disabled" },
+        if enable {
+            if mode == "noop" {
+                "enable_noop"
+            } else {
+                "enable"
+            }
+        } else if mode == "noop" {
+            "disable_noop"
+        } else {
+            "disable"
+        },
+        transition_reason,
+    );
 
     let payload = json!({
         "status": if enable { "connect_enabled" } else { "connect_disabled" },
         "mode": mode,
         "adapter_id": adapter_id,
         "enabled": enable,
+        "lifecycle_state": if enable { "ready" } else { "disabled" },
         "registry_path": connect_registry_path(&root).display().to_string(),
         "registry_schema_version": CONNECT_REGISTRY_SCHEMA_V2,
         "runtime_contract": CONNECT_RUNTIME_CONTRACT_V2,
@@ -384,14 +452,60 @@ fn handle_connect_test(args: &[String]) -> LoomResult<()> {
         .unwrap_or(0)
         + 1;
     diagnostics["test_history_entries"] = Value::Number(test_entries.into());
+    if !adapter
+        .get("lifecycle")
+        .map(Value::is_object)
+        .unwrap_or(false)
+    {
+        adapter["lifecycle"] = json!({});
+    }
+    if !adapter
+        .get("fallback")
+        .map(Value::is_object)
+        .unwrap_or(false)
+    {
+        adapter["fallback"] = default_fallback_policy();
+    }
+    adapter["lifecycle"]["last_transition_at"] = Value::String(tested_at.clone());
+    if test_status == "pass" {
+        adapter["status"] = Value::String("ready".to_string());
+        adapter["lifecycle"]["state"] = Value::String("ready".to_string());
+        adapter["lifecycle"]["auth_state"] = Value::String("verified".to_string());
+        adapter["lifecycle"]["last_error"] = Value::String(String::new());
+        adapter["fallback"]["active"] = Value::Bool(false);
+        adapter["fallback"]["last_trigger_reason"] = Value::String(String::new());
+    } else {
+        adapter["status"] = Value::String("error".to_string());
+        adapter["lifecycle"]["state"] = Value::String("error".to_string());
+        adapter["lifecycle"]["last_error"] = Value::String(test_reason.clone());
+        adapter["fallback"]["active"] = Value::Bool(true);
+        adapter["fallback"]["last_trigger_reason"] = Value::String(test_reason.clone());
+    }
     adapter["updated_at"] = Value::String(tested_at);
     persist_connect_registry(&root, &registry)?;
+    let _ = append_lifecycle_event(
+        &root,
+        &adapter_id,
+        if test_status == "pass" {
+            "ready"
+        } else {
+            "error"
+        },
+        if test_status == "pass" {
+            "test_pass"
+        } else {
+            "test_fail"
+        },
+        &test_reason,
+    );
 
     let payload = json!({
         "status": "connect_tested",
         "adapter_id": adapter_id,
         "test_status": test_event.get("test_status").and_then(Value::as_str).unwrap_or("unknown"),
         "test_reason": test_event.get("test_reason").and_then(Value::as_str).unwrap_or("unknown"),
+        "lifecycle_state": if test_status == "pass" { "ready" } else { "error" },
+        "fallback_active": test_status != "pass",
         "tests_history_path": connect_tests_history_path(&root, &adapter_id).display().to_string(),
         "registry_path": connect_registry_path(&root).display().to_string(),
         "runtime_contract": CONNECT_RUNTIME_CONTRACT_V2,
@@ -440,12 +554,103 @@ fn handle_connect_health(args: &[String]) -> LoomResult<()> {
         "unknown"
     };
     let health_checked_at = chrono_like_timestamp();
+    if !adapter
+        .get("lifecycle")
+        .map(Value::is_object)
+        .unwrap_or(false)
+    {
+        adapter["lifecycle"] = json!({});
+    }
+    if !adapter
+        .get("fallback")
+        .map(Value::is_object)
+        .unwrap_or(false)
+    {
+        adapter["fallback"] = default_fallback_policy();
+    }
+    let reconnect_attempts = adapter
+        .pointer("/lifecycle/reconnect_attempts")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let reconnect_attempts_max = adapter
+        .pointer("/lifecycle/reconnect_attempts_max")
+        .and_then(Value::as_u64)
+        .unwrap_or(DEFAULT_RECONNECT_ATTEMPTS_MAX);
+    let mut lifecycle_state = adapter
+        .pointer("/lifecycle/state")
+        .and_then(Value::as_str)
+        .unwrap_or("init")
+        .to_string();
+    let mut recommended_action = "none".to_string();
+    if !enabled {
+        lifecycle_state = "disabled".to_string();
+        adapter["fallback"]["active"] = Value::Bool(false);
+        recommended_action = "enable_adapter".to_string();
+    } else if health_status == "healthy" {
+        lifecycle_state = "ready".to_string();
+        adapter["lifecycle"]["auth_state"] = Value::String("verified".to_string());
+        adapter["lifecycle"]["reconnect_attempts"] = Value::Number(0_u64.into());
+        adapter["lifecycle"]["last_error"] = Value::String(String::new());
+        adapter["fallback"]["active"] = Value::Bool(false);
+        adapter["fallback"]["last_trigger_reason"] = Value::String(String::new());
+    } else if health_status == "degraded" {
+        let next_attempt = reconnect_attempts.saturating_add(1);
+        if next_attempt <= reconnect_attempts_max {
+            lifecycle_state = "reconnecting".to_string();
+            adapter["lifecycle"]["reconnect_attempts"] = Value::Number(next_attempt.into());
+            adapter["lifecycle"]["last_error"] = Value::String(
+                latest_test
+                    .as_ref()
+                    .and_then(|event| event.get("test_reason"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("test_failed")
+                    .to_string(),
+            );
+            adapter["fallback"]["active"] = Value::Bool(true);
+            adapter["fallback"]["last_trigger_reason"] =
+                Value::String("connect_health_degraded".to_string());
+            recommended_action = "reconnect".to_string();
+        } else {
+            lifecycle_state = "fallback".to_string();
+            adapter["fallback"]["active"] = Value::Bool(true);
+            adapter["fallback"]["last_trigger_reason"] =
+                Value::String("reconnect_attempts_exhausted".to_string());
+            recommended_action = "shadow_or_local_queue".to_string();
+        }
+    }
+    adapter["lifecycle"]["state"] = Value::String(lifecycle_state.clone());
+    adapter["lifecycle"]["last_transition_at"] = Value::String(health_checked_at.clone());
+    let lifecycle_event_action = match lifecycle_state.as_str() {
+        "ready" => "health_ready",
+        "reconnecting" => "health_reconnect",
+        "fallback" => "health_fallback",
+        "disabled" => "health_disabled",
+        _ => "health_unknown",
+    };
+    let lifecycle_event_reason = if health_status == "healthy" {
+        "health checks pass"
+    } else if health_status == "degraded" {
+        "latest adapter test failed"
+    } else if health_status == "disabled" {
+        "adapter disabled"
+    } else {
+        "no deterministic health signal"
+    };
+    let _ = append_lifecycle_event(
+        &root,
+        &adapter_id,
+        lifecycle_state.as_str(),
+        lifecycle_event_action,
+        lifecycle_event_reason,
+    );
     let payload = json!({
         "schema_version": CONNECT_HEALTH_EVENT_SCHEMA,
         "status": "connect_health",
         "adapter_id": adapter_id,
         "enabled": enabled,
         "health_status": health_status,
+        "recommended_action": recommended_action,
+        "lifecycle_state": lifecycle_state,
         "last_test_status": test_status,
         "last_test_reason": latest_test
             .as_ref()
@@ -457,11 +662,24 @@ fn handle_connect_health(args: &[String]) -> LoomResult<()> {
         "registry_path": connect_registry_path(&root).display().to_string(),
         "health_path": connect_health_path(&root, &adapter_id).display().to_string(),
         "tests_history_path": connect_tests_history_path(&root, &adapter_id).display().to_string(),
+        "lifecycle_history_path": connect_lifecycle_history_path(&root, &adapter_id).display().to_string(),
         "lifecycle_metrics": {
             "test_history_entries": adapter
                 .pointer("/diagnostics/test_history_entries")
                 .and_then(Value::as_u64)
                 .unwrap_or(0),
+            "reconnect_attempts": adapter
+                .pointer("/lifecycle/reconnect_attempts")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            "reconnect_attempts_max": adapter
+                .pointer("/lifecycle/reconnect_attempts_max")
+                .and_then(Value::as_u64)
+                .unwrap_or(DEFAULT_RECONNECT_ATTEMPTS_MAX),
+            "fallback_active": adapter
+                .pointer("/fallback/active")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
         },
         "note": "area10.1 adapter health snapshot",
     });
@@ -470,6 +688,23 @@ fn handle_connect_health(args: &[String]) -> LoomResult<()> {
     let diagnostics = adapter_diagnostics_mut(adapter);
     diagnostics["last_health_status"] = Value::String(health_status.to_string());
     diagnostics["last_health_at"] = Value::String(health_checked_at);
+    diagnostics["health_history_entries"] = Value::Number(
+        diagnostics
+            .get("health_history_entries")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            .saturating_add(1)
+            .into(),
+    );
+    diagnostics["lifecycle_history_entries"] = Value::Number(
+        diagnostics
+            .get("lifecycle_history_entries")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            .saturating_add(1)
+            .into(),
+    );
+    adapter["status"] = Value::String(lifecycle_state.clone());
     adapter["updated_at"] = Value::String(chrono_like_timestamp());
     persist_connect_registry(&root, &registry)?;
     persist_connect_latest_artifact(&root, &payload)?;
@@ -536,7 +771,10 @@ fn print_connect_payload(payload: &Value, format: &str) -> LoomResult<()> {
             print_startup_banner();
             let mut lines = vec![format!(
                 "status:              {}",
-                payload.get("status").and_then(Value::as_str).unwrap_or("unknown")
+                payload
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
             )];
             if let Some(mode) = payload.get("mode").and_then(Value::as_str) {
                 lines.push(format!("mode:                {mode}"));
@@ -555,6 +793,17 @@ fn print_connect_payload(payload: &Value, format: &str) -> LoomResult<()> {
             }
             if let Some(health_status) = payload.get("health_status").and_then(Value::as_str) {
                 lines.push(format!("health_status:       {health_status}"));
+            }
+            if let Some(lifecycle_state) = payload.get("lifecycle_state").and_then(Value::as_str) {
+                lines.push(format!("lifecycle_state:     {lifecycle_state}"));
+            }
+            if let Some(recommended_action) =
+                payload.get("recommended_action").and_then(Value::as_str)
+            {
+                lines.push(format!("recommended_action:  {recommended_action}"));
+            }
+            if let Some(fallback_active) = payload.get("fallback_active").and_then(Value::as_bool) {
+                lines.push(format!("fallback_active:     {fallback_active}"));
             }
             if let Some(validation_status) =
                 payload.get("validation_status").and_then(Value::as_str)
@@ -587,9 +836,18 @@ fn print_connect_payload(payload: &Value, format: &str) -> LoomResult<()> {
                 for adapter in adapters {
                     lines.push(format!(
                         "  - {} ({}) schema={} enabled={} status={}",
-                        adapter.get("adapter_id").and_then(Value::as_str).unwrap_or(""),
-                        adapter.get("transport").and_then(Value::as_str).unwrap_or(""),
-                        adapter.get("action_schema").and_then(Value::as_str).unwrap_or(""),
+                        adapter
+                            .get("adapter_id")
+                            .and_then(Value::as_str)
+                            .unwrap_or(""),
+                        adapter
+                            .get("transport")
+                            .and_then(Value::as_str)
+                            .unwrap_or(""),
+                        adapter
+                            .get("action_schema")
+                            .and_then(Value::as_str)
+                            .unwrap_or(""),
                         adapter
                             .pointer("/lifecycle/enabled")
                             .and_then(Value::as_bool)
@@ -645,6 +903,11 @@ fn connect_health_path(root: &Path, adapter_id: &str) -> PathBuf {
 
 fn connect_tests_history_path(root: &Path, adapter_id: &str) -> PathBuf {
     root.join(DEFAULT_CONNECT_TESTS_DIR)
+        .join(format!("{adapter_id}.jsonl"))
+}
+
+fn connect_lifecycle_history_path(root: &Path, adapter_id: &str) -> PathBuf {
+    root.join(DEFAULT_CONNECT_LIFECYCLE_DIR)
         .join(format!("{adapter_id}.jsonl"))
 }
 
@@ -706,7 +969,11 @@ fn normalize_registry(registry: &mut Value) {
     }
     registry["schema_version"] = Value::String(CONNECT_REGISTRY_SCHEMA_V2.to_string());
     registry["runtime_contract"] = Value::String(CONNECT_RUNTIME_CONTRACT_V2.to_string());
-    if !registry.get("adapters").map(Value::is_array).unwrap_or(false) {
+    if !registry
+        .get("adapters")
+        .map(Value::is_array)
+        .unwrap_or(false)
+    {
         registry["adapters"] = Value::Array(Vec::new());
     }
     if let Some(items) = registry.get_mut("adapters").and_then(Value::as_array_mut) {
@@ -732,7 +999,11 @@ fn normalize_adapter(adapter: &mut Value) {
         adapter["schema_version"] = Value::String(CONNECT_ADAPTER_SCHEMA.to_string());
     }
     adapter["runtime_contract"] = Value::String(CONNECT_RUNTIME_CONTRACT_V2.to_string());
-    if !adapter.get("lifecycle").map(Value::is_object).unwrap_or(false) {
+    if !adapter
+        .get("lifecycle")
+        .map(Value::is_object)
+        .unwrap_or(false)
+    {
         adapter["lifecycle"] = json!({});
     }
     if adapter
@@ -742,8 +1013,62 @@ fn normalize_adapter(adapter: &mut Value) {
     {
         adapter["lifecycle"]["enabled"] = Value::Bool(false);
     }
-    if !adapter.get("diagnostics").map(Value::is_object).unwrap_or(false) {
+    if adapter
+        .pointer("/lifecycle/state")
+        .and_then(Value::as_str)
+        .is_none()
+    {
+        adapter["lifecycle"]["state"] = Value::String("init".to_string());
+    }
+    if adapter
+        .pointer("/lifecycle/auth_state")
+        .and_then(Value::as_str)
+        .is_none()
+    {
+        adapter["lifecycle"]["auth_state"] = Value::String("pending".to_string());
+    }
+    if adapter
+        .pointer("/lifecycle/reconnect_attempts")
+        .and_then(Value::as_u64)
+        .is_none()
+    {
+        adapter["lifecycle"]["reconnect_attempts"] = Value::Number(0_u64.into());
+    }
+    if adapter
+        .pointer("/lifecycle/reconnect_attempts_max")
+        .and_then(Value::as_u64)
+        .is_none()
+    {
+        adapter["lifecycle"]["reconnect_attempts_max"] =
+            Value::Number(DEFAULT_RECONNECT_ATTEMPTS_MAX.into());
+    }
+    if adapter
+        .pointer("/lifecycle/last_error")
+        .and_then(Value::as_str)
+        .is_none()
+    {
+        adapter["lifecycle"]["last_error"] = Value::String(String::new());
+    }
+    if adapter
+        .pointer("/lifecycle/last_transition_at")
+        .and_then(Value::as_str)
+        .is_none()
+    {
+        adapter["lifecycle"]["last_transition_at"] = Value::String(String::new());
+    }
+    if !adapter
+        .get("diagnostics")
+        .map(Value::is_object)
+        .unwrap_or(false)
+    {
         adapter["diagnostics"] = default_adapter_diagnostics();
+    }
+    if !adapter
+        .get("fallback")
+        .map(Value::is_object)
+        .unwrap_or(false)
+    {
+        adapter["fallback"] = default_fallback_policy();
     }
     let diagnostics = adapter_diagnostics_mut(adapter);
     if diagnostics
@@ -766,6 +1091,28 @@ fn normalize_adapter(adapter: &mut Value) {
         .is_none()
     {
         diagnostics["test_history_entries"] = Value::Number(0_u64.into());
+    }
+    if diagnostics
+        .get("health_history_entries")
+        .and_then(Value::as_u64)
+        .is_none()
+    {
+        diagnostics["health_history_entries"] = Value::Number(0_u64.into());
+    }
+    if diagnostics
+        .get("lifecycle_history_entries")
+        .and_then(Value::as_u64)
+        .is_none()
+    {
+        diagnostics["lifecycle_history_entries"] = Value::Number(0_u64.into());
+    }
+    if diagnostics
+        .get("history_retention_days")
+        .and_then(Value::as_u64)
+        .is_none()
+    {
+        diagnostics["history_retention_days"] =
+            Value::Number(DEFAULT_DIAGNOSTIC_RETENTION_DAYS.into());
     }
 }
 
@@ -830,17 +1177,36 @@ fn adapter_enabled(adapter: &Value) -> bool {
 }
 
 fn set_adapter_enabled(adapter: &mut Value, enabled: bool) {
-    if !adapter.get("lifecycle").map(Value::is_object).unwrap_or(false) {
+    if !adapter
+        .get("lifecycle")
+        .map(Value::is_object)
+        .unwrap_or(false)
+    {
         adapter["lifecycle"] = json!({});
     }
     adapter["lifecycle"]["enabled"] = Value::Bool(enabled);
 }
 
 fn adapter_diagnostics_mut(adapter: &mut Value) -> &mut Value {
-    if !adapter.get("diagnostics").map(Value::is_object).unwrap_or(false) {
+    if !adapter
+        .get("diagnostics")
+        .map(Value::is_object)
+        .unwrap_or(false)
+    {
         adapter["diagnostics"] = default_adapter_diagnostics();
     }
     &mut adapter["diagnostics"]
+}
+
+fn adapter_lifecycle_mut(adapter: &mut Value) -> &mut Value {
+    if !adapter
+        .get("lifecycle")
+        .map(Value::is_object)
+        .unwrap_or(false)
+    {
+        adapter["lifecycle"] = json!({});
+    }
+    &mut adapter["lifecycle"]
 }
 
 fn default_adapter_diagnostics() -> Value {
@@ -851,7 +1217,40 @@ fn default_adapter_diagnostics() -> Value {
         "last_health_status": "unknown",
         "last_health_at": "",
         "test_history_entries": 0,
+        "health_history_entries": 0,
+        "lifecycle_history_entries": 0,
+        "history_retention_days": DEFAULT_DIAGNOSTIC_RETENTION_DAYS,
     })
+}
+
+fn default_fallback_policy() -> Value {
+    json!({
+        "mode": "local_queue_shadow",
+        "active": false,
+        "max_reconnect_attempts": DEFAULT_RECONNECT_ATTEMPTS_MAX,
+        "last_trigger_reason": "",
+    })
+}
+
+fn append_lifecycle_event(
+    root: &Path,
+    adapter_id: &str,
+    state: &str,
+    action: &str,
+    reason: &str,
+) -> LoomResult<()> {
+    let event = json!({
+        "schema_version": CONNECT_LIFECYCLE_EVENT_SCHEMA,
+        "adapter_id": adapter_id,
+        "state": state,
+        "action": action,
+        "reason": reason,
+        "recorded_at": chrono_like_timestamp(),
+    });
+    append_jsonl(
+        &connect_lifecycle_history_path(root, adapter_id),
+        &serde_json::to_string(&event).map_err(|error| error.to_string())?,
+    )
 }
 
 fn value_string(value: Option<&Value>) -> &str {
@@ -875,6 +1274,47 @@ fn poge_standard_profile() -> Value {
 
 fn transport_profile_for(transport: &str) -> Value {
     match transport {
+        "telegram" => json!({
+            "kind": "telegram",
+            "inbound_mode": "bot_updates",
+            "commands_surface": "inline+slash",
+            "health_endpoint": "/health",
+            "queue_fallback": "local_queue_shadow",
+            "note": "operator-grade chat transport with governed command envelopes",
+        }),
+        "discord" => json!({
+            "kind": "discord",
+            "inbound_mode": "slash_commands",
+            "voice_channel": true,
+            "health_endpoint": "/health",
+            "queue_fallback": "local_queue_shadow",
+            "note": "operator-grade guild transport with command + voice lane",
+        }),
+        "browser" => json!({
+            "kind": "browser",
+            "engine": "playwright_wrapper",
+            "sandbox": "restricted",
+            "health_endpoint": "/health",
+            "queue_fallback": "local_queue_shadow",
+            "note": "governed browser automation lane with proof receipts",
+        }),
+        "shell" => json!({
+            "kind": "shell",
+            "execution_mode": "restricted_executor",
+            "sandbox": "filesystem_guarded",
+            "health_endpoint": "/health",
+            "queue_fallback": "local_queue_shadow",
+            "note": "governed shell lane with bounded command execution",
+        }),
+        "webhook" => json!({
+            "kind": "webhook",
+            "method": "POST",
+            "content_type": "application/json",
+            "inbound_mode": "generic_http_ingress",
+            "health_endpoint": "/health",
+            "queue_fallback": "local_queue_shadow",
+            "note": "generic inbound webhook transport for external systems",
+        }),
         "grpc" => json!({
             "kind": "grpc",
             "rpc": "meridian.runtime.v1.ActionService/SubmitAction",
