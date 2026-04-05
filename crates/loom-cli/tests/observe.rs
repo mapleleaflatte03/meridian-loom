@@ -87,6 +87,22 @@ impl Harness {
         assert_success(args, &output);
         serde_json::from_slice(&output.stdout).expect("parse json")
     }
+
+    fn run_fail(&self, args: &[&str]) -> String {
+        let output = self.run_output(args);
+        assert!(
+            !output.status.success(),
+            "command {:?} unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
+            args,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        )
+    }
 }
 
 fn assert_success(args: &[&str], output: &Output) {
@@ -236,4 +252,130 @@ fn observe_alerts_returns_compact_alert_view() {
         Some("observability_contract_v1")
     );
     assert!(payload.get("alerts").and_then(Value::as_array).is_some());
+}
+
+#[test]
+fn observe_summary_surfaces_connect_degraded_alerts_and_fix_hints() {
+    let harness = Harness::new("connect_degraded");
+    harness.run_ok(&[
+        "connect",
+        "scaffold",
+        "--name",
+        "telegram_observe_adapter",
+        "--transport",
+        "telegram",
+        "--action-schema",
+        "meridian.runtime.v1",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    harness.run_ok(&[
+        "connect",
+        "enable",
+        "--adapter-id",
+        "telegram-observe-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    harness.run_ok(&[
+        "connect",
+        "test",
+        "--adapter-id",
+        "telegram-observe-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+
+    let registry_path = harness.root.join("state/connect/registry.json");
+    let mut registry: Value =
+        serde_json::from_str(&fs::read_to_string(&registry_path).expect("read registry"))
+            .expect("parse registry");
+    let adapters = registry
+        .get_mut("adapters")
+        .and_then(Value::as_array_mut)
+        .expect("adapters");
+    let adapter = adapters
+        .iter_mut()
+        .find(|item| {
+            item.get("adapter_id").and_then(Value::as_str) == Some("telegram-observe-adapter")
+        })
+        .expect("telegram adapter");
+    adapter["action_schema"] = Value::String(String::new());
+    fs::write(
+        &registry_path,
+        serde_json::to_string_pretty(&registry).expect("serialize registry"),
+    )
+    .expect("write registry");
+
+    let fail_output = harness.run_fail(&[
+        "connect",
+        "test",
+        "--adapter-id",
+        "telegram-observe-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    assert!(
+        fail_output.contains("missing_action_schema"),
+        "expected degraded connect test failure, got:\n{}",
+        fail_output
+    );
+    harness.run_ok(&[
+        "connect",
+        "health",
+        "--adapter-id",
+        "telegram-observe-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+
+    let payload = harness.json_ok(&[
+        "observe",
+        "summary",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+        "--fix-hints",
+    ]);
+    assert_eq!(
+        payload
+            .pointer("/components/connect/status")
+            .and_then(Value::as_str),
+        Some("degraded")
+    );
+    assert_eq!(
+        payload
+            .pointer("/components/connect/degraded_adapters")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    let alert_codes = payload
+        .get("alerts")
+        .and_then(Value::as_array)
+        .expect("alerts")
+        .iter()
+        .filter_map(|item| item.get("code").and_then(Value::as_str))
+        .collect::<Vec<_>>();
+    assert!(alert_codes.contains(&"connect_degraded"));
+    assert!(alert_codes.contains(&"connect_fallback_active"));
+
+    let fix_codes = payload
+        .get("fix_hints")
+        .and_then(Value::as_array)
+        .expect("fix_hints")
+        .iter()
+        .filter_map(|item| item.get("code").and_then(Value::as_str))
+        .collect::<Vec<_>>();
+    assert!(fix_codes.contains(&"connect_degraded"));
 }

@@ -10,6 +10,8 @@ const OBSERVABILITY_CONTRACT_VERSION: &str = "observability_contract_v1";
 const OBSERVABILITY_CONTRACT_PATH: &str = "state/observability/observability_contract_v1.json";
 const OBSERVABILITY_LATEST_ARTIFACT_PATH: &str = "artifacts/observability/latest.json";
 const ROUTE_TRACE_PATH: &str = "state/gateway/route_decision_trace.jsonl";
+const CONNECT_REGISTRY_PATH: &str = "state/connect/registry.json";
+const CONNECT_HEALTH_DIR: &str = "state/connect/health";
 
 pub(crate) fn handle_observe(args: &[String]) -> LoomResult<()> {
     if args.is_empty()
@@ -119,6 +121,7 @@ fn build_observability_payload(root: &Path, include_fix_hints: bool) -> LoomResu
     let queue = queue_status(root).map_err(|error| error.to_string())?;
     let proof_chain = proof_chain_snapshot(root)?;
     let route_trace = route_trace_snapshot(root)?;
+    let connect = connect_snapshot(root)?;
 
     let mut alerts = Vec::new();
     if !service.running {
@@ -171,6 +174,35 @@ fn build_observability_payload(root: &Path, include_fix_hints: bool) -> LoomResu
             "detected drift markers in route decision trace",
         ));
     }
+    match connect
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("missing")
+    {
+        "missing" => alerts.push(alert(
+            "connect_registry_missing",
+            "warning",
+            "connect registry is not available; adapter fleet cannot be observed",
+        )),
+        "degraded" => alerts.push(alert(
+            "connect_degraded",
+            "warning",
+            "one or more connect adapters are degraded",
+        )),
+        _ => {}
+    }
+    if connect
+        .get("fallback_active_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        > 0
+    {
+        alerts.push(alert(
+            "connect_fallback_active",
+            "warning",
+            "connect fallback is active for one or more adapters",
+        ));
+    }
 
     let overall_status = if alerts
         .iter()
@@ -213,6 +245,7 @@ fn build_observability_payload(root: &Path, include_fix_hints: bool) -> LoomResu
             },
             "proof_chain": proof_chain,
             "route_decision": route_trace,
+            "connect": connect,
         },
         "alerts": alerts,
         "fix_hints": Value::Array(Vec::new()),
@@ -305,6 +338,130 @@ fn route_trace_snapshot(root: &Path) -> LoomResult<Value> {
     }))
 }
 
+fn connect_snapshot(root: &Path) -> LoomResult<Value> {
+    let registry_path = root.join(CONNECT_REGISTRY_PATH);
+    if !registry_path.exists() {
+        return Ok(json!({
+            "status": "missing",
+            "registry_path": registry_path.display().to_string(),
+            "total_adapters": 0,
+            "enabled_adapters": 0,
+            "degraded_adapters": 0,
+            "reconnecting_count": 0,
+            "fallback_active_count": 0,
+            "health_dir": root.join(CONNECT_HEALTH_DIR).display().to_string(),
+            "operators_summary": "connect registry missing",
+        }));
+    }
+
+    let registry = read_optional_json(&registry_path)?
+        .and_then(|value| value.as_object().cloned().map(Value::Object))
+        .unwrap_or_else(|| json!({}));
+    let adapters = registry
+        .get("adapters")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if adapters.is_empty() {
+        return Ok(json!({
+            "status": "empty",
+            "registry_path": registry_path.display().to_string(),
+            "total_adapters": 0,
+            "enabled_adapters": 0,
+            "degraded_adapters": 0,
+            "reconnecting_count": 0,
+            "fallback_active_count": 0,
+            "health_dir": root.join(CONNECT_HEALTH_DIR).display().to_string(),
+            "operators_summary": "no adapters in connect registry",
+        }));
+    }
+
+    let mut enabled_count = 0_u64;
+    let mut degraded_count = 0_u64;
+    let mut reconnecting_count = 0_u64;
+    let mut fallback_count = 0_u64;
+
+    for adapter in &adapters {
+        let enabled = adapter
+            .pointer("/lifecycle/enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if enabled {
+            enabled_count = enabled_count.saturating_add(1);
+        }
+        let adapter_id = adapter
+            .get("adapter_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if adapter_id.is_empty() {
+            continue;
+        }
+        let health_path = root
+            .join(CONNECT_HEALTH_DIR)
+            .join(format!("{}.json", adapter_id.as_str()));
+        let health = read_optional_json(&health_path)?;
+
+        let health_status = health
+            .as_ref()
+            .and_then(|value| value.get("health_status"))
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let lifecycle_state = health
+            .as_ref()
+            .and_then(|value| value.get("lifecycle_state"))
+            .and_then(Value::as_str)
+            .or_else(|| {
+                adapter
+                    .pointer("/lifecycle/state")
+                    .and_then(Value::as_str)
+                    .or_else(|| adapter.get("status").and_then(Value::as_str))
+            })
+            .unwrap_or("unknown");
+        let fallback_active = health
+            .as_ref()
+            .and_then(|value| value.pointer("/lifecycle_metrics/fallback_active"))
+            .and_then(Value::as_bool)
+            .or_else(|| adapter.pointer("/fallback/active").and_then(Value::as_bool))
+            .unwrap_or(false);
+
+        if lifecycle_state == "reconnecting" {
+            reconnecting_count = reconnecting_count.saturating_add(1);
+        }
+        if fallback_active {
+            fallback_count = fallback_count.saturating_add(1);
+        }
+        let degraded = enabled
+            && (health_status == "degraded"
+                || matches!(lifecycle_state, "error" | "reconnecting" | "fallback"));
+        if degraded {
+            degraded_count = degraded_count.saturating_add(1);
+        }
+    }
+
+    let status = if degraded_count > 0 || fallback_count > 0 {
+        "degraded"
+    } else {
+        "ready"
+    };
+    Ok(json!({
+        "status": status,
+        "registry_path": registry_path.display().to_string(),
+        "total_adapters": adapters.len() as u64,
+        "enabled_adapters": enabled_count,
+        "degraded_adapters": degraded_count,
+        "reconnecting_count": reconnecting_count,
+        "fallback_active_count": fallback_count,
+        "health_dir": root.join(CONNECT_HEALTH_DIR).display().to_string(),
+        "operators_summary": if status == "degraded" {
+            format!("{} degraded / {} fallback", degraded_count, fallback_count)
+        } else {
+            "connect fleet healthy".to_string()
+        },
+    }))
+}
+
 fn fix_hints_from_alerts(alerts: Vec<Value>) -> Vec<Value> {
     let mut hints = Vec::new();
     for item in alerts {
@@ -313,15 +470,28 @@ fn fix_hints_from_alerts(alerts: Vec<Value>) -> Vec<Value> {
         };
         let hint = match code {
             "service_not_running" => {
-                "run `loom service start --root <root> --kernel-path <kernel> --service-token <token>`"
+                "run `loom service start --root \"$ROOT\" --kernel-path \"$KERNEL\" --service-token \"$TOKEN\"`"
             }
-            "queue_backlog" => "run `loom queue run-until-empty --root <root>` or `loom swarm run --settle-zk`",
+            "queue_backlog" => {
+                "run `loom queue run-until-empty --root \"$ROOT\"` or `loom swarm run --settle-zk --root \"$ROOT\"`"
+            }
             "proof_chain_missing" => {
-                "run `loom shadow run ...` then `loom job settle --zk ...` to emit zk + settlement artifacts"
+                "run `loom shadow run ... --root \"$ROOT\"` then `loom job settle --zk --root \"$ROOT\" --kernel-path \"$KERNEL\"`"
             }
-            "route_trace_missing" => "enable manager routing flow and ensure route decision trace is persisted",
+            "route_trace_missing" => {
+                "run one managed gateway request and verify `state/gateway/route_decision_trace.jsonl` is written"
+            }
             "route_drift_detected" => {
-                "review route decision thresholds, then rerun `loom observe summary --fix-hints`"
+                "review route thresholds and rerun `loom observe summary --root \"$ROOT\" --fix-hints`"
+            }
+            "connect_registry_missing" => {
+                "run `loom connect scaffold --name telegram_adapter --transport telegram --action-schema meridian.runtime.v1 --root \"$ROOT\"`"
+            }
+            "connect_degraded" => {
+                "run `loom connect list --root \"$ROOT\"`, then `loom connect diagnostics --adapter-id \"$ADAPTER_ID\" --limit 10 --root \"$ROOT\"`"
+            }
+            "connect_fallback_active" => {
+                "run `loom connect health --adapter-id \"$ADAPTER_ID\" --root \"$ROOT\"` until state returns `ready`"
             }
             _ => continue,
         };
