@@ -448,8 +448,14 @@ fn append_channel_health_snapshot(
     if let Some(parent) = history_path.parent() {
         fs::create_dir_all(parent).map_err(io_err)?;
     }
+    let previous = list_channel_health_history(root, &record.channel_id, 1)?
+        .into_iter()
+        .next();
+    let captured_at_unix_ms = previous.as_ref().map_or_else(now_unix_ms, |value| {
+        now_unix_ms().max(value.captured_at_unix_ms.saturating_add(1))
+    });
     let history_record = ChannelHealthHistoryRecord {
-        captured_at_unix_ms: now_unix_ms(),
+        captured_at_unix_ms,
         trigger: trigger.trim().to_string(),
         channel_id: record.channel_id.clone(),
         health: record.health.clone(),
@@ -463,7 +469,7 @@ fn append_channel_health_snapshot(
         blocked_count: record.blocked_count,
         archived_delivery_count: record.archived_delivery_count,
     };
-    if let Some(previous) = list_channel_health_history(root, &record.channel_id, 1)?.first() {
+    if let Some(previous) = previous.as_ref() {
         if previous.health == history_record.health
             && previous.ready == history_record.ready
             && previous.status_detail == history_record.status_detail
