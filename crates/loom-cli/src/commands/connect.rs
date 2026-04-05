@@ -10,6 +10,7 @@ const DEFAULT_CONNECT_ADAPTERS_DIR: &str = "state/connect/adapters";
 const DEFAULT_CONNECT_HEALTH_DIR: &str = "state/connect/health";
 const DEFAULT_CONNECT_TESTS_DIR: &str = "state/connect/tests";
 const DEFAULT_CONNECT_LIFECYCLE_DIR: &str = "state/connect/lifecycle";
+const DEFAULT_CONNECT_SANCTIONS_DIR: &str = "state/connect/sanctions";
 const DEFAULT_CONNECT_LATEST_ARTIFACT_PATH: &str = "artifacts/connect/latest.json";
 const CONNECT_REGISTRY_SCHEMA_V1: &str = "meridian.connect.registry.v1";
 const CONNECT_REGISTRY_SCHEMA_V2: &str = "meridian.connect.registry.v2";
@@ -20,8 +21,10 @@ const CONNECT_HEALTH_EVENT_SCHEMA: &str = "meridian.connect.health_event.v1";
 const CONNECT_LIFECYCLE_EVENT_SCHEMA: &str = "meridian.connect.lifecycle_event.v1";
 const DEFAULT_RECONNECT_ATTEMPTS_MAX: u64 = 3;
 const DEFAULT_DIAGNOSTIC_RETENTION_DAYS: u64 = 30;
+const DEFAULT_RATE_LIMIT_WINDOW_SECONDS: u64 = 60;
 const DEFAULT_SECURITY_MAX_PAYLOAD_BYTES: u64 = 262_144;
 const SECURITY_MAX_PAYLOAD_BYTES_LIMIT: u64 = 1_048_576;
+const CONNECT_SANCTION_SCHEMA: &str = "meridian.connect.sanction_event.v1";
 const SECURITY_PROFILE_SCHEMA: &str = "connect_security_profile_v1";
 const SECURITY_FAILURE_POLICY_DEFAULT: &str = "fallback_local_queue";
 const SECURITY_FAILURE_POLICIES: [&str; 3] = ["fallback_local_queue", "shadow_mode", "deny"];
@@ -416,6 +419,24 @@ fn handle_connect_test(args: &[String]) -> LoomResult<()> {
         .to_string();
     let enabled = adapter_enabled(adapter);
 
+    let tested_at = chrono_like_timestamp();
+    let tested_at_unix = tested_at.parse::<u64>().unwrap_or_default();
+    let rate_limit_per_minute = adapter
+        .pointer("/transport_profile/rate_limit_per_minute")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let rate_limit_reached = if rate_limit_per_minute > 0 {
+        recent_test_count_within_window(
+            &root,
+            &adapter_id,
+            tested_at_unix,
+            DEFAULT_RATE_LIMIT_WINDOW_SECONDS,
+        ) >= rate_limit_per_minute
+    } else {
+        false
+    };
+    let malformed_payload = should_force_malformed_payload(adapter);
+
     let (test_status, test_reason) = if !enabled {
         ("fail".to_string(), "adapter_disabled".to_string())
     } else if !SUPPORTED_TRANSPORTS.contains(&transport.as_str()) {
@@ -423,12 +444,18 @@ fn handle_connect_test(args: &[String]) -> LoomResult<()> {
             "fail".to_string(),
             format!("unsupported_transport:{transport}"),
         )
+    } else if malformed_payload {
+        ("fail".to_string(), "malformed_payload".to_string())
+    } else if rate_limit_reached {
+        (
+            "fail".to_string(),
+            format!("rate_limited:{rate_limit_per_minute}/min"),
+        )
     } else if action_schema.trim().is_empty() {
         ("fail".to_string(), "missing_action_schema".to_string())
     } else {
         ("pass".to_string(), "contract_checks_passed".to_string())
     };
-    let tested_at = chrono_like_timestamp();
     let test_event = json!({
         "schema_version": CONNECT_TEST_EVENT_SCHEMA,
         "adapter_id": adapter_id,
@@ -446,6 +473,15 @@ fn handle_connect_test(args: &[String]) -> LoomResult<()> {
         &connect_tests_history_path(&root, &adapter_id),
         &serde_json::to_string(&test_event).map_err(|error| error.to_string())?,
     )?;
+    if test_reason == "malformed_payload" {
+        let _ = append_connect_sanction_event(
+            &root,
+            &adapter_id,
+            "malformed_payload",
+            "test_fail",
+            "payload failed governed validation",
+        );
+    }
 
     let diagnostics = adapter_diagnostics_mut(adapter);
     diagnostics["last_test_status"] = Value::String(
@@ -527,9 +563,13 @@ fn handle_connect_test(args: &[String]) -> LoomResult<()> {
         "adapter_id": adapter_id,
         "test_status": test_event.get("test_status").and_then(Value::as_str).unwrap_or("unknown"),
         "test_reason": test_event.get("test_reason").and_then(Value::as_str).unwrap_or("unknown"),
+        "rate_limit_per_minute": rate_limit_per_minute,
+        "rate_limit_reached": rate_limit_reached,
+        "malformed_payload": malformed_payload,
         "lifecycle_state": if test_status == "pass" { "ready" } else { "error" },
         "fallback_active": test_status != "pass",
         "tests_history_path": connect_tests_history_path(&root, &adapter_id).display().to_string(),
+        "sanctions_path": connect_sanctions_history_path(&root, &adapter_id).display().to_string(),
         "registry_path": connect_registry_path(&root).display().to_string(),
         "runtime_contract": CONNECT_RUNTIME_CONTRACT_V2,
         "note": "adapter test diagnostics persisted",
@@ -604,7 +644,12 @@ fn handle_connect_health(args: &[String]) -> LoomResult<()> {
         .and_then(Value::as_str)
         .unwrap_or("init")
         .to_string();
+    let fallback_active_before = adapter
+        .pointer("/fallback/active")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let mut recommended_action = "none".to_string();
+    let mut sanction_status = "none".to_string();
     if !enabled {
         lifecycle_state = "disabled".to_string();
         adapter["fallback"]["active"] = Value::Bool(false);
@@ -634,11 +679,28 @@ fn handle_connect_health(args: &[String]) -> LoomResult<()> {
                 Value::String("connect_health_degraded".to_string());
             recommended_action = "reconnect".to_string();
         } else {
-            lifecycle_state = "fallback".to_string();
-            adapter["fallback"]["active"] = Value::Bool(true);
-            adapter["fallback"]["last_trigger_reason"] =
-                Value::String("reconnect_attempts_exhausted".to_string());
-            recommended_action = "shadow_or_local_queue".to_string();
+            if fallback_active_before && lifecycle_state == "fallback" {
+                lifecycle_state = "sanctioned".to_string();
+                adapter["fallback"]["active"] = Value::Bool(true);
+                adapter["fallback"]["last_trigger_reason"] =
+                    Value::String("reconnect_storm".to_string());
+                adapter["lifecycle"]["last_error"] = Value::String("reconnect_storm".to_string());
+                recommended_action = "court_sanction_review".to_string();
+                sanction_status = "reconnect_storm".to_string();
+                let _ = append_connect_sanction_event(
+                    &root,
+                    &adapter_id,
+                    "reconnect_storm",
+                    "health_degraded",
+                    "reconnect attempts exhausted repeatedly under degraded tests",
+                );
+            } else {
+                lifecycle_state = "fallback".to_string();
+                adapter["fallback"]["active"] = Value::Bool(true);
+                adapter["fallback"]["last_trigger_reason"] =
+                    Value::String("reconnect_attempts_exhausted".to_string());
+                recommended_action = "shadow_or_local_queue".to_string();
+            }
         }
     }
     adapter["lifecycle"]["state"] = Value::String(lifecycle_state.clone());
@@ -647,6 +709,7 @@ fn handle_connect_health(args: &[String]) -> LoomResult<()> {
         "ready" => "health_ready",
         "reconnecting" => "health_reconnect",
         "fallback" => "health_fallback",
+        "sanctioned" => "health_sanction",
         "disabled" => "health_disabled",
         _ => "health_unknown",
     };
@@ -673,6 +736,7 @@ fn handle_connect_health(args: &[String]) -> LoomResult<()> {
         "enabled": enabled,
         "health_status": health_status,
         "recommended_action": recommended_action,
+        "sanction_status": sanction_status,
         "lifecycle_state": lifecycle_state,
         "last_test_status": test_status,
         "last_test_reason": latest_test
@@ -686,6 +750,7 @@ fn handle_connect_health(args: &[String]) -> LoomResult<()> {
         "health_path": connect_health_path(&root, &adapter_id).display().to_string(),
         "tests_history_path": connect_tests_history_path(&root, &adapter_id).display().to_string(),
         "lifecycle_history_path": connect_lifecycle_history_path(&root, &adapter_id).display().to_string(),
+        "sanctions_path": connect_sanctions_history_path(&root, &adapter_id).display().to_string(),
         "lifecycle_metrics": {
             "test_history_entries": adapter
                 .pointer("/diagnostics/test_history_entries")
@@ -703,6 +768,7 @@ fn handle_connect_health(args: &[String]) -> LoomResult<()> {
                 .pointer("/fallback/active")
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
+            "sanction_events": count_jsonl_events(&connect_sanctions_history_path(&root, &adapter_id))?,
         },
         "note": "adapter health snapshot persisted",
     });
@@ -771,10 +837,12 @@ fn handle_connect_diagnostics(args: &[String]) -> LoomResult<()> {
         .ok_or_else(|| format!("adapter '{}' not found", adapter_id))?;
     let tests_path = connect_tests_history_path(&root, &adapter_id);
     let lifecycle_path = connect_lifecycle_history_path(&root, &adapter_id);
+    let sanctions_path = connect_sanctions_history_path(&root, &adapter_id);
     let health_path = connect_health_path(&root, &adapter_id);
 
     let tests_recent = read_recent_jsonl_events(&tests_path, limit)?;
     let lifecycle_recent = read_recent_jsonl_events(&lifecycle_path, limit)?;
+    let sanctions_recent = read_recent_jsonl_events(&sanctions_path, limit)?;
     let health_snapshot = read_optional_json_value(&health_path)?;
     let payload = json!({
         "status": "connect_diagnostics",
@@ -799,12 +867,15 @@ fn handle_connect_diagnostics(args: &[String]) -> LoomResult<()> {
         "limit": limit as u64,
         "tests_recent_count": tests_recent.len() as u64,
         "lifecycle_recent_count": lifecycle_recent.len() as u64,
+        "sanctions_recent_count": sanctions_recent.len() as u64,
         "tests_recent": tests_recent,
         "lifecycle_recent": lifecycle_recent,
+        "sanctions_recent": sanctions_recent,
         "health_snapshot": health_snapshot.unwrap_or(Value::Null),
         "registry_path": connect_registry_path(&root).display().to_string(),
         "tests_history_path": tests_path.display().to_string(),
         "lifecycle_history_path": lifecycle_path.display().to_string(),
+        "sanctions_path": sanctions_path.display().to_string(),
         "health_path": health_path.display().to_string(),
         "runtime_contract": CONNECT_RUNTIME_CONTRACT_V2,
         "note": "operator diagnostics snapshot for connect adapter lifecycle",
@@ -865,7 +936,11 @@ fn handle_connect_scorecard(args: &[String]) -> LoomResult<()> {
             .get("target_fallback_success_met")
             .and_then(Value::as_bool)
             .unwrap_or(false);
-        if !(uptime_met && fallback_met && security_posture_ok) {
+        let sanction_clean = row
+            .get("sanction_clean")
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+        if !(uptime_met && fallback_met && security_posture_ok && sanction_clean) {
             degraded = degraded.saturating_add(1);
             if apply_fix {
                 if !security_posture_ok {
@@ -889,6 +964,12 @@ fn handle_connect_scorecard(args: &[String]) -> LoomResult<()> {
                             "action": action,
                         }));
                     }
+                }
+                if !sanction_clean {
+                    remediation_actions.push(json!({
+                        "adapter_id": adapter_id,
+                        "action": "manual_court_review_required",
+                    }));
                 }
             }
         }
@@ -947,6 +1028,7 @@ fn compute_connect_metrics_payload(
     let cutoff_secs = now_secs.saturating_sub(retention_days.saturating_mul(86_400));
     let tests_path = connect_tests_history_path(root, adapter_id);
     let lifecycle_path = connect_lifecycle_history_path(root, adapter_id);
+    let sanctions_path = connect_sanctions_history_path(root, adapter_id);
 
     let tests_events = read_jsonl_events(&tests_path)?
         .into_iter()
@@ -1017,6 +1099,11 @@ fn compute_connect_metrics_payload(
     };
     let target_uptime = 0.995_f64;
     let target_fallback_success = 0.98_f64;
+    let sanction_events = read_jsonl_events(&sanctions_path)?
+        .into_iter()
+        .filter(|event| event_in_window(event, &["recorded_at"], cutoff_secs))
+        .count() as u64;
+    let sanction_clean = sanction_events == 0;
 
     Ok(json!({
         "adapter_id": adapter_id,
@@ -1036,8 +1123,11 @@ fn compute_connect_metrics_payload(
         "target_fallback_success": target_fallback_success,
         "target_uptime_met": uptime_ratio >= target_uptime,
         "target_fallback_success_met": fallback_success_ratio >= target_fallback_success,
+        "sanction_events": sanction_events,
+        "sanction_clean": sanction_clean,
         "tests_history_path": tests_path.display().to_string(),
         "lifecycle_history_path": lifecycle_path.display().to_string(),
+        "sanctions_history_path": sanctions_path.display().to_string(),
         "runtime_contract": CONNECT_RUNTIME_CONTRACT_V2,
     }))
 }
@@ -1243,6 +1333,10 @@ fn read_recent_jsonl_events(path: &Path, limit: usize) -> LoomResult<Vec<Value>>
     Ok(events[events.len() - limit..].to_vec())
 }
 
+fn count_jsonl_events(path: &Path) -> LoomResult<u64> {
+    Ok(read_jsonl_events(path)?.len() as u64)
+}
+
 fn read_optional_json_value(path: &Path) -> LoomResult<Option<Value>> {
     if !path.exists() {
         return Ok(None);
@@ -1313,6 +1407,33 @@ fn parse_event_timestamp(event: &Value, fields: &[&str]) -> Option<u64> {
         }
     }
     None
+}
+
+fn recent_test_count_within_window(
+    root: &Path,
+    adapter_id: &str,
+    now_unix: u64,
+    window_seconds: u64,
+) -> u64 {
+    let tests_path = connect_tests_history_path(root, adapter_id);
+    let Ok(events) = read_jsonl_events(&tests_path) else {
+        return 0;
+    };
+    events
+        .into_iter()
+        .filter(|event| {
+            parse_event_timestamp(event, &["tested_at"])
+                .map(|ts| ts > 0 && now_unix.saturating_sub(ts) <= window_seconds)
+                .unwrap_or(false)
+        })
+        .count() as u64
+}
+
+fn should_force_malformed_payload(adapter: &Value) -> bool {
+    adapter
+        .pointer("/transport_profile/force_malformed_payload")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
 }
 
 fn event_in_window(event: &Value, fields: &[&str], cutoff_secs: u64) -> bool {
@@ -1401,6 +1522,9 @@ fn print_connect_payload(payload: &Value, format: &str) -> LoomResult<()> {
             {
                 lines.push(format!("recommended_action:  {recommended_action}"));
             }
+            if let Some(sanction_status) = payload.get("sanction_status").and_then(Value::as_str) {
+                lines.push(format!("sanction_status:     {sanction_status}"));
+            }
             if let Some(fallback_active) = payload.get("fallback_active").and_then(Value::as_bool) {
                 lines.push(format!("fallback_active:     {fallback_active}"));
             }
@@ -1435,6 +1559,12 @@ fn print_connect_payload(payload: &Value, format: &str) -> LoomResult<()> {
                 .and_then(Value::as_u64)
             {
                 lines.push(format!("lifecycle_recent:    {value}"));
+            }
+            if let Some(value) = payload
+                .get("sanctions_recent_count")
+                .and_then(Value::as_u64)
+            {
+                lines.push(format!("sanctions_recent:    {value}"));
             }
             if let Some(value) = payload.get("uptime_ratio").and_then(Value::as_f64) {
                 lines.push(format!("uptime_ratio:        {:.4}", value));
@@ -1540,6 +1670,11 @@ fn connect_tests_history_path(root: &Path, adapter_id: &str) -> PathBuf {
 
 fn connect_lifecycle_history_path(root: &Path, adapter_id: &str) -> PathBuf {
     root.join(DEFAULT_CONNECT_LIFECYCLE_DIR)
+        .join(format!("{adapter_id}.jsonl"))
+}
+
+fn connect_sanctions_history_path(root: &Path, adapter_id: &str) -> PathBuf {
+    root.join(DEFAULT_CONNECT_SANCTIONS_DIR)
         .join(format!("{adapter_id}.jsonl"))
 }
 
@@ -1989,16 +2124,40 @@ fn harden_adapter_security_profile(adapter: &mut Value) {
         "whatsapp" => {
             profile["inbound_mode"] = Value::String("webhook".to_string());
             profile["commands_surface"] = Value::String("message+interactive".to_string());
+            if profile
+                .get("rate_limit_per_minute")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+                == 0
+            {
+                profile["rate_limit_per_minute"] = Value::Number(60_u64.into());
+            }
             profile["queue_fallback"] = Value::String("local_queue_shadow".to_string());
         }
         "slack" => {
             profile["inbound_mode"] = Value::String("events_api".to_string());
             profile["commands_surface"] = Value::String("slash+app_mentions".to_string());
+            if profile
+                .get("rate_limit_per_minute")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+                == 0
+            {
+                profile["rate_limit_per_minute"] = Value::Number(120_u64.into());
+            }
             profile["queue_fallback"] = Value::String("local_queue_shadow".to_string());
         }
         "email" => {
             profile["inbound_mode"] = Value::String("smtp_imap_bridge".to_string());
             profile["commands_surface"] = Value::String("subject+reply_thread".to_string());
+            if profile
+                .get("rate_limit_per_minute")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+                == 0
+            {
+                profile["rate_limit_per_minute"] = Value::Number(30_u64.into());
+            }
             profile["queue_fallback"] = Value::String("local_queue_shadow".to_string());
         }
         _ => {}
@@ -2082,11 +2241,18 @@ fn evaluate_adapter_security(adapter: &Value) -> Value {
 fn evaluate_transport_security(adapter: &Value, transport: &str) -> bool {
     let profile = adapter.get("transport_profile").unwrap_or(&Value::Null);
     match transport {
-        "telegram" | "discord" | "whatsapp" | "slack" | "email" => profile
-            .get("health_endpoint")
-            .and_then(Value::as_str)
-            .map(|value| value == "/health")
-            .unwrap_or(false),
+        "telegram" | "discord" | "whatsapp" | "slack" | "email" => {
+            profile
+                .get("health_endpoint")
+                .and_then(Value::as_str)
+                .map(|value| value == "/health")
+                .unwrap_or(false)
+                && profile
+                    .get("rate_limit_per_minute")
+                    .and_then(Value::as_u64)
+                    .map(|value| value > 0)
+                    .unwrap_or(false)
+        }
         "browser" => profile
             .get("sandbox")
             .and_then(Value::as_str)
@@ -2173,6 +2339,31 @@ fn append_lifecycle_event(
     )
 }
 
+fn append_connect_sanction_event(
+    root: &Path,
+    adapter_id: &str,
+    sanction_kind: &str,
+    trigger: &str,
+    reason: &str,
+) -> LoomResult<()> {
+    let event = json!({
+        "schema_version": CONNECT_SANCTION_SCHEMA,
+        "adapter_id": adapter_id,
+        "sanction_kind": sanction_kind,
+        "trigger": trigger,
+        "reason": reason,
+        "recorded_at": chrono_like_timestamp(),
+        "warrant_bound": true,
+        "authority_checked": true,
+        "court_checked": true,
+        "treasury_gate": true,
+    });
+    append_jsonl(
+        &connect_sanctions_history_path(root, adapter_id),
+        &serde_json::to_string(&event).map_err(|error| error.to_string())?,
+    )
+}
+
 fn value_string(value: Option<&Value>) -> &str {
     value.and_then(Value::as_str).unwrap_or("")
 }
@@ -2198,6 +2389,7 @@ fn transport_profile_for(transport: &str) -> Value {
             "kind": "telegram",
             "inbound_mode": "bot_updates",
             "commands_surface": "inline+slash",
+            "rate_limit_per_minute": 60,
             "health_endpoint": "/health",
             "queue_fallback": "local_queue_shadow",
             "note": "operator-grade chat transport with governed command envelopes",
@@ -2206,6 +2398,7 @@ fn transport_profile_for(transport: &str) -> Value {
             "kind": "discord",
             "inbound_mode": "slash_commands",
             "voice_channel": true,
+            "rate_limit_per_minute": 90,
             "health_endpoint": "/health",
             "queue_fallback": "local_queue_shadow",
             "note": "operator-grade guild transport with command and voice support",
@@ -2214,6 +2407,7 @@ fn transport_profile_for(transport: &str) -> Value {
             "kind": "whatsapp",
             "inbound_mode": "webhook",
             "commands_surface": "message+interactive",
+            "rate_limit_per_minute": 60,
             "health_endpoint": "/health",
             "queue_fallback": "local_queue_shadow",
             "note": "operator-grade WhatsApp transport with governed webhook envelopes",
@@ -2222,6 +2416,7 @@ fn transport_profile_for(transport: &str) -> Value {
             "kind": "slack",
             "inbound_mode": "events_api",
             "commands_surface": "slash+app_mentions",
+            "rate_limit_per_minute": 120,
             "health_endpoint": "/health",
             "queue_fallback": "local_queue_shadow",
             "note": "operator-grade Slack transport with governed event ingestion",
@@ -2230,6 +2425,7 @@ fn transport_profile_for(transport: &str) -> Value {
             "kind": "email",
             "inbound_mode": "smtp_imap_bridge",
             "commands_surface": "subject+reply_thread",
+            "rate_limit_per_minute": 30,
             "health_endpoint": "/health",
             "queue_fallback": "local_queue_shadow",
             "note": "operator-grade email transport with governed thread routing",

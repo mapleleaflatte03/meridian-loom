@@ -30,6 +30,7 @@ Acceptance lanes:
 - `scripts/acceptance_connect_webhook_lane.sh`
 - `scripts/acceptance_connect_failure_injection_lane.sh`
 - `scripts/acceptance_connect_security_lane.sh`
+- `scripts/acceptance_connect_c2_matrix_lane.sh`
 - `scripts/acceptance_migration_profile_lane.sh`
 
 Migration bootstrap:

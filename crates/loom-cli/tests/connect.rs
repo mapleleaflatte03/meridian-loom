@@ -1933,3 +1933,286 @@ fn connect_failure_injection_matrix_recovers_priority_transports() {
         );
     }
 }
+
+#[test]
+fn connect_c2_hardening_matrix_enforces_rate_limit_malformed_and_sanction_path() {
+    let harness = Harness::new("c2_hardening_matrix");
+
+    harness.run_ok(&[
+        "connect",
+        "scaffold",
+        "--name",
+        "telegram_c2_rate_adapter",
+        "--transport",
+        "telegram",
+        "--action-schema",
+        "meridian.runtime.v1",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    harness.run_ok(&[
+        "connect",
+        "enable",
+        "--adapter-id",
+        "telegram-c2-rate-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+
+    let registry_path = Path::new(harness.root_str()).join("state/connect/registry.json");
+    let mut registry: Value =
+        serde_json::from_str(&fs::read_to_string(&registry_path).expect("read registry"))
+            .expect("parse registry");
+    let adapters = registry
+        .get_mut("adapters")
+        .and_then(Value::as_array_mut)
+        .expect("adapters");
+    let rate_adapter = adapters
+        .iter_mut()
+        .find(|item| {
+            item.get("adapter_id").and_then(Value::as_str) == Some("telegram-c2-rate-adapter")
+        })
+        .expect("rate adapter");
+    rate_adapter["transport_profile"]["rate_limit_per_minute"] = Value::Number(1_u64.into());
+    fs::write(
+        &registry_path,
+        serde_json::to_string_pretty(&registry).expect("serialize registry"),
+    )
+    .expect("write registry");
+
+    let _ = harness.json_ok(&[
+        "connect",
+        "test",
+        "--adapter-id",
+        "telegram-c2-rate-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    let rate_limit_output = harness.run_output(&[
+        "connect",
+        "test",
+        "--adapter-id",
+        "telegram-c2-rate-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    assert!(
+        !rate_limit_output.status.success(),
+        "expected rate-limit failure"
+    );
+    let rate_limit_payload: Value =
+        serde_json::from_slice(&rate_limit_output.stdout).expect("parse rate-limit payload");
+    assert_eq!(
+        rate_limit_payload
+            .get("test_reason")
+            .and_then(Value::as_str)
+            .map(|value| value.starts_with("rate_limited:")),
+        Some(true)
+    );
+
+    harness.run_ok(&[
+        "connect",
+        "scaffold",
+        "--name",
+        "webhook_c2_malformed_adapter",
+        "--transport",
+        "webhook",
+        "--action-schema",
+        "meridian.runtime.v1",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    harness.run_ok(&[
+        "connect",
+        "enable",
+        "--adapter-id",
+        "webhook-c2-malformed-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    let mut registry: Value =
+        serde_json::from_str(&fs::read_to_string(&registry_path).expect("read registry"))
+            .expect("parse registry");
+    let adapters = registry
+        .get_mut("adapters")
+        .and_then(Value::as_array_mut)
+        .expect("adapters");
+    let malformed_adapter = adapters
+        .iter_mut()
+        .find(|item| {
+            item.get("adapter_id").and_then(Value::as_str) == Some("webhook-c2-malformed-adapter")
+        })
+        .expect("malformed adapter");
+    malformed_adapter["transport_profile"]["force_malformed_payload"] = Value::Bool(true);
+    fs::write(
+        &registry_path,
+        serde_json::to_string_pretty(&registry).expect("serialize registry"),
+    )
+    .expect("write registry");
+
+    let malformed_output = harness.run_output(&[
+        "connect",
+        "test",
+        "--adapter-id",
+        "webhook-c2-malformed-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    assert!(
+        !malformed_output.status.success(),
+        "expected malformed payload failure"
+    );
+    let malformed_payload: Value =
+        serde_json::from_slice(&malformed_output.stdout).expect("parse malformed payload");
+    assert_eq!(
+        malformed_payload.get("test_reason").and_then(Value::as_str),
+        Some("malformed_payload")
+    );
+    let malformed_sanctions = Path::new(harness.root_str())
+        .join("state/connect/sanctions/webhook-c2-malformed-adapter.jsonl");
+    let malformed_sanctions_raw =
+        fs::read_to_string(&malformed_sanctions).expect("read malformed sanctions");
+    assert!(
+        malformed_sanctions_raw.contains("\"sanction_kind\":\"malformed_payload\""),
+        "expected malformed_payload sanction event"
+    );
+
+    harness.run_ok(&[
+        "connect",
+        "scaffold",
+        "--name",
+        "telegram_c2_storm_adapter",
+        "--transport",
+        "telegram",
+        "--action-schema",
+        "meridian.runtime.v1",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    harness.run_ok(&[
+        "connect",
+        "enable",
+        "--adapter-id",
+        "telegram-c2-storm-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    let mut registry: Value =
+        serde_json::from_str(&fs::read_to_string(&registry_path).expect("read registry"))
+            .expect("parse registry");
+    let adapters = registry
+        .get_mut("adapters")
+        .and_then(Value::as_array_mut)
+        .expect("adapters");
+    let storm_adapter = adapters
+        .iter_mut()
+        .find(|item| {
+            item.get("adapter_id").and_then(Value::as_str) == Some("telegram-c2-storm-adapter")
+        })
+        .expect("storm adapter");
+    storm_adapter["action_schema"] = Value::String(String::new());
+    storm_adapter["lifecycle"]["reconnect_attempts_max"] = Value::Number(1_u64.into());
+    fs::write(
+        &registry_path,
+        serde_json::to_string_pretty(&registry).expect("serialize registry"),
+    )
+    .expect("write registry");
+
+    let _ = harness.run_fail(&[
+        "connect",
+        "test",
+        "--adapter-id",
+        "telegram-c2-storm-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    let _ = harness.json_ok(&[
+        "connect",
+        "health",
+        "--adapter-id",
+        "telegram-c2-storm-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    let storm_health = harness.json_ok(&[
+        "connect",
+        "health",
+        "--adapter-id",
+        "telegram-c2-storm-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    assert_eq!(
+        storm_health.get("lifecycle_state").and_then(Value::as_str),
+        Some("fallback")
+    );
+    let storm_health = harness.json_ok(&[
+        "connect",
+        "health",
+        "--adapter-id",
+        "telegram-c2-storm-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    assert_eq!(
+        storm_health.get("lifecycle_state").and_then(Value::as_str),
+        Some("sanctioned")
+    );
+    assert_eq!(
+        storm_health.get("sanction_status").and_then(Value::as_str),
+        Some("reconnect_storm")
+    );
+    let storm_sanctions = Path::new(harness.root_str())
+        .join("state/connect/sanctions/telegram-c2-storm-adapter.jsonl");
+    let storm_sanctions_raw = fs::read_to_string(&storm_sanctions).expect("read storm sanctions");
+    assert!(
+        storm_sanctions_raw.contains("\"sanction_kind\":\"reconnect_storm\""),
+        "expected reconnect_storm sanction event"
+    );
+
+    let scorecard = harness.json_ok(&[
+        "connect",
+        "scorecard",
+        "--retention-days",
+        "30",
+        "--fix",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    let remediation_actions = scorecard
+        .get("remediation_actions")
+        .and_then(Value::as_array)
+        .expect("remediation actions");
+    assert!(remediation_actions.iter().any(|item| {
+        item.get("adapter_id").and_then(Value::as_str) == Some("telegram-c2-storm-adapter")
+            && item.get("action").and_then(Value::as_str) == Some("manual_court_review_required")
+    }));
+}
