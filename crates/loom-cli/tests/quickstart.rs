@@ -83,23 +83,53 @@ fn assert_success(args: &[&str], output: &Output) {
     );
 }
 
+fn kernel_fixture_source() -> PathBuf {
+    if let Ok(value) = std::env::var("MERIDIAN_TEST_KERNEL_PATH") {
+        let candidate = PathBuf::from(value.trim());
+        if candidate.join("kernel").join("agent_registry.py").exists() {
+            return candidate;
+        }
+    }
+    for candidate in ["/opt/meridian-kernel", "/tmp/meridian-kernel"] {
+        let path = PathBuf::from(candidate);
+        if path.join("kernel").join("agent_registry.py").exists() {
+            return path;
+        }
+    }
+    panic!(
+        "kernel fixture source not found; set MERIDIAN_TEST_KERNEL_PATH to a Meridian Kernel checkout"
+    );
+}
+
 fn copy_kernel_fixture(destination: &Path) {
     fs::create_dir_all(destination).expect("create kernel destination");
+    let source = kernel_fixture_source();
     let status = Command::new("cp")
         .args([
             "-R",
-            "/opt/meridian-kernel/.",
+            source.join(".").to_str().expect("source str"),
             destination.to_str().expect("dest str"),
         ])
         .status()
         .expect("copy kernel fixture");
-    assert!(status.success(), "cp -R /opt/meridian-kernel failed");
+    assert!(status.success(), "cp -R {} failed", source.display());
     let agent_registry = destination.join("kernel").join("agent_registry.json");
     fs::write(
         &agent_registry,
         "{\n  \"agents\": {},\n  \"updatedAt\": \"1970-01-01T00:00:00Z\"\n}\n",
     )
     .expect("reset copied kernel agent registry");
+    let ledger_path = destination.join("economy").join("ledger.json");
+    if !ledger_path.exists() {
+        if let Some(parent) = ledger_path.parent() {
+            fs::create_dir_all(parent).expect("create economy dir");
+        }
+        fs::write(
+            &ledger_path,
+            "{\n  \"version\": 1,\n  \"schema\": \"meridian-kernel-economy-v1\",\n  \"updatedAt\": \"1970-01-01T00:00:00Z\",\n  \"agents\": {},\n  \"treasury\": {\n    \"cash_usd\": 0.0,\n    \"reserve_floor_usd\": 50.0,\n    \"total_revenue_usd\": 0.0,\n    \"support_received_usd\": 0.0,\n    \"owner_capital_contributed_usd\": 0.0,\n    \"expenses_recorded_usd\": 0.0,\n    \"owner_draws_usd\": 0.0\n  },\n  \"bonus_pool\": {\"available_usd\": 0.0},\n  \"epoch\": {\n    \"number\": 0,\n    \"started_at\": \"1970-01-01T00:00:00Z\",\n    \"auth_decay_per_epoch\": 5\n  },\n  \"transactions\": []\n}\n",
+        )
+        .expect("seed kernel ledger fixture");
+    }
 }
 
 #[test]

@@ -9,11 +9,20 @@ on:
 jobs:
   rust:
     runs-on: ubuntu-latest
+    env:
+      MERIDIAN_TEST_KERNEL_PATH: /tmp/meridian-kernel
     steps:
       - uses: actions/checkout@v5
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Prepare Meridian Kernel fixture
+        run: |
+          if [ ! -f /tmp/meridian-kernel/kernel/agent_registry.py ]; then
+            rm -rf /tmp/meridian-kernel
+            git clone --depth 1 https://github.com/mapleleaflatte03/meridian-kernel.git /tmp/meridian-kernel
+          fi
 
       - name: Test workspace
         run: cargo test --workspace
