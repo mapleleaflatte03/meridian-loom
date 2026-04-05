@@ -272,4 +272,17 @@ if not lifecycle_after.strip():
     raise SystemExit("lifecycle history should keep non-stale entries")
 PY
 
+SCORECARD_JSON="$(run_loom_json connect scorecard --retention-days 30 --root "${ROOT_DIR}")"
+python3 - <<'PY' "${SCORECARD_JSON}"
+import json
+import sys
+payload = json.loads(sys.argv[1])
+if payload.get("status") != "connect_scorecard":
+    raise SystemExit(f"unexpected scorecard status: {payload.get('status')}")
+if payload.get("total_adapters", 0) < 5:
+    raise SystemExit(f"expected total_adapters >= 5, got {payload.get('total_adapters')}")
+if payload.get("overall_status") not in {"healthy", "degraded"}:
+    raise SystemExit(f"unexpected overall_status: {payload.get('overall_status')}")
+PY
+
 echo "[loom-acceptance] PASS connect ecosystem lane"

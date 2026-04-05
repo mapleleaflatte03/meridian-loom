@@ -1069,3 +1069,103 @@ fn connect_prune_removes_stale_history_events() {
     assert!(lifecycle_after.contains("\"reason\":\"fresh\""));
     assert!(!lifecycle_after.contains("\"reason\":\"stale\""));
 }
+
+#[test]
+fn connect_scorecard_aggregates_adapter_kpis() {
+    let harness = Harness::new("scorecard");
+    for (name, transport) in [
+        ("telegram_score_adapter", "telegram"),
+        ("discord_score_adapter", "discord"),
+    ] {
+        harness.run_ok(&[
+            "connect",
+            "scaffold",
+            "--name",
+            name,
+            "--transport",
+            transport,
+            "--action-schema",
+            "meridian.runtime.v1",
+            "--root",
+            harness.root_str(),
+            "--format",
+            "json",
+        ]);
+        harness.run_ok(&[
+            "connect",
+            "enable",
+            "--adapter-id",
+            &name.replace('_', "-"),
+            "--root",
+            harness.root_str(),
+            "--format",
+            "json",
+        ]);
+        harness.run_ok(&[
+            "connect",
+            "test",
+            "--adapter-id",
+            &name.replace('_', "-"),
+            "--root",
+            harness.root_str(),
+            "--format",
+            "json",
+        ]);
+        harness.run_ok(&[
+            "connect",
+            "health",
+            "--adapter-id",
+            &name.replace('_', "-"),
+            "--root",
+            harness.root_str(),
+            "--format",
+            "json",
+        ]);
+    }
+
+    let scorecard = harness.json_ok(&[
+        "connect",
+        "scorecard",
+        "--retention-days",
+        "30",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    assert_eq!(
+        scorecard.get("status").and_then(Value::as_str),
+        Some("connect_scorecard")
+    );
+    assert_eq!(
+        scorecard
+            .get("total_adapters")
+            .and_then(Value::as_u64)
+            .unwrap_or_default(),
+        2
+    );
+    assert_eq!(
+        scorecard
+            .get("overall_status")
+            .and_then(Value::as_str)
+            .map(|value| value == "healthy" || value == "degraded"),
+        Some(true)
+    );
+    let adapters = scorecard
+        .get("adapters")
+        .and_then(Value::as_array)
+        .expect("adapters");
+    assert_eq!(adapters.len(), 2);
+    assert!(adapters.iter().all(|adapter| {
+        adapter
+            .get("uptime_ratio")
+            .and_then(Value::as_f64)
+            .is_some()
+    }));
+    assert!(adapters.iter().all(|adapter| {
+        adapter
+            .get("target_uptime_met")
+            .and_then(Value::as_bool)
+            .is_some()
+    }));
+}

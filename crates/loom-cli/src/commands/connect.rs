@@ -45,9 +45,10 @@ pub(crate) fn handle_connect(args: &[String]) -> LoomResult<()> {
         Some("test") => handle_connect_test(&args[1..]),
         Some("health") => handle_connect_health(&args[1..]),
         Some("metrics") => handle_connect_metrics(&args[1..]),
+        Some("scorecard") => handle_connect_scorecard(&args[1..]),
         Some("prune") => handle_connect_prune(&args[1..]),
         _ => Err(
-            "connect supports 'scaffold', 'list', 'validate', 'enable', 'disable', 'test', 'health', 'metrics', and 'prune'"
+            "connect supports 'scaffold', 'list', 'validate', 'enable', 'disable', 'test', 'health', 'metrics', 'scorecard', and 'prune'"
                 .to_string(),
         ),
     }
@@ -71,6 +72,7 @@ COMMANDS:
   test     --adapter-id ID [--root ROOT] [--format human|json]
   health   --adapter-id ID [--root ROOT] [--format human|json]
   metrics  --adapter-id ID [--retention-days DAYS] [--root ROOT] [--format human|json]
+  scorecard [--retention-days DAYS] [--root ROOT] [--format human|json]
   prune    --adapter-id ID [--retention-days DAYS] [--root ROOT] [--format human|json]"
     );
 }
@@ -731,14 +733,85 @@ fn handle_connect_metrics(args: &[String]) -> LoomResult<()> {
         .and_then(Value::as_u64)
         .unwrap_or(DEFAULT_DIAGNOSTIC_RETENTION_DAYS);
     let retention_days = parse_retention_days(args, configured_retention)?;
+    let mut payload = compute_connect_metrics_payload(&root, &adapter_id, retention_days)?;
+    payload["status"] = Value::String("connect_metrics".to_string());
+    payload["note"] =
+        Value::String("b1 operator metrics over connect diagnostics window".to_string());
+    persist_connect_latest_artifact(&root, &payload)?;
+    print_connect_payload(&payload, &format)
+}
+
+fn handle_connect_scorecard(args: &[String]) -> LoomResult<()> {
+    let root = root_from(take_value(args, "--root").as_deref())?;
+    let format = output_format(args);
+    let registry = load_connect_registry(&root)?;
+    let adapters = registry
+        .get("adapters")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if adapters.is_empty() {
+        return Err("connect scorecard found no adapters".to_string());
+    }
+
+    let mut rows = Vec::new();
+    let mut degraded = 0_u64;
+    for adapter in adapters {
+        let adapter_id = adapter
+            .get("adapter_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        if adapter_id.is_empty() {
+            continue;
+        }
+        let configured_retention = adapter
+            .pointer("/diagnostics/history_retention_days")
+            .and_then(Value::as_u64)
+            .unwrap_or(DEFAULT_DIAGNOSTIC_RETENTION_DAYS);
+        let retention_days = parse_retention_days(args, configured_retention)?;
+        let row = compute_connect_metrics_payload(&root, &adapter_id, retention_days)?;
+        let uptime_met = row
+            .get("target_uptime_met")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let fallback_met = row
+            .get("target_fallback_success_met")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if !(uptime_met && fallback_met) {
+            degraded = degraded.saturating_add(1);
+        }
+        rows.push(row);
+    }
+    let payload = json!({
+        "status": "connect_scorecard",
+        "overall_status": if degraded == 0 { "healthy" } else { "degraded" },
+        "total_adapters": rows.len(),
+        "degraded_adapters": degraded,
+        "runtime_contract": CONNECT_RUNTIME_CONTRACT_V2,
+        "adapters": rows,
+        "note": "c1 fleet scorecard across connect adapters",
+    });
+    persist_connect_latest_artifact(&root, &payload)?;
+    print_connect_payload(&payload, &format)
+}
+
+fn compute_connect_metrics_payload(
+    root: &Path,
+    adapter_id: &str,
+    retention_days: u64,
+) -> LoomResult<Value> {
     let now_secs = chrono_like_timestamp().parse::<u64>().unwrap_or_default();
     let cutoff_secs = now_secs.saturating_sub(retention_days.saturating_mul(86_400));
+    let tests_path = connect_tests_history_path(root, adapter_id);
+    let lifecycle_path = connect_lifecycle_history_path(root, adapter_id);
 
-    let tests_events = read_jsonl_events(&connect_tests_history_path(&root, &adapter_id))?
+    let tests_events = read_jsonl_events(&tests_path)?
         .into_iter()
         .filter(|event| event_in_window(event, &["tested_at"], cutoff_secs))
         .collect::<Vec<_>>();
-    let lifecycle_events = read_jsonl_events(&connect_lifecycle_history_path(&root, &adapter_id))?
+    let lifecycle_events = read_jsonl_events(&lifecycle_path)?
         .into_iter()
         .filter(|event| event_in_window(event, &["recorded_at"], cutoff_secs))
         .collect::<Vec<_>>();
@@ -794,18 +867,17 @@ fn handle_connect_metrics(args: &[String]) -> LoomResult<()> {
     let uptime_ratio = if lifecycle_total > 0 {
         ready_states as f64 / lifecycle_total as f64
     } else {
-        read_optional_health_ready_ratio(&root, &adapter_id)?
+        read_optional_health_ready_ratio(root, adapter_id)?
     };
     let fallback_success_ratio = if fallback_events > 0 {
         fallback_recoveries as f64 / fallback_events as f64
     } else {
         1.0
     };
-
     let target_uptime = 0.995_f64;
     let target_fallback_success = 0.98_f64;
-    let payload = json!({
-        "status": "connect_metrics",
+
+    Ok(json!({
         "adapter_id": adapter_id,
         "retention_days": retention_days,
         "window_start_unix": cutoff_secs,
@@ -823,13 +895,10 @@ fn handle_connect_metrics(args: &[String]) -> LoomResult<()> {
         "target_fallback_success": target_fallback_success,
         "target_uptime_met": uptime_ratio >= target_uptime,
         "target_fallback_success_met": fallback_success_ratio >= target_fallback_success,
-        "tests_history_path": connect_tests_history_path(&root, &adapter_id).display().to_string(),
-        "lifecycle_history_path": connect_lifecycle_history_path(&root, &adapter_id).display().to_string(),
+        "tests_history_path": tests_path.display().to_string(),
+        "lifecycle_history_path": lifecycle_path.display().to_string(),
         "runtime_contract": CONNECT_RUNTIME_CONTRACT_V2,
-        "note": "b1 operator metrics over connect diagnostics window",
-    });
-    persist_connect_latest_artifact(&root, &payload)?;
-    print_connect_payload(&payload, &format)
+    }))
 }
 
 fn handle_connect_prune(args: &[String]) -> LoomResult<()> {

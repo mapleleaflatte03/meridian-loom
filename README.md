@@ -257,6 +257,7 @@ The full end-to-end flow lives in [docs/QUICKSTART.md](docs/QUICKSTART.md).
   - `loom connect test --adapter-id ...`
   - `loom connect health --adapter-id ...`
   - `loom connect metrics --adapter-id ... [--retention-days 30]`
+  - `loom connect scorecard [--retention-days 30]`
   - `loom connect prune --adapter-id ... [--retention-days 30]`
 - Operator-priority transport templates:
   - `telegram`, `discord`, `browser`, `shell`, `webhook`

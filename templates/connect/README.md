@@ -12,6 +12,7 @@ These are contract-shape examples for `loom connect scaffold|validate|enable|tes
 Operator retention + KPI surfaces:
 
 - `loom connect metrics --adapter-id ...`
+- `loom connect scorecard`
 - `loom connect prune --adapter-id ...`
 
 They do not include provider-specific defaults or secrets.
