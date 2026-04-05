@@ -21,8 +21,7 @@ fn handle_swarm_run(args: &[String]) -> LoomResult<()> {
     let kernel_path = required_flag(args, "--kernel-path")?;
     let agent_id = required_flag(args, "--agent-id")?;
     let org_id = take_value(args, "--org-id").unwrap_or_else(|| config.org_id.clone());
-    let action_type =
-        take_value(args, "--action-type").unwrap_or_else(|| "research".to_string());
+    let action_type = take_value(args, "--action-type").unwrap_or_else(|| "research".to_string());
     let resource = take_value(args, "--resource").unwrap_or_else(|| "system_info".to_string());
     let module_source =
         take_value(args, "--module").unwrap_or_else(|| "builtin:system.info".to_string());

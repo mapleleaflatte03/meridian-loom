@@ -19,6 +19,6 @@ pub(crate) mod schedule;
 pub(crate) mod service;
 pub(crate) mod session;
 pub(crate) mod skill;
-pub(crate) mod swarm;
 pub(crate) mod supervisor;
+pub(crate) mod swarm;
 pub(crate) mod wasm;

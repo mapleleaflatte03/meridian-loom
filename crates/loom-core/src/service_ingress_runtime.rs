@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -281,6 +283,14 @@ fn collect_service_ingress_records(root: &Path) -> LoomResult<Vec<ServiceIngress
     fs::create_dir_all(&request_dir).map_err(io_err)?;
     fs::create_dir_all(&receipt_dir).map_err(io_err)?;
 
+    // Bolt Optimization: Pre-scan receipt directory to avoid O(N) OS-level `.exists()` calls
+    let mut receipt_names: HashSet<OsString> = HashSet::new();
+    if let Ok(entries) = fs::read_dir(&receipt_dir) {
+        for entry in entries.flatten() {
+            receipt_names.insert(entry.file_name());
+        }
+    }
+
     let mut records = Vec::new();
     for entry in fs::read_dir(&request_dir).map_err(io_err)? {
         let path = entry.map_err(io_err)?.path();
@@ -293,8 +303,8 @@ fn collect_service_ingress_records(root: &Path) -> LoomResult<Vec<ServiceIngress
         let request_id = value_string_value(&request, "request_id", "");
         let receipt_path = path
             .file_name()
-            .map(|name| receipt_dir.join(name))
-            .filter(|candidate| candidate.exists());
+            .filter(|name| receipt_names.contains(*name))
+            .map(|name| receipt_dir.join(name));
         let receipt = if let Some(receipt_path) = &receipt_path {
             let raw = fs::read_to_string(receipt_path).map_err(io_err)?;
             Some(

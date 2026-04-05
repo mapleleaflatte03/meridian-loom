@@ -225,6 +225,9 @@ fn swarm_run_settle_zk_one_command_lane() {
         Some("committed")
     );
     assert!(harness.root.join("artifacts/zk/latest.json").exists());
-    assert!(harness.root.join("artifacts/settlement/latest.json").exists());
+    assert!(harness
+        .root
+        .join("artifacts/settlement/latest.json")
+        .exists());
     assert!(harness.root.join("artifacts/swarm/latest.json").exists());
 }
