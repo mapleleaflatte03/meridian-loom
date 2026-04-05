@@ -632,13 +632,17 @@ fn handle_shadow_run(args: &[String]) -> LoomResult<()> {
         "a2a" => loom_shadow::ShadowBackendKind::A2a,
         "a2a_action" | "a2a-action" => loom_shadow::ShadowBackendKind::A2aAction,
         "grpc_action" | "grpc-action" => loom_shadow::ShadowBackendKind::GrpcAction,
+        "grpc_physical" | "grpc-physical" => loom_shadow::ShadowBackendKind::GrpcPhysical,
         other => {
             return Err(format!(
-                "shadow run currently supports --backend wasmtime|command|http|mcp|a2a|a2a_action|grpc_action, got '{}'",
+                "shadow run currently supports --backend wasmtime|command|http|mcp|a2a|a2a_action|grpc_action|grpc_physical, got '{}'",
                 other
             ))
         }
     };
+    let is_grpc_action = matches!(backend_kind, loom_shadow::ShadowBackendKind::GrpcAction);
+    let is_grpc_physical = matches!(backend_kind, loom_shadow::ShadowBackendKind::GrpcPhysical);
+    let is_grpc_semantic = is_grpc_action || is_grpc_physical;
     let command_program = if matches!(backend_kind, loom_shadow::ShadowBackendKind::Command) {
         Some(required_flag(args, "--command")?)
     } else {
@@ -656,6 +660,7 @@ fn handle_shadow_run(args: &[String]) -> LoomResult<()> {
             | loom_shadow::ShadowBackendKind::A2a
             | loom_shadow::ShadowBackendKind::A2aAction
             | loom_shadow::ShadowBackendKind::GrpcAction
+            | loom_shadow::ShadowBackendKind::GrpcPhysical
     ) {
         Some(required_flag(args, "--url")?)
     } else {
@@ -663,7 +668,7 @@ fn handle_shadow_run(args: &[String]) -> LoomResult<()> {
     };
     let http_method = if matches!(backend_kind, loom_shadow::ShadowBackendKind::Http) {
         Some(take_value(args, "--method").unwrap_or_else(|| "GET".to_string()))
-    } else if matches!(backend_kind, loom_shadow::ShadowBackendKind::GrpcAction) {
+    } else if is_grpc_action {
         let grpc_service = take_value(args, "--grpc-service")
             .unwrap_or_else(|| "meridian.runtime.v1.ActionService".to_string());
         let grpc_method =
@@ -673,6 +678,19 @@ fn handle_shadow_run(args: &[String]) -> LoomResult<()> {
         if grpc_service.is_empty() || grpc_method.is_empty() {
             return Err(
                 "shadow run --backend grpc_action requires non-empty --grpc-service and --grpc-method"
+                    .to_string(),
+            );
+        }
+        Some(format!("{}/{}", grpc_service, grpc_method))
+    } else if is_grpc_physical {
+        let grpc_service = take_value(args, "--grpc-service")
+            .unwrap_or_else(|| "meridian.embodied.action.v1.PhysicalActionService".to_string());
+        let grpc_method = take_value(args, "--grpc-method").unwrap_or_else(|| "Execute".to_string());
+        let grpc_service = grpc_service.trim();
+        let grpc_method = grpc_method.trim();
+        if grpc_service.is_empty() || grpc_method.is_empty() {
+            return Err(
+                "shadow run --backend grpc_physical requires non-empty --grpc-service and --grpc-method"
                     .to_string(),
             );
         }
@@ -694,18 +712,21 @@ fn handle_shadow_run(args: &[String]) -> LoomResult<()> {
             | loom_shadow::ShadowBackendKind::A2a
             | loom_shadow::ShadowBackendKind::A2aAction
             | loom_shadow::ShadowBackendKind::GrpcAction
+            | loom_shadow::ShadowBackendKind::GrpcPhysical
     ) {
         parse_shadow_http_headers(&take_values(args, "--header"))?
     } else {
         Vec::new()
     };
-    if matches!(backend_kind, loom_shadow::ShadowBackendKind::GrpcAction) {
+    if is_grpc_semantic {
         let force_plaintext = has_flag(args, "--grpc-plaintext");
         let force_tls = has_flag(args, "--grpc-tls");
         if force_plaintext && force_tls {
             return Err(
-                "shadow run --backend grpc_action does not allow both --grpc-plaintext and --grpc-tls"
-                    .to_string(),
+                format!(
+                    "shadow run --backend {} does not allow both --grpc-plaintext and --grpc-tls",
+                    if is_grpc_physical { "grpc_physical" } else { "grpc_action" }
+                ),
             );
         }
         if force_plaintext {
@@ -727,10 +748,10 @@ fn handle_shadow_run(args: &[String]) -> LoomResult<()> {
                 )
             })?;
             if !(1..=120).contains(&timeout_seconds) {
-                return Err(
-                    "shadow run --backend grpc_action requires --grpc-timeout-seconds between 1 and 120"
-                        .to_string(),
-                );
+                return Err(format!(
+                    "shadow run --backend {} requires --grpc-timeout-seconds between 1 and 120",
+                    if is_grpc_physical { "grpc_physical" } else { "grpc_action" }
+                ));
             }
             http_headers.push((
                 "x-loom-grpc-max-time-seconds".to_string(),
@@ -740,19 +761,20 @@ fn handle_shadow_run(args: &[String]) -> LoomResult<()> {
         if let Some(authority) = take_value(args, "--grpc-authority") {
             let authority = authority.trim();
             if authority.is_empty() {
-                return Err(
-                    "shadow run --backend grpc_action received empty --grpc-authority".to_string(),
-                );
+                return Err(format!(
+                    "shadow run --backend {} received empty --grpc-authority",
+                    if is_grpc_physical { "grpc_physical" } else { "grpc_action" }
+                ));
             }
             http_headers.push(("x-loom-grpc-authority".to_string(), authority.to_string()));
         }
         for import_path in take_values(args, "--grpc-import-path") {
             let import_path = import_path.trim();
             if import_path.is_empty() {
-                return Err(
-                    "shadow run --backend grpc_action received empty --grpc-import-path"
-                        .to_string(),
-                );
+                return Err(format!(
+                    "shadow run --backend {} received empty --grpc-import-path",
+                    if is_grpc_physical { "grpc_physical" } else { "grpc_action" }
+                ));
             }
             http_headers.push((
                 "x-loom-grpc-import-path".to_string(),
@@ -762,21 +784,138 @@ fn handle_shadow_run(args: &[String]) -> LoomResult<()> {
         for proto in take_values(args, "--grpc-proto") {
             let proto = proto.trim();
             if proto.is_empty() {
-                return Err(
-                    "shadow run --backend grpc_action received empty --grpc-proto".to_string(),
-                );
+                return Err(format!(
+                    "shadow run --backend {} received empty --grpc-proto",
+                    if is_grpc_physical { "grpc_physical" } else { "grpc_action" }
+                ));
             }
             http_headers.push(("x-loom-grpc-proto".to_string(), proto.to_string()));
         }
         for protoset in take_values(args, "--grpc-protoset") {
             let protoset = protoset.trim();
             if protoset.is_empty() {
-                return Err(
-                    "shadow run --backend grpc_action received empty --grpc-protoset".to_string(),
-                );
+                return Err(format!(
+                    "shadow run --backend {} received empty --grpc-protoset",
+                    if is_grpc_physical { "grpc_physical" } else { "grpc_action" }
+                ));
             }
             http_headers.push(("x-loom-grpc-protoset".to_string(), protoset.to_string()));
         }
+    }
+    let physical_robot_id = take_value(args, "--physical-robot-id");
+    let physical_target = take_value(args, "--physical-target");
+    let physical_command = take_value(args, "--physical-command");
+    let physical_safety_class = take_value(args, "--physical-safety-class");
+    let physical_dry_run = has_flag(args, "--physical-dry-run");
+    let grpc_physical_lifecycle_mode =
+        take_value(args, "--grpc-physical-lifecycle").unwrap_or_else(|| "unary".to_string());
+    let grpc_physical_lifecycle_mode = grpc_physical_lifecycle_mode.trim().to_string();
+    if is_grpc_physical && grpc_physical_lifecycle_mode != "unary" && grpc_physical_lifecycle_mode != "stream" {
+        return Err(format!(
+            "shadow run --backend grpc_physical expects --grpc-physical-lifecycle unary|stream, got '{}'",
+            grpc_physical_lifecycle_mode
+        ));
+    }
+    let grpc_physical_ack_required = has_flag(args, "--grpc-physical-ack-required");
+    let grpc_physical_ack_timeout_seconds = take_value(args, "--grpc-physical-ack-timeout-seconds")
+        .map(|raw| {
+            raw.parse::<u64>()
+                .map_err(|error| format!("invalid --grpc-physical-ack-timeout-seconds '{}': {}", raw, error))
+        })
+        .transpose()?;
+    if is_grpc_physical {
+        if grpc_physical_ack_required && grpc_physical_lifecycle_mode != "stream" {
+            return Err(
+                "shadow run --backend grpc_physical requires --grpc-physical-lifecycle stream when --grpc-physical-ack-required is set".to_string(),
+            );
+        }
+        if let Some(timeout) = grpc_physical_ack_timeout_seconds {
+            if !(1..=300).contains(&timeout) {
+                return Err(
+                    "shadow run --backend grpc_physical requires --grpc-physical-ack-timeout-seconds between 1 and 300".to_string(),
+                );
+            }
+        }
+    }
+    let grpc_physical_cancel_on_ack_timeout = has_flag(args, "--grpc-physical-cancel-on-ack-timeout");
+    let grpc_physical_cancel_after_seconds = take_value(args, "--grpc-physical-cancel-after-seconds")
+        .map(|raw| {
+            raw.parse::<u64>()
+                .map_err(|error| format!("invalid --grpc-physical-cancel-after-seconds '{}': {}", raw, error))
+        })
+        .transpose()?;
+    if is_grpc_physical {
+        if let Some(cancel_after) = grpc_physical_cancel_after_seconds {
+            if !(1..=600).contains(&cancel_after) {
+                return Err(
+                    "shadow run --backend grpc_physical requires --grpc-physical-cancel-after-seconds between 1 and 600".to_string(),
+                );
+            }
+        }
+    }
+    let grpc_physical_remediation_profile = take_value(args, "--grpc-physical-remediation-profile")
+        .unwrap_or_else(|| "standard".to_string());
+    if is_grpc_physical && grpc_physical_remediation_profile.trim().is_empty() {
+        return Err(
+            "shadow run --backend grpc_physical requires non-empty --grpc-physical-remediation-profile".to_string(),
+        );
+    }
+    if is_grpc_physical {
+        if physical_robot_id.as_deref().map(str::trim).unwrap_or_default().is_empty() {
+            return Err("shadow run --backend grpc_physical requires --physical-robot-id".to_string());
+        }
+        if physical_target.as_deref().map(str::trim).unwrap_or_default().is_empty() {
+            return Err("shadow run --backend grpc_physical requires --physical-target".to_string());
+        }
+        if physical_command.as_deref().map(str::trim).unwrap_or_default().is_empty() {
+            return Err("shadow run --backend grpc_physical requires --physical-command".to_string());
+        }
+        if physical_safety_class
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default()
+            .is_empty()
+        {
+            return Err(
+                "shadow run --backend grpc_physical requires --physical-safety-class".to_string(),
+            );
+        }
+        http_headers.push((
+            "x-loom-grpc-physical-lifecycle-mode".to_string(),
+            grpc_physical_lifecycle_mode.clone(),
+        ));
+        http_headers.push((
+            "x-loom-grpc-physical-ack-required".to_string(),
+            if grpc_physical_ack_required {
+                "true".to_string()
+            } else {
+                "false".to_string()
+            },
+        ));
+        if let Some(timeout) = grpc_physical_ack_timeout_seconds {
+            http_headers.push((
+                "x-loom-grpc-physical-ack-timeout-seconds".to_string(),
+                timeout.to_string(),
+            ));
+        }
+        http_headers.push((
+            "x-loom-grpc-physical-cancel-on-ack-timeout".to_string(),
+            if grpc_physical_cancel_on_ack_timeout {
+                "true".to_string()
+            } else {
+                "false".to_string()
+            },
+        ));
+        if let Some(cancel_after) = grpc_physical_cancel_after_seconds {
+            http_headers.push((
+                "x-loom-grpc-physical-cancel-after-seconds".to_string(),
+                cancel_after.to_string(),
+            ));
+        }
+        http_headers.push((
+            "x-loom-grpc-physical-remediation-profile".to_string(),
+            grpc_physical_remediation_profile.trim().to_string(),
+        ));
     }
     let http_body_json = if matches!(backend_kind, loom_shadow::ShadowBackendKind::Http) {
         take_value(args, "--body-json")
@@ -835,7 +974,7 @@ fn handle_shadow_run(args: &[String]) -> LoomResult<()> {
             &a2a_memory_json,
             a2a_skill.as_deref(),
         )?)
-    } else if matches!(backend_kind, loom_shadow::ShadowBackendKind::GrpcAction) {
+    } else if is_grpc_action {
         let grpc_action_request_id = take_value(args, "--grpc-action-request-id")
             .unwrap_or_else(|| format!("loom-shadow-grpc-action-{}", chrono_like_timestamp()));
         let grpc_action_kind =
@@ -861,6 +1000,44 @@ fn handle_shadow_run(args: &[String]) -> LoomResult<()> {
             &grpc_constraints_json,
             &grpc_memory_json,
             grpc_skill.as_deref(),
+        )?)
+    } else if is_grpc_physical {
+        let grpc_action_request_id = take_value(args, "--grpc-action-request-id")
+            .unwrap_or_else(|| format!("loom-shadow-grpc-physical-{}", chrono_like_timestamp()));
+        let grpc_action_kind =
+            take_value(args, "--grpc-action-kind").unwrap_or_else(|| action_type.clone());
+        let grpc_action_objective = take_value(args, "--grpc-action-objective")
+            .unwrap_or_else(|| format!("execute {} on {}", action_type, resource));
+        let grpc_context_json =
+            take_value(args, "--grpc-context-json").unwrap_or_else(|| "{}".to_string());
+        let grpc_constraints_json =
+            take_value(args, "--grpc-constraints-json").unwrap_or_else(|| "{}".to_string());
+        let grpc_memory_json =
+            take_value(args, "--grpc-memory-json").unwrap_or_else(|| "[]".to_string());
+        let grpc_skill = take_value(args, "--grpc-skill");
+        Some(build_shadow_embodied_physical_request_json(
+            "grpc_physical",
+            &agent_id,
+            &org_id,
+            &warrant.id,
+            &grpc_action_request_id,
+            &grpc_action_kind,
+            &grpc_action_objective,
+            &grpc_context_json,
+            &grpc_constraints_json,
+            &grpc_memory_json,
+            grpc_skill.as_deref(),
+            physical_robot_id.as_deref().unwrap_or_default(),
+            physical_target.as_deref().unwrap_or_default(),
+            physical_command.as_deref().unwrap_or_default(),
+            physical_safety_class.as_deref().unwrap_or_default(),
+            physical_dry_run,
+            &grpc_physical_lifecycle_mode,
+            grpc_physical_ack_required,
+            grpc_physical_ack_timeout_seconds,
+            grpc_physical_cancel_on_ack_timeout,
+            grpc_physical_cancel_after_seconds,
+            grpc_physical_remediation_profile.trim(),
         )?)
     } else {
         None
@@ -894,7 +1071,7 @@ fn handle_shadow_run(args: &[String]) -> LoomResult<()> {
         } else {
             module_source
         }
-    } else if matches!(backend_kind, loom_shadow::ShadowBackendKind::GrpcAction) {
+    } else if is_grpc_action {
         let action_kind =
             take_value(args, "--grpc-action-kind").unwrap_or_else(|| action_type.clone());
         if let Some(url) = http_url.as_ref() {
@@ -903,6 +1080,21 @@ fn handle_shadow_run(args: &[String]) -> LoomResult<()> {
                 http_method
                     .as_deref()
                     .unwrap_or("meridian.runtime.v1.ActionService/SubmitAction"),
+                action_kind,
+                url
+            )
+        } else {
+            module_source
+        }
+    } else if is_grpc_physical {
+        let action_kind =
+            take_value(args, "--grpc-action-kind").unwrap_or_else(|| action_type.clone());
+        if let Some(url) = http_url.as_ref() {
+            format!(
+                "grpc_physical:{}:{}:{}",
+                http_method
+                    .as_deref()
+                    .unwrap_or("meridian.embodied.action.v1.PhysicalActionService/Execute"),
                 action_kind,
                 url
             )
@@ -1205,4 +1397,146 @@ fn build_shadow_semantic_action_request_json(
     });
     serde_json::to_string(&payload)
         .map_err(|error| format!("failed to serialize semantic action request json: {error}"))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_shadow_embodied_physical_request_json(
+    backend_label: &str,
+    agent_id: &str,
+    org_id: &str,
+    warrant_id: &[u8; 32],
+    request_id: &str,
+    action_kind: &str,
+    action_objective: &str,
+    context_json: &str,
+    constraints_json: &str,
+    memory_json: &str,
+    skill_name: Option<&str>,
+    physical_robot_id: &str,
+    physical_target: &str,
+    physical_command: &str,
+    physical_safety_class: &str,
+    physical_dry_run: bool,
+    lifecycle_mode: &str,
+    lifecycle_ack_required: bool,
+    lifecycle_ack_timeout_seconds: Option<u64>,
+    lifecycle_cancel_on_ack_timeout: bool,
+    lifecycle_cancel_after_seconds: Option<u64>,
+    remediation_profile: &str,
+) -> LoomResult<String> {
+    let context: Value = serde_json::from_str(context_json)
+        .map_err(|error| format!("invalid context JSON: {error}"))?;
+    if !context.is_object() {
+        return Err(format!(
+            "shadow run --backend {} expects context JSON to be a JSON object",
+            backend_label
+        ));
+    }
+    let constraints: Value = serde_json::from_str(constraints_json)
+        .map_err(|error| format!("invalid constraints JSON: {error}"))?;
+    if !constraints.is_object() {
+        return Err(format!(
+            "shadow run --backend {} expects constraints JSON to be a JSON object",
+            backend_label
+        ));
+    }
+    let recall_refs: Value = serde_json::from_str(memory_json)
+        .map_err(|error| format!("invalid memory JSON: {error}"))?;
+    if !recall_refs.is_array() {
+        return Err(format!(
+            "shadow run --backend {} expects memory JSON to be a JSON array",
+            backend_label
+        ));
+    }
+    let action_kind = action_kind.trim();
+    if action_kind.is_empty() {
+        return Err(format!(
+            "shadow run --backend {} requires non-empty action kind",
+            backend_label
+        ));
+    }
+    let action_objective = action_objective.trim();
+    if action_objective.is_empty() {
+        return Err(format!(
+            "shadow run --backend {} requires non-empty action objective",
+            backend_label
+        ));
+    }
+    let physical_robot_id = physical_robot_id.trim();
+    let physical_target = physical_target.trim();
+    let physical_command = physical_command.trim();
+    let physical_safety_class = physical_safety_class.trim();
+    if physical_robot_id.is_empty()
+        || physical_target.is_empty()
+        || physical_command.is_empty()
+        || physical_safety_class.is_empty()
+    {
+        return Err(format!(
+            "shadow run --backend {} requires non-empty physical robot/target/command/safety fields",
+            backend_label
+        ));
+    }
+    let lifecycle_mode = lifecycle_mode.trim();
+    if lifecycle_mode.is_empty() {
+        return Err(format!(
+            "shadow run --backend {} requires non-empty lifecycle mode",
+            backend_label
+        ));
+    }
+    let remediation_profile = remediation_profile.trim();
+    if remediation_profile.is_empty() {
+        return Err(format!(
+            "shadow run --backend {} requires non-empty remediation profile",
+            backend_label
+        ));
+    }
+
+    let mut action = serde_json::Map::new();
+    action.insert("kind".to_string(), Value::String(action_kind.to_string()));
+    action.insert(
+        "objective".to_string(),
+        Value::String(action_objective.to_string()),
+    );
+    if let Some(skill) = skill_name.map(str::trim).filter(|value| !value.is_empty()) {
+        action.insert("skill".to_string(), Value::String(skill.to_string()));
+    }
+    let payload = serde_json::json!({
+        "schema": "meridian.embodied.action.v1",
+        "request_id": request_id,
+        "actor": {
+            "agent_id": agent_id,
+            "org_id": org_id,
+        },
+        "action": action,
+        "physical": {
+            "robot_id": physical_robot_id,
+            "target": physical_target,
+            "command": physical_command,
+            "safety_class": physical_safety_class,
+            "dry_run": physical_dry_run,
+        },
+        "lifecycle": {
+            "mode": lifecycle_mode,
+            "ack_required": lifecycle_ack_required,
+            "ack_timeout_seconds": lifecycle_ack_timeout_seconds,
+            "cancel_on_ack_timeout": lifecycle_cancel_on_ack_timeout,
+            "cancel_after_seconds": lifecycle_cancel_after_seconds,
+        },
+        "remediation": {
+            "profile": remediation_profile,
+        },
+        "context": context,
+        "memory": {
+            "recall_refs": recall_refs,
+        },
+        "constraints": constraints,
+        "governance": {
+            "warrant_id_hex": format!("0x{}", hex::encode(warrant_id)),
+            "proof_required": true,
+            "settlement_mode": "treasury_gated",
+        }
+    });
+    serde_json::to_string(&payload).map_err(|error| {
+        format!("failed to serialize embodied physical request json: {error}")
+    })
 }

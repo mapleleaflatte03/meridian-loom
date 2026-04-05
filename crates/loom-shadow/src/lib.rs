@@ -176,6 +176,7 @@ pub enum ShadowBackendKind {
     A2a,
     A2aAction,
     GrpcAction,
+    GrpcPhysical,
 }
 
 impl ShadowBackendKind {
@@ -188,6 +189,7 @@ impl ShadowBackendKind {
             Self::A2a => "a2a",
             Self::A2aAction => "a2a_action",
             Self::GrpcAction => "grpc_action",
+            Self::GrpcPhysical => "grpc_physical",
         }
     }
 }
@@ -1336,6 +1338,7 @@ struct McpShadowBackendPlugin;
 struct A2aShadowBackendPlugin;
 struct A2aActionShadowBackendPlugin;
 struct GrpcActionShadowBackendPlugin;
+struct GrpcPhysicalShadowBackendPlugin;
 
 impl ShadowBackendPlugin for WasmtimeShadowBackendPlugin {
     fn id(&self) -> &'static str {
@@ -1407,6 +1410,16 @@ impl ShadowBackendPlugin for GrpcActionShadowBackendPlugin {
     }
 }
 
+impl ShadowBackendPlugin for GrpcPhysicalShadowBackendPlugin {
+    fn id(&self) -> &'static str {
+        ShadowBackendKind::GrpcPhysical.as_str()
+    }
+
+    fn run(&self, request: &ShadowRunRequest) -> ShadowResult<ShadowRunCapture> {
+        run_shadow_backend_grpc_physical(request)
+    }
+}
+
 static WASMTIME_SHADOW_BACKEND_PLUGIN: WasmtimeShadowBackendPlugin = WasmtimeShadowBackendPlugin;
 static COMMAND_SHADOW_BACKEND_PLUGIN: CommandShadowBackendPlugin = CommandShadowBackendPlugin;
 static HTTP_SHADOW_BACKEND_PLUGIN: HttpShadowBackendPlugin = HttpShadowBackendPlugin;
@@ -1416,6 +1429,8 @@ static A2A_ACTION_SHADOW_BACKEND_PLUGIN: A2aActionShadowBackendPlugin =
     A2aActionShadowBackendPlugin;
 static GRPC_ACTION_SHADOW_BACKEND_PLUGIN: GrpcActionShadowBackendPlugin =
     GrpcActionShadowBackendPlugin;
+static GRPC_PHYSICAL_SHADOW_BACKEND_PLUGIN: GrpcPhysicalShadowBackendPlugin =
+    GrpcPhysicalShadowBackendPlugin;
 
 fn resolve_shadow_backend_plugin(kind: &ShadowBackendKind) -> &'static dyn ShadowBackendPlugin {
     match kind {
@@ -1426,6 +1441,7 @@ fn resolve_shadow_backend_plugin(kind: &ShadowBackendKind) -> &'static dyn Shado
         ShadowBackendKind::A2a => &A2A_SHADOW_BACKEND_PLUGIN,
         ShadowBackendKind::A2aAction => &A2A_ACTION_SHADOW_BACKEND_PLUGIN,
         ShadowBackendKind::GrpcAction => &GRPC_ACTION_SHADOW_BACKEND_PLUGIN,
+        ShadowBackendKind::GrpcPhysical => &GRPC_PHYSICAL_SHADOW_BACKEND_PLUGIN,
     }
 }
 
@@ -1985,6 +2001,151 @@ fn parse_semantic_a2a_action_request(request_json: &str) -> ShadowResult<A2aSema
     })
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct EmbodiedPhysicalActionRequest {
+    request_id: String,
+    action_kind: String,
+    action_objective: String,
+    action_skill: String,
+    actor_agent_id: String,
+    actor_org_id: String,
+    governance_warrant_id_hex: String,
+    physical_robot_id: String,
+    physical_target: String,
+    physical_command: String,
+    physical_safety_class: String,
+    physical_dry_run: bool,
+    lifecycle_mode: String,
+    lifecycle_ack_required: bool,
+    lifecycle_ack_timeout_seconds: Option<u64>,
+    lifecycle_cancel_on_ack_timeout: bool,
+    lifecycle_cancel_after_seconds: Option<u64>,
+    remediation_profile: String,
+}
+
+fn parse_semantic_embodied_physical_request(
+    request_json: &str,
+) -> ShadowResult<EmbodiedPhysicalActionRequest> {
+    let request_payload: Value = serde_json::from_str(request_json)
+        .map_err(|error| format!("invalid embodied physical request json: {error}"))?;
+    let schema = value_string(request_payload.get("schema"));
+    if schema != "meridian.embodied.action.v1" {
+        return Err(format!(
+            "invalid embodied physical schema '{}': expected meridian.embodied.action.v1",
+            schema
+        ));
+    }
+    let request_id = value_string(request_payload.get("request_id"));
+    if request_id.is_empty() {
+        return Err("embodied physical request missing request_id".to_string());
+    }
+    let actor = request_payload
+        .get("actor")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "embodied physical request missing actor object".to_string())?;
+    let actor_agent_id = value_string(actor.get("agent_id"));
+    let actor_org_id = value_string(actor.get("org_id"));
+    if actor_agent_id.is_empty() || actor_org_id.is_empty() {
+        return Err(
+            "embodied physical actor requires non-empty agent_id and org_id".to_string(),
+        );
+    }
+    let action = request_payload
+        .get("action")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "embodied physical request missing action object".to_string())?;
+    let action_kind = value_string(action.get("kind"));
+    let action_objective = value_string(action.get("objective"));
+    if action_kind.is_empty() || action_objective.is_empty() {
+        return Err(
+            "embodied physical request requires non-empty action.kind and action.objective"
+                .to_string(),
+        );
+    }
+    let action_skill = value_string(action.get("skill"));
+    let physical = request_payload
+        .get("physical")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "embodied physical request missing physical object".to_string())?;
+    let physical_robot_id = value_string(physical.get("robot_id"));
+    let physical_target = value_string(physical.get("target"));
+    let physical_command = value_string(physical.get("command"));
+    let physical_safety_class = value_string(physical.get("safety_class"));
+    let physical_dry_run = physical
+        .get("dry_run")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if physical_robot_id.is_empty()
+        || physical_target.is_empty()
+        || physical_command.is_empty()
+        || physical_safety_class.is_empty()
+    {
+        return Err(
+            "embodied physical request requires non-empty robot_id/target/command/safety_class"
+                .to_string(),
+        );
+    }
+    let lifecycle = request_payload
+        .get("lifecycle")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "embodied physical request missing lifecycle object".to_string())?;
+    let lifecycle_mode = value_string(lifecycle.get("mode"));
+    if lifecycle_mode != "unary" && lifecycle_mode != "stream" {
+        return Err(format!(
+            "embodied physical lifecycle mode must be unary|stream, got '{}'",
+            lifecycle_mode
+        ));
+    }
+    let lifecycle_ack_required = lifecycle
+        .get("ack_required")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let lifecycle_ack_timeout_seconds = lifecycle
+        .get("ack_timeout_seconds")
+        .and_then(Value::as_u64);
+    let lifecycle_cancel_on_ack_timeout = lifecycle
+        .get("cancel_on_ack_timeout")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let lifecycle_cancel_after_seconds = lifecycle
+        .get("cancel_after_seconds")
+        .and_then(Value::as_u64);
+    let remediation_profile = request_payload
+        .get("remediation")
+        .and_then(Value::as_object)
+        .map(|value| value_string(value.get("profile")))
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "standard".to_string());
+    let governance = request_payload
+        .get("governance")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "embodied physical request missing governance object".to_string())?;
+    let governance_warrant_id_hex = value_string(governance.get("warrant_id_hex"));
+    if governance_warrant_id_hex.is_empty() {
+        return Err("embodied physical governance requires warrant_id_hex".to_string());
+    }
+    Ok(EmbodiedPhysicalActionRequest {
+        request_id,
+        action_kind,
+        action_objective,
+        action_skill,
+        actor_agent_id,
+        actor_org_id,
+        governance_warrant_id_hex,
+        physical_robot_id,
+        physical_target,
+        physical_command,
+        physical_safety_class,
+        physical_dry_run,
+        lifecycle_mode,
+        lifecycle_ack_required,
+        lifecycle_ack_timeout_seconds,
+        lifecycle_cancel_on_ack_timeout,
+        lifecycle_cancel_after_seconds,
+        remediation_profile,
+    })
+}
+
 fn run_shadow_backend_a2a(request: &ShadowRunRequest) -> ShadowResult<ShadowRunCapture> {
     let url = request
         .http_url
@@ -2536,6 +2697,392 @@ fn run_shadow_backend_grpc_action(request: &ShadowRunRequest) -> ShadowResult<Sh
     Ok(capture)
 }
 
+fn run_shadow_backend_grpc_physical(request: &ShadowRunRequest) -> ShadowResult<ShadowRunCapture> {
+    let target_url = request
+        .http_url
+        .as_deref()
+        .ok_or_else(|| "shadow grpc_physical backend requires http_url target".to_string())?;
+    let request_json = request.http_body_json.as_deref().ok_or_else(|| {
+        "shadow grpc_physical backend requires semantic physical request body".to_string()
+    })?;
+    let action_request = parse_semantic_embodied_physical_request(request_json)?;
+    if action_request.actor_agent_id != request.agent_id
+        || action_request.actor_org_id != request.org_id
+    {
+        return Err(format!(
+            "grpc_physical actor mismatch: payload actor={}/{} but run requested {}/{}",
+            action_request.actor_agent_id,
+            action_request.actor_org_id,
+            request.agent_id,
+            request.org_id
+        ));
+    }
+    let expected_warrant = format!("0x{}", hex::encode(request.warrant.id));
+    if !action_request
+        .governance_warrant_id_hex
+        .trim()
+        .eq_ignore_ascii_case(&expected_warrant)
+    {
+        return Err(format!(
+            "grpc_physical warrant mismatch: payload={} expected={}",
+            action_request.governance_warrant_id_hex, expected_warrant
+        ));
+    }
+
+    let grpc_rpc = request
+        .http_method
+        .as_deref()
+        .unwrap_or("meridian.embodied.action.v1.PhysicalActionService/Execute")
+        .trim()
+        .to_string();
+    let Some((grpc_service, grpc_method)) = grpc_rpc.split_once('/') else {
+        return Err(format!(
+            "invalid grpc_physical rpc '{}': expected <Service>/<Method>",
+            grpc_rpc
+        ));
+    };
+    if grpc_service.trim().is_empty()
+        || grpc_method.trim().is_empty()
+        || grpc_method.contains('/')
+        || grpc_service.contains(' ')
+        || grpc_method.contains(' ')
+    {
+        return Err(format!(
+            "invalid grpc_physical rpc '{}': expected <Service>/<Method> without spaces",
+            grpc_rpc
+        ));
+    }
+    let (grpc_target, inferred_plaintext) = parse_grpc_target_from_url(target_url)?;
+
+    let mut grpc_headers = Vec::new();
+    let mut grpc_proto_files = Vec::new();
+    let mut grpc_protosets = Vec::new();
+    let mut grpc_import_paths = Vec::new();
+    let mut grpc_authority = String::new();
+    let mut grpc_plaintext_override: Option<bool> = None;
+    let mut grpc_allow_unknown_fields = false;
+    let mut grpc_max_time_seconds = 5_u64;
+    let mut lifecycle_mode = action_request.lifecycle_mode.clone();
+    let mut lifecycle_ack_required = action_request.lifecycle_ack_required;
+    let mut lifecycle_ack_timeout_seconds = action_request.lifecycle_ack_timeout_seconds;
+    let mut lifecycle_cancel_on_ack_timeout = action_request.lifecycle_cancel_on_ack_timeout;
+    let mut lifecycle_cancel_after_seconds = action_request.lifecycle_cancel_after_seconds;
+    let mut remediation_profile = action_request.remediation_profile.clone();
+    for (name, value) in &request.http_headers {
+        let lower = name.to_ascii_lowercase();
+        match lower.as_str() {
+            "x-loom-grpc-proto" => grpc_proto_files.push(value.clone()),
+            "x-loom-grpc-protoset" => grpc_protosets.push(value.clone()),
+            "x-loom-grpc-import-path" => grpc_import_paths.push(value.clone()),
+            "x-loom-grpc-authority" => {
+                grpc_authority = value.trim().to_string();
+            }
+            "x-loom-grpc-plaintext" => {
+                let normalized = value.trim().to_ascii_lowercase();
+                if normalized == "true" || normalized == "1" || normalized == "yes" {
+                    grpc_plaintext_override = Some(true);
+                } else if normalized == "false" || normalized == "0" || normalized == "no" {
+                    grpc_plaintext_override = Some(false);
+                } else {
+                    return Err(format!(
+                        "invalid x-loom-grpc-plaintext value '{}': expected true/false",
+                        value
+                    ));
+                }
+            }
+            "x-loom-grpc-allow-unknown-fields" => {
+                let normalized = value.trim().to_ascii_lowercase();
+                if normalized == "true" || normalized == "1" || normalized == "yes" {
+                    grpc_allow_unknown_fields = true;
+                } else if normalized == "false" || normalized == "0" || normalized == "no" {
+                    grpc_allow_unknown_fields = false;
+                } else {
+                    return Err(format!(
+                        "invalid x-loom-grpc-allow-unknown-fields value '{}': expected true/false",
+                        value
+                    ));
+                }
+            }
+            "x-loom-grpc-max-time-seconds" => {
+                let parsed = value.trim().parse::<u64>().map_err(|error| {
+                    format!(
+                        "invalid x-loom-grpc-max-time-seconds value '{}': {}",
+                        value, error
+                    )
+                })?;
+                if !(1..=120).contains(&parsed) {
+                    return Err(format!(
+                        "invalid x-loom-grpc-max-time-seconds value '{}': expected 1..120",
+                        value
+                    ));
+                }
+                grpc_max_time_seconds = parsed;
+            }
+            "x-loom-grpc-physical-lifecycle-mode" => {
+                lifecycle_mode = value.trim().to_string();
+            }
+            "x-loom-grpc-physical-ack-required" => {
+                let normalized = value.trim().to_ascii_lowercase();
+                if normalized == "true" || normalized == "1" || normalized == "yes" {
+                    lifecycle_ack_required = true;
+                } else if normalized == "false" || normalized == "0" || normalized == "no" {
+                    lifecycle_ack_required = false;
+                } else {
+                    return Err(format!(
+                        "invalid x-loom-grpc-physical-ack-required value '{}': expected true/false",
+                        value
+                    ));
+                }
+            }
+            "x-loom-grpc-physical-ack-timeout-seconds" => {
+                let parsed = value.trim().parse::<u64>().map_err(|error| {
+                    format!(
+                        "invalid x-loom-grpc-physical-ack-timeout-seconds value '{}': {}",
+                        value, error
+                    )
+                })?;
+                lifecycle_ack_timeout_seconds = Some(parsed);
+            }
+            "x-loom-grpc-physical-cancel-on-ack-timeout" => {
+                let normalized = value.trim().to_ascii_lowercase();
+                if normalized == "true" || normalized == "1" || normalized == "yes" {
+                    lifecycle_cancel_on_ack_timeout = true;
+                } else if normalized == "false" || normalized == "0" || normalized == "no" {
+                    lifecycle_cancel_on_ack_timeout = false;
+                } else {
+                    return Err(format!(
+                        "invalid x-loom-grpc-physical-cancel-on-ack-timeout value '{}': expected true/false",
+                        value
+                    ));
+                }
+            }
+            "x-loom-grpc-physical-cancel-after-seconds" => {
+                let parsed = value.trim().parse::<u64>().map_err(|error| {
+                    format!(
+                        "invalid x-loom-grpc-physical-cancel-after-seconds value '{}': {}",
+                        value, error
+                    )
+                })?;
+                lifecycle_cancel_after_seconds = Some(parsed);
+            }
+            "x-loom-grpc-physical-remediation-profile" => {
+                remediation_profile = value.trim().to_string();
+            }
+            _ => grpc_headers.push((name.clone(), value.clone())),
+        }
+    }
+    if lifecycle_mode != "unary" && lifecycle_mode != "stream" {
+        return Err(format!(
+            "grpc_physical lifecycle mode must be unary|stream, got '{}'",
+            lifecycle_mode
+        ));
+    }
+    if lifecycle_ack_required && lifecycle_mode != "stream" {
+        return Err(
+            "grpc_physical lifecycle requires stream mode when ack_required=true".to_string(),
+        );
+    }
+    if let Some(timeout) = lifecycle_ack_timeout_seconds {
+        if !(1..=300).contains(&timeout) {
+            return Err(format!(
+                "grpc_physical ack timeout out of range: {} (expected 1..300)",
+                timeout
+            ));
+        }
+    }
+    if let Some(cancel_after) = lifecycle_cancel_after_seconds {
+        if !(1..=600).contains(&cancel_after) {
+            return Err(format!(
+                "grpc_physical cancel-after out of range: {} (expected 1..600)",
+                cancel_after
+            ));
+        }
+    }
+    if remediation_profile.trim().is_empty() {
+        remediation_profile = "standard".to_string();
+    }
+    let plaintext = grpc_plaintext_override.unwrap_or(inferred_plaintext);
+
+    let start_ms = current_epoch_ms();
+    let mut interceptor = PoGEInterceptor::new_validated(
+        request.warrant.clone(),
+        shadow_grpc_physical_module_digest(&grpc_target, &grpc_rpc, &request.http_headers, request_json),
+        format!(
+            "shadow:{}:{}:{}:{}",
+            request.org_id, request.agent_id, request.action_type, request.resource
+        ),
+        start_ms,
+    )
+    .map_err(|error| format!("invalid kernel warrant: {}", error))?;
+    let request_bytes = request_json.as_bytes().to_vec();
+
+    let grpcurl_bin =
+        std::env::var("LOOM_SHADOW_GRPCURL_BIN").unwrap_or_else(|_| "grpcurl".to_string());
+    let mut command = Command::new(&grpcurl_bin);
+    command
+        .arg("-max-time")
+        .arg(grpc_max_time_seconds.to_string());
+    if plaintext {
+        command.arg("-plaintext");
+    }
+    if grpc_allow_unknown_fields {
+        command.arg("-allow-unknown-fields");
+    }
+    for (name, value) in &grpc_headers {
+        command.arg("-H").arg(format!("{}: {}", name, value));
+    }
+    if !grpc_authority.is_empty() {
+        command.arg("-authority").arg(&grpc_authority);
+    }
+    for import_path in &grpc_import_paths {
+        command.arg("-import-path").arg(import_path);
+    }
+    for proto in &grpc_proto_files {
+        command.arg("-proto").arg(proto);
+    }
+    for protoset in &grpc_protosets {
+        command.arg("-protoset").arg(protoset);
+    }
+    command.arg("-d").arg(request_json);
+    command.arg(&grpc_target).arg(&grpc_rpc);
+    let output = command.output().map_err(|error| match error.kind() {
+        ErrorKind::NotFound => format!(
+            "failed to execute grpc_physical: '{}' not found. Install grpcurl or set LOOM_SHADOW_GRPCURL_BIN to a grpcurl-compatible binary",
+            grpcurl_bin
+        ),
+        _ => format!(
+            "failed to execute grpc_physical via {} for {} {}: {}",
+            grpcurl_bin, grpc_target, grpc_rpc, error
+        ),
+    })?;
+    let exit_code = output.status.code();
+    let stdout_text = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr_text = String::from_utf8_lossy(&output.stderr).to_string();
+    let stdout_json: Value = serde_json::from_str(&stdout_text).unwrap_or_else(|_| {
+        serde_json::json!({
+            "status": if output.status.success() { "ok" } else { "error" },
+            "stdout_excerpt_utf8": stdout_text,
+        })
+    });
+    let ack_received = stdout_json
+        .get("ack_received")
+        .and_then(Value::as_bool)
+        .unwrap_or(!lifecycle_ack_required);
+    let mut lifecycle_cancelled = stdout_json
+        .get("cancelled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let mut lifecycle_cancel_reason = value_string(stdout_json.get("cancel_reason"));
+    if lifecycle_ack_required && !ack_received && lifecycle_cancel_on_ack_timeout {
+        lifecycle_cancelled = true;
+        if lifecycle_cancel_reason.is_empty() {
+            lifecycle_cancel_reason = "ack_timeout".to_string();
+        }
+    }
+    let lifecycle_status = value_string(stdout_json.get("lifecycle_status"));
+    let lifecycle_stream_event_count = stdout_json.get("stream_event_count").and_then(Value::as_u64);
+    let lifecycle_ack_latency_ms = stdout_json.get("ack_latency_ms").and_then(Value::as_u64);
+    let remediation_action = if lifecycle_cancelled {
+        format!(
+            "cancelled:{}:{}",
+            if lifecycle_cancel_reason.is_empty() {
+                "unspecified"
+            } else {
+                lifecycle_cancel_reason.as_str()
+            },
+            remediation_profile
+        )
+    } else if lifecycle_ack_required && !ack_received {
+        format!("escalate_ack_missing:{}", remediation_profile)
+    } else {
+        "none".to_string()
+    };
+    let response_payload = serde_json::json!({
+        "status": if output.status.success() { "grpc_physical_executed" } else { "grpc_physical_error" },
+        "grpc_target": grpc_target,
+        "grpc_rpc": grpc_rpc,
+        "grpc_transport": if plaintext { "plaintext" } else { "tls" },
+        "grpc_allow_unknown_fields": grpc_allow_unknown_fields,
+        "grpc_max_time_seconds": grpc_max_time_seconds,
+        "grpc_schema": "meridian.embodied.action.v1",
+        "grpc_request_id": action_request.request_id,
+        "grpc_action_kind": action_request.action_kind,
+        "grpc_action_objective": action_request.action_objective,
+        "grpc_action_skill": action_request.action_skill,
+        "grpc_proto_count": grpc_proto_files.len(),
+        "grpc_protoset_count": grpc_protosets.len(),
+        "grpc_import_path_count": grpc_import_paths.len(),
+        "grpc_authority": grpc_authority,
+        "exit_code": exit_code,
+        "stdout_excerpt_utf8": stdout_text,
+        "stderr_excerpt_utf8": stderr_text,
+        "grpc_physical_robot_id": action_request.physical_robot_id,
+        "grpc_physical_target": action_request.physical_target,
+        "grpc_physical_command": action_request.physical_command,
+        "grpc_physical_safety_class": action_request.physical_safety_class,
+        "grpc_physical_dry_run": action_request.physical_dry_run,
+        "grpc_lifecycle_mode": lifecycle_mode,
+        "grpc_lifecycle_ack_required": lifecycle_ack_required,
+        "grpc_lifecycle_ack_timeout_seconds": lifecycle_ack_timeout_seconds,
+        "grpc_lifecycle_ack_received": ack_received,
+        "grpc_lifecycle_ack_latency_ms": lifecycle_ack_latency_ms,
+        "grpc_lifecycle_cancel_on_ack_timeout": lifecycle_cancel_on_ack_timeout,
+        "grpc_lifecycle_cancel_after_seconds": lifecycle_cancel_after_seconds,
+        "grpc_lifecycle_cancelled": lifecycle_cancelled,
+        "grpc_lifecycle_cancel_reason": lifecycle_cancel_reason,
+        "grpc_lifecycle_status": lifecycle_status,
+        "grpc_lifecycle_stream_event_count": lifecycle_stream_event_count,
+        "grpc_remediation_profile": remediation_profile,
+        "grpc_remediation_action": remediation_action,
+    });
+    let response_json = serde_json::to_string_pretty(&response_payload).map_err(io_err)?;
+    interceptor
+        .record_event(
+            HostCallKind::Extension,
+            start_ms,
+            &request_bytes,
+            response_json.as_bytes(),
+            !output.status.success(),
+        )
+        .map_err(|error| error.to_string())?;
+    let audit_root = interceptor.finalize().map_err(|error| error.to_string())?;
+    let capture = ShadowRunCapture {
+        execution_path: ensure_runtime_dir(&request.root)?.join("last_execution.json"),
+        shadow_latest_path: ensure_shadow_dir(&request.root)?.join("latest.json"),
+        parity_latest_path: ensure_parity_dir(&request.root)?.join("latest.json"),
+        parity_stream_path: ensure_parity_dir(&request.root)?.join("stream.jsonl"),
+        status: "shadow_run_captured".to_string(),
+        captured_at: timestamp_now(),
+        backend: request.backend.as_str().to_string(),
+        agent_id: request.agent_id.clone(),
+        org_id: request.org_id.clone(),
+        action_type: request.action_type.clone(),
+        resource: request.resource.clone(),
+        module_name: request.module_name.clone(),
+        entrypoint: request.entrypoint.clone(),
+        entrypoint_result: exit_code,
+        host_backend: "external_grpc_physical".to_string(),
+        warrant_binding_status: "verified".to_string(),
+        warrant_id_hex: Some(format!("0x{}", hex::encode(audit_root.warrant_id))),
+        poge_merkle_root_hex: Some(audit_root.merkle_root_hex()),
+        poge_trace_len: Some(audit_root.trace_len),
+        poge_witness_digest_hex: Some(audit_root.witness_digest_hex()),
+        poge_session_label: Some(audit_root.session_label.clone()),
+        poge_epoch_start_ms: Some(audit_root.epoch_start_ms),
+        poge_epoch_end_ms: Some(audit_root.epoch_end_ms),
+        poge_module_digest_hex: Some(format!("0x{}", hex::encode(audit_root.module_digest))),
+        host_calls: vec![
+            "grpc.physical.execute".to_string(),
+            "grpc.physical.lifecycle".to_string(),
+        ],
+        host_response_json: Some(response_json),
+    };
+
+    persist_shadow_run_capture(&capture)?;
+    persist_shadow_grpc_action_diagnostics(&request.root, &capture, &response_payload)?;
+    Ok(capture)
+}
+
 fn persist_shadow_run_capture(capture: &ShadowRunCapture) -> ShadowResult<()> {
     let rendered = render_shadow_run_capture_json(capture);
     fs::write(&capture.execution_path, &rendered).map_err(io_err)?;
@@ -2583,6 +3130,9 @@ fn shadow_run_capture_value(capture: &ShadowRunCapture) -> Value {
         }
         "grpc_action" => {
             "shadow run executed through the governed grpc semantic action backend with warrant-bound PoGE receipts"
+        }
+        "grpc_physical" => {
+            "shadow run executed through the governed grpc embodied physical backend with warrant-bound PoGE receipts"
         }
         _ => "shadow run executed through a governed backend with warrant-bound PoGE receipts",
     };
@@ -2727,6 +3277,30 @@ fn shadow_grpc_action_module_digest(
 ) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(b"MERIDIAN_SHADOW_GRPC_ACTION_BACKEND_V1\x00");
+    hasher.update((grpc_target.len() as u32).to_be_bytes());
+    hasher.update(grpc_target.as_bytes());
+    hasher.update((grpc_rpc.len() as u32).to_be_bytes());
+    hasher.update(grpc_rpc.as_bytes());
+    hasher.update((headers.len() as u32).to_be_bytes());
+    for (name, value) in headers {
+        hasher.update((name.len() as u32).to_be_bytes());
+        hasher.update(name.as_bytes());
+        hasher.update((value.len() as u32).to_be_bytes());
+        hasher.update(value.as_bytes());
+    }
+    hasher.update((body_json.len() as u32).to_be_bytes());
+    hasher.update(body_json.as_bytes());
+    hasher.finalize().into()
+}
+
+fn shadow_grpc_physical_module_digest(
+    grpc_target: &str,
+    grpc_rpc: &str,
+    headers: &[(String, String)],
+    body_json: &str,
+) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"MERIDIAN_SHADOW_GRPC_PHYSICAL_BACKEND_V1\x00");
     hasher.update((grpc_target.len() as u32).to_be_bytes());
     hasher.update(grpc_target.as_bytes());
     hasher.update((grpc_rpc.len() as u32).to_be_bytes());
@@ -9039,6 +9613,24 @@ struct ShadowGrpcActionDiagnostics {
     grpc_import_path_count: Option<u64>,
     grpc_authority: String,
     exit_code: Option<i32>,
+    grpc_physical_robot_id: String,
+    grpc_physical_target: String,
+    grpc_physical_command: String,
+    grpc_physical_safety_class: String,
+    grpc_physical_dry_run: Option<bool>,
+    grpc_lifecycle_mode: String,
+    grpc_lifecycle_ack_required: Option<bool>,
+    grpc_lifecycle_ack_timeout_seconds: Option<u64>,
+    grpc_lifecycle_ack_received: Option<bool>,
+    grpc_lifecycle_ack_latency_ms: Option<u64>,
+    grpc_lifecycle_cancel_on_ack_timeout: Option<bool>,
+    grpc_lifecycle_cancel_after_seconds: Option<u64>,
+    grpc_lifecycle_cancelled: Option<bool>,
+    grpc_lifecycle_cancel_reason: String,
+    grpc_lifecycle_status: String,
+    grpc_lifecycle_stream_event_count: Option<u64>,
+    grpc_remediation_profile: String,
+    grpc_remediation_action: String,
 }
 
 pub fn render_shadow_report(root: &Path) -> ShadowResult<String> {
@@ -9334,7 +9926,11 @@ fn optional_value_string(value: Option<&Value>) -> Option<String> {
 }
 
 fn load_grpc_action_diagnostics(capture: &ShadowRunCapture) -> Option<ShadowGrpcActionDiagnostics> {
-    if capture.backend != "grpc_action" && capture.host_backend != "external_grpc_action" {
+    if capture.backend != "grpc_action"
+        && capture.backend != "grpc_physical"
+        && capture.host_backend != "external_grpc_action"
+        && capture.host_backend != "external_grpc_physical"
+    {
         return None;
     }
     let raw = capture.host_response_json.as_deref()?;
@@ -9376,6 +9972,40 @@ fn grpc_action_diagnostics_from_value(value: &Value) -> ShadowGrpcActionDiagnost
             .get("exit_code")
             .and_then(Value::as_i64)
             .map(|code| code as i32),
+        grpc_physical_robot_id: value_string(value.get("grpc_physical_robot_id")),
+        grpc_physical_target: value_string(value.get("grpc_physical_target")),
+        grpc_physical_command: value_string(value.get("grpc_physical_command")),
+        grpc_physical_safety_class: value_string(value.get("grpc_physical_safety_class")),
+        grpc_physical_dry_run: value.get("grpc_physical_dry_run").and_then(Value::as_bool),
+        grpc_lifecycle_mode: value_string(value.get("grpc_lifecycle_mode")),
+        grpc_lifecycle_ack_required: value
+            .get("grpc_lifecycle_ack_required")
+            .and_then(Value::as_bool),
+        grpc_lifecycle_ack_timeout_seconds: value
+            .get("grpc_lifecycle_ack_timeout_seconds")
+            .and_then(Value::as_u64),
+        grpc_lifecycle_ack_received: value
+            .get("grpc_lifecycle_ack_received")
+            .and_then(Value::as_bool),
+        grpc_lifecycle_ack_latency_ms: value
+            .get("grpc_lifecycle_ack_latency_ms")
+            .and_then(Value::as_u64),
+        grpc_lifecycle_cancel_on_ack_timeout: value
+            .get("grpc_lifecycle_cancel_on_ack_timeout")
+            .and_then(Value::as_bool),
+        grpc_lifecycle_cancel_after_seconds: value
+            .get("grpc_lifecycle_cancel_after_seconds")
+            .and_then(Value::as_u64),
+        grpc_lifecycle_cancelled: value
+            .get("grpc_lifecycle_cancelled")
+            .and_then(Value::as_bool),
+        grpc_lifecycle_cancel_reason: value_string(value.get("grpc_lifecycle_cancel_reason")),
+        grpc_lifecycle_status: value_string(value.get("grpc_lifecycle_status")),
+        grpc_lifecycle_stream_event_count: value
+            .get("grpc_lifecycle_stream_event_count")
+            .and_then(Value::as_u64),
+        grpc_remediation_profile: value_string(value.get("grpc_remediation_profile")),
+        grpc_remediation_action: value_string(value.get("grpc_remediation_action")),
     }
 }
 
@@ -9398,6 +10028,24 @@ fn grpc_action_diagnostics_to_value(diagnostics: &ShadowGrpcActionDiagnostics) -
         "grpc_import_path_count": diagnostics.grpc_import_path_count,
         "grpc_authority": diagnostics.grpc_authority,
         "exit_code": diagnostics.exit_code,
+        "grpc_physical_robot_id": diagnostics.grpc_physical_robot_id,
+        "grpc_physical_target": diagnostics.grpc_physical_target,
+        "grpc_physical_command": diagnostics.grpc_physical_command,
+        "grpc_physical_safety_class": diagnostics.grpc_physical_safety_class,
+        "grpc_physical_dry_run": diagnostics.grpc_physical_dry_run,
+        "grpc_lifecycle_mode": diagnostics.grpc_lifecycle_mode,
+        "grpc_lifecycle_ack_required": diagnostics.grpc_lifecycle_ack_required,
+        "grpc_lifecycle_ack_timeout_seconds": diagnostics.grpc_lifecycle_ack_timeout_seconds,
+        "grpc_lifecycle_ack_received": diagnostics.grpc_lifecycle_ack_received,
+        "grpc_lifecycle_ack_latency_ms": diagnostics.grpc_lifecycle_ack_latency_ms,
+        "grpc_lifecycle_cancel_on_ack_timeout": diagnostics.grpc_lifecycle_cancel_on_ack_timeout,
+        "grpc_lifecycle_cancel_after_seconds": diagnostics.grpc_lifecycle_cancel_after_seconds,
+        "grpc_lifecycle_cancelled": diagnostics.grpc_lifecycle_cancelled,
+        "grpc_lifecycle_cancel_reason": diagnostics.grpc_lifecycle_cancel_reason,
+        "grpc_lifecycle_status": diagnostics.grpc_lifecycle_status,
+        "grpc_lifecycle_stream_event_count": diagnostics.grpc_lifecycle_stream_event_count,
+        "grpc_remediation_profile": diagnostics.grpc_remediation_profile,
+        "grpc_remediation_action": diagnostics.grpc_remediation_action,
     })
 }
 
@@ -9473,6 +10121,100 @@ fn render_shadow_run_summary(title: &str, source: &Path, capture: &ShadowRunCapt
                 .map(|value| value.to_string())
                 .unwrap_or_else(|| "(none)".to_string()),
         ));
+        if !diag.grpc_physical_robot_id.is_empty()
+            || !diag.grpc_physical_target.is_empty()
+            || !diag.grpc_physical_command.is_empty()
+            || !diag.grpc_physical_safety_class.is_empty()
+            || diag.grpc_physical_dry_run.is_some()
+        {
+            output.push_str(&format!(
+                "grpc_physical_robot_id: {}\ngrpc_physical_target: {}\ngrpc_physical_command: {}\ngrpc_physical_safety_class: {}\ngrpc_physical_dry_run: {}\n",
+                if diag.grpc_physical_robot_id.is_empty() {
+                    "(none)"
+                } else {
+                    diag.grpc_physical_robot_id.as_str()
+                },
+                if diag.grpc_physical_target.is_empty() {
+                    "(none)"
+                } else {
+                    diag.grpc_physical_target.as_str()
+                },
+                if diag.grpc_physical_command.is_empty() {
+                    "(none)"
+                } else {
+                    diag.grpc_physical_command.as_str()
+                },
+                if diag.grpc_physical_safety_class.is_empty() {
+                    "(none)"
+                } else {
+                    diag.grpc_physical_safety_class.as_str()
+                },
+                diag.grpc_physical_dry_run
+                    .map(|value| if value { "true" } else { "false" })
+                    .unwrap_or("(none)")
+            ));
+        }
+        if !diag.grpc_lifecycle_mode.is_empty()
+            || diag.grpc_lifecycle_ack_required.is_some()
+            || diag.grpc_lifecycle_ack_received.is_some()
+            || diag.grpc_lifecycle_cancelled.is_some()
+            || !diag.grpc_lifecycle_cancel_reason.is_empty()
+            || !diag.grpc_remediation_profile.is_empty()
+            || !diag.grpc_remediation_action.is_empty()
+        {
+            output.push_str(&format!(
+                "grpc_lifecycle_mode: {}\ngrpc_lifecycle_ack_required: {}\ngrpc_lifecycle_ack_timeout_seconds: {}\ngrpc_lifecycle_ack_received: {}\ngrpc_lifecycle_ack_latency_ms: {}\ngrpc_lifecycle_cancel_on_ack_timeout: {}\ngrpc_lifecycle_cancel_after_seconds: {}\ngrpc_lifecycle_cancelled: {}\ngrpc_lifecycle_cancel_reason: {}\ngrpc_lifecycle_status: {}\ngrpc_lifecycle_stream_event_count: {}\ngrpc_remediation_profile: {}\ngrpc_remediation_action: {}\n",
+                if diag.grpc_lifecycle_mode.is_empty() {
+                    "(none)"
+                } else {
+                    diag.grpc_lifecycle_mode.as_str()
+                },
+                diag.grpc_lifecycle_ack_required
+                    .map(|value| if value { "true" } else { "false" })
+                    .unwrap_or("(none)"),
+                diag.grpc_lifecycle_ack_timeout_seconds
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "(none)".to_string()),
+                diag.grpc_lifecycle_ack_received
+                    .map(|value| if value { "true" } else { "false" })
+                    .unwrap_or("(none)"),
+                diag.grpc_lifecycle_ack_latency_ms
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "(none)".to_string()),
+                diag.grpc_lifecycle_cancel_on_ack_timeout
+                    .map(|value| if value { "true" } else { "false" })
+                    .unwrap_or("(none)"),
+                diag.grpc_lifecycle_cancel_after_seconds
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "(none)".to_string()),
+                diag.grpc_lifecycle_cancelled
+                    .map(|value| if value { "true" } else { "false" })
+                    .unwrap_or("(none)"),
+                if diag.grpc_lifecycle_cancel_reason.is_empty() {
+                    "(none)"
+                } else {
+                    diag.grpc_lifecycle_cancel_reason.as_str()
+                },
+                if diag.grpc_lifecycle_status.is_empty() {
+                    "(none)"
+                } else {
+                    diag.grpc_lifecycle_status.as_str()
+                },
+                diag.grpc_lifecycle_stream_event_count
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "(none)".to_string()),
+                if diag.grpc_remediation_profile.is_empty() {
+                    "(none)"
+                } else {
+                    diag.grpc_remediation_profile.as_str()
+                },
+                if diag.grpc_remediation_action.is_empty() {
+                    "(none)"
+                } else {
+                    diag.grpc_remediation_action.as_str()
+                },
+            ));
+        }
     }
     output
 }
@@ -9532,7 +10274,7 @@ fn render_grpc_action_diagnostics_summary(
     path: &Path,
     artifact: &ShadowGrpcActionDiagnostics,
 ) -> String {
-    format!(
+    let mut output = format!(
         "\nGrpc action diagnostics latest\n==============================\nsource: typed grpc diagnostics @ {}\nstatus:                  {}\ncaptured_at:             {}\ngrpc_target:             {}\ngrpc_rpc:                {}\ngrpc_transport:          {}\ngrpc_allow_unknown:      {}\ngrpc_max_time_seconds:   {}\ngrpc_proto_count:        {}\ngrpc_protoset_count:     {}\ngrpc_import_path_count:  {}\ngrpc_authority:          {}\ngrpc_schema:             {}\ngrpc_request_id:         {}\ngrpc_action_kind:        {}\ngrpc_action_objective:   {}\ngrpc_action_skill:       {}\ngrpc_exit_code:          {}\n",
         path.display(),
         if artifact.status.is_empty() {
@@ -9615,7 +10357,112 @@ fn render_grpc_action_diagnostics_summary(
             .exit_code
             .map(|value| value.to_string())
             .unwrap_or_else(|| "(none)".to_string()),
-    )
+    );
+    if !artifact.grpc_physical_robot_id.is_empty()
+        || !artifact.grpc_physical_target.is_empty()
+        || !artifact.grpc_physical_command.is_empty()
+        || !artifact.grpc_physical_safety_class.is_empty()
+        || artifact.grpc_physical_dry_run.is_some()
+    {
+        output.push_str(&format!(
+            "grpc_physical_robot_id: {}\ngrpc_physical_target: {}\ngrpc_physical_command: {}\ngrpc_physical_safety_class: {}\ngrpc_physical_dry_run: {}\n",
+            if artifact.grpc_physical_robot_id.is_empty() {
+                "(none)"
+            } else {
+                artifact.grpc_physical_robot_id.as_str()
+            },
+            if artifact.grpc_physical_target.is_empty() {
+                "(none)"
+            } else {
+                artifact.grpc_physical_target.as_str()
+            },
+            if artifact.grpc_physical_command.is_empty() {
+                "(none)"
+            } else {
+                artifact.grpc_physical_command.as_str()
+            },
+            if artifact.grpc_physical_safety_class.is_empty() {
+                "(none)"
+            } else {
+                artifact.grpc_physical_safety_class.as_str()
+            },
+            artifact
+                .grpc_physical_dry_run
+                .map(|value| if value { "true" } else { "false" })
+                .unwrap_or("(none)")
+        ));
+    }
+    if !artifact.grpc_lifecycle_mode.is_empty()
+        || artifact.grpc_lifecycle_ack_required.is_some()
+        || artifact.grpc_lifecycle_ack_received.is_some()
+        || artifact.grpc_lifecycle_cancelled.is_some()
+        || !artifact.grpc_lifecycle_cancel_reason.is_empty()
+        || !artifact.grpc_lifecycle_status.is_empty()
+        || !artifact.grpc_remediation_profile.is_empty()
+        || !artifact.grpc_remediation_action.is_empty()
+    {
+        output.push_str(&format!(
+            "grpc_lifecycle_mode:         {}\ngrpc_lifecycle_ack_required: {}\ngrpc_lifecycle_ack_timeout_seconds: {}\ngrpc_lifecycle_ack_received: {}\ngrpc_lifecycle_ack_latency_ms: {}\ngrpc_lifecycle_cancel_on_ack_timeout: {}\ngrpc_lifecycle_cancel_after_seconds: {}\ngrpc_lifecycle_cancelled: {}\ngrpc_lifecycle_cancel_reason: {}\ngrpc_lifecycle_status: {}\ngrpc_lifecycle_stream_event_count: {}\ngrpc_remediation_profile: {}\ngrpc_remediation_action: {}\n",
+            if artifact.grpc_lifecycle_mode.is_empty() {
+                "(none)"
+            } else {
+                artifact.grpc_lifecycle_mode.as_str()
+            },
+            artifact
+                .grpc_lifecycle_ack_required
+                .map(|value| if value { "true" } else { "false" })
+                .unwrap_or("(none)"),
+            artifact
+                .grpc_lifecycle_ack_timeout_seconds
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "(none)".to_string()),
+            artifact
+                .grpc_lifecycle_ack_received
+                .map(|value| if value { "true" } else { "false" })
+                .unwrap_or("(none)"),
+            artifact
+                .grpc_lifecycle_ack_latency_ms
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "(none)".to_string()),
+            artifact
+                .grpc_lifecycle_cancel_on_ack_timeout
+                .map(|value| if value { "true" } else { "false" })
+                .unwrap_or("(none)"),
+            artifact
+                .grpc_lifecycle_cancel_after_seconds
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "(none)".to_string()),
+            artifact
+                .grpc_lifecycle_cancelled
+                .map(|value| if value { "true" } else { "false" })
+                .unwrap_or("(none)"),
+            if artifact.grpc_lifecycle_cancel_reason.is_empty() {
+                "(none)"
+            } else {
+                artifact.grpc_lifecycle_cancel_reason.as_str()
+            },
+            if artifact.grpc_lifecycle_status.is_empty() {
+                "(none)"
+            } else {
+                artifact.grpc_lifecycle_status.as_str()
+            },
+            artifact
+                .grpc_lifecycle_stream_event_count
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "(none)".to_string()),
+            if artifact.grpc_remediation_profile.is_empty() {
+                "(none)"
+            } else {
+                artifact.grpc_remediation_profile.as_str()
+            },
+            if artifact.grpc_remediation_action.is_empty() {
+                "(none)"
+            } else {
+                artifact.grpc_remediation_action.as_str()
+            },
+        ));
+    }
+    output
 }
 
 pub fn render_shadow_grpc_action_diagnostics_report(
@@ -13300,6 +14147,7 @@ mod tests {
             ShadowBackendKind::A2a,
             ShadowBackendKind::A2aAction,
             ShadowBackendKind::GrpcAction,
+            ShadowBackendKind::GrpcPhysical,
         ];
         for case in cases.iter() {
             let plugin = resolve_shadow_backend_plugin(case);
