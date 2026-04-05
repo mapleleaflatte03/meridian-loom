@@ -774,3 +774,298 @@ fn connect_health_escalates_reconnect_then_fallback_under_repeated_failures() {
         Some("shadow_or_local_queue")
     );
 }
+
+#[test]
+fn connect_metrics_reports_uptime_and_fallback_recovery() {
+    let harness = Harness::new("metrics");
+    harness.run_ok(&[
+        "connect",
+        "scaffold",
+        "--name",
+        "telegram_metrics_adapter",
+        "--transport",
+        "telegram",
+        "--action-schema",
+        "meridian.runtime.v1",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    harness.run_ok(&[
+        "connect",
+        "enable",
+        "--adapter-id",
+        "telegram-metrics-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    harness.run_ok(&[
+        "connect",
+        "test",
+        "--adapter-id",
+        "telegram-metrics-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    harness.run_ok(&[
+        "connect",
+        "health",
+        "--adapter-id",
+        "telegram-metrics-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+
+    let registry_path = Path::new(harness.root_str()).join("state/connect/registry.json");
+    let mut registry: Value =
+        serde_json::from_str(&fs::read_to_string(&registry_path).expect("read registry"))
+            .expect("parse registry");
+    let adapters = registry
+        .get_mut("adapters")
+        .and_then(Value::as_array_mut)
+        .expect("adapters");
+    let adapter = adapters
+        .iter_mut()
+        .find(|item| {
+            item.get("adapter_id").and_then(Value::as_str) == Some("telegram-metrics-adapter")
+        })
+        .expect("telegram metrics adapter");
+    adapter["action_schema"] = Value::String(String::new());
+    fs::write(
+        &registry_path,
+        serde_json::to_string_pretty(&registry).expect("serialize registry"),
+    )
+    .expect("write registry");
+
+    let _ = harness.run_fail(&[
+        "connect",
+        "test",
+        "--adapter-id",
+        "telegram-metrics-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    for _ in 0..4 {
+        let _ = harness.json_ok(&[
+            "connect",
+            "health",
+            "--adapter-id",
+            "telegram-metrics-adapter",
+            "--root",
+            harness.root_str(),
+            "--format",
+            "json",
+        ]);
+    }
+
+    let mut registry: Value =
+        serde_json::from_str(&fs::read_to_string(&registry_path).expect("read registry"))
+            .expect("parse registry");
+    let adapters = registry
+        .get_mut("adapters")
+        .and_then(Value::as_array_mut)
+        .expect("adapters");
+    let adapter = adapters
+        .iter_mut()
+        .find(|item| {
+            item.get("adapter_id").and_then(Value::as_str) == Some("telegram-metrics-adapter")
+        })
+        .expect("telegram metrics adapter");
+    adapter["action_schema"] = Value::String("meridian.runtime.v1".to_string());
+    fs::write(
+        &registry_path,
+        serde_json::to_string_pretty(&registry).expect("serialize registry"),
+    )
+    .expect("write registry");
+
+    harness.run_ok(&[
+        "connect",
+        "test",
+        "--adapter-id",
+        "telegram-metrics-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    harness.run_ok(&[
+        "connect",
+        "health",
+        "--adapter-id",
+        "telegram-metrics-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+
+    let metrics = harness.json_ok(&[
+        "connect",
+        "metrics",
+        "--adapter-id",
+        "telegram-metrics-adapter",
+        "--retention-days",
+        "30",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    assert_eq!(
+        metrics.get("status").and_then(Value::as_str),
+        Some("connect_metrics")
+    );
+    assert_eq!(
+        metrics.get("adapter_id").and_then(Value::as_str),
+        Some("telegram-metrics-adapter")
+    );
+    assert!(
+        metrics
+            .get("tests_total")
+            .and_then(Value::as_u64)
+            .unwrap_or_default()
+            >= 2
+    );
+    assert!(
+        metrics
+            .get("fallback_events")
+            .and_then(Value::as_u64)
+            .unwrap_or_default()
+            >= 1
+    );
+    assert!(
+        metrics
+            .get("fallback_recoveries")
+            .and_then(Value::as_u64)
+            .unwrap_or_default()
+            >= 1
+    );
+    assert!(
+        metrics
+            .get("uptime_ratio")
+            .and_then(Value::as_f64)
+            .unwrap_or_default()
+            > 0.0
+    );
+    assert!(
+        metrics
+            .get("fallback_success_ratio")
+            .and_then(Value::as_f64)
+            .unwrap_or_default()
+            > 0.0
+    );
+}
+
+#[test]
+fn connect_prune_removes_stale_history_events() {
+    let harness = Harness::new("prune");
+    harness.run_ok(&[
+        "connect",
+        "scaffold",
+        "--name",
+        "telegram_prune_adapter",
+        "--transport",
+        "telegram",
+        "--action-schema",
+        "meridian.runtime.v1",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    harness.run_ok(&[
+        "connect",
+        "enable",
+        "--adapter-id",
+        "telegram-prune-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    harness.run_ok(&[
+        "connect",
+        "test",
+        "--adapter-id",
+        "telegram-prune-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    harness.run_ok(&[
+        "connect",
+        "health",
+        "--adapter-id",
+        "telegram-prune-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+
+    let tests_path =
+        Path::new(harness.root_str()).join("state/connect/tests/telegram-prune-adapter.jsonl");
+    let lifecycle_path =
+        Path::new(harness.root_str()).join("state/connect/lifecycle/telegram-prune-adapter.jsonl");
+    fs::write(
+        &tests_path,
+        "{\"schema_version\":\"meridian.connect.test_event.v1\",\"adapter_id\":\"telegram-prune-adapter\",\"result\":\"pass\",\"reason\":\"stale\",\"tested_at\":\"1\"}\n\
+{\"schema_version\":\"meridian.connect.test_event.v1\",\"adapter_id\":\"telegram-prune-adapter\",\"result\":\"pass\",\"reason\":\"fresh\",\"tested_at\":\"9999999999\"}\n",
+    )
+    .expect("write tests history");
+    fs::write(
+        &lifecycle_path,
+        "{\"schema_version\":\"meridian.connect.lifecycle_event.v1\",\"adapter_id\":\"telegram-prune-adapter\",\"state\":\"fallback\",\"action\":\"health_fallback\",\"reason\":\"stale\",\"recorded_at\":\"1\"}\n\
+{\"schema_version\":\"meridian.connect.lifecycle_event.v1\",\"adapter_id\":\"telegram-prune-adapter\",\"state\":\"ready\",\"action\":\"health_ok\",\"reason\":\"fresh\",\"recorded_at\":\"9999999999\"}\n",
+    )
+    .expect("write lifecycle history");
+
+    let pruned = harness.json_ok(&[
+        "connect",
+        "prune",
+        "--adapter-id",
+        "telegram-prune-adapter",
+        "--retention-days",
+        "30",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    assert_eq!(
+        pruned.get("status").and_then(Value::as_str),
+        Some("connect_pruned")
+    );
+    assert_eq!(
+        pruned
+            .get("removed_tests_entries")
+            .and_then(Value::as_u64)
+            .unwrap_or_default(),
+        1
+    );
+    assert_eq!(
+        pruned
+            .get("removed_lifecycle_entries")
+            .and_then(Value::as_u64)
+            .unwrap_or_default(),
+        1
+    );
+
+    let tests_after = fs::read_to_string(&tests_path).expect("read tests after prune");
+    assert!(tests_after.contains("\"reason\":\"fresh\""));
+    assert!(!tests_after.contains("\"reason\":\"stale\""));
+
+    let lifecycle_after = fs::read_to_string(&lifecycle_path).expect("read lifecycle after prune");
+    assert!(lifecycle_after.contains("\"reason\":\"fresh\""));
+    assert!(!lifecycle_after.contains("\"reason\":\"stale\""));
+}

@@ -44,8 +44,10 @@ pub(crate) fn handle_connect(args: &[String]) -> LoomResult<()> {
         Some("disable") => handle_connect_toggle(&args[1..], false),
         Some("test") => handle_connect_test(&args[1..]),
         Some("health") => handle_connect_health(&args[1..]),
+        Some("metrics") => handle_connect_metrics(&args[1..]),
+        Some("prune") => handle_connect_prune(&args[1..]),
         _ => Err(
-            "connect supports 'scaffold', 'list', 'validate', 'enable', 'disable', 'test', and 'health'"
+            "connect supports 'scaffold', 'list', 'validate', 'enable', 'disable', 'test', 'health', 'metrics', and 'prune'"
                 .to_string(),
         ),
     }
@@ -67,7 +69,9 @@ COMMANDS:
   enable   --adapter-id ID [--root ROOT] [--format human|json]
   disable  --adapter-id ID [--root ROOT] [--format human|json]
   test     --adapter-id ID [--root ROOT] [--format human|json]
-  health   --adapter-id ID [--root ROOT] [--format human|json]"
+  health   --adapter-id ID [--root ROOT] [--format human|json]
+  metrics  --adapter-id ID [--retention-days DAYS] [--root ROOT] [--format human|json]
+  prune    --adapter-id ID [--retention-days DAYS] [--root ROOT] [--format human|json]"
     );
 }
 
@@ -711,6 +715,174 @@ fn handle_connect_health(args: &[String]) -> LoomResult<()> {
     print_connect_payload(&payload, &format)
 }
 
+fn handle_connect_metrics(args: &[String]) -> LoomResult<()> {
+    let root = root_from(take_value(args, "--root").as_deref())?;
+    let format = output_format(args);
+    let adapter_id = sanitize_token(&required_flag(args, "--adapter-id")?);
+    if adapter_id.is_empty() {
+        return Err("adapter-id cannot be empty".to_string());
+    }
+
+    let registry = load_connect_registry(&root)?;
+    let adapter = find_adapter(&registry, &adapter_id)
+        .ok_or_else(|| format!("adapter '{}' not found", adapter_id))?;
+    let configured_retention = adapter
+        .pointer("/diagnostics/history_retention_days")
+        .and_then(Value::as_u64)
+        .unwrap_or(DEFAULT_DIAGNOSTIC_RETENTION_DAYS);
+    let retention_days = parse_retention_days(args, configured_retention)?;
+    let now_secs = chrono_like_timestamp().parse::<u64>().unwrap_or_default();
+    let cutoff_secs = now_secs.saturating_sub(retention_days.saturating_mul(86_400));
+
+    let tests_events = read_jsonl_events(&connect_tests_history_path(&root, &adapter_id))?
+        .into_iter()
+        .filter(|event| event_in_window(event, &["tested_at"], cutoff_secs))
+        .collect::<Vec<_>>();
+    let lifecycle_events = read_jsonl_events(&connect_lifecycle_history_path(&root, &adapter_id))?
+        .into_iter()
+        .filter(|event| event_in_window(event, &["recorded_at"], cutoff_secs))
+        .collect::<Vec<_>>();
+
+    let tests_total = tests_events.len() as u64;
+    let tests_pass = tests_events
+        .iter()
+        .filter(|event| {
+            event.get("test_status").and_then(Value::as_str) == Some("pass")
+                || event.get("result").and_then(Value::as_str) == Some("pass")
+        })
+        .count() as u64;
+    let test_pass_ratio = if tests_total == 0 {
+        1.0
+    } else {
+        tests_pass as f64 / tests_total as f64
+    };
+
+    let mut lifecycle_states = lifecycle_events
+        .iter()
+        .map(|event| {
+            (
+                parse_event_timestamp(event, &["recorded_at"]).unwrap_or_default(),
+                event
+                    .get("state")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+                    .to_string(),
+            )
+        })
+        .collect::<Vec<_>>();
+    lifecycle_states.sort_by(|left, right| left.0.cmp(&right.0));
+
+    let lifecycle_total = lifecycle_states.len() as u64;
+    let ready_states = lifecycle_states
+        .iter()
+        .filter(|(_, state)| state == "ready")
+        .count() as u64;
+    let fallback_events = lifecycle_states
+        .iter()
+        .filter(|(_, state)| state == "fallback")
+        .count() as u64;
+    let mut pending_recovery = 0_u64;
+    let mut fallback_recoveries = 0_u64;
+    for (_, state) in &lifecycle_states {
+        if state == "fallback" {
+            pending_recovery = pending_recovery.saturating_add(1);
+        } else if state == "ready" && pending_recovery > 0 {
+            fallback_recoveries = fallback_recoveries.saturating_add(1);
+            pending_recovery = pending_recovery.saturating_sub(1);
+        }
+    }
+    let uptime_ratio = if lifecycle_total > 0 {
+        ready_states as f64 / lifecycle_total as f64
+    } else {
+        read_optional_health_ready_ratio(&root, &adapter_id)?
+    };
+    let fallback_success_ratio = if fallback_events > 0 {
+        fallback_recoveries as f64 / fallback_events as f64
+    } else {
+        1.0
+    };
+
+    let target_uptime = 0.995_f64;
+    let target_fallback_success = 0.98_f64;
+    let payload = json!({
+        "status": "connect_metrics",
+        "adapter_id": adapter_id,
+        "retention_days": retention_days,
+        "window_start_unix": cutoff_secs,
+        "window_end_unix": now_secs,
+        "tests_total": tests_total,
+        "tests_pass": tests_pass,
+        "test_pass_ratio": test_pass_ratio,
+        "lifecycle_samples": lifecycle_total,
+        "ready_samples": ready_states,
+        "fallback_events": fallback_events,
+        "fallback_recoveries": fallback_recoveries,
+        "uptime_ratio": uptime_ratio,
+        "fallback_success_ratio": fallback_success_ratio,
+        "target_uptime": target_uptime,
+        "target_fallback_success": target_fallback_success,
+        "target_uptime_met": uptime_ratio >= target_uptime,
+        "target_fallback_success_met": fallback_success_ratio >= target_fallback_success,
+        "tests_history_path": connect_tests_history_path(&root, &adapter_id).display().to_string(),
+        "lifecycle_history_path": connect_lifecycle_history_path(&root, &adapter_id).display().to_string(),
+        "runtime_contract": CONNECT_RUNTIME_CONTRACT_V2,
+        "note": "b1 operator metrics over connect diagnostics window",
+    });
+    persist_connect_latest_artifact(&root, &payload)?;
+    print_connect_payload(&payload, &format)
+}
+
+fn handle_connect_prune(args: &[String]) -> LoomResult<()> {
+    let root = root_from(take_value(args, "--root").as_deref())?;
+    let format = output_format(args);
+    let adapter_id = sanitize_token(&required_flag(args, "--adapter-id")?);
+    if adapter_id.is_empty() {
+        return Err("adapter-id cannot be empty".to_string());
+    }
+
+    let mut registry = load_connect_registry(&root)?;
+    let adapter = find_adapter_mut(&mut registry, &adapter_id)
+        .ok_or_else(|| format!("adapter '{}' not found", adapter_id))?;
+    let configured_retention = adapter
+        .pointer("/diagnostics/history_retention_days")
+        .and_then(Value::as_u64)
+        .unwrap_or(DEFAULT_DIAGNOSTIC_RETENTION_DAYS);
+    let retention_days = parse_retention_days(args, configured_retention)?;
+    let now_secs = chrono_like_timestamp().parse::<u64>().unwrap_or_default();
+    let cutoff_secs = now_secs.saturating_sub(retention_days.saturating_mul(86_400));
+
+    let tests_path = connect_tests_history_path(&root, &adapter_id);
+    let lifecycle_path = connect_lifecycle_history_path(&root, &adapter_id);
+    let (removed_tests_entries, remaining_tests_entries) =
+        prune_jsonl_events_by_cutoff(&tests_path, &["tested_at"], cutoff_secs)?;
+    let (removed_lifecycle_entries, remaining_lifecycle_entries) =
+        prune_jsonl_events_by_cutoff(&lifecycle_path, &["recorded_at"], cutoff_secs)?;
+
+    let diagnostics = adapter_diagnostics_mut(adapter);
+    diagnostics["test_history_entries"] = Value::Number(remaining_tests_entries.into());
+    diagnostics["lifecycle_history_entries"] = Value::Number(remaining_lifecycle_entries.into());
+    diagnostics["history_retention_days"] = Value::Number(retention_days.into());
+    adapter["updated_at"] = Value::String(chrono_like_timestamp());
+    persist_connect_registry(&root, &registry)?;
+
+    let payload = json!({
+        "status": "connect_pruned",
+        "adapter_id": adapter_id,
+        "retention_days": retention_days,
+        "cutoff_unix": cutoff_secs,
+        "removed_tests_entries": removed_tests_entries,
+        "removed_lifecycle_entries": removed_lifecycle_entries,
+        "remaining_tests_entries": remaining_tests_entries,
+        "remaining_lifecycle_entries": remaining_lifecycle_entries,
+        "tests_history_path": tests_path.display().to_string(),
+        "lifecycle_history_path": lifecycle_path.display().to_string(),
+        "runtime_contract": CONNECT_RUNTIME_CONTRACT_V2,
+        "note": "b1 diagnostics retention prune",
+    });
+    persist_connect_latest_artifact(&root, &payload)?;
+    print_connect_payload(&payload, &format)
+}
+
 fn persist_health_snapshot(root: &Path, adapter_id: &str, payload: &Value) -> LoomResult<()> {
     let health_path = connect_health_path(root, adapter_id);
     if let Some(parent) = health_path.parent() {
@@ -763,6 +935,120 @@ fn read_latest_jsonl_event(path: &Path) -> LoomResult<Option<Value>> {
         return Ok(Some(value));
     }
     Ok(None)
+}
+
+fn read_jsonl_events(path: &Path) -> LoomResult<Vec<Value>> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let raw = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let mut events = Vec::new();
+    for line in raw.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let value: Value = serde_json::from_str(line)
+            .map_err(|error| format!("invalid connect jsonl entry: {error}"))?;
+        events.push(value);
+    }
+    Ok(events)
+}
+
+fn write_jsonl_events(path: &Path, events: &[Value]) -> LoomResult<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let rendered = events
+        .iter()
+        .map(|event| serde_json::to_string(event).map_err(|error| error.to_string()))
+        .collect::<Result<Vec<_>, _>>()?
+        .join("\n");
+    if rendered.is_empty() {
+        std::fs::write(path, "").map_err(|error| error.to_string())?;
+    } else {
+        std::fs::write(path, format!("{rendered}\n")).map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn parse_retention_days(args: &[String], fallback: u64) -> LoomResult<u64> {
+    let retention_days = take_value(args, "--retention-days")
+        .map(|raw| {
+            raw.parse::<u64>()
+                .map_err(|error| format!("invalid --retention-days '{}': {}", raw, error))
+        })
+        .transpose()?
+        .unwrap_or(fallback);
+    if !(1..=3650).contains(&retention_days) {
+        return Err("retention days must be between 1 and 3650".to_string());
+    }
+    Ok(retention_days)
+}
+
+fn parse_event_timestamp(event: &Value, fields: &[&str]) -> Option<u64> {
+    for field in fields {
+        if let Some(value) = event.get(*field).and_then(Value::as_u64) {
+            return Some(value);
+        }
+        if let Some(raw) = event.get(*field).and_then(Value::as_str) {
+            if raw.is_empty() {
+                continue;
+            }
+            if let Ok(value) = raw.parse::<u64>() {
+                return Some(value);
+            }
+        }
+    }
+    None
+}
+
+fn event_in_window(event: &Value, fields: &[&str], cutoff_secs: u64) -> bool {
+    match parse_event_timestamp(event, fields) {
+        Some(value) if value > 0 => value >= cutoff_secs,
+        _ => true,
+    }
+}
+
+fn prune_jsonl_events_by_cutoff(
+    path: &Path,
+    fields: &[&str],
+    cutoff_secs: u64,
+) -> LoomResult<(u64, u64)> {
+    let events = read_jsonl_events(path)?;
+    let mut kept = Vec::new();
+    let mut removed = 0_u64;
+    for event in events {
+        let should_remove = parse_event_timestamp(&event, fields)
+            .map(|value| value > 0 && value < cutoff_secs)
+            .unwrap_or(false);
+        if should_remove {
+            removed = removed.saturating_add(1);
+        } else {
+            kept.push(event);
+        }
+    }
+    write_jsonl_events(path, &kept)?;
+    Ok((removed, kept.len() as u64))
+}
+
+fn read_optional_health_ready_ratio(root: &Path, adapter_id: &str) -> LoomResult<f64> {
+    let health_path = connect_health_path(root, adapter_id);
+    if !health_path.exists() {
+        return Ok(0.0);
+    }
+    let raw = std::fs::read_to_string(health_path).map_err(|error| error.to_string())?;
+    let value: Value = serde_json::from_str(&raw).map_err(|error| error.to_string())?;
+    let ratio = if value
+        .get("health_status")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown")
+        == "healthy"
+    {
+        1.0
+    } else {
+        0.0
+    };
+    Ok(ratio)
 }
 
 fn print_connect_payload(payload: &Value, format: &str) -> LoomResult<()> {
@@ -819,8 +1105,32 @@ fn print_connect_payload(payload: &Value, format: &str) -> LoomResult<()> {
             if let Some(path) = payload.get("tests_history_path").and_then(Value::as_str) {
                 lines.push(format!("tests_history_path:  {path}"));
             }
+            if let Some(path) = payload
+                .get("lifecycle_history_path")
+                .and_then(Value::as_str)
+            {
+                lines.push(format!("lifecycle_path:      {path}"));
+            }
             if let Some(path) = payload.get("health_path").and_then(Value::as_str) {
                 lines.push(format!("health_path:         {path}"));
+            }
+            if let Some(value) = payload.get("uptime_ratio").and_then(Value::as_f64) {
+                lines.push(format!("uptime_ratio:        {:.4}", value));
+            }
+            if let Some(value) = payload
+                .get("fallback_success_ratio")
+                .and_then(Value::as_f64)
+            {
+                lines.push(format!("fallback_success:    {:.4}", value));
+            }
+            if let Some(value) = payload.get("removed_tests_entries").and_then(Value::as_u64) {
+                lines.push(format!("removed_tests:       {}", value));
+            }
+            if let Some(value) = payload
+                .get("removed_lifecycle_entries")
+                .and_then(Value::as_u64)
+            {
+                lines.push(format!("removed_lifecycle:   {}", value));
             }
             if let Some(total) = payload.get("total_adapters").and_then(Value::as_u64) {
                 lines.push(format!("total_adapters:      {total}"));

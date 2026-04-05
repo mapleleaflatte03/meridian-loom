@@ -201,13 +201,13 @@ loom channel health --root "$LOOM_ROOT" --agent my-assistant --history-limit 5 -
 loom channel deliveries --root "$LOOM_ROOT" --include-archived
 loom breed agent_atlas agent_quill --agent-id agent_atlas --mutation-rate 0.15 --root "$LOOM_ROOT" --kernel-path "$MERIDIAN_KERNEL_PATH"
 loom init-nation --charter "Shadow Era Charter" --org-id "$MERIDIAN_ORG_ID" --root "$LOOM_ROOT" --kernel-path "$MERIDIAN_KERNEL_PATH"
-loom connect scaffold --name grpc_action_adapter --transport grpc --action-schema meridian.a2a.action.v1 --root "$LOOM_ROOT"
+loom connect scaffold --name telegram_ops_adapter --transport telegram --action-schema meridian.runtime.v1 --root "$LOOM_ROOT"
 loom connect list --root "$LOOM_ROOT"
-loom connect validate --adapter-id grpc-action-adapter --root "$LOOM_ROOT"
-loom connect enable --adapter-id grpc-action-adapter --root "$LOOM_ROOT"
-loom connect test --adapter-id grpc-action-adapter --root "$LOOM_ROOT"
-loom connect health --adapter-id grpc-action-adapter --root "$LOOM_ROOT"
-loom connect disable --adapter-id grpc-action-adapter --root "$LOOM_ROOT"
+loom connect validate --adapter-id telegram-ops-adapter --root "$LOOM_ROOT"
+loom connect enable --adapter-id telegram-ops-adapter --root "$LOOM_ROOT"
+loom connect test --adapter-id telegram-ops-adapter --root "$LOOM_ROOT"
+loom connect health --adapter-id telegram-ops-adapter --root "$LOOM_ROOT"
+loom connect disable --adapter-id telegram-ops-adapter --root "$LOOM_ROOT"
 loom extension install --manifest ./extension.json --root "$LOOM_ROOT"
 loom extension export --extension-id my-extension --out ./my-extension-export.json --root "$LOOM_ROOT"
 loom extension remove --extension-id my-extension --root "$LOOM_ROOT"
@@ -256,10 +256,18 @@ The full end-to-end flow lives in [docs/QUICKSTART.md](docs/QUICKSTART.md).
   - `loom connect enable|disable`
   - `loom connect test --adapter-id ...`
   - `loom connect health --adapter-id ...`
+  - `loom connect metrics --adapter-id ... [--retention-days 30]`
+  - `loom connect prune --adapter-id ... [--retention-days 30]`
+- Operator-priority transport templates:
+  - `telegram`, `discord`, `browser`, `shell`, `webhook`
+- Lifecycle state contract:
+  - `init -> ready -> error -> reconnecting (max 3) -> fallback`
 - Diagnostics/history persistence:
   - `state/connect/health/*.json`
   - `state/connect/tests/*.jsonl`
+  - `state/connect/lifecycle/*.jsonl`
   - `artifacts/connect/latest.json`
+  - default retention policy: `30` days
 
 Rollback plan:
 - Keep a copy of `state/connect/registry.json` before migration.

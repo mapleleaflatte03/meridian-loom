@@ -211,4 +211,65 @@ if payload.get("recommended_action") != "shadow_or_local_queue":
     raise SystemExit(f"expected shadow_or_local_queue action, got {payload.get('recommended_action')}")
 PY
 
+echo "[loom-acceptance] verify metrics window and retention prune"
+python3 - <<'PY' "${ROOT_DIR}"
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+tests_path = root / "state/connect/tests/telegram-adapter.jsonl"
+lifecycle_path = root / "state/connect/lifecycle/telegram-adapter.jsonl"
+
+tests_path.write_text(
+    '{"schema_version":"meridian.connect.test_event.v1","adapter_id":"telegram-adapter","test_status":"pass","test_reason":"stale","tested_at":"1"}\n'
+    '{"schema_version":"meridian.connect.test_event.v1","adapter_id":"telegram-adapter","test_status":"pass","test_reason":"fresh","tested_at":"9999999999"}\n'
+)
+lifecycle_path.write_text(
+    '{"schema_version":"meridian.connect.lifecycle_event.v1","adapter_id":"telegram-adapter","state":"fallback","action":"health_fallback","reason":"stale","recorded_at":"1"}\n'
+    '{"schema_version":"meridian.connect.lifecycle_event.v1","adapter_id":"telegram-adapter","state":"fallback","action":"health_fallback","reason":"fresh","recorded_at":"9999999998"}\n'
+    '{"schema_version":"meridian.connect.lifecycle_event.v1","adapter_id":"telegram-adapter","state":"ready","action":"health_ready","reason":"fresh","recorded_at":"9999999999"}\n'
+)
+PY
+
+METRICS_JSON="$(run_loom_json connect metrics --adapter-id telegram-adapter --retention-days 30 --root "${ROOT_DIR}")"
+python3 - <<'PY' "${METRICS_JSON}"
+import json
+import sys
+payload = json.loads(sys.argv[1])
+if payload.get("status") != "connect_metrics":
+    raise SystemExit(f"unexpected status: {payload.get('status')}")
+if payload.get("tests_total", 0) < 1:
+    raise SystemExit("expected tests_total >= 1")
+if payload.get("fallback_events", 0) < 1:
+    raise SystemExit("expected fallback_events >= 1")
+PY
+
+PRUNE_JSON="$(run_loom_json connect prune --adapter-id telegram-adapter --retention-days 30 --root "${ROOT_DIR}")"
+python3 - <<'PY' "${PRUNE_JSON}" "${ROOT_DIR}"
+import json
+import pathlib
+import sys
+
+payload = json.loads(sys.argv[1])
+root = pathlib.Path(sys.argv[2])
+if payload.get("status") != "connect_pruned":
+    raise SystemExit(f"unexpected prune status: {payload.get('status')}")
+if payload.get("removed_tests_entries") != 1:
+    raise SystemExit(f"expected removed_tests_entries=1, got {payload.get('removed_tests_entries')}")
+if payload.get("removed_lifecycle_entries") != 1:
+    raise SystemExit(f"expected removed_lifecycle_entries=1, got {payload.get('removed_lifecycle_entries')}")
+
+tests_after = (root / "state/connect/tests/telegram-adapter.jsonl").read_text()
+if '"reason":"stale"' in tests_after:
+    raise SystemExit("stale tests entry should be pruned")
+if not tests_after.strip():
+    raise SystemExit("tests history should keep non-stale entries")
+lifecycle_after = (root / "state/connect/lifecycle/telegram-adapter.jsonl").read_text()
+if '"reason":"stale"' in lifecycle_after:
+    raise SystemExit("stale lifecycle entry should be pruned")
+if not lifecycle_after.strip():
+    raise SystemExit("lifecycle history should keep non-stale entries")
+PY
+
 echo "[loom-acceptance] PASS connect ecosystem lane"
