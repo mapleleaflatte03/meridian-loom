@@ -94,6 +94,7 @@ fn run() -> LoomResult<()> {
             Ok(())
         }
         "onboard" => commands::onboard::handle_onboard(&args[1..]),
+        "quickstart" => commands::quickstart::handle_quickstart(&args[1..]),
         "version" | "-V" | "--version" => {
             print_startup_banner();
             print_human(&format!(
@@ -118,10 +119,14 @@ fn run() -> LoomResult<()> {
         "new-agent" => commands::personal_agent::handle_new_agent(&args[1..]),
         "run-agent" => commands::personal_agent::handle_run_agent(&args[1..]),
         "gateway" => commands::gateway::handle_gateway(&args[1..]),
+        "auth" => commands::auth::handle_auth(&args[1..]),
         "binding" => commands::binding::handle_binding(&args[1..]),
         "breed" => commands::breed::handle_breed(&args[1..]),
         "channel" => commands::channel::handle_channel(&args[1..]),
         "connect" => commands::connect::handle_connect(&args[1..]),
+        "deploy" => commands::deploy::handle_deploy(&args[1..]),
+        "extension" => commands::extension::handle_extension(&args[1..]),
+        "observe" => commands::observe::handle_observe(&args[1..]),
         "skill" => commands::skill::handle_skill(&args[1..]),
         "schedule" => commands::schedule::handle_schedule(&args[1..]),
         "heartbeat" => commands::heartbeat::handle_heartbeat(&args[1..]),
@@ -297,6 +302,7 @@ Bootstrap\n\
 ---------\n\
   loom banner\n\
   loom version\n\
+  loom quickstart [--root PATH] [--kernel-path PATH] [--org-id ORG] [--charter TEXT] [--agent-name NAME] [--webhook-url URL] [--channel-test-text TEXT] [--interactive] [--non-interactive] [--format human|json]\n\
   loom onboard [--root PATH] [--mode MODE] [--org-id ID] [--kernel-path PATH] [--config-action setup|keep|modify|reset] [--manager-lane frontier|local] [--manager-model NAME] [--codex-auth-source loom|cli|path] [--codex-auth-path PATH] [--gateway-port N] [--gateway-bind loopback|all] [--gateway-auth-mode token|none] [--gateway-token-env ENV] [--telegram-enabled yes|no] [--telegram-token-env ENV] [--telegram-dm-policy TEXT] [--telegram-group-policy TEXT] [--telegram-streaming TEXT] [--daemon-enabled yes|no] [--daemon-manager supervisor] [--recurring-install-defaults yes|no] [--recurring-entry ID]... [--start-daemon] [--skip-health-check] [--format human|json]\n\
   loom init --mode <embedded|shadow|standalone> [--kernel-path PATH] [--root PATH] [--org-id ID]\n\
   loom doctor [--root PATH] [--format json|human]\n\
@@ -321,6 +327,10 @@ Bootstrap\n\
   loom provider profiles [--root PATH] [--profile NAME] [--format human|json]\n\
   loom provider mark-used --profile NAME [--root PATH] [--format human|json]\n\
   loom provider mark-failure --profile NAME [--reason TEXT] [--cooldown-ms N] [--root PATH] [--format human|json]\n\
+  loom auth status [--root PATH] [--format human|json]\n\
+  loom auth rotate --alias NAME --env-var NAME [--agent-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
+  loom auth revoke --alias NAME [--agent-id ID] [--org-id ORG] [--kernel-path PATH] [--root PATH] [--format human|json]\n\
+  loom auth audit [--root PATH] [--limit N] [--format human|json]\n\
   loom gateway status [--root PATH] [--format human|json]\n\
   loom gateway sync [--root PATH] [--format human|json]\n\
   loom binding status [--root PATH] [--format human|json]\n\
@@ -341,6 +351,13 @@ Bootstrap\n\
   loom channel test --agent NAME [--text TEXT] [--format human|json]\n\
   loom connect scaffold --name NAME --transport grpc|a2a|mcp|http|ros2 --action-schema SCHEMA [--root PATH] [--format human|json]\n\
   loom connect list [--root PATH] [--format human|json]\n\
+  loom extension validate --manifest PATH [--root PATH] [--format human|json]\n\
+  loom extension install --manifest PATH [--root PATH] [--format human|json]\n\
+  loom extension remove --extension-id ID [--root PATH] [--format human|json]\n\
+  loom extension export --extension-id ID --out PATH [--root PATH] [--format human|json]\n\
+  loom observe summary [--root PATH] [--fix-hints] [--format human|json]\n\
+  loom observe alerts [--root PATH] [--fix-hints] [--format human|json]\n\
+  loom observe watch [--root PATH] [--iterations N] [--interval-seconds N] [--fix-hints] [--format human|json]\n\
   loom channel send --channel ID --recipient ID [--text TEXT|--file PATH] [--allow-receipt-hashes] [--allow-operator-diagnostics] [--root PATH] [--format human|json]\n\
   loom channel deliveries [--root PATH] [--limit N] [--include-archived|--archived-only] [--format human|json]\n\
   loom ingress status [--root PATH] [--format human|json]\n\

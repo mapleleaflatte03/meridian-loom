@@ -8,7 +8,7 @@ ORG_ID ?= local_foundry
 RELEASE_DIR ?= $(ROOT)/dist
 PREFIX ?= $(HOME)/.local/share/meridian-loom
 
-.PHONY: build test init doctor health status start stop restart logs run-local package-release release-local docker-build docker-up docker-down install-local acceptance acceptance-container acceptance-shadow-zk acceptance-shadow-zk-embodied acceptance-shadow-zk-lane acceptance-swarm-zk-lane acceptance-memory-graph-lane acceptance-init-nation-lane acceptance-breed-lane acceptance-embodied-physical-lane acceptance-connect-lane verify-release
+.PHONY: build test init doctor health status start stop restart logs run-local package-release release-local docker-build docker-up docker-down install-local acceptance acceptance-container acceptance-shadow-zk acceptance-shadow-zk-embodied acceptance-shadow-zk-lane acceptance-swarm-zk-lane acceptance-memory-graph-lane acceptance-init-nation-lane acceptance-breed-lane acceptance-embodied-physical-lane acceptance-connect-lane acceptance-connect-ecosystem-lane acceptance-extension-lane acceptance-quickstart-lane acceptance-deploy-lane acceptance-security-auth-lane acceptance-observability-lane acceptance-oss-dx-lane acceptance-branding-lane dev-first-proof verify-release
 
 build:
 	cargo build --release --workspace --locked
@@ -108,6 +108,33 @@ acceptance-embodied-physical-lane:
 
 acceptance-connect-lane:
 	./scripts/acceptance_connect_lane.sh
+
+acceptance-connect-ecosystem-lane:
+	./scripts/acceptance_connect_ecosystem_lane.sh
+
+acceptance-extension-lane:
+	./scripts/acceptance_extension_lane.sh
+
+acceptance-quickstart-lane:
+	./scripts/acceptance_quickstart_lane.sh
+
+acceptance-deploy-lane:
+	./scripts/acceptance_deploy_lane.sh
+
+acceptance-security-auth-lane:
+	./scripts/acceptance_security_auth_lane.sh
+
+acceptance-observability-lane:
+	./scripts/acceptance_observability_lane.sh
+
+acceptance-oss-dx-lane:
+	./scripts/acceptance_oss_dx_lane.sh
+
+acceptance-branding-lane:
+	./scripts/acceptance_branding_lane.sh
+
+dev-first-proof:
+	./scripts/dev_first_proof.sh
 
 verify-release:
 	./scripts/verify_release_local.sh --kernel-path "$(KERNEL_PATH)"

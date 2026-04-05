@@ -296,6 +296,13 @@ fn copy_kernel_fixture(destination: &Path) {
         .expect("copy kernel fixture");
     assert!(status.success(), "cp -R /opt/meridian-kernel failed");
     let agent_registry = destination.join("kernel").join("agent_registry.json");
+    // /opt fixture may contain a symlink into a live workspace registry.
+    // Detach it so supervision tests never mutate shared state or race each other.
+    if let Ok(metadata) = fs::symlink_metadata(&agent_registry) {
+        if metadata.file_type().is_symlink() {
+            fs::remove_file(&agent_registry).expect("remove copied symlinked agent registry");
+        }
+    }
     fs::write(
         &agent_registry,
         "{\n  \"agents\": {},\n  \"updatedAt\": \"1970-01-01T00:00:00Z\"\n}\n",

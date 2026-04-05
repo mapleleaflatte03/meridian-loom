@@ -356,11 +356,29 @@ fn run_python_json(script: &str, args: &[&str]) -> LoomResult<Value> {
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    serde_json::from_slice(&output.stdout).map_err(|error| {
+    parse_json_from_mixed_stdout(&output.stdout).map_err(|error| {
         format!(
             "python helper returned invalid json: {} | stdout={}",
             error,
             String::from_utf8_lossy(&output.stdout).trim()
         )
     })
+}
+
+fn parse_json_from_mixed_stdout(stdout: &[u8]) -> LoomResult<Value> {
+    if let Ok(value) = serde_json::from_slice(stdout) {
+        return Ok(value);
+    }
+    let text = String::from_utf8_lossy(stdout);
+    let lines = text.lines().collect::<Vec<_>>();
+    for index in (0..lines.len()).rev() {
+        let candidate = lines[index..].join("\n");
+        let trimmed = candidate.trim();
+        if trimmed.starts_with('{') || trimmed.starts_with('[') {
+            if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+                return Ok(value);
+            }
+        }
+    }
+    Err("no JSON payload detected".to_string())
 }

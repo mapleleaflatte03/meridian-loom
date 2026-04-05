@@ -22,6 +22,8 @@
   <a href="docs/RUN_LOCAL.md">Run Local</a> ·
   <a href="docs/BENCHMARKS.md">Benchmarks</a> ·
   <a href="docs/RELEASE.md">Release</a> ·
+  <a href="CONTRIBUTING.md">Contributing</a> ·
+  <a href="docs/COMMUNITY_MAP.md">Community Map</a> ·
   <a href="docs/SERVICE.md">Service</a> ·
   <a href="docs/ARCHITECTURE.md">Architecture</a> ·
   <a href="docs/MERIDIAN_PoGE_PROTOCOL.md">PoGE</a>
@@ -49,6 +51,107 @@ curl -fsSL https://raw.githubusercontent.com/mapleleaflatte03/meridian-loom/main
 
 The installer prefers prebuilt GitHub release assets for the current host and
 falls back to a source build only when no matching asset is available.
+
+## One-command first proof lane
+
+```bash
+loom quickstart \
+  --root "$HOME/.local/share/meridian-loom/runtime/default" \
+  --kernel-path /opt/meridian-kernel \
+  --org-id "${MERIDIAN_ORG_ID:-local_foundry}" \
+  --charter "First Proof Charter" \
+  --agent-name "My First Agent" \
+  --webhook-url "https://example.com/loom-hook" \
+  --format human
+```
+
+`loom quickstart` is additive. It does not replace existing `loom init`,
+`loom init-nation`, or `loom new-agent` flows.
+
+Migration notes:
+
+- If you already run scripted bootstrap, keep it unchanged.
+- Adopt `loom quickstart` only when you want one command for first proof.
+
+Rollback plan:
+
+- Continue using `loom init` + `loom init-nation` + `loom new-agent` directly.
+- Use `loom quickstart --non-interactive --format json` only for local onboarding lanes.
+
+## Developer first-proof lane (Area 9.1)
+
+For contributors, one command runs the shortest end-to-end local developer lane:
+
+```bash
+make dev-first-proof
+```
+
+This validates first-proof UX before deeper feature work.
+
+## Extension contract v1 (Area 3.1)
+
+`extension_contract_v1` adds an agnostic extension lifecycle with rollback
+receipts:
+
+```bash
+cp ./templates/extensions/extension_contract_v1.sample.json ./extension.json
+loom extension validate --manifest ./extension.json --root "$LOOM_ROOT" --format human
+loom extension install --manifest ./extension.json --root "$LOOM_ROOT" --format human
+loom extension export --extension-id my-extension --out ./exported-extension.json --root "$LOOM_ROOT" --format human
+loom extension remove --extension-id my-extension --root "$LOOM_ROOT" --format human
+```
+
+Migration notes:
+
+- Existing `loom connect` and capability flows remain unchanged.
+- `loom extension` is additive and contract-scoped to `meridian.extension.contract.v1`.
+
+Rollback plan:
+
+- Every install/remove writes a rollback receipt in `artifacts/extensions/receipts/`.
+- Use the receipt `rollback.command` to revert quickly from the same runtime root.
+
+## Auth contract v1 (Area 7.1)
+
+`auth_contract_v1` adds governed token alias lifecycle without persisting secret
+values.
+
+```bash
+loom auth status --root "$LOOM_ROOT" --format human
+loom auth rotate --alias manager_primary --env-var MERIDIAN_MANAGER_TOKEN_A --kernel-path "$MERIDIAN_KERNEL_PATH" --root "$LOOM_ROOT" --format human
+loom auth revoke --alias manager_primary --kernel-path "$MERIDIAN_KERNEL_PATH" --root "$LOOM_ROOT" --format human
+loom auth audit --root "$LOOM_ROOT" --limit 20 --format human
+```
+
+Migration notes:
+
+- Existing provider profile auth env vars are migrated into alias records on `loom auth status`.
+- This migration layer is additive and keeps current runtime profile behavior unchanged.
+
+Rollback plan:
+
+- Re-run `loom auth rotate` to restore a previous alias mapping.
+- Use `loom auth audit` to recover the exact event order and alias transitions.
+
+## Observability contract v1 (Area 8.1)
+
+`observability_contract_v1` gives one operator decision surface across runtime
+service, queue, proof chain, and route trace drift.
+
+```bash
+loom observe summary --root "$LOOM_ROOT" --fix-hints --format human
+loom observe alerts --root "$LOOM_ROOT" --fix-hints --format human
+loom observe watch --root "$LOOM_ROOT" --iterations 5 --interval-seconds 1 --format human
+```
+
+Migration notes:
+
+- Existing `loom doctor`, `loom status`, and report commands remain unchanged.
+- `loom observe` is additive and contract-scoped for operator diagnostics.
+
+Rollback plan:
+
+- Fall back to `loom doctor`, `loom status`, `loom parity report`, and `loom shadow report`.
 
 ## Create your first governed personal agent
 
@@ -100,6 +203,14 @@ loom breed agent_atlas agent_quill --agent-id agent_atlas --mutation-rate 0.15 -
 loom init-nation --charter "Shadow Era Charter" --org-id "$MERIDIAN_ORG_ID" --root "$LOOM_ROOT" --kernel-path "$MERIDIAN_KERNEL_PATH"
 loom connect scaffold --name grpc_action_adapter --transport grpc --action-schema meridian.a2a.action.v1 --root "$LOOM_ROOT"
 loom connect list --root "$LOOM_ROOT"
+loom connect validate --adapter-id grpc-action-adapter --root "$LOOM_ROOT"
+loom connect enable --adapter-id grpc-action-adapter --root "$LOOM_ROOT"
+loom connect test --adapter-id grpc-action-adapter --root "$LOOM_ROOT"
+loom connect health --adapter-id grpc-action-adapter --root "$LOOM_ROOT"
+loom connect disable --adapter-id grpc-action-adapter --root "$LOOM_ROOT"
+loom extension install --manifest ./extension.json --root "$LOOM_ROOT"
+loom extension export --extension-id my-extension --out ./my-extension-export.json --root "$LOOM_ROOT"
+loom extension remove --extension-id my-extension --root "$LOOM_ROOT"
 ```
 
 If the loop exits and the supervision policy says it should come back, reconcile it:
@@ -131,9 +242,33 @@ The full end-to-end flow lives in [docs/QUICKSTART.md](docs/QUICKSTART.md).
   - `loom run-agent reconcile`
   - `loom channel connect/list/health/test`
   - `loom memory receipts/fork/replay`
+  - `loom deploy host/verify/rollback`
 - Queue, job, audit, parity, and runtime-service surfaces on disk
 - Memory receipts for write/read/remove/prune/fork/replay operations
 - Proof of Governed Execution (PoGE) contract and receipt architecture
+
+## Connect Runtime Contract v2 migration notes
+
+- `loom connect` now normalizes registry state to `meridian.connect.registry.v2` with additive compatibility for v1 files.
+- Existing adapter manifests remain valid; migration fills missing lifecycle/diagnostics fields and preserves transport/action schema.
+- New operator lifecycle surface:
+  - `loom connect validate`
+  - `loom connect enable|disable`
+  - `loom connect test --adapter-id ...`
+  - `loom connect health --adapter-id ...`
+- Diagnostics/history persistence:
+  - `state/connect/health/*.json`
+  - `state/connect/tests/*.jsonl`
+  - `artifacts/connect/latest.json`
+
+Rollback plan:
+- Keep a copy of `state/connect/registry.json` before migration.
+- To roll back behavior, restore the backup registry and use only `loom connect scaffold|list`.
+- Validate post-rollback state with `make acceptance-connect-lane`.
+
+Operator acceptance lanes:
+- `make acceptance-connect-ecosystem-lane`
+- `make acceptance-branding-lane` (verifies M-wings/wordmark/lockup contract + desktop/mobile snapshots for `/`, `/demo`, `/compare`)
 
 ## Quickstart: three copy-paste examples
 
@@ -474,6 +609,36 @@ make acceptance-init-nation-lane
 ./scripts/acceptance_breed_lane.sh
 # or
 make acceptance-breed-lane
+
+# Area 3.1 lane (extension contract validate/install/remove/export + rollback receipt)
+./scripts/acceptance_extension_lane.sh
+# or
+make acceptance-extension-lane
+
+# P0 task 2 lane (one-command first proof quickstart)
+./scripts/acceptance_quickstart_lane.sh
+# or
+make acceptance-quickstart-lane
+
+# Area 6.1 lane (deploy host/verify/rollback idempotency vertical slice)
+./scripts/acceptance_deploy_lane.sh
+# or
+make acceptance-deploy-lane
+
+# Area 7.1 lane (auth_contract_v1 + rotate/revoke/audit governance flow)
+./scripts/acceptance_security_auth_lane.sh
+# or
+make acceptance-security-auth-lane
+
+# Area 8.1 lane (observability_contract_v1 summary/alerts/watch)
+./scripts/acceptance_observability_lane.sh
+# or
+make acceptance-observability-lane
+
+# Area 9.1 lane (community + OSS DX contributor surface)
+./scripts/acceptance_oss_dx_lane.sh
+# or
+make acceptance-oss-dx-lane
 ```
 
 Phase 1 merge gate (Direction 1 + 2 only):
@@ -643,6 +808,8 @@ The cryptographic execution-receipt architecture is defined in the
 
 - `loom init`, `loom doctor`, `loom health`, `loom status`
 - `loom start`, `loom stop`, `loom restart`, `loom logs`
+- `loom auth status|rotate|revoke|audit`
+- `loom observe summary|alerts|watch`
 - `loom queue inspect|consume|ack|run-once|run-until-empty|status`
 - `loom job list|inspect`
 - `loom parity report`

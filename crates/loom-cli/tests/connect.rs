@@ -1,4 +1,4 @@
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -309,5 +309,333 @@ fn connect_scaffold_rejects_unknown_transport() {
         stderr.contains("unsupported transport"),
         "expected unsupported transport error, got:\n{}",
         stderr
+    );
+}
+
+#[test]
+fn connect_validate_migrates_registry_v1_to_v2_additive_shape() {
+    let harness = Harness::new("validate_migrate_v2");
+    let registry_path = Path::new(harness.root_str()).join("state/connect/registry.json");
+    fs::create_dir_all(
+        registry_path
+            .parent()
+            .expect("registry parent should exist"),
+    )
+    .expect("create registry directory");
+    let legacy_registry = json!({
+        "schema_version": "meridian.connect.registry.v1",
+        "adapters": [
+            {
+                "schema_version": "meridian.connect.adapter.v1",
+                "adapter_id": "legacy-adapter",
+                "name": "legacy_adapter",
+                "transport": "http",
+                "action_schema": "meridian.runtime.v1",
+                "status": "scaffolded",
+                "created_at": "1",
+                "updated_at": "1"
+            }
+        ]
+    });
+    fs::write(
+        &registry_path,
+        serde_json::to_string_pretty(&legacy_registry).expect("serialize v1 registry"),
+    )
+    .expect("write v1 registry");
+
+    let validated = harness.json_ok(&[
+        "connect",
+        "validate",
+        "--adapter-id",
+        "legacy-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    assert_eq!(
+        validated.get("status").and_then(Value::as_str),
+        Some("connect_validated")
+    );
+    assert_eq!(
+        validated
+            .get("registry_schema_version")
+            .and_then(Value::as_str),
+        Some("meridian.connect.registry.v2")
+    );
+    assert_eq!(
+        validated
+            .pointer("/migration/legacy_schema_detected")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+
+    let upgraded: Value =
+        serde_json::from_str(&fs::read_to_string(&registry_path).expect("read upgraded registry"))
+            .expect("parse upgraded registry");
+    assert_eq!(
+        upgraded.get("schema_version").and_then(Value::as_str),
+        Some("meridian.connect.registry.v2")
+    );
+    assert_eq!(
+        upgraded
+            .pointer("/adapters/0/lifecycle/enabled")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        upgraded
+            .pointer("/adapters/0/runtime_contract")
+            .and_then(Value::as_str),
+        Some("connect_runtime_contract_v2")
+    );
+}
+
+#[test]
+fn connect_enable_disable_idempotent() {
+    let harness = Harness::new("enable_disable_idempotent");
+    harness.run_ok(&[
+        "connect",
+        "scaffold",
+        "--name",
+        "switchable_adapter",
+        "--transport",
+        "grpc",
+        "--action-schema",
+        "meridian.runtime.v1",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+
+    let disable_noop = harness.json_ok(&[
+        "connect",
+        "disable",
+        "--adapter-id",
+        "switchable-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    assert_eq!(
+        disable_noop.get("mode").and_then(Value::as_str),
+        Some("noop")
+    );
+    let enable_changed = harness.json_ok(&[
+        "connect",
+        "enable",
+        "--adapter-id",
+        "switchable-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    assert_eq!(
+        enable_changed.get("mode").and_then(Value::as_str),
+        Some("changed")
+    );
+
+    let enable_noop = harness.json_ok(&[
+        "connect",
+        "enable",
+        "--adapter-id",
+        "switchable-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    assert_eq!(
+        enable_noop.get("mode").and_then(Value::as_str),
+        Some("noop")
+    );
+    let disable_changed = harness.json_ok(&[
+        "connect",
+        "disable",
+        "--adapter-id",
+        "switchable-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    assert_eq!(
+        disable_changed.get("mode").and_then(Value::as_str),
+        Some("changed")
+    );
+}
+
+#[test]
+fn connect_test_and_health_persist_history_and_latest_artifact() {
+    let harness = Harness::new("test_health_history");
+    harness.run_ok(&[
+        "connect",
+        "scaffold",
+        "--name",
+        "history_adapter",
+        "--transport",
+        "mcp",
+        "--action-schema",
+        "meridian.runtime.v1",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    harness.run_ok(&[
+        "connect",
+        "enable",
+        "--adapter-id",
+        "history-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+
+    let tested = harness.json_ok(&[
+        "connect",
+        "test",
+        "--adapter-id",
+        "history-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    assert_eq!(
+        tested.get("status").and_then(Value::as_str),
+        Some("connect_tested")
+    );
+    assert_eq!(
+        tested.get("test_status").and_then(Value::as_str),
+        Some("pass")
+    );
+
+    let health = harness.json_ok(&[
+        "connect",
+        "health",
+        "--adapter-id",
+        "history-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    assert_eq!(
+        health.get("status").and_then(Value::as_str),
+        Some("connect_health")
+    );
+    assert_eq!(
+        health.get("health_status").and_then(Value::as_str),
+        Some("healthy")
+    );
+
+    let tests_history_path =
+        Path::new(harness.root_str()).join("state/connect/tests/history-adapter.jsonl");
+    assert!(tests_history_path.exists(), "missing tests history file");
+    let history_lines = fs::read_to_string(&tests_history_path)
+        .expect("read tests history")
+        .lines()
+        .count();
+    assert!(history_lines >= 1, "expected test history entries");
+
+    let health_path = Path::new(harness.root_str()).join("state/connect/health/history-adapter.json");
+    assert!(health_path.exists(), "missing health file");
+    let persisted_health: Value =
+        serde_json::from_str(&fs::read_to_string(&health_path).expect("read health json"))
+            .expect("parse health json");
+    assert_eq!(
+        persisted_health
+            .get("health_status")
+            .and_then(Value::as_str),
+        Some("healthy")
+    );
+
+    let latest_artifact_path = Path::new(harness.root_str()).join("artifacts/connect/latest.json");
+    let latest: Value = serde_json::from_str(
+        &fs::read_to_string(&latest_artifact_path).expect("read connect latest artifact"),
+    )
+    .expect("parse connect latest artifact");
+    assert_eq!(
+        latest.get("status").and_then(Value::as_str),
+        Some("connect_health")
+    );
+}
+
+#[test]
+fn connect_test_matrix_covers_all_transports_and_disabled_fail_path() {
+    let harness = Harness::new("matrix");
+    for (name, transport) in [
+        ("grpc_diag_adapter", "grpc"),
+        ("a2a_diag_adapter", "a2a"),
+        ("mcp_diag_adapter", "mcp"),
+        ("http_diag_adapter", "http"),
+        ("ros2_diag_adapter", "ros2"),
+    ] {
+        harness.run_ok(&[
+            "connect",
+            "scaffold",
+            "--name",
+            name,
+            "--transport",
+            transport,
+            "--action-schema",
+            "meridian.runtime.v1",
+            "--root",
+            harness.root_str(),
+            "--format",
+            "json",
+        ]);
+        harness.run_ok(&[
+            "connect",
+            "enable",
+            "--adapter-id",
+            &name.replace('_', "-"),
+            "--root",
+            harness.root_str(),
+            "--format",
+            "json",
+        ]);
+        let tested = harness.json_ok(&[
+            "connect",
+            "test",
+            "--adapter-id",
+            &name.replace('_', "-"),
+            "--root",
+            harness.root_str(),
+            "--format",
+            "json",
+        ]);
+        assert_eq!(tested.get("test_status").and_then(Value::as_str), Some("pass"));
+    }
+
+    harness.run_ok(&[
+        "connect",
+        "disable",
+        "--adapter-id",
+        "grpc-diag-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    let failure = harness.run_fail(&[
+        "connect",
+        "test",
+        "--adapter-id",
+        "grpc-diag-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    assert!(
+        failure.contains("disabled"),
+        "expected disabled fail path, got:\n{}",
+        failure
     );
 }
