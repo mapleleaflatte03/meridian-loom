@@ -160,19 +160,15 @@ fn observe_summary_flags_missing_proof_chain_and_includes_fix_hints() {
         .get("alerts")
         .and_then(Value::as_array)
         .expect("alerts array");
-    assert!(
-        alerts
-            .iter()
-            .filter_map(|item| item.get("code").and_then(Value::as_str))
-            .any(|code| code == "proof_chain_missing")
-    );
-    assert!(
-        payload
-            .get("fix_hints")
-            .and_then(Value::as_array)
-            .map(|items| !items.is_empty())
-            .unwrap_or(false)
-    );
+    assert!(alerts
+        .iter()
+        .filter_map(|item| item.get("code").and_then(Value::as_str))
+        .any(|code| code == "proof_chain_missing"));
+    assert!(payload
+        .get("fix_hints")
+        .and_then(Value::as_array)
+        .map(|items| !items.is_empty())
+        .unwrap_or(false));
 }
 
 #[test]

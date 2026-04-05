@@ -2046,9 +2046,7 @@ fn parse_semantic_embodied_physical_request(
     let actor_agent_id = value_string(actor.get("agent_id"));
     let actor_org_id = value_string(actor.get("org_id"));
     if actor_agent_id.is_empty() || actor_org_id.is_empty() {
-        return Err(
-            "embodied physical actor requires non-empty agent_id and org_id".to_string(),
-        );
+        return Err("embodied physical actor requires non-empty agent_id and org_id".to_string());
     }
     let action = request_payload
         .get("action")
@@ -2100,9 +2098,8 @@ fn parse_semantic_embodied_physical_request(
         .get("ack_required")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let lifecycle_ack_timeout_seconds = lifecycle
-        .get("ack_timeout_seconds")
-        .and_then(Value::as_u64);
+    let lifecycle_ack_timeout_seconds =
+        lifecycle.get("ack_timeout_seconds").and_then(Value::as_u64);
     let lifecycle_cancel_on_ack_timeout = lifecycle
         .get("cancel_on_ack_timeout")
         .and_then(Value::as_bool)
@@ -2906,7 +2903,12 @@ fn run_shadow_backend_grpc_physical(request: &ShadowRunRequest) -> ShadowResult<
     let start_ms = current_epoch_ms();
     let mut interceptor = PoGEInterceptor::new_validated(
         request.warrant.clone(),
-        shadow_grpc_physical_module_digest(&grpc_target, &grpc_rpc, &request.http_headers, request_json),
+        shadow_grpc_physical_module_digest(
+            &grpc_target,
+            &grpc_rpc,
+            &request.http_headers,
+            request_json,
+        ),
         format!(
             "shadow:{}:{}:{}:{}",
             request.org_id, request.agent_id, request.action_type, request.resource
@@ -3011,7 +3013,9 @@ fn run_shadow_backend_grpc_physical(request: &ShadowRunRequest) -> ShadowResult<
         }
     }
     let lifecycle_status = value_string(stdout_json.get("lifecycle_status"));
-    let lifecycle_stream_event_count = stdout_json.get("stream_event_count").and_then(Value::as_u64);
+    let lifecycle_stream_event_count = stdout_json
+        .get("stream_event_count")
+        .and_then(Value::as_u64);
     let lifecycle_ack_latency_ms = stdout_json.get("ack_latency_ms").and_then(Value::as_u64);
     let remediation_action = if let Some(reason) = transport_fallback.as_deref() {
         format!("transport_unavailable:{}:{}", reason, remediation_profile)

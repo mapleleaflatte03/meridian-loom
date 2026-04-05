@@ -161,7 +161,8 @@ fn handle_memory_fork(args: &[String]) -> LoomResult<()> {
         "note": "native memory fork lane created from governed replay selection",
     });
     let rendered = serde_json::to_string_pretty(&payload).map_err(|error| error.to_string())?;
-    std::fs::write(&fork_artifact_path, rendered.clone() + "\n").map_err(|error| error.to_string())?;
+    std::fs::write(&fork_artifact_path, rendered.clone() + "\n")
+        .map_err(|error| error.to_string())?;
     std::fs::write(&latest_artifact_path, rendered + "\n").map_err(|error| error.to_string())?;
     print_memory_fork_payload(payload, &format)
 }

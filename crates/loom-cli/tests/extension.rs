@@ -310,10 +310,9 @@ fn extension_install_export_remove_roundtrip_emits_rollback_receipts() {
         exported.get("status").and_then(Value::as_str),
         Some("extension_exported")
     );
-    let exported_manifest: Value = serde_json::from_str(
-        &fs::read_to_string(&exported_path).expect("read exported manifest"),
-    )
-    .expect("parse exported manifest");
+    let exported_manifest: Value =
+        serde_json::from_str(&fs::read_to_string(&exported_path).expect("read exported manifest"))
+            .expect("parse exported manifest");
     assert_eq!(
         exported_manifest
             .get("extension_id")
@@ -339,9 +338,10 @@ fn extension_install_export_remove_roundtrip_emits_rollback_receipts() {
         .get("receipt_path")
         .and_then(Value::as_str)
         .expect("remove receipt path");
-    let remove_receipt: Value =
-        serde_json::from_str(&fs::read_to_string(remove_receipt_path).expect("read remove receipt"))
-            .expect("parse remove receipt");
+    let remove_receipt: Value = serde_json::from_str(
+        &fs::read_to_string(remove_receipt_path).expect("read remove receipt"),
+    )
+    .expect("parse remove receipt");
     assert_eq!(
         remove_receipt
             .pointer("/rollback/action")

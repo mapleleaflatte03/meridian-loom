@@ -71,7 +71,8 @@ fn handle_job_settle(args: &[String]) -> LoomResult<()> {
         .unwrap_or_else(|| "sp1".to_string())
         .parse::<ZkProofBackend>()
         .map_err(|error| format!("invalid --zk-backend: {}", error))?;
-    let capture = settle_latest_execution_with_zk(&root, &kernel_path, actual_cost_usd, zk_backend)?;
+    let capture =
+        settle_latest_execution_with_zk(&root, &kernel_path, actual_cost_usd, zk_backend)?;
 
     if format == "json" {
         println!(

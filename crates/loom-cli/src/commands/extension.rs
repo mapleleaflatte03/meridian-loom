@@ -131,7 +131,8 @@ fn handle_extension_install(args: &[String]) -> LoomResult<()> {
 
     let manifest_text =
         serde_json::to_string_pretty(&manifest).map_err(|error| error.to_string())? + "\n";
-    std::fs::write(&manifest_store_path, manifest_text.as_bytes()).map_err(|error| error.to_string())?;
+    std::fs::write(&manifest_store_path, manifest_text.as_bytes())
+        .map_err(|error| error.to_string())?;
     let checksum_sha256 = sha256_hex(manifest_text.as_bytes());
 
     upsert_registry_entry(
@@ -230,7 +231,8 @@ fn handle_extension_remove(args: &[String]) -> LoomResult<()> {
     if let Some(parent) = rollback_manifest_backup_path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-    std::fs::copy(&manifest_path, &rollback_manifest_backup_path).map_err(|error| error.to_string())?;
+    std::fs::copy(&manifest_path, &rollback_manifest_backup_path)
+        .map_err(|error| error.to_string())?;
     std::fs::remove_file(&manifest_path).map_err(|error| error.to_string())?;
 
     remove_registry_entry(&mut registry, extension_id.as_str())?;
@@ -309,7 +311,10 @@ fn print_extension_payload(payload: &Value, format: &str) -> LoomResult<()> {
             print_startup_banner();
             let mut lines = vec![format!(
                 "status:              {}",
-                payload.get("status").and_then(Value::as_str).unwrap_or("unknown")
+                payload
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
             )];
             if let Some(mode) = payload.get("mode").and_then(Value::as_str) {
                 lines.push(format!("mode:                {}", mode));
@@ -359,10 +364,18 @@ fn output_format(args: &[String]) -> String {
 }
 
 fn load_manifest(path: &Path) -> LoomResult<Value> {
-    let raw = std::fs::read_to_string(path)
-        .map_err(|error| format!("failed to read extension manifest {}: {error}", path.display()))?;
-    serde_json::from_str::<Value>(&raw)
-        .map_err(|error| format!("invalid extension manifest json {}: {error}", path.display()))
+    let raw = std::fs::read_to_string(path).map_err(|error| {
+        format!(
+            "failed to read extension manifest {}: {error}",
+            path.display()
+        )
+    })?;
+    serde_json::from_str::<Value>(&raw).map_err(|error| {
+        format!(
+            "invalid extension manifest json {}: {error}",
+            path.display()
+        )
+    })
 }
 
 fn governance_guards_from_manifest(manifest: &Value) -> Value {
@@ -398,7 +411,8 @@ fn validate_manifest(manifest: &Value) -> Vec<String> {
     if extension_id.is_empty() {
         errors.push("extension_id is required".to_string());
     } else if sanitize_token(extension_id) != extension_id {
-        errors.push("extension_id must be lowercase token form (letters/digits/hyphen)".to_string());
+        errors
+            .push("extension_id must be lowercase token form (letters/digits/hyphen)".to_string());
     }
     if manifest
         .get("name")
@@ -499,8 +513,14 @@ fn extension_latest_artifact_path(root: &Path) -> PathBuf {
     root.join(DEFAULT_EXTENSION_LATEST_ARTIFACT_PATH)
 }
 
-fn write_registry_snapshot(root: &Path, receipt_id: &str, suffix: &str, registry: &Value) -> LoomResult<PathBuf> {
-    let path = extension_rollback_dir(root).join(format!("{}_{}_registry.json", receipt_id, suffix));
+fn write_registry_snapshot(
+    root: &Path,
+    receipt_id: &str,
+    suffix: &str,
+    registry: &Value,
+) -> LoomResult<PathBuf> {
+    let path =
+        extension_rollback_dir(root).join(format!("{}_{}_registry.json", receipt_id, suffix));
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
@@ -581,11 +601,17 @@ fn normalize_registry(registry: &mut Value) {
     {
         registry["schema_version"] = Value::String(EXTENSION_REGISTRY_SCHEMA.to_string());
     }
-    if !registry.get("extensions").map(Value::is_array).unwrap_or(false) {
+    if !registry
+        .get("extensions")
+        .map(Value::is_array)
+        .unwrap_or(false)
+    {
         registry["extensions"] = Value::Array(Vec::new());
     }
     if let Some(items) = registry.get_mut("extensions").and_then(Value::as_array_mut) {
-        items.sort_by(|left, right| value_string(left.get("extension_id")).cmp(value_string(right.get("extension_id"))));
+        items.sort_by(|left, right| {
+            value_string(left.get("extension_id")).cmp(value_string(right.get("extension_id")))
+        });
     }
 }
 
@@ -624,7 +650,9 @@ fn upsert_registry_entry(registry: &mut Value, entry: Value) -> LoomResult<()> {
     } else {
         items.push(entry);
     }
-    items.sort_by(|left, right| value_string(left.get("extension_id")).cmp(value_string(right.get("extension_id"))));
+    items.sort_by(|left, right| {
+        value_string(left.get("extension_id")).cmp(value_string(right.get("extension_id")))
+    });
     Ok(())
 }
 

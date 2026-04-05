@@ -167,7 +167,9 @@ fn write_signed_warrant(path: &Path) {
     for (index, slot) in id.iter_mut().enumerate() {
         *slot = (index as u8).wrapping_mul(9).wrapping_add(7);
     }
-    let scope_cbor = vec![0xA1, 0x69, b'e', b'm', b'b', b'o', b'd', b'i', b'e', b'd', 0xF5];
+    let scope_cbor = vec![
+        0xA1, 0x69, b'e', b'm', b'b', b'o', b'd', b'i', b'e', b'd', 0xF5,
+    ];
     let expiry_epoch_ms = epoch_ms_now() + 60_000;
     let signature: Signature = signer.sign(&warrant_message(id, &scope_cbor, expiry_epoch_ms));
     let payload = json!({
@@ -379,7 +381,9 @@ fn shadow_run_grpc_physical_stream_ack_lifecycle_records_ack() {
         ],
     );
 
-    let diagnostics_path = harness.root.join("artifacts/shadow/grpc_action/latest.json");
+    let diagnostics_path = harness
+        .root
+        .join("artifacts/shadow/grpc_action/latest.json");
     let diagnostics: Value = serde_json::from_str(
         &fs::read_to_string(&diagnostics_path).expect("read grpc physical diagnostics"),
     )
@@ -436,7 +440,9 @@ fn shadow_run_grpc_physical_stream_ack_timeout_cancels() {
         ],
     );
 
-    let diagnostics_path = harness.root.join("artifacts/shadow/grpc_action/latest.json");
+    let diagnostics_path = harness
+        .root
+        .join("artifacts/shadow/grpc_action/latest.json");
     let diagnostics: Value = serde_json::from_str(
         &fs::read_to_string(&diagnostics_path).expect("read grpc physical diagnostics"),
     )

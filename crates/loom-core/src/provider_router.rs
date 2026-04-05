@@ -6,6 +6,7 @@ use serde_json::{json, Value};
 use url::Url;
 
 #[cfg(test)]
+#[allow(clippy::duplicate_mod)]
 #[path = "agent_runtime.rs"]
 mod agent_runtime;
 

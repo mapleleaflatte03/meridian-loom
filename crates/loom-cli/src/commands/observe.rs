@@ -172,9 +172,10 @@ fn build_observability_payload(root: &Path, include_fix_hints: bool) -> LoomResu
         ));
     }
 
-    let overall_status = if alerts.iter().any(|item| {
-        item.get("severity").and_then(Value::as_str) == Some("critical")
-    }) {
+    let overall_status = if alerts
+        .iter()
+        .any(|item| item.get("severity").and_then(Value::as_str) == Some("critical"))
+    {
         "degraded"
     } else if alerts.is_empty() {
         "healthy"
@@ -345,13 +346,8 @@ fn read_optional_json(path: &Path) -> LoomResult<Option<Value>> {
         return Ok(None);
     }
     let raw = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
-    let value = serde_json::from_str::<Value>(&raw).map_err(|error| {
-        format!(
-            "failed to parse json at {}: {}",
-            path.display(),
-            error
-        )
-    })?;
+    let value = serde_json::from_str::<Value>(&raw)
+        .map_err(|error| format!("failed to parse json at {}: {}", path.display(), error))?;
     Ok(Some(value))
 }
 
@@ -362,7 +358,10 @@ fn print_observe_payload(payload: &Value, format: &str) -> LoomResult<()> {
             let mut lines = vec![
                 format!(
                     "status:              {}",
-                    payload.get("status").and_then(Value::as_str).unwrap_or("unknown")
+                    payload
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown")
                 ),
                 format!(
                     "contract_version:    {}",

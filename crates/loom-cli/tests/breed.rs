@@ -8,12 +8,8 @@ static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn unique_temp_dir(label: &str) -> PathBuf {
     let n = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
-    let dir = std::env::temp_dir().join(format!(
-        "loom_breed_{}_{}_{}",
-        label,
-        std::process::id(),
-        n
-    ));
+    let dir =
+        std::env::temp_dir().join(format!("loom_breed_{}_{}_{}", label, std::process::id(), n));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("create temp dir");
     dir
@@ -143,11 +139,7 @@ def get_agent(agent_id, org_id=None):
     )
     .expect("write registry");
 
-    let restrictions = if blocked_by_court {
-        "['breed']"
-    } else {
-        "[]"
-    };
+    let restrictions = if blocked_by_court { "['breed']" } else { "[]" };
     fs::write(
         kernel_dir.join("court.py"),
         format!(
@@ -201,7 +193,10 @@ fn breed_creates_dna_artifact_when_governance_allows() {
         .and_then(Value::as_str)
         .map(|value| !value.is_empty())
         .unwrap_or(false));
-    assert!(harness.root.join("artifacts/evolution/latest.json").exists());
+    assert!(harness
+        .root
+        .join("artifacts/evolution/latest.json")
+        .exists());
 }
 
 #[test]
@@ -271,7 +266,10 @@ fn breed_is_blocked_by_court_gate() {
         output.get("court_status").and_then(Value::as_str),
         Some("blocked")
     );
-    assert!(!harness.root.join("artifacts/evolution/latest.json").exists());
+    assert!(!harness
+        .root
+        .join("artifacts/evolution/latest.json")
+        .exists());
 }
 
 #[test]
@@ -300,5 +298,8 @@ fn breed_is_blocked_by_authority_gate() {
         output.get("authority_status").and_then(Value::as_str),
         Some("denied")
     );
-    assert!(!harness.root.join("artifacts/evolution/latest.json").exists());
+    assert!(!harness
+        .root
+        .join("artifacts/evolution/latest.json")
+        .exists());
 }

@@ -12,6 +12,7 @@ use crate::wasm_limits::{default_limits, render_limits_human, validate_limits, W
 use crate::wasm_profiles::{render_pooling_config_human, PoolingConfig, PoolingProfile};
 
 #[cfg(test)]
+#[allow(clippy::duplicate_mod)]
 #[path = "provider_router.rs"]
 mod provider_router;
 

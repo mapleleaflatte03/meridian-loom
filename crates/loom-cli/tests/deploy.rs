@@ -142,7 +142,10 @@ fn deploy_host_is_idempotent_for_same_target_version() {
         first.get("status").and_then(Value::as_str),
         Some("deploy_host_applied")
     );
-    assert_eq!(first.get("idempotent").and_then(Value::as_bool), Some(false));
+    assert_eq!(
+        first.get("idempotent").and_then(Value::as_bool),
+        Some(false)
+    );
 
     let second = harness.json_ok(&[
         "deploy",
@@ -158,7 +161,10 @@ fn deploy_host_is_idempotent_for_same_target_version() {
         second.get("status").and_then(Value::as_str),
         Some("deploy_host_idempotent")
     );
-    assert_eq!(second.get("idempotent").and_then(Value::as_bool), Some(true));
+    assert_eq!(
+        second.get("idempotent").and_then(Value::as_bool),
+        Some(true)
+    );
 }
 
 #[test]
@@ -239,7 +245,10 @@ fn deploy_rollback_restores_previous_version() {
         rollback.get("current_version").and_then(Value::as_str),
         Some("v1")
     );
-    assert_eq!(rollback.get("idempotent").and_then(Value::as_bool), Some(false));
+    assert_eq!(
+        rollback.get("idempotent").and_then(Value::as_bool),
+        Some(false)
+    );
 
     let rollback_again = harness.json_ok(&[
         "deploy",
@@ -256,7 +265,9 @@ fn deploy_rollback_restores_previous_version() {
         Some("deploy_rollback_idempotent")
     );
     assert_eq!(
-        rollback_again.get("current_version").and_then(Value::as_str),
+        rollback_again
+            .get("current_version")
+            .and_then(Value::as_str),
         Some("v1")
     );
     assert_eq!(

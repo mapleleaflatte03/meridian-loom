@@ -8,7 +8,8 @@ static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn unique_temp_dir(label: &str) -> PathBuf {
     let n = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
-    let dir = std::env::temp_dir().join(format!("loom_auth_{}_{}_{}", label, std::process::id(), n));
+    let dir =
+        std::env::temp_dir().join(format!("loom_auth_{}_{}_{}", label, std::process::id(), n));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("create temp dir");
     dir
@@ -184,8 +185,18 @@ def pre_action_check(org_id, envelope):
 #[test]
 fn auth_status_scaffolds_auth_contract_and_aliases() {
     let harness = Harness::new("status_scaffold");
-    let payload = harness.json_ok(&["auth", "status", "--root", harness.root_str(), "--format", "json"]);
-    assert_eq!(payload.get("status").and_then(Value::as_str), Some("auth_status"));
+    let payload = harness.json_ok(&[
+        "auth",
+        "status",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    assert_eq!(
+        payload.get("status").and_then(Value::as_str),
+        Some("auth_status")
+    );
     assert_eq!(
         payload.get("contract_version").and_then(Value::as_str),
         Some("auth_contract_v1")
@@ -236,7 +247,10 @@ fn auth_rotate_and_revoke_record_audit_with_governance() {
         "--format",
         "json",
     ]);
-    assert_eq!(rotate.get("status").and_then(Value::as_str), Some("auth_rotated"));
+    assert_eq!(
+        rotate.get("status").and_then(Value::as_str),
+        Some("auth_rotated")
+    );
     assert_eq!(
         rotate
             .pointer("/governance/allowed")
@@ -264,11 +278,12 @@ fn auth_rotate_and_revoke_record_audit_with_governance() {
         "--format",
         "json",
     ]);
-    assert_eq!(revoke.get("status").and_then(Value::as_str), Some("auth_revoked"));
     assert_eq!(
-        revoke
-            .pointer("/alias/status")
-            .and_then(Value::as_str),
+        revoke.get("status").and_then(Value::as_str),
+        Some("auth_revoked")
+    );
+    assert_eq!(
+        revoke.pointer("/alias/status").and_then(Value::as_str),
         Some("revoked")
     );
 

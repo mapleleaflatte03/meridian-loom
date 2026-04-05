@@ -59,11 +59,7 @@ fn handle_deploy_host(args: &[String]) -> LoomResult<()> {
     let mut state = load_deploy_state(&root)?;
     let current_version = state_current_version(&state);
     let idempotent = !current_version.is_empty() && current_version == target_version;
-    let deploy_id = format!(
-        "dep_{}_{}",
-        now,
-        sanitize_token(target_version.as_str())
-    );
+    let deploy_id = format!("dep_{}_{}", now, sanitize_token(target_version.as_str()));
     let status = if idempotent {
         "deploy_host_idempotent"
     } else {
@@ -175,11 +171,7 @@ fn handle_deploy_rollback(args: &[String]) -> LoomResult<()> {
         requested_target.trim().to_string()
     };
     let idempotent = target_version == current_version;
-    let rollback_id = format!(
-        "rlb_{}_{}",
-        now,
-        sanitize_token(target_version.as_str())
-    );
+    let rollback_id = format!("rlb_{}_{}", now, sanitize_token(target_version.as_str()));
     let status = if idempotent {
         "deploy_rollback_idempotent"
     } else {
@@ -263,10 +255,19 @@ fn load_deploy_state(root: &Path) -> LoomResult<Value> {
     if !payload.is_object() {
         payload = json!({});
     }
-    if payload.get("schema_version").and_then(Value::as_str).unwrap_or("").is_empty() {
+    if payload
+        .get("schema_version")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .is_empty()
+    {
         payload["schema_version"] = Value::String(DEPLOY_STATE_SCHEMA.to_string());
     }
-    if !payload.get("current").map(Value::is_object).unwrap_or(false) {
+    if !payload
+        .get("current")
+        .map(Value::is_object)
+        .unwrap_or(false)
+    {
         payload["current"] = json!({});
     }
     if !payload.get("history").map(Value::is_array).unwrap_or(false) {

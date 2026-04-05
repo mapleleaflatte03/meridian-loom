@@ -3,7 +3,6 @@
 /// Defines the configuration layer that will be consumed by the wasmtime
 /// `StoreLimitsBuilder` once the runtime wiring is connected. These structures
 /// are pure configuration — no wasmtime dependency required.
-
 /// Hard ceiling for max_memory_bytes validation (4 GiB).
 const MAX_MEMORY_CEILING: u64 = 4 * 1024 * 1024 * 1024;
 

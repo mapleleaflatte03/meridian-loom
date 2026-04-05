@@ -284,7 +284,9 @@ fn capture_auth_governance(
     let config = read_config(root)?;
     let kernel_path = take_value(args, "--kernel-path")
         .or_else(|| trim_to_option(&config.kernel_path))
-        .ok_or_else(|| "auth governance checks require --kernel-path or configured kernel_path".to_string())?;
+        .ok_or_else(|| {
+            "auth governance checks require --kernel-path or configured kernel_path".to_string()
+        })?;
     let org_id = take_value(args, "--org-id").unwrap_or_else(|| config.org_id.clone());
     let agent_id = take_value(args, "--agent-id").unwrap_or_else(|| "agent_main".to_string());
     let identity = resolve_agent_identity(root, Some(&kernel_path), &agent_id, Some(&org_id))?;
@@ -332,7 +334,10 @@ fn print_auth_payload(payload: &Value, format: &str) -> LoomResult<()> {
             print_startup_banner();
             let mut lines = vec![format!(
                 "status:              {}",
-                payload.get("status").and_then(Value::as_str).unwrap_or("unknown")
+                payload
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
             )];
             if let Some(version) = payload.get("contract_version").and_then(Value::as_str) {
                 lines.push(format!("contract_version:    {}", version));
@@ -400,8 +405,8 @@ fn load_aliases(root: &Path) -> LoomResult<BTreeMap<String, Value>> {
         return Ok(BTreeMap::new());
     }
     let raw = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
-    let value: Value =
-        serde_json::from_str(&raw).map_err(|error| format!("invalid auth aliases json: {error}"))?;
+    let value: Value = serde_json::from_str(&raw)
+        .map_err(|error| format!("invalid auth aliases json: {error}"))?;
     let mut out = BTreeMap::new();
     if let Some(aliases) = value.get("aliases").and_then(Value::as_object) {
         for (alias, record) in aliases {
@@ -484,7 +489,10 @@ fn default_alias_record(alias: &str, now_ms: u64) -> Value {
 }
 
 fn alias_summaries(aliases: &BTreeMap<String, Value>) -> Vec<Value> {
-    let mut out = aliases.values().map(alias_record_summary).collect::<Vec<_>>();
+    let mut out = aliases
+        .values()
+        .map(alias_record_summary)
+        .collect::<Vec<_>>();
     out.sort_by(|left, right| {
         left.get("alias")
             .and_then(Value::as_str)

@@ -685,7 +685,8 @@ fn handle_shadow_run(args: &[String]) -> LoomResult<()> {
     } else if is_grpc_physical {
         let grpc_service = take_value(args, "--grpc-service")
             .unwrap_or_else(|| "meridian.embodied.action.v1.PhysicalActionService".to_string());
-        let grpc_method = take_value(args, "--grpc-method").unwrap_or_else(|| "Execute".to_string());
+        let grpc_method =
+            take_value(args, "--grpc-method").unwrap_or_else(|| "Execute".to_string());
         let grpc_service = grpc_service.trim();
         let grpc_method = grpc_method.trim();
         if grpc_service.is_empty() || grpc_method.is_empty() {
@@ -722,12 +723,14 @@ fn handle_shadow_run(args: &[String]) -> LoomResult<()> {
         let force_plaintext = has_flag(args, "--grpc-plaintext");
         let force_tls = has_flag(args, "--grpc-tls");
         if force_plaintext && force_tls {
-            return Err(
-                format!(
-                    "shadow run --backend {} does not allow both --grpc-plaintext and --grpc-tls",
-                    if is_grpc_physical { "grpc_physical" } else { "grpc_action" }
-                ),
-            );
+            return Err(format!(
+                "shadow run --backend {} does not allow both --grpc-plaintext and --grpc-tls",
+                if is_grpc_physical {
+                    "grpc_physical"
+                } else {
+                    "grpc_action"
+                }
+            ));
         }
         if force_plaintext {
             http_headers.push(("x-loom-grpc-plaintext".to_string(), "true".to_string()));
@@ -750,7 +753,11 @@ fn handle_shadow_run(args: &[String]) -> LoomResult<()> {
             if !(1..=120).contains(&timeout_seconds) {
                 return Err(format!(
                     "shadow run --backend {} requires --grpc-timeout-seconds between 1 and 120",
-                    if is_grpc_physical { "grpc_physical" } else { "grpc_action" }
+                    if is_grpc_physical {
+                        "grpc_physical"
+                    } else {
+                        "grpc_action"
+                    }
                 ));
             }
             http_headers.push((
@@ -763,7 +770,11 @@ fn handle_shadow_run(args: &[String]) -> LoomResult<()> {
             if authority.is_empty() {
                 return Err(format!(
                     "shadow run --backend {} received empty --grpc-authority",
-                    if is_grpc_physical { "grpc_physical" } else { "grpc_action" }
+                    if is_grpc_physical {
+                        "grpc_physical"
+                    } else {
+                        "grpc_action"
+                    }
                 ));
             }
             http_headers.push(("x-loom-grpc-authority".to_string(), authority.to_string()));
@@ -773,7 +784,11 @@ fn handle_shadow_run(args: &[String]) -> LoomResult<()> {
             if import_path.is_empty() {
                 return Err(format!(
                     "shadow run --backend {} received empty --grpc-import-path",
-                    if is_grpc_physical { "grpc_physical" } else { "grpc_action" }
+                    if is_grpc_physical {
+                        "grpc_physical"
+                    } else {
+                        "grpc_action"
+                    }
                 ));
             }
             http_headers.push((
@@ -786,7 +801,11 @@ fn handle_shadow_run(args: &[String]) -> LoomResult<()> {
             if proto.is_empty() {
                 return Err(format!(
                     "shadow run --backend {} received empty --grpc-proto",
-                    if is_grpc_physical { "grpc_physical" } else { "grpc_action" }
+                    if is_grpc_physical {
+                        "grpc_physical"
+                    } else {
+                        "grpc_action"
+                    }
                 ));
             }
             http_headers.push(("x-loom-grpc-proto".to_string(), proto.to_string()));
@@ -796,7 +815,11 @@ fn handle_shadow_run(args: &[String]) -> LoomResult<()> {
             if protoset.is_empty() {
                 return Err(format!(
                     "shadow run --backend {} received empty --grpc-protoset",
-                    if is_grpc_physical { "grpc_physical" } else { "grpc_action" }
+                    if is_grpc_physical {
+                        "grpc_physical"
+                    } else {
+                        "grpc_action"
+                    }
                 ));
             }
             http_headers.push(("x-loom-grpc-protoset".to_string(), protoset.to_string()));
@@ -810,7 +833,10 @@ fn handle_shadow_run(args: &[String]) -> LoomResult<()> {
     let grpc_physical_lifecycle_mode =
         take_value(args, "--grpc-physical-lifecycle").unwrap_or_else(|| "unary".to_string());
     let grpc_physical_lifecycle_mode = grpc_physical_lifecycle_mode.trim().to_string();
-    if is_grpc_physical && grpc_physical_lifecycle_mode != "unary" && grpc_physical_lifecycle_mode != "stream" {
+    if is_grpc_physical
+        && grpc_physical_lifecycle_mode != "unary"
+        && grpc_physical_lifecycle_mode != "stream"
+    {
         return Err(format!(
             "shadow run --backend grpc_physical expects --grpc-physical-lifecycle unary|stream, got '{}'",
             grpc_physical_lifecycle_mode
@@ -819,8 +845,12 @@ fn handle_shadow_run(args: &[String]) -> LoomResult<()> {
     let grpc_physical_ack_required = has_flag(args, "--grpc-physical-ack-required");
     let grpc_physical_ack_timeout_seconds = take_value(args, "--grpc-physical-ack-timeout-seconds")
         .map(|raw| {
-            raw.parse::<u64>()
-                .map_err(|error| format!("invalid --grpc-physical-ack-timeout-seconds '{}': {}", raw, error))
+            raw.parse::<u64>().map_err(|error| {
+                format!(
+                    "invalid --grpc-physical-ack-timeout-seconds '{}': {}",
+                    raw, error
+                )
+            })
         })
         .transpose()?;
     if is_grpc_physical {
@@ -837,13 +867,19 @@ fn handle_shadow_run(args: &[String]) -> LoomResult<()> {
             }
         }
     }
-    let grpc_physical_cancel_on_ack_timeout = has_flag(args, "--grpc-physical-cancel-on-ack-timeout");
-    let grpc_physical_cancel_after_seconds = take_value(args, "--grpc-physical-cancel-after-seconds")
-        .map(|raw| {
-            raw.parse::<u64>()
-                .map_err(|error| format!("invalid --grpc-physical-cancel-after-seconds '{}': {}", raw, error))
-        })
-        .transpose()?;
+    let grpc_physical_cancel_on_ack_timeout =
+        has_flag(args, "--grpc-physical-cancel-on-ack-timeout");
+    let grpc_physical_cancel_after_seconds =
+        take_value(args, "--grpc-physical-cancel-after-seconds")
+            .map(|raw| {
+                raw.parse::<u64>().map_err(|error| {
+                    format!(
+                        "invalid --grpc-physical-cancel-after-seconds '{}': {}",
+                        raw, error
+                    )
+                })
+            })
+            .transpose()?;
     if is_grpc_physical {
         if let Some(cancel_after) = grpc_physical_cancel_after_seconds {
             if !(1..=600).contains(&cancel_after) {
@@ -861,14 +897,35 @@ fn handle_shadow_run(args: &[String]) -> LoomResult<()> {
         );
     }
     if is_grpc_physical {
-        if physical_robot_id.as_deref().map(str::trim).unwrap_or_default().is_empty() {
-            return Err("shadow run --backend grpc_physical requires --physical-robot-id".to_string());
+        if physical_robot_id
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default()
+            .is_empty()
+        {
+            return Err(
+                "shadow run --backend grpc_physical requires --physical-robot-id".to_string(),
+            );
         }
-        if physical_target.as_deref().map(str::trim).unwrap_or_default().is_empty() {
-            return Err("shadow run --backend grpc_physical requires --physical-target".to_string());
+        if physical_target
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default()
+            .is_empty()
+        {
+            return Err(
+                "shadow run --backend grpc_physical requires --physical-target".to_string(),
+            );
         }
-        if physical_command.as_deref().map(str::trim).unwrap_or_default().is_empty() {
-            return Err("shadow run --backend grpc_physical requires --physical-command".to_string());
+        if physical_command
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default()
+            .is_empty()
+        {
+            return Err(
+                "shadow run --backend grpc_physical requires --physical-command".to_string(),
+            );
         }
         if physical_safety_class
             .as_deref()
@@ -1536,7 +1593,6 @@ fn build_shadow_embodied_physical_request_json(
             "settlement_mode": "treasury_gated",
         }
     });
-    serde_json::to_string(&payload).map_err(|error| {
-        format!("failed to serialize embodied physical request json: {error}")
-    })
+    serde_json::to_string(&payload)
+        .map_err(|error| format!("failed to serialize embodied physical request json: {error}"))
 }
