@@ -464,6 +464,11 @@ make acceptance-shadow-zk-embodied
 ./scripts/acceptance_memory_graph_lane.sh
 # or
 make acceptance-memory-graph-lane
+
+# Direction 7.1 lane (init-nation vertical slice)
+./scripts/acceptance_init_nation_lane.sh
+# or
+make acceptance-init-nation-lane
 ```
 
 Phase 1 merge gate (Direction 1 + 2 only):
