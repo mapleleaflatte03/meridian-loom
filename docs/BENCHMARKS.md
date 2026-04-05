@@ -21,6 +21,7 @@ python3 scripts/bench_runtime.py \
   --iterations 5 \
   --warmup 1 \
   --case "loom status::./target/release/loom status --root /tmp/loom-bench-root" \
+  --case "zeroclaw help::zeroclaw --help" \
   --case "openfang help::openfang --help" \
   --case "ironclaw::ironclaw --help" \
   --format markdown
@@ -38,6 +39,7 @@ The script reports:
 These are the least misleading commands to benchmark first:
 
 - `loom status --root <runtime-root>`
+- `zeroclaw --help`
 - `openfang --help`
 - `ironclaw --help`
 
@@ -48,15 +50,17 @@ and keep the comparison honest in your notes.
 
 Reference host:
 
-- date: `2026-04-01`
+- date: `2026-04-05`
 - host: Meridian VPS, Ubuntu 22.04, x86_64
 - Loom binary: local `target/debug/loom`
+- ZeroClaw binary: optional Linux x86_64 release asset when available on host
 - OpenFang binary: `v0.5.6` Linux x86_64 release asset
 - IronClaw binary: `v0.24.0` Linux x86_64 release asset
 
 Reference commands:
 
 - `loom status --root /home/ubuntu/.local/share/meridian-loom/runtime/default`
+- `zeroclaw --help`
 - `openfang --help`
 - `ironclaw --help`
 
@@ -65,12 +69,14 @@ Reference results:
 | Case | Mean cold start (ms) | p95 (ms) | Peak RSS (MiB) |
 | --- | ---: | ---: | ---: |
 | `loom status` | 29.8 | 33.9 | 4.8 |
+| `zeroclaw --help` | n/a (binary not installed on reference host) | n/a | n/a |
 | `openfang --help` | 28.5 | 30.8 | 2.8 |
 | `ironclaw --help` | 32.6 | 33.9 | 5.1 |
 
 Interpretation:
 
 - Loom is already in the same cold-start band as OpenFang and IronClaw on this host.
+- ZeroClaw is included in the harness so the same host can produce a direct row whenever that binary is installed.
 - OpenFang wins this narrow help-surface memory/startup check.
 - Loom stays ahead of IronClaw on the same narrow check while surfacing a richer governed status command.
 - This is still not a workflow benchmark. It only answers the newcomer question: "does the binary feel fast enough to trust on first run?"

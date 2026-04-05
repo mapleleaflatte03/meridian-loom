@@ -19,6 +19,7 @@
 <p align="center">
   <a href="docs/INSTALL.md">Install</a> ·
   <a href="docs/QUICKSTART.md">Quickstart</a> ·
+  <a href="docs/MIGRATE_FROM_CLAW.md">Migrate from Claw</a> ·
   <a href="docs/RUN_LOCAL.md">Run Local</a> ·
   <a href="docs/BENCHMARKS.md">Benchmarks</a> ·
   <a href="docs/RELEASE.md">Release</a> ·
@@ -77,6 +78,27 @@ Rollback plan:
 
 - Continue using `loom init` + `loom init-nation` + `loom new-agent` directly.
 - Use `loom quickstart --non-interactive --format json` only for local onboarding automation.
+
+## One-command migration profile
+
+If you are moving from a Claw-family runtime and want a fast, additive Loom
+bootstrap:
+
+```bash
+./scripts/bootstrap_from_claw_profile.sh \
+  --profile openclaw \
+  --root "$HOME/.local/share/meridian-loom/runtime/migrate-openclaw" \
+  --kernel-path /opt/meridian-kernel \
+  --org-id migration_openclaw
+```
+
+Supported profiles: `openclaw`, `openfang`, `zeroclaw`.
+
+Validation lane:
+
+```bash
+make acceptance-migration-profile-lane
+```
 
 ## Developer first-proof flow
 

@@ -27,5 +27,12 @@ Acceptance lanes:
 - `scripts/acceptance_connect_webhook_lane.sh`
 - `scripts/acceptance_connect_failure_injection_lane.sh`
 - `scripts/acceptance_connect_security_lane.sh`
+- `scripts/acceptance_migration_profile_lane.sh`
+
+Migration bootstrap:
+
+- `scripts/bootstrap_from_claw_profile.sh --profile openclaw`
+- `scripts/bootstrap_from_claw_profile.sh --profile openfang`
+- `scripts/bootstrap_from_claw_profile.sh --profile zeroclaw`
 
 They do not include provider-specific defaults or secrets.
