@@ -52,7 +52,7 @@ curl -fsSL https://raw.githubusercontent.com/mapleleaflatte03/meridian-loom/main
 The installer prefers prebuilt GitHub release assets for the current host and
 falls back to a source build only when no matching asset is available.
 
-## One-command first proof lane
+## One-command first proof
 
 ```bash
 loom quickstart \
@@ -76,11 +76,11 @@ Migration notes:
 Rollback plan:
 
 - Continue using `loom init` + `loom init-nation` + `loom new-agent` directly.
-- Use `loom quickstart --non-interactive --format json` only for local onboarding lanes.
+- Use `loom quickstart --non-interactive --format json` only for local onboarding automation.
 
-## Developer first-proof lane (Area 9.1)
+## Developer first-proof flow
 
-For contributors, one command runs the shortest end-to-end local developer lane:
+For contributors, one command runs the shortest end-to-end local developer flow:
 
 ```bash
 make dev-first-proof
@@ -88,7 +88,7 @@ make dev-first-proof
 
 This validates first-proof UX before deeper feature work.
 
-## Extension contract v1 (Area 3.1)
+## Extension contract v1
 
 `extension_contract_v1` adds an agnostic extension lifecycle with rollback
 receipts:
@@ -111,7 +111,7 @@ Rollback plan:
 - Every install/remove writes a rollback receipt in `artifacts/extensions/receipts/`.
 - Use the receipt `rollback.command` to revert quickly from the same runtime root.
 
-## Auth contract v1 (Area 7.1)
+## Auth Contract v1
 
 `auth_contract_v1` adds governed token alias lifecycle without persisting secret
 values.
@@ -133,7 +133,7 @@ Rollback plan:
 - Re-run `loom auth rotate` to restore a previous alias mapping.
 - Use `loom auth audit` to recover the exact event order and alias transitions.
 
-## Observability contract v1 (Area 8.1)
+## Observability Contract v1
 
 `observability_contract_v1` gives one operator decision surface across runtime
 service, queue, proof chain, and route trace drift.
@@ -256,9 +256,9 @@ The full end-to-end flow lives in [docs/QUICKSTART.md](docs/QUICKSTART.md).
   - `loom connect enable|disable`
   - `loom connect test --adapter-id ...`
   - `loom connect health --adapter-id ...`
-  - `loom connect metrics --adapter-id ... [--retention-days 30]`
-  - `loom connect scorecard [--retention-days 30]`
-  - `loom connect prune --adapter-id ... [--retention-days 30]`
+  - `loom connect metrics --adapter-id ... [--retention-days <days>]`
+  - `loom connect scorecard [--retention-days <days>] [--fix]`
+  - `loom connect prune --adapter-id ... [--retention-days <days>]`
 - Operator-priority transport templates:
   - `telegram`, `discord`, `browser`, `shell`, `webhook`
 - Lifecycle state contract:
@@ -268,14 +268,14 @@ The full end-to-end flow lives in [docs/QUICKSTART.md](docs/QUICKSTART.md).
   - `state/connect/tests/*.jsonl`
   - `state/connect/lifecycle/*.jsonl`
   - `artifacts/connect/latest.json`
-  - default retention policy: `30` days
+  - default history retention: `30` days
 
 Rollback plan:
 - Keep a copy of `state/connect/registry.json` before migration.
 - To roll back behavior, restore the backup registry and use only `loom connect scaffold|list`.
 - Validate post-rollback state with `make acceptance-connect-lane`.
 
-Operator acceptance lanes:
+Operator acceptance scripts:
 - `make acceptance-connect-ecosystem-lane`
 - `make acceptance-branding-lane` (verifies M-wings/wordmark/lockup contract + desktop/mobile snapshots for `/`, `/demo`, `/compare`)
 
@@ -370,7 +370,7 @@ What this proves:
 
 ### 1c. Rehearse semantic gRPC action transport with governed proof
 
-This lane keeps the same semantic contract (`meridian.a2a.action.v1`) but
+This flow keeps the same semantic contract (`meridian.a2a.action.v1`) but
 executes over a gRPC unary transport adapter (`grpcurl`).
 
 ```bash
@@ -388,7 +388,7 @@ loom shadow run \
   --grpc-method SubmitAction \
   --grpc-action-kind research.deliver \
   --grpc-action-objective "deliver governed runtime diff" \
-  --grpc-context-json '{"lane":"trust_ops"}' \
+  --grpc-context-json '{"workflow":"trust_ops"}' \
   --grpc-constraints-json '{"max_latency_ms":12000}' \
   --grpc-memory-json '["mem://pattern/trust-ops-summary-v3"]' \
   --grpc-plaintext \
@@ -428,9 +428,9 @@ Notes:
   backends.
 - `job settle --zk` accepts `--zk-backend` (currently `sp1`).
 
-### 1d. Rehearse embodied gRPC physical action transport (Direction 5)
+### 1d. Rehearse embodied gRPC physical action transport
 
-This lane keeps warrant/governance/PoGE semantics and switches transport +
+This flow keeps warrant/governance/PoGE semantics and switches transport +
 schema to embodied physical actions (`meridian.embodied.action.v1`).
 
 ```bash
@@ -507,7 +507,7 @@ loom shadow run \
   --a2a-physical-method message/send \
   --a2a-physical-request-id shadow-a2a-physical-test \
   --a2a-physical-kind physical.move \
-  --a2a-physical-objective "dispatch embodied lane" \
+  --a2a-physical-objective "dispatch embodied workflow" \
   --a2a-physical-skill atlas_motion \
   --physical-robot-id unitree.go2 \
   --physical-target warehouse.aisle-7 \
@@ -522,7 +522,7 @@ loom shadow run \
 
 ### 1e. Rehearse embodied ROS2 physical action transport
 
-This lane keeps the same semantic embodied request (`meridian.embodied.action.v1`)
+This flow keeps the same semantic embodied request (`meridian.embodied.action.v1`)
 and executes through a ROS2 service bridge (`ros2 service call`).
 
 ```bash
@@ -587,70 +587,70 @@ loom shadow run \
   --physical-dry-run \
   --format human
 ```
-- One-command acceptance lane for `shadow run -> job settle --zk -> reports`:
+- One-command acceptance script for `shadow run -> job settle --zk -> reports`:
 
 ```bash
 ./scripts/acceptance_shadow_zk.sh
 # or
 make acceptance-shadow-zk
 
-# full lane (core flow + typed report assertions)
+# full flow (core path + typed report assertions)
 ./scripts/acceptance_shadow_zk_lane.sh
 # or
 make acceptance-shadow-zk-lane
 
-# embodied core lane (ros2_physical -> settle --zk -> reports)
+# embodied core flow (ros2_physical -> settle --zk -> reports)
 ./scripts/acceptance_shadow_embodied_zk.sh
 # or
 make acceptance-shadow-zk-embodied
 
-# Direction 3.1 lane (memory graph inspect + selective replay governance gates)
+# memory graph flow (inspect + selective replay governance gates)
 ./scripts/acceptance_memory_graph_lane.sh
 # or
 make acceptance-memory-graph-lane
 
-# Direction 7.1 lane (init-nation vertical slice)
+# nation bootstrap flow
 ./scripts/acceptance_init_nation_lane.sh
 # or
 make acceptance-init-nation-lane
 
-# Direction 6.1 lane (basic breed DNA artifact + governance gates)
+# breed flow (DNA artifact + governance gates)
 ./scripts/acceptance_breed_lane.sh
 # or
 make acceptance-breed-lane
 
-# Area 3.1 lane (extension contract validate/install/remove/export + rollback receipt)
+# extension flow (validate/install/remove/export + rollback receipt)
 ./scripts/acceptance_extension_lane.sh
 # or
 make acceptance-extension-lane
 
-# P0 task 2 lane (one-command first proof quickstart)
+# first-proof quickstart flow
 ./scripts/acceptance_quickstart_lane.sh
 # or
 make acceptance-quickstart-lane
 
-# Area 6.1 lane (deploy host/verify/rollback idempotency vertical slice)
+# deploy flow (host/verify/rollback idempotency)
 ./scripts/acceptance_deploy_lane.sh
 # or
 make acceptance-deploy-lane
 
-# Area 7.1 lane (auth_contract_v1 + rotate/revoke/audit governance flow)
+# auth flow (status/rotate/revoke/audit governance)
 ./scripts/acceptance_security_auth_lane.sh
 # or
 make acceptance-security-auth-lane
 
-# Area 8.1 lane (observability_contract_v1 summary/alerts/watch)
+# observability flow (summary/alerts/watch)
 ./scripts/acceptance_observability_lane.sh
 # or
 make acceptance-observability-lane
 
-# Area 9.1 lane (community + OSS DX contributor surface)
+# OSS DX flow (developer onboarding surface)
 ./scripts/acceptance_oss_dx_lane.sh
 # or
 make acceptance-oss-dx-lane
 ```
 
-Phase 1 merge gate (Direction 1 + 2 only):
+Core shadow+zk merge gate:
 
 ```bash
 ./scripts/acceptance_shadow_zk_lane.sh
@@ -658,11 +658,7 @@ cargo test -p loom-shadow
 cargo test -p meridian-loom --test shadow_zk
 ```
 
-Swarm economy acceptance is intentionally excluded from the Phase 1 gate and
-should be run only in the Direction 4 phase.
-
-Direction 3.1 gate should run `acceptance_memory_graph_lane.sh` before merge.
-Direction 6.1 gate should run `acceptance_breed_lane.sh` before merge.
+Additional domain-specific acceptance scripts can be run independently before merge.
 
 ### 2. Run bounded browser navigation and inspect proof
 
@@ -689,7 +685,7 @@ loom job inspect --root "$LOOM_ROOT" --job-id "$LATEST_JOB_ID" --format human
 loom parity report --root "$LOOM_ROOT"
 ```
 
-This proves the local browser host-call lane and its receipt surfaces. It does
+This proves the local browser host-call flow and its receipt surfaces. It does
 not claim broad hosted browser automation.
 
 ### 3. Connect Loom to Kernel using `quickstart.py`
