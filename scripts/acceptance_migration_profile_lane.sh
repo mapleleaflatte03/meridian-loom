@@ -6,10 +6,8 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 KERNEL_PATH="${KERNEL_PATH:-/opt/meridian-kernel}"
 LOOM_BIN="${LOOM_BIN:-${REPO_ROOT}/target/release/loom}"
 
-if [[ ! -x "${LOOM_BIN}" ]]; then
-  echo "[migration-acceptance] release binary missing, building..."
-  (cd "${REPO_ROOT}" && cargo build -p meridian-loom --release)
-fi
+echo "[migration-acceptance] building release binary"
+(cd "${REPO_ROOT}" && cargo build -p meridian-loom --release >/dev/null)
 
 run_profile() {
   local profile="$1"
@@ -42,7 +40,7 @@ run_profile() {
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "${TMP_ROOT}"' EXIT
 
-run_profile openclaw 5 "${TMP_ROOT}/openclaw"
+run_profile openclaw 8 "${TMP_ROOT}/openclaw"
 run_profile openfang 4 "${TMP_ROOT}/openfang"
 run_profile zeroclaw 6 "${TMP_ROOT}/zeroclaw"
 

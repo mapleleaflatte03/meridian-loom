@@ -4,6 +4,9 @@ Operator-first adapter templates for the priority connect transports:
 
 - `telegram.sample.json`
 - `discord.sample.json`
+- `whatsapp.sample.json`
+- `slack.sample.json`
+- `email.sample.json`
 - `browser.sample.json`
 - `shell.sample.json`
 - `webhook.sample.json`

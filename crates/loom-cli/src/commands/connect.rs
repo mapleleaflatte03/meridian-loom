@@ -25,11 +25,13 @@ const SECURITY_MAX_PAYLOAD_BYTES_LIMIT: u64 = 1_048_576;
 const SECURITY_PROFILE_SCHEMA: &str = "connect_security_profile_v1";
 const SECURITY_FAILURE_POLICY_DEFAULT: &str = "fallback_local_queue";
 const SECURITY_FAILURE_POLICIES: [&str; 3] = ["fallback_local_queue", "shadow_mode", "deny"];
-const SUPPORTED_TRANSPORTS: [&str; 10] = [
-    "telegram", "discord", "browser", "shell", "webhook", "grpc", "a2a", "mcp", "http", "ros2",
+const SUPPORTED_TRANSPORTS: [&str; 13] = [
+    "telegram", "discord", "whatsapp", "slack", "email", "browser", "shell", "webhook", "grpc",
+    "a2a", "mcp", "http", "ros2",
 ];
-const OPERATOR_PRIORITY_TRANSPORTS: [&str; 5] =
-    ["telegram", "discord", "browser", "shell", "webhook"];
+const OPERATOR_PRIORITY_TRANSPORTS: [&str; 8] = [
+    "telegram", "discord", "whatsapp", "slack", "email", "browser", "shell", "webhook",
+];
 
 pub(crate) fn handle_connect(args: &[String]) -> LoomResult<()> {
     if args.is_empty()
@@ -69,7 +71,7 @@ Scaffold, validate, and operate Universal Connect adapter manifests.
 USAGE: loom connect <COMMAND> [OPTIONS]
 
 COMMANDS:
-  scaffold --name NAME --transport telegram|discord|browser|shell|webhook|grpc|a2a|mcp|http|ros2 --action-schema SCHEMA
+  scaffold --name NAME --transport telegram|discord|whatsapp|slack|email|browser|shell|webhook|grpc|a2a|mcp|http|ros2 --action-schema SCHEMA
            [--root ROOT] [--format human|json]
   list     [--root ROOT] [--format human|json]
   validate [--adapter-id ID] [--root ROOT] [--format human|json]
@@ -1966,7 +1968,7 @@ fn harden_adapter_security_profile(adapter: &mut Value) {
 
     let profile = &mut adapter["transport_profile"];
     match transport.as_str() {
-        "telegram" | "discord" | "webhook" => {
+        "telegram" | "discord" | "whatsapp" | "slack" | "email" | "webhook" => {
             profile["health_endpoint"] = Value::String("/health".to_string());
         }
         _ => {}
@@ -1983,6 +1985,21 @@ fn harden_adapter_security_profile(adapter: &mut Value) {
         "webhook" => {
             profile["method"] = Value::String("POST".to_string());
             profile["content_type"] = Value::String("application/json".to_string());
+        }
+        "whatsapp" => {
+            profile["inbound_mode"] = Value::String("webhook".to_string());
+            profile["commands_surface"] = Value::String("message+interactive".to_string());
+            profile["queue_fallback"] = Value::String("local_queue_shadow".to_string());
+        }
+        "slack" => {
+            profile["inbound_mode"] = Value::String("events_api".to_string());
+            profile["commands_surface"] = Value::String("slash+app_mentions".to_string());
+            profile["queue_fallback"] = Value::String("local_queue_shadow".to_string());
+        }
+        "email" => {
+            profile["inbound_mode"] = Value::String("smtp_imap_bridge".to_string());
+            profile["commands_surface"] = Value::String("subject+reply_thread".to_string());
+            profile["queue_fallback"] = Value::String("local_queue_shadow".to_string());
         }
         _ => {}
     }
@@ -2065,7 +2082,7 @@ fn evaluate_adapter_security(adapter: &Value) -> Value {
 fn evaluate_transport_security(adapter: &Value, transport: &str) -> bool {
     let profile = adapter.get("transport_profile").unwrap_or(&Value::Null);
     match transport {
-        "telegram" | "discord" => profile
+        "telegram" | "discord" | "whatsapp" | "slack" | "email" => profile
             .get("health_endpoint")
             .and_then(Value::as_str)
             .map(|value| value == "/health")
@@ -2192,6 +2209,30 @@ fn transport_profile_for(transport: &str) -> Value {
             "health_endpoint": "/health",
             "queue_fallback": "local_queue_shadow",
             "note": "operator-grade guild transport with command and voice support",
+        }),
+        "whatsapp" => json!({
+            "kind": "whatsapp",
+            "inbound_mode": "webhook",
+            "commands_surface": "message+interactive",
+            "health_endpoint": "/health",
+            "queue_fallback": "local_queue_shadow",
+            "note": "operator-grade WhatsApp transport with governed webhook envelopes",
+        }),
+        "slack" => json!({
+            "kind": "slack",
+            "inbound_mode": "events_api",
+            "commands_surface": "slash+app_mentions",
+            "health_endpoint": "/health",
+            "queue_fallback": "local_queue_shadow",
+            "note": "operator-grade Slack transport with governed event ingestion",
+        }),
+        "email" => json!({
+            "kind": "email",
+            "inbound_mode": "smtp_imap_bridge",
+            "commands_surface": "subject+reply_thread",
+            "health_endpoint": "/health",
+            "queue_fallback": "local_queue_shadow",
+            "note": "operator-grade email transport with governed thread routing",
         }),
         "browser" => json!({
             "kind": "browser",

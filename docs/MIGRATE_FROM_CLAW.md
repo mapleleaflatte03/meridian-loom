@@ -38,7 +38,7 @@ Supported profiles:
 
 | Profile | Adapter set scaffolded |
 | --- | --- |
-| `openclaw` | `telegram`, `discord`, `webhook`, `browser`, `shell` |
+| `openclaw` | `telegram`, `discord`, `whatsapp`, `slack`, `email`, `webhook`, `browser`, `shell` |
 | `openfang` | `grpc`, `a2a`, `mcp`, `http` |
 | `zeroclaw` | `telegram`, `discord`, `browser`, `shell`, `webhook`, `ros2` |
 

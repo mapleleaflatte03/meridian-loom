@@ -93,6 +93,9 @@ bootstrap:
 ```
 
 Supported profiles: `openclaw`, `openfang`, `zeroclaw`.
+Current connect transport set includes `telegram`, `discord`, `whatsapp`,
+`slack`, `email`, `browser`, `shell`, `webhook`, `grpc`, `a2a`, `mcp`,
+`http`, and `ros2`.
 
 Validation lane:
 

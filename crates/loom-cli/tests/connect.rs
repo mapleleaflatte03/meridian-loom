@@ -272,6 +272,54 @@ fn connect_list_surfaces_all_supported_transport_profiles() {
 }
 
 #[test]
+fn connect_scaffold_supports_growth_transports() {
+    let harness = Harness::new("growth_transports");
+    for (name, transport) in [
+        ("whatsapp_adapter", "whatsapp"),
+        ("slack_adapter", "slack"),
+        ("email_adapter", "email"),
+    ] {
+        harness.run_ok(&[
+            "connect",
+            "scaffold",
+            "--name",
+            name,
+            "--transport",
+            transport,
+            "--action-schema",
+            "meridian.runtime.v1",
+            "--root",
+            harness.root_str(),
+            "--format",
+            "json",
+        ]);
+    }
+
+    let validated = harness.json_ok(&[
+        "connect",
+        "validate",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    assert_eq!(
+        validated.get("validation_status").and_then(Value::as_str),
+        Some("pass")
+    );
+    let checks = validated
+        .get("checks")
+        .and_then(Value::as_array)
+        .expect("checks");
+    assert_eq!(checks.len(), 3);
+    assert!(checks.iter().all(|item| {
+        item.get("security_posture_ok")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    }));
+}
+
+#[test]
 fn connect_scaffold_upserts_existing_adapter_without_duplicates() {
     let harness = Harness::new("upsert");
     harness.run_ok(&[

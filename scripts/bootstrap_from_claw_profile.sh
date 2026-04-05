@@ -90,7 +90,7 @@ fi
 
 case "${PROFILE}" in
   openclaw)
-    transports=(telegram discord webhook browser shell)
+    transports=(telegram discord whatsapp slack email webhook browser shell)
     ;;
   openfang)
     transports=(grpc a2a mcp http)

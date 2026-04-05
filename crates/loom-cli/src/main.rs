@@ -349,7 +349,7 @@ Bootstrap\n\
   loom channel disconnect telegram --agent NAME\n\
   loom channel disconnect webhook --agent NAME\n\
   loom channel test --agent NAME [--text TEXT] [--format human|json]\n\
-  loom connect scaffold --name NAME --transport telegram|discord|browser|shell|webhook|grpc|a2a|mcp|http|ros2 --action-schema SCHEMA [--root PATH] [--format human|json]\n\
+  loom connect scaffold --name NAME --transport telegram|discord|whatsapp|slack|email|browser|shell|webhook|grpc|a2a|mcp|http|ros2 --action-schema SCHEMA [--root PATH] [--format human|json]\n\
   loom connect list [--root PATH] [--format human|json]\n\
   loom connect validate [--adapter-id ID] [--root PATH] [--format human|json]\n\
   loom connect enable --adapter-id ID [--root PATH] [--format human|json]\n\
