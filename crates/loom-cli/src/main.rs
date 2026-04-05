@@ -119,6 +119,7 @@ fn run() -> LoomResult<()> {
         "run-agent" => commands::personal_agent::handle_run_agent(&args[1..]),
         "gateway" => commands::gateway::handle_gateway(&args[1..]),
         "binding" => commands::binding::handle_binding(&args[1..]),
+        "breed" => commands::breed::handle_breed(&args[1..]),
         "channel" => commands::channel::handle_channel(&args[1..]),
         "skill" => commands::skill::handle_skill(&args[1..]),
         "schedule" => commands::schedule::handle_schedule(&args[1..]),
@@ -326,6 +327,7 @@ Bootstrap\n\
   loom binding list [--root PATH] [--format human|json]\n\
   loom binding show --binding-id ID [--root PATH] [--format human|json]\n\
   loom binding resolve --channel ID --peer ID [--thread ID] [--agent-id ID] [--root PATH] [--format human|json]\n\
+  loom breed <parent1> <parent2> --agent-id ID --kernel-path PATH [--org-id ORG] [--mutation-rate F] [--root PATH] [--format human|json]\n\
   loom channel status [--root PATH] [--format human|json]\n\
   loom channel sync [--root PATH] [--format human|json]\n\
   loom channel list [--root PATH] [--agent NAME] [--format human|json]\n\

@@ -469,6 +469,11 @@ make acceptance-memory-graph-lane
 ./scripts/acceptance_init_nation_lane.sh
 # or
 make acceptance-init-nation-lane
+
+# Direction 6.1 lane (basic breed DNA artifact + governance gates)
+./scripts/acceptance_breed_lane.sh
+# or
+make acceptance-breed-lane
 ```
 
 Phase 1 merge gate (Direction 1 + 2 only):
@@ -483,6 +488,7 @@ Swarm economy acceptance is intentionally excluded from the Phase 1 gate and
 should be run only in the Direction 4 phase.
 
 Direction 3.1 gate should run `acceptance_memory_graph_lane.sh` before merge.
+Direction 6.1 gate should run `acceptance_breed_lane.sh` before merge.
 
 ### 2. Run bounded browser navigation and inspect proof
 

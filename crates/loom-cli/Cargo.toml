@@ -18,12 +18,12 @@ loom-poge = { path = "../loom-poge" }
 loom-shadow = { path = "../loom-shadow" }
 hex = "0.4"
 serde_json = "1"
+sha2 = "0.10"
 
 [dev-dependencies]
 ed25519-dalek = "2"
 hex = "0.4"
 serde_json = "1"
-sha2 = "0.10"
 
 [[bin]]
 name = "loom"

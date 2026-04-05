@@ -1,5 +1,6 @@
 pub(crate) mod action;
 pub(crate) mod binding;
+pub(crate) mod breed;
 pub(crate) mod capability;
 pub(crate) mod channel;
 pub(crate) mod context;
