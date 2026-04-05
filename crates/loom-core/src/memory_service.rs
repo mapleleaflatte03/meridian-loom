@@ -1422,13 +1422,16 @@ mod tests {
             .unwrap();
 
         let receipts = svc.list_receipts(20, Some("atlas")).unwrap();
-        let write_nodes = receipts
+        let focus = receipts
             .iter()
-            .filter(|record| record.operation == "write")
+            .find(|record| {
+                record.operation == "write"
+                    && record
+                        .input_summary
+                        .contains("category=research key=strategy")
+            })
             .map(|record| record.receipt_hash.clone())
-            .collect::<Vec<_>>();
-        assert!(write_nodes.len() >= 3);
-        let focus = write_nodes[1].clone();
+            .expect("strategy write receipt should exist");
         let selection = svc
             .select_replay_entries("atlas", Some(&focus), MemoryLineageDirection::Ancestors, 10)
             .unwrap();
