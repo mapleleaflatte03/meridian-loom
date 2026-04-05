@@ -349,8 +349,17 @@ Bootstrap\n\
   loom channel disconnect telegram --agent NAME\n\
   loom channel disconnect webhook --agent NAME\n\
   loom channel test --agent NAME [--text TEXT] [--format human|json]\n\
-  loom connect scaffold --name NAME --transport grpc|a2a|mcp|http|ros2 --action-schema SCHEMA [--root PATH] [--format human|json]\n\
+  loom connect scaffold --name NAME --transport telegram|discord|browser|shell|webhook|grpc|a2a|mcp|http|ros2 --action-schema SCHEMA [--root PATH] [--format human|json]\n\
   loom connect list [--root PATH] [--format human|json]\n\
+  loom connect validate [--adapter-id ID] [--root PATH] [--format human|json]\n\
+  loom connect enable --adapter-id ID [--root PATH] [--format human|json]\n\
+  loom connect disable --adapter-id ID [--root PATH] [--format human|json]\n\
+  loom connect test --adapter-id ID [--root PATH] [--format human|json]\n\
+  loom connect health --adapter-id ID [--root PATH] [--format human|json]\n\
+  loom connect diagnostics --adapter-id ID [--limit N] [--root PATH] [--format human|json]\n\
+  loom connect metrics --adapter-id ID [--retention-days DAYS] [--root PATH] [--format human|json]\n\
+  loom connect scorecard [--retention-days DAYS] [--fix] [--root PATH] [--format human|json]\n\
+  loom connect prune --adapter-id ID [--retention-days DAYS] [--root PATH] [--format human|json]\n\
   loom extension validate --manifest PATH [--root PATH] [--format human|json]\n\
   loom extension install --manifest PATH [--root PATH] [--format human|json]\n\
   loom extension remove --extension-id ID [--root PATH] [--format human|json]\n\

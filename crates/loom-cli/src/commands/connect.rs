@@ -44,11 +44,12 @@ pub(crate) fn handle_connect(args: &[String]) -> LoomResult<()> {
         Some("disable") => handle_connect_toggle(&args[1..], false),
         Some("test") => handle_connect_test(&args[1..]),
         Some("health") => handle_connect_health(&args[1..]),
+        Some("diagnostics") => handle_connect_diagnostics(&args[1..]),
         Some("metrics") => handle_connect_metrics(&args[1..]),
         Some("scorecard") => handle_connect_scorecard(&args[1..]),
         Some("prune") => handle_connect_prune(&args[1..]),
         _ => Err(
-            "connect supports 'scaffold', 'list', 'validate', 'enable', 'disable', 'test', 'health', 'metrics', 'scorecard', and 'prune'"
+            "connect supports 'scaffold', 'list', 'validate', 'enable', 'disable', 'test', 'health', 'diagnostics', 'metrics', 'scorecard', and 'prune'"
                 .to_string(),
         ),
     }
@@ -71,6 +72,7 @@ COMMANDS:
   disable  --adapter-id ID [--root ROOT] [--format human|json]
   test     --adapter-id ID [--root ROOT] [--format human|json]
   health   --adapter-id ID [--root ROOT] [--format human|json]
+  diagnostics --adapter-id ID [--limit N] [--root ROOT] [--format human|json]
   metrics  --adapter-id ID [--retention-days DAYS] [--root ROOT] [--format human|json]
   scorecard [--retention-days DAYS] [--root ROOT] [--format human|json]
   prune    --adapter-id ID [--retention-days DAYS] [--root ROOT] [--format human|json]"
@@ -740,6 +742,62 @@ fn handle_connect_metrics(args: &[String]) -> LoomResult<()> {
     print_connect_payload(&payload, &format)
 }
 
+fn handle_connect_diagnostics(args: &[String]) -> LoomResult<()> {
+    let root = root_from(take_value(args, "--root").as_deref())?;
+    let format = output_format(args);
+    let adapter_id = sanitize_token(&required_flag(args, "--adapter-id")?);
+    if adapter_id.is_empty() {
+        return Err("adapter-id cannot be empty".to_string());
+    }
+    let limit = parse_limit(args, "--limit", 10, 500)?;
+
+    let registry = load_connect_registry(&root)?;
+    let adapter = find_adapter(&registry, &adapter_id)
+        .ok_or_else(|| format!("adapter '{}' not found", adapter_id))?;
+    let tests_path = connect_tests_history_path(&root, &adapter_id);
+    let lifecycle_path = connect_lifecycle_history_path(&root, &adapter_id);
+    let health_path = connect_health_path(&root, &adapter_id);
+
+    let tests_recent = read_recent_jsonl_events(&tests_path, limit)?;
+    let lifecycle_recent = read_recent_jsonl_events(&lifecycle_path, limit)?;
+    let health_snapshot = read_optional_json_value(&health_path)?;
+    let payload = json!({
+        "status": "connect_diagnostics",
+        "adapter_id": adapter_id,
+        "enabled": adapter_enabled(adapter),
+        "lifecycle_state": adapter
+            .pointer("/lifecycle/state")
+            .and_then(Value::as_str)
+            .unwrap_or("init"),
+        "fallback_active": adapter
+            .pointer("/fallback/active")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        "last_test_status": adapter
+            .pointer("/diagnostics/last_test_status")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown"),
+        "last_health_status": adapter
+            .pointer("/diagnostics/last_health_status")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown"),
+        "limit": limit as u64,
+        "tests_recent_count": tests_recent.len() as u64,
+        "lifecycle_recent_count": lifecycle_recent.len() as u64,
+        "tests_recent": tests_recent,
+        "lifecycle_recent": lifecycle_recent,
+        "health_snapshot": health_snapshot.unwrap_or(Value::Null),
+        "registry_path": connect_registry_path(&root).display().to_string(),
+        "tests_history_path": tests_path.display().to_string(),
+        "lifecycle_history_path": lifecycle_path.display().to_string(),
+        "health_path": health_path.display().to_string(),
+        "runtime_contract": CONNECT_RUNTIME_CONTRACT_V2,
+        "note": "operator diagnostics snapshot for connect adapter lifecycle",
+    });
+    persist_connect_latest_artifact(&root, &payload)?;
+    print_connect_payload(&payload, &format)
+}
+
 fn handle_connect_scorecard(args: &[String]) -> LoomResult<()> {
     let root = root_from(take_value(args, "--root").as_deref())?;
     let format = output_format(args);
@@ -1087,6 +1145,24 @@ fn read_jsonl_events(path: &Path) -> LoomResult<Vec<Value>> {
     Ok(events)
 }
 
+fn read_recent_jsonl_events(path: &Path, limit: usize) -> LoomResult<Vec<Value>> {
+    let events = read_jsonl_events(path)?;
+    if events.len() <= limit {
+        return Ok(events);
+    }
+    Ok(events[events.len() - limit..].to_vec())
+}
+
+fn read_optional_json_value(path: &Path) -> LoomResult<Option<Value>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let value: Value = serde_json::from_str(&raw)
+        .map_err(|error| format!("invalid json payload '{}': {}", path.display(), error))?;
+    Ok(Some(value))
+}
+
 fn write_jsonl_events(path: &Path, events: &[Value]) -> LoomResult<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
@@ -1116,6 +1192,20 @@ fn parse_retention_days(args: &[String], fallback: u64) -> LoomResult<u64> {
         return Err("retention days must be between 1 and 3650".to_string());
     }
     Ok(retention_days)
+}
+
+fn parse_limit(args: &[String], flag: &str, fallback: usize, max: usize) -> LoomResult<usize> {
+    let limit = take_value(args, flag)
+        .map(|raw| {
+            raw.parse::<usize>()
+                .map_err(|error| format!("invalid {} '{}': {}", flag, raw, error))
+        })
+        .transpose()?
+        .unwrap_or(fallback);
+    if !(1..=max).contains(&limit) {
+        return Err(format!("{} must be between 1 and {}", flag, max));
+    }
+    Ok(limit)
 }
 
 fn parse_event_timestamp(event: &Value, fields: &[&str]) -> Option<u64> {
@@ -1246,6 +1336,15 @@ fn print_connect_payload(payload: &Value, format: &str) -> LoomResult<()> {
             }
             if let Some(path) = payload.get("health_path").and_then(Value::as_str) {
                 lines.push(format!("health_path:         {path}"));
+            }
+            if let Some(value) = payload.get("tests_recent_count").and_then(Value::as_u64) {
+                lines.push(format!("tests_recent_count:  {value}"));
+            }
+            if let Some(value) = payload
+                .get("lifecycle_recent_count")
+                .and_then(Value::as_u64)
+            {
+                lines.push(format!("lifecycle_recent:    {value}"));
             }
             if let Some(value) = payload.get("uptime_ratio").and_then(Value::as_f64) {
                 lines.push(format!("uptime_ratio:        {:.4}", value));

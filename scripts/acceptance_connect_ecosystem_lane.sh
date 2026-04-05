@@ -105,6 +105,7 @@ for pair in "${ADAPTERS[@]}"; do
   run_loom_json connect enable --adapter-id "${adapter_id}" --root "${ROOT_DIR}" >/dev/null
   run_loom_json connect test --adapter-id "${adapter_id}" --root "${ROOT_DIR}" >/dev/null
   run_loom_json connect health --adapter-id "${adapter_id}" --root "${ROOT_DIR}" >/dev/null
+  run_loom_json connect diagnostics --adapter-id "${adapter_id}" --limit 5 --root "${ROOT_DIR}" >/dev/null
 done
 
 echo "[loom-acceptance] assert disabled adapter test fail path"
@@ -153,9 +154,27 @@ latest_path = root / "artifacts/connect/latest.json"
 if not latest_path.exists():
     raise SystemExit(f"missing latest artifact: {latest_path}")
 latest = json.loads(latest_path.read_text())
-if latest.get("status") not in {"connect_tested", "connect_health", "connect_disabled", "connect_enabled", "connect_validated", "connect_scaffolded"}:
+if latest.get("status") not in {"connect_tested", "connect_health", "connect_diagnostics", "connect_disabled", "connect_enabled", "connect_validated", "connect_scaffolded"}:
     raise SystemExit(f"unexpected latest status: {latest.get('status')}")
 print("artifacts_ok")
+PY
+
+echo "[loom-acceptance] verify adapter diagnostics query surface"
+DIAGNOSTICS_JSON="$(run_loom_json connect diagnostics --adapter-id telegram-adapter --limit 5 --root "${ROOT_DIR}")"
+python3 - <<'PY' "${DIAGNOSTICS_JSON}"
+import json
+import sys
+payload = json.loads(sys.argv[1])
+if payload.get("status") != "connect_diagnostics":
+    raise SystemExit(f"unexpected diagnostics status: {payload.get('status')}")
+if payload.get("adapter_id") != "telegram-adapter":
+    raise SystemExit(f"unexpected diagnostics adapter_id: {payload.get('adapter_id')}")
+if payload.get("tests_recent_count", 0) < 1:
+    raise SystemExit("expected tests_recent_count >= 1")
+if payload.get("lifecycle_recent_count", 0) < 1:
+    raise SystemExit("expected lifecycle_recent_count >= 1")
+if "health_snapshot" not in payload:
+    raise SystemExit("expected health_snapshot field")
 PY
 
 echo "[loom-acceptance] verify reconnect->fallback lifecycle semantics"

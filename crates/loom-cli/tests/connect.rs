@@ -1313,3 +1313,92 @@ fn connect_scorecard_fix_applies_remediation_for_degraded_adapter() {
         "expected scorecard_fix lifecycle action in history"
     );
 }
+
+#[test]
+fn connect_diagnostics_returns_recent_test_and_lifecycle_history() {
+    let harness = Harness::new("diagnostics");
+    harness.run_ok(&[
+        "connect",
+        "scaffold",
+        "--name",
+        "telegram_diagnostics_adapter",
+        "--transport",
+        "telegram",
+        "--action-schema",
+        "meridian.runtime.v1",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    harness.run_ok(&[
+        "connect",
+        "enable",
+        "--adapter-id",
+        "telegram-diagnostics-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    harness.run_ok(&[
+        "connect",
+        "test",
+        "--adapter-id",
+        "telegram-diagnostics-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    harness.run_ok(&[
+        "connect",
+        "health",
+        "--adapter-id",
+        "telegram-diagnostics-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+
+    let diagnostics = harness.json_ok(&[
+        "connect",
+        "diagnostics",
+        "--adapter-id",
+        "telegram-diagnostics-adapter",
+        "--limit",
+        "5",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    assert_eq!(
+        diagnostics.get("status").and_then(Value::as_str),
+        Some("connect_diagnostics")
+    );
+    assert_eq!(
+        diagnostics.get("adapter_id").and_then(Value::as_str),
+        Some("telegram-diagnostics-adapter")
+    );
+    assert_eq!(diagnostics.get("limit").and_then(Value::as_u64), Some(5));
+    assert_eq!(
+        diagnostics
+            .get("tests_recent")
+            .and_then(Value::as_array)
+            .map(|items| !items.is_empty()),
+        Some(true)
+    );
+    assert_eq!(
+        diagnostics
+            .get("lifecycle_recent")
+            .and_then(Value::as_array)
+            .map(|items| !items.is_empty()),
+        Some(true)
+    );
+    assert!(
+        diagnostics.get("health_snapshot").is_some(),
+        "expected health snapshot in diagnostics payload"
+    );
+}
