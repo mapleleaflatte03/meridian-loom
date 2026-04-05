@@ -9,6 +9,7 @@ Operator-first adapter templates for the priority connect transports:
 - `email.sample.json`
 - `browser.sample.json`
 - `shell.sample.json`
+- `desktop.sample.json`
 - `webhook.sample.json`
 
 These are contract-shape examples for `loom connect scaffold|validate|enable|test|health`.
@@ -27,6 +28,7 @@ Acceptance lanes:
 - `scripts/acceptance_connect_discord_lane.sh`
 - `scripts/acceptance_connect_browser_lane.sh`
 - `scripts/acceptance_connect_shell_lane.sh`
+- `scripts/acceptance_connect_desktop_lane.sh`
 - `scripts/acceptance_connect_webhook_lane.sh`
 - `scripts/acceptance_connect_failure_injection_lane.sh`
 - `scripts/acceptance_connect_security_lane.sh`

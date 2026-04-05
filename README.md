@@ -34,7 +34,7 @@
 
 Loom is the governed local runtime for AI agents. Install in one command, run
 terminal/browser/schedule/personal-agent jobs, and inspect proof receipts
-immediately. No vibes, just proof + governance.
+immediately with explicit governance and proof artifacts.
 
 If you want the shortest honest summary:
 
@@ -94,7 +94,7 @@ bootstrap:
 
 Supported profiles: `openclaw`, `openfang`, `zeroclaw`.
 Current connect transport set includes `telegram`, `discord`, `whatsapp`,
-`slack`, `email`, `browser`, `shell`, `webhook`, `grpc`, `a2a`, `mcp`,
+`slack`, `email`, `browser`, `shell`, `desktop`, `webhook`, `grpc`, `a2a`, `mcp`,
 `http`, and `ros2`.
 
 Validation lane:
@@ -285,7 +285,7 @@ The full end-to-end flow lives in [docs/QUICKSTART.md](docs/QUICKSTART.md).
   - `loom connect scorecard [--retention-days <days>] [--fix]`
   - `loom connect prune --adapter-id ... [--retention-days <days>]`
 - Operator-priority transport templates:
-  - `telegram`, `discord`, `browser`, `shell`, `webhook`
+  - `telegram`, `discord`, `browser`, `shell`, `desktop`, `webhook`
 - Lifecycle state contract:
   - `init -> ready -> error -> reconnecting (max 3) -> fallback`
 - Diagnostics/history persistence:
@@ -302,6 +302,7 @@ Rollback plan:
 
 Operator acceptance scripts:
 - `make acceptance-connect-ecosystem-lane`
+- `make acceptance-connect-desktop-lane`
 - `make acceptance-branding-lane` (verifies M-wings/wordmark/lockup contract + desktop/mobile snapshots for `/`, `/demo`, `/compare`)
 
 ## Quickstart: three copy-paste examples

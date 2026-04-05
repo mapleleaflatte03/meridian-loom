@@ -28,12 +28,12 @@ const CONNECT_SANCTION_SCHEMA: &str = "meridian.connect.sanction_event.v1";
 const SECURITY_PROFILE_SCHEMA: &str = "connect_security_profile_v1";
 const SECURITY_FAILURE_POLICY_DEFAULT: &str = "fallback_local_queue";
 const SECURITY_FAILURE_POLICIES: [&str; 3] = ["fallback_local_queue", "shadow_mode", "deny"];
-const SUPPORTED_TRANSPORTS: [&str; 13] = [
-    "telegram", "discord", "whatsapp", "slack", "email", "browser", "shell", "webhook", "grpc",
-    "a2a", "mcp", "http", "ros2",
+const SUPPORTED_TRANSPORTS: [&str; 14] = [
+    "telegram", "discord", "whatsapp", "slack", "email", "browser", "shell", "desktop",
+    "webhook", "grpc", "a2a", "mcp", "http", "ros2",
 ];
-const OPERATOR_PRIORITY_TRANSPORTS: [&str; 8] = [
-    "telegram", "discord", "whatsapp", "slack", "email", "browser", "shell", "webhook",
+const OPERATOR_PRIORITY_TRANSPORTS: [&str; 9] = [
+    "telegram", "discord", "whatsapp", "slack", "email", "browser", "shell", "desktop", "webhook",
 ];
 
 pub(crate) fn handle_connect(args: &[String]) -> LoomResult<()> {
@@ -74,7 +74,7 @@ Scaffold, validate, and operate Universal Connect adapter manifests.
 USAGE: loom connect <COMMAND> [OPTIONS]
 
 COMMANDS:
-  scaffold --name NAME --transport telegram|discord|whatsapp|slack|email|browser|shell|webhook|grpc|a2a|mcp|http|ros2 --action-schema SCHEMA
+  scaffold --name NAME --transport telegram|discord|whatsapp|slack|email|browser|shell|desktop|webhook|grpc|a2a|mcp|http|ros2 --action-schema SCHEMA
            [--root ROOT] [--format human|json]
   list     [--root ROOT] [--format human|json]
   validate [--adapter-id ID] [--root ROOT] [--format human|json]
@@ -2117,6 +2117,21 @@ fn harden_adapter_security_profile(adapter: &mut Value) {
             profile["execution_mode"] = Value::String("restricted_executor".to_string());
             profile["sandbox"] = Value::String("filesystem_guarded".to_string());
         }
+        "desktop" => {
+            profile["control_mode"] = Value::String("governed_desktop_bridge".to_string());
+            profile["input_guard"] = Value::String("warrant_bound".to_string());
+            profile["capture_mode"] = Value::String("receipt_snapshots".to_string());
+            profile["health_endpoint"] = Value::String("/health".to_string());
+            if profile
+                .get("rate_limit_per_minute")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+                == 0
+            {
+                profile["rate_limit_per_minute"] = Value::Number(45_u64.into());
+            }
+            profile["queue_fallback"] = Value::String("local_queue_shadow".to_string());
+        }
         "webhook" => {
             profile["method"] = Value::String("POST".to_string());
             profile["content_type"] = Value::String("application/json".to_string());
@@ -2268,6 +2283,28 @@ fn evaluate_transport_security(adapter: &Value, transport: &str) -> bool {
                     .get("sandbox")
                     .and_then(Value::as_str)
                     .map(|value| value == "filesystem_guarded")
+                    .unwrap_or(false)
+        }
+        "desktop" => {
+            profile
+                .get("control_mode")
+                .and_then(Value::as_str)
+                .map(|value| value == "governed_desktop_bridge")
+                .unwrap_or(false)
+                && profile
+                    .get("input_guard")
+                    .and_then(Value::as_str)
+                    .map(|value| value == "warrant_bound")
+                    .unwrap_or(false)
+                && profile
+                    .get("health_endpoint")
+                    .and_then(Value::as_str)
+                    .map(|value| value == "/health")
+                    .unwrap_or(false)
+                && profile
+                    .get("rate_limit_per_minute")
+                    .and_then(Value::as_u64)
+                    .map(|value| value > 0)
                     .unwrap_or(false)
         }
         "webhook" => {
@@ -2445,6 +2482,16 @@ fn transport_profile_for(transport: &str) -> Value {
             "health_endpoint": "/health",
             "queue_fallback": "local_queue_shadow",
             "note": "governed shell transport with bounded command execution",
+        }),
+        "desktop" => json!({
+            "kind": "desktop",
+            "control_mode": "governed_desktop_bridge",
+            "input_guard": "warrant_bound",
+            "capture_mode": "receipt_snapshots",
+            "rate_limit_per_minute": 45,
+            "health_endpoint": "/health",
+            "queue_fallback": "local_queue_shadow",
+            "note": "governed desktop control lane with proof-bound interaction envelopes",
         }),
         "webhook" => json!({
             "kind": "webhook",

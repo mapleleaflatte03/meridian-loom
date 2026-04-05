@@ -230,6 +230,7 @@ fn connect_list_surfaces_all_supported_transport_profiles() {
         ("discord_adapter", "discord"),
         ("browser_adapter", "browser"),
         ("shell_adapter", "shell"),
+        ("desktop_adapter", "desktop"),
         ("webhook_adapter", "webhook"),
     ] {
         harness.run_ok(&[
@@ -264,7 +265,7 @@ fn connect_list_surfaces_all_supported_transport_profiles() {
         .filter_map(|adapter| adapter.get("transport").and_then(Value::as_str))
         .map(|value| value.to_string())
         .collect::<BTreeSet<_>>();
-    let expected = ["telegram", "discord", "browser", "shell", "webhook"]
+    let expected = ["telegram", "discord", "browser", "shell", "desktop", "webhook"]
         .iter()
         .map(|value| value.to_string())
         .collect::<BTreeSet<_>>();
@@ -486,6 +487,7 @@ fn connect_validate_rejects_unsafe_security_matrix_for_priority_transports() {
         ("discord_secure_adapter", "discord"),
         ("browser_secure_adapter", "browser"),
         ("shell_secure_adapter", "shell"),
+        ("desktop_secure_adapter", "desktop"),
         ("webhook_secure_adapter", "webhook"),
     ];
     for (name, transport) in adapters {
@@ -532,6 +534,10 @@ fn connect_validate_rejects_unsafe_security_matrix_for_priority_transports() {
                 adapter["transport_profile"]["execution_mode"] =
                     Value::String("unrestricted".to_string());
             }
+            "desktop-secure-adapter" => {
+                adapter["transport_profile"]["control_mode"] =
+                    Value::String("unrestricted_desktop_bridge".to_string());
+            }
             "webhook-secure-adapter" => {
                 adapter["transport_profile"]["method"] = Value::String("GET".to_string());
             }
@@ -573,7 +579,7 @@ fn connect_validate_rejects_unsafe_security_matrix_for_priority_transports() {
         .get("checks")
         .and_then(Value::as_array)
         .expect("checks");
-    assert_eq!(checks.len(), 5);
+    assert_eq!(checks.len(), 6);
     assert!(checks.iter().all(|item| {
         item.get("security_posture_ok")
             .and_then(Value::as_bool)
@@ -766,6 +772,7 @@ fn connect_test_matrix_covers_all_transports_and_disabled_fail_path() {
         ("discord_diag_adapter", "discord"),
         ("browser_diag_adapter", "browser"),
         ("shell_diag_adapter", "shell"),
+        ("desktop_diag_adapter", "desktop"),
         ("webhook_diag_adapter", "webhook"),
     ] {
         harness.run_ok(&[
@@ -1255,12 +1262,12 @@ fn connect_scorecard_rejects_unexpected_argument_tokens() {
         "--retention-days",
         "30",
         "--fix",
-        "???",
+        "__unexpected_token__",
         "--root",
         harness.root_str(),
     ]);
     assert!(
-        failure.contains("unexpected argument '???' for `loom connect scorecard`"),
+        failure.contains("unexpected argument '__unexpected_token__' for `loom connect scorecard`"),
         "unexpected failure output:\n{failure}"
     );
 }
@@ -1534,6 +1541,7 @@ fn connect_scorecard_fix_applies_security_baseline_for_priority_transports() {
         ("discord_security_adapter", "discord"),
         ("browser_security_adapter", "browser"),
         ("shell_security_adapter", "shell"),
+        ("desktop_security_adapter", "desktop"),
         ("webhook_security_adapter", "webhook"),
     ];
 
@@ -1612,6 +1620,10 @@ fn connect_scorecard_fix_applies_security_baseline_for_priority_transports() {
                 adapter["transport_profile"]["execution_mode"] =
                     Value::String("unrestricted".to_string());
             }
+            "desktop-security-adapter" => {
+                adapter["transport_profile"]["control_mode"] =
+                    Value::String("unrestricted_desktop_bridge".to_string());
+            }
             "webhook-security-adapter" => {
                 adapter["transport_profile"]["method"] = Value::String("GET".to_string());
             }
@@ -1654,8 +1666,8 @@ fn connect_scorecard_fix_applies_security_baseline_for_priority_transports() {
         })
         .count();
     assert!(
-        security_actions >= 5,
-        "expected at least five apply_security_baseline actions, got {}",
+        security_actions >= 6,
+        "expected at least six apply_security_baseline actions, got {}",
         security_actions
     );
 
@@ -1770,6 +1782,7 @@ fn connect_failure_injection_matrix_recovers_priority_transports() {
         ("discord_fail_adapter", "discord"),
         ("browser_fail_adapter", "browser"),
         ("shell_fail_adapter", "shell"),
+        ("desktop_fail_adapter", "desktop"),
         ("webhook_fail_adapter", "webhook"),
     ];
 
@@ -1888,7 +1901,7 @@ fn connect_failure_injection_matrix_recovers_priority_transports() {
             .get("remediations_applied")
             .and_then(Value::as_u64)
             .unwrap_or_default()
-            >= 5
+            >= 6
     );
 
     let registry_after: Value =

@@ -91,6 +91,7 @@ declare -a ADAPTERS=(
   "discord_adapter discord"
   "browser_adapter browser"
   "shell_adapter shell"
+  "desktop_adapter desktop"
   "webhook_adapter webhook"
 )
 
@@ -131,7 +132,7 @@ import pathlib
 import sys
 
 root = pathlib.Path(sys.argv[1])
-adapters = ["telegram-adapter", "discord-adapter", "browser-adapter", "shell-adapter", "webhook-adapter"]
+adapters = ["telegram-adapter", "discord-adapter", "browser-adapter", "shell-adapter", "desktop-adapter", "webhook-adapter"]
 for adapter in adapters:
     health_path = root / "state/connect/health" / f"{adapter}.json"
     tests_path = root / "state/connect/tests" / f"{adapter}.jsonl"
@@ -311,13 +312,13 @@ import sys
 payload = json.loads(sys.argv[1])
 if payload.get("status") != "connect_scorecard":
     raise SystemExit(f"unexpected scorecard status: {payload.get('status')}")
-if payload.get("total_adapters", 0) < 5:
-    raise SystemExit(f"expected total_adapters >= 5, got {payload.get('total_adapters')}")
+if payload.get("total_adapters", 0) < 6:
+    raise SystemExit(f"expected total_adapters >= 6, got {payload.get('total_adapters')}")
 if payload.get("overall_status") not in {"healthy", "degraded"}:
     raise SystemExit(f"unexpected overall_status: {payload.get('overall_status')}")
 rows = payload.get("adapters") or []
-if len(rows) < 5:
-    raise SystemExit(f"expected at least 5 scorecard rows, got {len(rows)}")
+if len(rows) < 6:
+    raise SystemExit(f"expected at least 6 scorecard rows, got {len(rows)}")
 for row in rows:
     if row.get("security_posture_ok") is not True:
         raise SystemExit(f"expected security_posture_ok=true for {row.get('adapter_id')}")
