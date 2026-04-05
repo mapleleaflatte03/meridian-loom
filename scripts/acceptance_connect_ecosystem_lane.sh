@@ -211,6 +211,19 @@ if payload.get("recommended_action") != "shadow_or_local_queue":
     raise SystemExit(f"expected shadow_or_local_queue action, got {payload.get('recommended_action')}")
 PY
 
+SCORECARD_FIX_JSON="$(run_loom_json connect scorecard --retention-days 30 --fix --root "${ROOT_DIR}")"
+python3 - <<'PY' "${SCORECARD_FIX_JSON}"
+import json
+import sys
+payload = json.loads(sys.argv[1])
+if payload.get("status") != "connect_scorecard":
+    raise SystemExit(f"unexpected scorecard status: {payload.get('status')}")
+if payload.get("fix_requested") is not True:
+    raise SystemExit("expected fix_requested=true")
+if payload.get("remediations_applied", 0) < 1:
+    raise SystemExit("expected remediations_applied >= 1")
+PY
+
 echo "[loom-acceptance] verify metrics window and retention prune"
 python3 - <<'PY' "${ROOT_DIR}"
 import json

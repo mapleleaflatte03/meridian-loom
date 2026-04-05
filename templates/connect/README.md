@@ -1,4 +1,4 @@
-# Connect Templates (Lane A1)
+# Connect Templates
 
 Operator-first adapter templates for the priority connect transports:
 

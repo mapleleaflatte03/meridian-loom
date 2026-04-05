@@ -167,7 +167,7 @@ fn handle_connect_scaffold(args: &[String]) -> LoomResult<()> {
         "poge_standard_profile": manifest.pointer("/poge_standard/profile").and_then(Value::as_str).unwrap_or(""),
         "supported_transports": SUPPORTED_TRANSPORTS,
         "operator_priority_transports": OPERATOR_PRIORITY_TRANSPORTS,
-        "note": "area10.1 connect lifecycle scaffold",
+        "note": "connect adapter scaffolded with governed defaults",
     });
     persist_connect_latest_artifact(&root, &payload)?;
     let _ = append_lifecycle_event(
@@ -200,7 +200,7 @@ fn handle_connect_list(args: &[String]) -> LoomResult<()> {
         "supported_transports": SUPPORTED_TRANSPORTS,
         "operator_priority_transports": OPERATOR_PRIORITY_TRANSPORTS,
         "adapters": adapters,
-        "note": "area10.1 universal connect lifecycle registry",
+        "note": "connect adapter registry snapshot",
     });
     print_connect_payload(&payload, &format)
 }
@@ -288,7 +288,7 @@ fn handle_connect_validate(args: &[String]) -> LoomResult<()> {
             "legacy_schema_detected": legacy_schema_detected,
             "migration_mode": "additive_v1_to_v2",
         },
-        "note": "area10.1 connect validate with additive v1->v2 compatibility",
+        "note": "connect registry validation with additive v1->v2 compatibility",
     });
     persist_connect_latest_artifact(&root, &payload)?;
     if invalid > 0 {
@@ -370,7 +370,7 @@ fn handle_connect_toggle(args: &[String], enable: bool) -> LoomResult<()> {
         "registry_path": connect_registry_path(&root).display().to_string(),
         "registry_schema_version": CONNECT_REGISTRY_SCHEMA_V2,
         "runtime_contract": CONNECT_RUNTIME_CONTRACT_V2,
-        "note": "area10.1 adapter lifecycle toggle",
+        "note": "adapter lifecycle state updated",
     });
     persist_connect_latest_artifact(&root, &payload)?;
     print_connect_payload(&payload, &format)
@@ -515,7 +515,7 @@ fn handle_connect_test(args: &[String]) -> LoomResult<()> {
         "tests_history_path": connect_tests_history_path(&root, &adapter_id).display().to_string(),
         "registry_path": connect_registry_path(&root).display().to_string(),
         "runtime_contract": CONNECT_RUNTIME_CONTRACT_V2,
-        "note": "area10.1 adapter diagnostics test entry persisted",
+        "note": "adapter test diagnostics persisted",
     });
     persist_connect_latest_artifact(&root, &payload)?;
     if payload.get("test_status").and_then(Value::as_str) == Some("fail") {
@@ -687,7 +687,7 @@ fn handle_connect_health(args: &[String]) -> LoomResult<()> {
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
         },
-        "note": "area10.1 adapter health snapshot",
+        "note": "adapter health snapshot persisted",
     });
     persist_health_snapshot(&root, &adapter_id, &payload)?;
 
@@ -735,8 +735,7 @@ fn handle_connect_metrics(args: &[String]) -> LoomResult<()> {
     let retention_days = parse_retention_days(args, configured_retention)?;
     let mut payload = compute_connect_metrics_payload(&root, &adapter_id, retention_days)?;
     payload["status"] = Value::String("connect_metrics".to_string());
-    payload["note"] =
-        Value::String("b1 operator metrics over connect diagnostics window".to_string());
+    payload["note"] = Value::String("operator metrics over connect diagnostics window".to_string());
     persist_connect_latest_artifact(&root, &payload)?;
     print_connect_payload(&payload, &format)
 }
@@ -744,6 +743,7 @@ fn handle_connect_metrics(args: &[String]) -> LoomResult<()> {
 fn handle_connect_scorecard(args: &[String]) -> LoomResult<()> {
     let root = root_from(take_value(args, "--root").as_deref())?;
     let format = output_format(args);
+    let apply_fix = has_flag(args, "--fix");
     let registry = load_connect_registry(&root)?;
     let adapters = registry
         .get("adapters")
@@ -756,6 +756,9 @@ fn handle_connect_scorecard(args: &[String]) -> LoomResult<()> {
 
     let mut rows = Vec::new();
     let mut degraded = 0_u64;
+    let mut remediation_actions = Vec::new();
+    let mut remediations_applied = 0_u64;
+    let mut mutable_registry = load_connect_registry(&root)?;
     for adapter in adapters {
         let adapter_id = adapter
             .get("adapter_id")
@@ -781,17 +784,34 @@ fn handle_connect_scorecard(args: &[String]) -> LoomResult<()> {
             .unwrap_or(false);
         if !(uptime_met && fallback_met) {
             degraded = degraded.saturating_add(1);
+            if apply_fix {
+                if let Some(action) =
+                    apply_scorecard_fix(&root, &mut mutable_registry, &adapter_id)?
+                {
+                    remediations_applied = remediations_applied.saturating_add(1);
+                    remediation_actions.push(json!({
+                        "adapter_id": adapter_id,
+                        "action": action,
+                    }));
+                }
+            }
         }
         rows.push(row);
+    }
+    if apply_fix {
+        persist_connect_registry(&root, &mutable_registry)?;
     }
     let payload = json!({
         "status": "connect_scorecard",
         "overall_status": if degraded == 0 { "healthy" } else { "degraded" },
         "total_adapters": rows.len(),
         "degraded_adapters": degraded,
+        "fix_requested": apply_fix,
+        "remediations_applied": remediations_applied,
+        "remediation_actions": remediation_actions,
         "runtime_contract": CONNECT_RUNTIME_CONTRACT_V2,
         "adapters": rows,
-        "note": "c1 fleet scorecard across connect adapters",
+        "note": "fleet scorecard across connect adapters",
     });
     persist_connect_latest_artifact(&root, &payload)?;
     print_connect_payload(&payload, &format)
@@ -901,6 +921,50 @@ fn compute_connect_metrics_payload(
     }))
 }
 
+fn apply_scorecard_fix(
+    root: &Path,
+    registry: &mut Value,
+    adapter_id: &str,
+) -> LoomResult<Option<String>> {
+    let Some(adapter) = find_adapter_mut(registry, adapter_id) else {
+        return Ok(None);
+    };
+    let enabled = adapter_enabled(adapter);
+    if !enabled {
+        return Ok(Some("enable_required".to_string()));
+    }
+    if !adapter
+        .get("lifecycle")
+        .map(Value::is_object)
+        .unwrap_or(false)
+    {
+        adapter["lifecycle"] = json!({});
+    }
+    if !adapter
+        .get("fallback")
+        .map(Value::is_object)
+        .unwrap_or(false)
+    {
+        adapter["fallback"] = default_fallback_policy();
+    }
+    adapter["lifecycle"]["state"] = Value::String("reconnecting".to_string());
+    adapter["lifecycle"]["reconnect_attempts"] = Value::Number(0_u64.into());
+    adapter["lifecycle"]["last_transition_at"] = Value::String(chrono_like_timestamp());
+    adapter["lifecycle"]["last_error"] = Value::String("scorecard_fix_reset".to_string());
+    adapter["fallback"]["active"] = Value::Bool(false);
+    adapter["fallback"]["last_trigger_reason"] = Value::String("scorecard_fix_reset".to_string());
+    adapter["status"] = Value::String("reconnecting".to_string());
+    adapter["updated_at"] = Value::String(chrono_like_timestamp());
+    let _ = append_lifecycle_event(
+        root,
+        adapter_id,
+        "reconnecting",
+        "scorecard_fix",
+        "scorecard remediation reset reconnect state",
+    );
+    Ok(Some("reset_reconnect_state".to_string()))
+}
+
 fn handle_connect_prune(args: &[String]) -> LoomResult<()> {
     let root = root_from(take_value(args, "--root").as_deref())?;
     let format = output_format(args);
@@ -946,7 +1010,7 @@ fn handle_connect_prune(args: &[String]) -> LoomResult<()> {
         "tests_history_path": tests_path.display().to_string(),
         "lifecycle_history_path": lifecycle_path.display().to_string(),
         "runtime_contract": CONNECT_RUNTIME_CONTRACT_V2,
-        "note": "b1 diagnostics retention prune",
+        "note": "diagnostics retention pruning complete",
     });
     persist_connect_latest_artifact(&root, &payload)?;
     print_connect_payload(&payload, &format)
@@ -1667,7 +1731,7 @@ fn transport_profile_for(transport: &str) -> Value {
             "voice_channel": true,
             "health_endpoint": "/health",
             "queue_fallback": "local_queue_shadow",
-            "note": "operator-grade guild transport with command + voice lane",
+            "note": "operator-grade guild transport with command and voice support",
         }),
         "browser" => json!({
             "kind": "browser",
@@ -1675,7 +1739,7 @@ fn transport_profile_for(transport: &str) -> Value {
             "sandbox": "restricted",
             "health_endpoint": "/health",
             "queue_fallback": "local_queue_shadow",
-            "note": "governed browser automation lane with proof receipts",
+            "note": "governed browser automation transport with proof receipts",
         }),
         "shell" => json!({
             "kind": "shell",
@@ -1683,7 +1747,7 @@ fn transport_profile_for(transport: &str) -> Value {
             "sandbox": "filesystem_guarded",
             "health_endpoint": "/health",
             "queue_fallback": "local_queue_shadow",
-            "note": "governed shell lane with bounded command execution",
+            "note": "governed shell transport with bounded command execution",
         }),
         "webhook" => json!({
             "kind": "webhook",
@@ -1712,7 +1776,7 @@ fn transport_profile_for(transport: &str) -> Value {
             "method": "tools/call",
             "target": "https://mcp.example",
             "tool": "shadow.execute",
-            "note": "MCP tool-call lane with governed action envelope",
+            "note": "MCP tool-call transport with governed action envelope",
         }),
         "http" => json!({
             "kind": "http",
@@ -1726,7 +1790,7 @@ fn transport_profile_for(transport: &str) -> Value {
             "mode": "service",
             "service": "/meridian/physical_action/execute",
             "type": "meridian_embodied_msgs/srv/ExecutePhysicalAction",
-            "note": "embodied lane via ROS2 service/action bridge",
+            "note": "embodied transport via ROS2 service/action bridge",
         }),
         _ => json!({
             "kind": transport,

@@ -1169,3 +1169,147 @@ fn connect_scorecard_aggregates_adapter_kpis() {
             .is_some()
     }));
 }
+
+#[test]
+fn connect_scorecard_fix_applies_remediation_for_degraded_adapter() {
+    let harness = Harness::new("scorecard_fix");
+    harness.run_ok(&[
+        "connect",
+        "scaffold",
+        "--name",
+        "telegram_fix_adapter",
+        "--transport",
+        "telegram",
+        "--action-schema",
+        "meridian.runtime.v1",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    harness.run_ok(&[
+        "connect",
+        "enable",
+        "--adapter-id",
+        "telegram-fix-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    harness.run_ok(&[
+        "connect",
+        "test",
+        "--adapter-id",
+        "telegram-fix-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    harness.run_ok(&[
+        "connect",
+        "health",
+        "--adapter-id",
+        "telegram-fix-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+
+    let registry_path = Path::new(harness.root_str()).join("state/connect/registry.json");
+    let mut registry: Value =
+        serde_json::from_str(&fs::read_to_string(&registry_path).expect("read registry"))
+            .expect("parse registry");
+    let adapters = registry
+        .get_mut("adapters")
+        .and_then(Value::as_array_mut)
+        .expect("adapters");
+    let adapter = adapters
+        .iter_mut()
+        .find(|item| item.get("adapter_id").and_then(Value::as_str) == Some("telegram-fix-adapter"))
+        .expect("telegram fix adapter");
+    adapter["action_schema"] = Value::String(String::new());
+    fs::write(
+        &registry_path,
+        serde_json::to_string_pretty(&registry).expect("serialize registry"),
+    )
+    .expect("write registry");
+
+    let _ = harness.run_fail(&[
+        "connect",
+        "test",
+        "--adapter-id",
+        "telegram-fix-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    for _ in 0..4 {
+        let _ = harness.json_ok(&[
+            "connect",
+            "health",
+            "--adapter-id",
+            "telegram-fix-adapter",
+            "--root",
+            harness.root_str(),
+            "--format",
+            "json",
+        ]);
+    }
+
+    let scorecard = harness.json_ok(&[
+        "connect",
+        "scorecard",
+        "--retention-days",
+        "30",
+        "--fix",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    assert_eq!(
+        scorecard.get("status").and_then(Value::as_str),
+        Some("connect_scorecard")
+    );
+    assert!(
+        scorecard
+            .get("remediations_applied")
+            .and_then(Value::as_u64)
+            .unwrap_or_default()
+            >= 1
+    );
+
+    let registry: Value =
+        serde_json::from_str(&fs::read_to_string(&registry_path).expect("read registry"))
+            .expect("parse registry");
+    let adapters = registry
+        .get("adapters")
+        .and_then(Value::as_array)
+        .expect("adapters");
+    let adapter = adapters
+        .iter()
+        .find(|item| item.get("adapter_id").and_then(Value::as_str) == Some("telegram-fix-adapter"))
+        .expect("telegram fix adapter");
+    assert_eq!(
+        adapter
+            .pointer("/lifecycle/reconnect_attempts")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        adapter.pointer("/fallback/active").and_then(Value::as_bool),
+        Some(false)
+    );
+
+    let lifecycle_path =
+        Path::new(harness.root_str()).join("state/connect/lifecycle/telegram-fix-adapter.jsonl");
+    let lifecycle_history = fs::read_to_string(&lifecycle_path).expect("read lifecycle");
+    assert!(
+        lifecycle_history.contains("\"action\":\"scorecard_fix\""),
+        "expected scorecard_fix lifecycle action in history"
+    );
+}
