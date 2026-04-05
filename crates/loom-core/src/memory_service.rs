@@ -8,6 +8,7 @@
 //! layers can read from the repo, but all writes go through the service to
 //! enforce governance (retention policy, size limits, agent isolation).
 
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -98,6 +99,101 @@ pub struct MemoryReceiptRecord {
     pub is_error: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MemoryLineageDirection {
+    Ancestors,
+    Descendants,
+    Both,
+}
+
+impl MemoryLineageDirection {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Ancestors => "ancestors",
+            Self::Descendants => "descendants",
+            Self::Both => "both",
+        }
+    }
+
+    pub fn parse(raw: &str) -> LoomResult<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "ancestors" => Ok(Self::Ancestors),
+            "descendants" => Ok(Self::Descendants),
+            "both" => Ok(Self::Both),
+            other => Err(format!(
+                "invalid direction '{}': expected ancestors|descendants|both",
+                other
+            )),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MemoryGraphNode {
+    pub node_id: String,
+    pub timestamp_unix_ms: u64,
+    pub operation: String,
+    pub category: String,
+    pub key: String,
+    pub source: String,
+    pub output_summary: String,
+    pub parent_node_id: Option<String>,
+}
+
+impl MemoryGraphNode {
+    pub fn to_json(&self) -> Value {
+        json!({
+            "node_id": self.node_id,
+            "timestamp_unix_ms": self.timestamp_unix_ms,
+            "operation": self.operation,
+            "category": self.category,
+            "key": self.key,
+            "source": self.source,
+            "output_summary": self.output_summary,
+            "parent_node_id": self.parent_node_id,
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MemoryGraphInspectView {
+    pub source_ref: String,
+    pub total_nodes: usize,
+    pub focus_node: Option<MemoryGraphNode>,
+    pub ancestor_nodes: Vec<MemoryGraphNode>,
+    pub descendant_nodes: Vec<MemoryGraphNode>,
+    pub direction: MemoryLineageDirection,
+    pub limit: usize,
+    pub note: String,
+}
+
+impl MemoryGraphInspectView {
+    pub fn to_json(&self) -> Value {
+        json!({
+            "status": "memory_graph_inspect",
+            "source_ref": self.source_ref,
+            "total_nodes": self.total_nodes,
+            "focus_node": self.focus_node.as_ref().map(MemoryGraphNode::to_json),
+            "ancestor_nodes": self.ancestor_nodes.iter().map(MemoryGraphNode::to_json).collect::<Vec<_>>(),
+            "descendant_nodes": self.descendant_nodes.iter().map(MemoryGraphNode::to_json).collect::<Vec<_>>(),
+            "direction": self.direction.as_str(),
+            "limit": self.limit,
+            "note": self.note,
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MemoryReplaySelection {
+    pub source_ref: String,
+    pub focus_node_id: Option<String>,
+    pub mode: String,
+    pub selected_node_ids: Vec<String>,
+    pub selected_category_keys: Vec<(String, String)>,
+    pub selected_entries: Vec<MemoryEntry>,
+    pub total_graph_nodes: usize,
+    pub note: String,
+}
 impl MemoryReceiptRecord {
     pub fn from_json(value: &Value) -> LoomResult<Self> {
         Ok(Self {
@@ -511,6 +607,165 @@ impl MemoryService {
         Ok(records.into_iter().take(limit).collect())
     }
 
+    pub fn graph_inspect(
+        &self,
+        source_ref: &str,
+        focus_node_id: Option<&str>,
+        direction: MemoryLineageDirection,
+        limit: usize,
+    ) -> LoomResult<MemoryGraphInspectView> {
+        let effective_limit = limit.max(1);
+        let nodes = self.graph_nodes(source_ref)?;
+        let total_nodes = nodes.len();
+        if total_nodes == 0 {
+            return Ok(MemoryGraphInspectView {
+                source_ref: source_ref.to_string(),
+                total_nodes,
+                focus_node: None,
+                ancestor_nodes: Vec::new(),
+                descendant_nodes: Vec::new(),
+                direction,
+                limit: effective_limit,
+                note: "no graph nodes available for source".to_string(),
+            });
+        }
+        let graph_index = build_graph_index(&nodes);
+        let fallback_focus = nodes
+            .iter()
+            .max_by_key(|node| node.timestamp_unix_ms)
+            .map(|node| node.node_id.clone())
+            .unwrap_or_default();
+        let focus_id = focus_node_id
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| value.to_string())
+            .unwrap_or(fallback_focus);
+        let focus_node = graph_index.nodes.get(&focus_id).cloned().ok_or_else(|| {
+            format!(
+                "focus node '{}' not found for source {}",
+                focus_id, source_ref
+            )
+        })?;
+        let ancestor_ids = if matches!(
+            direction,
+            MemoryLineageDirection::Ancestors | MemoryLineageDirection::Both
+        ) {
+            collect_ancestor_ids(&graph_index.parents, &focus_id, effective_limit)
+        } else {
+            Vec::new()
+        };
+        let descendant_ids = if matches!(
+            direction,
+            MemoryLineageDirection::Descendants | MemoryLineageDirection::Both
+        ) {
+            collect_descendant_ids(
+                &graph_index.children,
+                &graph_index.nodes,
+                &focus_id,
+                effective_limit,
+            )
+        } else {
+            Vec::new()
+        };
+        let ancestor_nodes = ancestor_ids
+            .iter()
+            .filter_map(|node_id| graph_index.nodes.get(node_id).cloned())
+            .collect::<Vec<_>>();
+        let descendant_nodes = descendant_ids
+            .iter()
+            .filter_map(|node_id| graph_index.nodes.get(node_id).cloned())
+            .collect::<Vec<_>>();
+        Ok(MemoryGraphInspectView {
+            source_ref: source_ref.to_string(),
+            total_nodes,
+            focus_node: Some(focus_node),
+            ancestor_nodes,
+            descendant_nodes,
+            direction,
+            limit: effective_limit,
+            note: "compact lineage view over governed memory write/remove receipts".to_string(),
+        })
+    }
+
+    pub fn select_replay_entries(
+        &self,
+        source_ref: &str,
+        focus_node_id: Option<&str>,
+        direction: MemoryLineageDirection,
+        limit: usize,
+    ) -> LoomResult<MemoryReplaySelection> {
+        let entries = self.search(source_ref, None, None)?;
+        if focus_node_id.is_none() {
+            return Ok(MemoryReplaySelection {
+                source_ref: source_ref.to_string(),
+                focus_node_id: None,
+                mode: "full_snapshot".to_string(),
+                selected_node_ids: Vec::new(),
+                selected_category_keys: entries
+                    .iter()
+                    .map(|entry| (entry.category.clone(), entry.key.clone()))
+                    .collect(),
+                selected_entries: entries,
+                total_graph_nodes: self.graph_nodes(source_ref)?.len(),
+                note: "full snapshot replay selected from source memory entries".to_string(),
+            });
+        }
+
+        let graph = self.graph_inspect(source_ref, focus_node_id, direction.clone(), limit)?;
+        let focus = graph
+            .focus_node
+            .as_ref()
+            .ok_or_else(|| format!("focus node missing for source {}", source_ref))?;
+        let mut selected_node_ids = vec![focus.node_id.clone()];
+        if matches!(
+            direction,
+            MemoryLineageDirection::Ancestors | MemoryLineageDirection::Both
+        ) {
+            selected_node_ids.extend(graph.ancestor_nodes.iter().map(|node| node.node_id.clone()));
+        }
+        if matches!(
+            direction,
+            MemoryLineageDirection::Descendants | MemoryLineageDirection::Both
+        ) {
+            selected_node_ids.extend(
+                graph
+                    .descendant_nodes
+                    .iter()
+                    .map(|node| node.node_id.clone()),
+            );
+        }
+        selected_node_ids.sort();
+        selected_node_ids.dedup();
+
+        let mut selected_key_set = HashSet::new();
+        for node in std::iter::once(focus)
+            .chain(graph.ancestor_nodes.iter())
+            .chain(graph.descendant_nodes.iter())
+        {
+            selected_key_set.insert((node.category.clone(), node.key.clone()));
+        }
+        let selected_category_keys = selected_key_set.iter().cloned().collect::<Vec<_>>();
+        let selected_entries = entries
+            .into_iter()
+            .filter(|entry| selected_key_set.contains(&(entry.category.clone(), entry.key.clone())))
+            .collect::<Vec<_>>();
+
+        Ok(MemoryReplaySelection {
+            source_ref: source_ref.to_string(),
+            focus_node_id: Some(focus.node_id.clone()),
+            mode: "node_subgraph".to_string(),
+            selected_node_ids,
+            selected_category_keys,
+            selected_entries,
+            total_graph_nodes: graph.total_nodes,
+            note: "selected replay set generated from focused lineage subgraph".to_string(),
+        })
+    }
+
+    fn graph_nodes(&self, source_ref: &str) -> LoomResult<Vec<MemoryGraphNode>> {
+        let records = self.list_receipts(0, Some(source_ref))?;
+        build_graph_nodes_from_receipts(&records)
+    }
+
     fn append_receipt(
         &self,
         operation: &str,
@@ -707,6 +962,238 @@ fn synthetic_warrant_id(agent_id: &str) -> [u8; 32] {
     warrant
 }
 
+struct MemoryGraphIndex {
+    nodes: HashMap<String, MemoryGraphNode>,
+    parents: HashMap<String, Option<String>>,
+    children: HashMap<String, Vec<String>>,
+}
+
+fn build_graph_nodes_from_receipts(
+    records: &[MemoryReceiptRecord],
+) -> LoomResult<Vec<MemoryGraphNode>> {
+    let mut relevant = records
+        .iter()
+        .filter(|record| matches!(record.operation.as_str(), "write" | "remove"))
+        .cloned()
+        .collect::<Vec<_>>();
+    relevant.sort_by_key(|record| (record.timestamp_unix_ms, record.receipt_hash.clone()));
+
+    let mut nodes = Vec::new();
+    let mut last_node_by_key: HashMap<(String, String), String> = HashMap::new();
+
+    for record in relevant {
+        let summary = parse_summary_tokens(&record.input_summary);
+        let category = summary.get("category").cloned().unwrap_or_default();
+        let key = summary.get("key").cloned().unwrap_or_default();
+        if category.is_empty() || key.is_empty() {
+            continue;
+        }
+        let source = summary
+            .get("source")
+            .cloned()
+            .unwrap_or_else(|| "unknown".to_string());
+        let parent_node_id = last_node_by_key
+            .get(&(category.clone(), key.clone()))
+            .cloned();
+        let node = MemoryGraphNode {
+            node_id: record.receipt_hash.clone(),
+            timestamp_unix_ms: record.timestamp_unix_ms,
+            operation: record.operation.clone(),
+            category: category.clone(),
+            key: key.clone(),
+            source,
+            output_summary: record.output_summary.clone(),
+            parent_node_id: parent_node_id.clone(),
+        };
+        nodes.push(node);
+        last_node_by_key.insert((category, key), record.receipt_hash);
+    }
+    Ok(nodes)
+}
+
+fn build_graph_index(nodes: &[MemoryGraphNode]) -> MemoryGraphIndex {
+    let mut node_map = HashMap::new();
+    let mut parents = HashMap::new();
+    let mut children: HashMap<String, Vec<String>> = HashMap::new();
+    for node in nodes {
+        node_map.insert(node.node_id.clone(), node.clone());
+        parents.insert(node.node_id.clone(), node.parent_node_id.clone());
+        if let Some(parent_id) = node.parent_node_id.as_ref() {
+            children
+                .entry(parent_id.clone())
+                .or_default()
+                .push(node.node_id.clone());
+        }
+    }
+    for list in children.values_mut() {
+        list.sort();
+        list.dedup();
+    }
+    MemoryGraphIndex {
+        nodes: node_map,
+        parents,
+        children,
+    }
+}
+
+fn collect_ancestor_ids(
+    parents: &HashMap<String, Option<String>>,
+    node_id: &str,
+    limit: usize,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cursor = parents.get(node_id).and_then(|value| value.clone());
+    while let Some(current) = cursor {
+        if out.len() >= limit {
+            break;
+        }
+        out.push(current.clone());
+        cursor = parents.get(&current).and_then(|value| value.clone());
+    }
+    out
+}
+
+fn collect_descendant_ids(
+    children: &HashMap<String, Vec<String>>,
+    nodes: &HashMap<String, MemoryGraphNode>,
+    node_id: &str,
+    limit: usize,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut queue = VecDeque::new();
+    if let Some(initial) = children.get(node_id) {
+        for child in initial {
+            queue.push_back(child.clone());
+        }
+    }
+    let mut visited = HashSet::new();
+    while let Some(current) = queue.pop_front() {
+        if !visited.insert(current.clone()) {
+            continue;
+        }
+        if !nodes.contains_key(&current) {
+            continue;
+        }
+        out.push(current.clone());
+        if out.len() >= limit {
+            break;
+        }
+        if let Some(next) = children.get(&current) {
+            for child in next {
+                queue.push_back(child.clone());
+            }
+        }
+    }
+    out
+}
+
+fn parse_summary_tokens(summary: &str) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    for token in summary.split_whitespace() {
+        if let Some((key, value)) = token.split_once('=') {
+            if key.trim().is_empty() {
+                continue;
+            }
+            out.insert(key.trim().to_string(), value.trim().to_string());
+        }
+    }
+    out
+}
+
+pub fn render_memory_graph_inspect_human(view: &MemoryGraphInspectView) -> String {
+    let focus = match view.focus_node.as_ref() {
+        Some(node) => format!(
+            "node_id:          {}\noperation:        {}\ncategory:         {}\nkey:              {}\nparent_node_id:   {}\ntimestamp_ms:     {}\n",
+            node.node_id,
+            node.operation,
+            node.category,
+            node.key,
+            node.parent_node_id.as_deref().unwrap_or("(none)"),
+            node.timestamp_unix_ms
+        ),
+        None => "(none)\n".to_string(),
+    };
+    let ancestors = if view.ancestor_nodes.is_empty() {
+        "  (none)\n".to_string()
+    } else {
+        view.ancestor_nodes
+            .iter()
+            .map(|node| {
+                format!(
+                    "  {} [{}:{}] parent={}\n",
+                    node.node_id,
+                    node.category,
+                    node.key,
+                    node.parent_node_id.as_deref().unwrap_or("(none)")
+                )
+            })
+            .collect::<String>()
+    };
+    let descendants = if view.descendant_nodes.is_empty() {
+        "  (none)\n".to_string()
+    } else {
+        view.descendant_nodes
+            .iter()
+            .map(|node| {
+                format!(
+                    "  {} [{}:{}] parent={}\n",
+                    node.node_id,
+                    node.category,
+                    node.key,
+                    node.parent_node_id.as_deref().unwrap_or("(none)")
+                )
+            })
+            .collect::<String>()
+    };
+    format!(
+        "source_ref:        {}\ntotal_nodes:       {}\ndirection:         {}\nlimit:             {}\nnote:              {}\n\nfocus_node\n----------\n{}\nancestor_nodes\n--------------\n{}\ndescendant_nodes\n----------------\n{}",
+        view.source_ref,
+        view.total_nodes,
+        view.direction.as_str(),
+        view.limit,
+        view.note,
+        focus,
+        ancestors,
+        descendants,
+    )
+}
+
+pub fn render_memory_graph_inspect_json(view: &MemoryGraphInspectView) -> String {
+    serde_json::to_string_pretty(&view.to_json()).unwrap_or_else(|_| "{}".to_string()) + "\n"
+}
+
+pub fn render_memory_replay_selection_human(selection: &MemoryReplaySelection) -> String {
+    format!(
+        "source_ref:         {}\nmode:               {}\nfocus_node_id:      {}\nselected_nodes:     {}\nselected_keys:      {}\nselected_entries:   {}\ntotal_graph_nodes:  {}\nnote:               {}\n",
+        selection.source_ref,
+        selection.mode,
+        selection.focus_node_id.as_deref().unwrap_or("(none)"),
+        selection.selected_node_ids.len(),
+        selection.selected_category_keys.len(),
+        selection.selected_entries.len(),
+        selection.total_graph_nodes,
+        selection.note,
+    )
+}
+
+pub fn render_memory_replay_selection_json(selection: &MemoryReplaySelection) -> String {
+    serde_json::to_string_pretty(&json!({
+        "source_ref": selection.source_ref,
+        "mode": selection.mode,
+        "focus_node_id": selection.focus_node_id,
+        "selected_node_ids": selection.selected_node_ids,
+        "selected_category_keys": selection.selected_category_keys.iter().map(|(category, key)| json!({
+            "category": category,
+            "key": key,
+        })).collect::<Vec<_>>(),
+        "selected_entries": selection.selected_entries.iter().map(MemoryEntry::to_json).collect::<Vec<_>>(),
+        "total_graph_nodes": selection.total_graph_nodes,
+        "note": selection.note,
+    }))
+    .unwrap_or_else(|_| "{}".to_string())
+        + "\n"
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -884,6 +1371,114 @@ mod tests {
 
         let limited = svc.list_receipts(1, None).unwrap();
         assert_eq!(limited.len(), 1);
+        cleanup(&root);
+    }
+
+    #[test]
+    fn test_graph_inspect_compact_lineage_for_focus_node() {
+        let root = temp_root();
+        let svc = MemoryService::with_defaults(&root);
+        svc.write("atlas", "research", "strategy", "v1", "test")
+            .unwrap();
+        svc.write("atlas", "research", "strategy", "v2", "test")
+            .unwrap();
+        svc.write("atlas", "research", "strategy", "v3", "test")
+            .unwrap();
+
+        let receipts = svc.list_receipts(20, Some("atlas")).unwrap();
+        let write_nodes = receipts
+            .iter()
+            .filter(|record| record.operation == "write")
+            .map(|record| record.receipt_hash.clone())
+            .collect::<Vec<_>>();
+        assert!(write_nodes.len() >= 3);
+        let focus = write_nodes[1].clone();
+
+        let graph = svc
+            .graph_inspect("atlas", Some(&focus), MemoryLineageDirection::Both, 10)
+            .unwrap();
+        assert_eq!(graph.source_ref, "atlas");
+        assert_eq!(graph.total_nodes >= 3, true);
+        assert_eq!(
+            graph.focus_node.as_ref().map(|node| node.node_id.as_str()),
+            Some(focus.as_str())
+        );
+        assert!(!graph.ancestor_nodes.is_empty());
+        assert!(!graph.descendant_nodes.is_empty());
+        cleanup(&root);
+    }
+
+    #[test]
+    fn test_select_replay_entries_for_node_subgraph() {
+        let root = temp_root();
+        let svc = MemoryService::with_defaults(&root);
+        svc.write("atlas", "research", "strategy", "v1", "test")
+            .unwrap();
+        svc.write("atlas", "research", "strategy", "v2", "test")
+            .unwrap();
+        svc.write("atlas", "research", "strategy", "v3", "test")
+            .unwrap();
+        svc.write("atlas", "research", "risk", "low", "test")
+            .unwrap();
+
+        let receipts = svc.list_receipts(20, Some("atlas")).unwrap();
+        let write_nodes = receipts
+            .iter()
+            .filter(|record| record.operation == "write")
+            .map(|record| record.receipt_hash.clone())
+            .collect::<Vec<_>>();
+        assert!(write_nodes.len() >= 3);
+        let focus = write_nodes[1].clone();
+        let selection = svc
+            .select_replay_entries("atlas", Some(&focus), MemoryLineageDirection::Ancestors, 10)
+            .unwrap();
+        assert_eq!(selection.mode, "node_subgraph");
+        assert_eq!(selection.focus_node_id.as_deref(), Some(focus.as_str()));
+        assert!(!selection.selected_node_ids.is_empty());
+        assert!(!selection.selected_entries.is_empty());
+        assert!(selection
+            .selected_category_keys
+            .iter()
+            .any(|(category, key)| category == "research" && key == "strategy"));
+        cleanup(&root);
+    }
+
+    #[test]
+    fn test_graph_inspect_respects_direction_mode() {
+        let root = temp_root();
+        let svc = MemoryService::with_defaults(&root);
+        svc.write("atlas", "research", "strategy", "v1", "test")
+            .unwrap();
+        svc.write("atlas", "research", "strategy", "v2", "test")
+            .unwrap();
+        svc.write("atlas", "research", "strategy", "v3", "test")
+            .unwrap();
+
+        let receipts = svc.list_receipts(20, Some("atlas")).unwrap();
+        let write_nodes = receipts
+            .iter()
+            .filter(|record| record.operation == "write")
+            .map(|record| record.receipt_hash.clone())
+            .collect::<Vec<_>>();
+        assert!(write_nodes.len() >= 3);
+        let focus = write_nodes[1].clone();
+
+        let only_ancestors = svc
+            .graph_inspect("atlas", Some(&focus), MemoryLineageDirection::Ancestors, 10)
+            .unwrap();
+        assert!(!only_ancestors.ancestor_nodes.is_empty());
+        assert!(only_ancestors.descendant_nodes.is_empty());
+
+        let only_descendants = svc
+            .graph_inspect(
+                "atlas",
+                Some(&focus),
+                MemoryLineageDirection::Descendants,
+                10,
+            )
+            .unwrap();
+        assert!(only_descendants.ancestor_nodes.is_empty());
+        assert!(!only_descendants.descendant_nodes.is_empty());
         cleanup(&root);
     }
 }
