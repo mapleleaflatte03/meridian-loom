@@ -8,7 +8,7 @@ ORG_ID ?= local_foundry
 RELEASE_DIR ?= $(ROOT)/dist
 PREFIX ?= $(HOME)/.local/share/meridian-loom
 
-.PHONY: build test init doctor health status start stop restart logs run-local package-release release-local docker-build docker-up docker-down install-local acceptance acceptance-container acceptance-shadow-zk acceptance-shadow-zk-embodied acceptance-shadow-zk-lane acceptance-swarm-zk-lane acceptance-memory-graph-lane acceptance-init-nation-lane acceptance-breed-lane acceptance-embodied-physical-lane acceptance-connect-lane acceptance-connect-ecosystem-lane acceptance-extension-lane acceptance-quickstart-lane acceptance-deploy-lane acceptance-security-auth-lane acceptance-observability-lane acceptance-oss-dx-lane acceptance-branding-lane dev-first-proof verify-release
+.PHONY: build test init doctor health status start stop restart logs run-local package-release release-local docker-build docker-up docker-down install-local acceptance acceptance-container acceptance-shadow-zk acceptance-shadow-zk-embodied acceptance-shadow-zk-lane acceptance-swarm-zk-lane acceptance-memory-graph-lane acceptance-init-nation-lane acceptance-breed-lane acceptance-embodied-physical-lane acceptance-connect-lane acceptance-connect-ecosystem-lane acceptance-connect-telegram-lane acceptance-connect-discord-lane acceptance-connect-browser-lane acceptance-connect-shell-lane acceptance-connect-webhook-lane acceptance-extension-lane acceptance-quickstart-lane acceptance-deploy-lane acceptance-security-auth-lane acceptance-observability-lane acceptance-oss-dx-lane acceptance-branding-lane connect-kpi-gate dev-first-proof verify-release
 
 build:
 	cargo build --release --workspace --locked
@@ -112,6 +112,21 @@ acceptance-connect-lane:
 acceptance-connect-ecosystem-lane:
 	./scripts/acceptance_connect_ecosystem_lane.sh
 
+acceptance-connect-telegram-lane:
+	./scripts/acceptance_connect_telegram_lane.sh
+
+acceptance-connect-discord-lane:
+	./scripts/acceptance_connect_discord_lane.sh
+
+acceptance-connect-browser-lane:
+	./scripts/acceptance_connect_browser_lane.sh
+
+acceptance-connect-shell-lane:
+	./scripts/acceptance_connect_shell_lane.sh
+
+acceptance-connect-webhook-lane:
+	./scripts/acceptance_connect_webhook_lane.sh
+
 acceptance-extension-lane:
 	./scripts/acceptance_extension_lane.sh
 
@@ -132,6 +147,9 @@ acceptance-oss-dx-lane:
 
 acceptance-branding-lane:
 	./scripts/acceptance_branding_lane.sh
+
+connect-kpi-gate:
+	./scripts/connect_kpi_gate.sh --root "$(LOOM_ROOT)" --adapter-id telegram-adapter --adapter-id discord-adapter --adapter-id browser-adapter --adapter-id shell-adapter --adapter-id webhook-adapter
 
 dev-first-proof:
 	./scripts/dev_first_proof.sh

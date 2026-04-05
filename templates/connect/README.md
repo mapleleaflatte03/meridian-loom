@@ -14,5 +14,15 @@ Operator retention + KPI surfaces:
 - `loom connect metrics --adapter-id ...`
 - `loom connect scorecard`
 - `loom connect prune --adapter-id ...`
+- `scripts/connect_kpi_gate.sh --root ... --adapter-id ...`
+
+Acceptance lanes:
+
+- `scripts/acceptance_connect_ecosystem_lane.sh`
+- `scripts/acceptance_connect_telegram_lane.sh`
+- `scripts/acceptance_connect_discord_lane.sh`
+- `scripts/acceptance_connect_browser_lane.sh`
+- `scripts/acceptance_connect_shell_lane.sh`
+- `scripts/acceptance_connect_webhook_lane.sh`
 
 They do not include provider-specific defaults or secrets.
