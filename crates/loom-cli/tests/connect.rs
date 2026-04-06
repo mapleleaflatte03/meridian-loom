@@ -2416,3 +2416,47 @@ fn unknown_top_level_command_suggests_help() {
         "unknown command error should suggest --help: {output}"
     );
 }
+
+#[test]
+fn connect_health_includes_operator_next_step() {
+    let harness = Harness::new("health_next_step");
+    harness.run_ok(&[
+        "connect", "scaffold", "--name", "telegram_health_step",
+        "--transport", "telegram", "--action-schema", "meridian.runtime.v1",
+        "--root", harness.root_str(), "--format", "json",
+    ]);
+    harness.run_ok(&[
+        "connect", "enable", "--adapter-id", "telegram-health-step",
+        "--root", harness.root_str(), "--format", "json",
+    ]);
+    harness.run_ok(&[
+        "connect", "test", "--adapter-id", "telegram-health-step",
+        "--root", harness.root_str(), "--format", "json",
+    ]);
+    let health = harness.json_ok(&[
+        "connect", "health", "--adapter-id", "telegram-health-step",
+        "--root", harness.root_str(), "--format", "json",
+    ]);
+    assert_eq!(health.get("health_status").and_then(Value::as_str), Some("healthy"));
+    let next_step = health.get("operator_next_step").and_then(Value::as_str).expect("operator_next_step");
+    assert!(next_step.contains("loom connect"), "operator_next_step should be actionable: {next_step}");
+}
+
+#[test]
+fn connect_diagnostics_includes_operator_next_step() {
+    let harness = Harness::new("diag_next_step");
+    harness.run_ok(&[
+        "connect", "scaffold", "--name", "webhook_diag_step",
+        "--transport", "webhook", "--action-schema", "meridian.runtime.v1",
+        "--root", harness.root_str(), "--format", "json",
+    ]);
+    let diag = harness.json_ok(&[
+        "connect", "diagnostics", "--adapter-id", "webhook-diag-step",
+        "--root", harness.root_str(), "--format", "json",
+    ]);
+    let next_step = diag.get("operator_next_step").and_then(Value::as_str).expect("operator_next_step");
+    assert!(
+        next_step.contains("loom connect health") && next_step.contains("webhook-diag-step"),
+        "diagnostics operator_next_step should point to health command: {next_step}"
+    );
+}

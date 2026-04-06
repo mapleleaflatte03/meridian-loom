@@ -823,6 +823,13 @@ fn handle_connect_health(args: &[String]) -> LoomResult<()> {
             "desktop_capture_events": count_jsonl_events(&connect_desktop_history_path(&root, &adapter_id))?,
         },
         "desktop_vision": latest_desktop_event,
+        "operator_next_step": match recommended_action.as_str() {
+            "enable_adapter" => format!("loom connect enable --adapter-id {} --format human", adapter_id),
+            "reconnect" => format!("loom connect test --adapter-id {} --format human", adapter_id),
+            "shadow_or_local_queue" => format!("loom connect diagnostics --adapter-id {} --format human", adapter_id),
+            "court_sanction_review" => format!("loom connect scorecard --fix --format human"),
+            _ => "loom connect list --format human".to_string(),
+        },
         "note": "adapter health snapshot persisted",
     });
     persist_health_snapshot(&root, &adapter_id, &payload)?;
@@ -936,6 +943,7 @@ fn handle_connect_diagnostics(args: &[String]) -> LoomResult<()> {
         "desktop_path": desktop_path.display().to_string(),
         "health_path": health_path.display().to_string(),
         "runtime_contract": CONNECT_RUNTIME_CONTRACT_V2,
+        "operator_next_step": format!("loom connect health --adapter-id {} --format human", adapter_id),
         "note": "operator diagnostics snapshot for connect adapter lifecycle",
     });
     persist_connect_latest_artifact(&root, &payload)?;
@@ -1654,6 +1662,9 @@ fn print_connect_payload(payload: &Value, format: &str) -> LoomResult<()> {
             }
             if let Some(invalid) = payload.get("invalid_adapters").and_then(Value::as_u64) {
                 lines.push(format!("invalid_adapters:    {invalid}"));
+            }
+            if let Some(next_step) = payload.get("operator_next_step").and_then(Value::as_str) {
+                lines.push(format!("operator_next_step:  {next_step}"));
             }
             if let Some(note) = payload.get("note").and_then(Value::as_str) {
                 lines.push(format!("note:                {note}"));
