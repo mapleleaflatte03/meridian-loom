@@ -321,6 +321,92 @@ fn connect_scaffold_supports_growth_transports() {
 }
 
 #[test]
+fn connect_desktop_transport_persists_vision_events_and_metrics() {
+    let harness = Harness::new("desktop_vision");
+    harness.run_ok(&[
+        "connect",
+        "scaffold",
+        "--name",
+        "desktop_vision_adapter",
+        "--transport",
+        "desktop",
+        "--action-schema",
+        "meridian.runtime.v1",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    harness.run_ok(&[
+        "connect",
+        "enable",
+        "--adapter-id",
+        "desktop-vision-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    let tested = harness.json_ok(&[
+        "connect",
+        "test",
+        "--adapter-id",
+        "desktop-vision-adapter",
+        "--root",
+        harness.root_str(),
+        "--format",
+        "json",
+    ]);
+    assert_eq!(
+        tested.get("test_status").and_then(Value::as_str),
+        Some("pass")
+    );
+    let desktop_vision = tested
+        .get("desktop_vision")
+        .and_then(Value::as_object)
+        .expect("desktop vision payload");
+    let digest = desktop_vision
+        .get("capture_digest_hex")
+        .and_then(Value::as_str)
+        .expect("capture digest");
+    assert_eq!(digest.len(), 64);
+    let desktop_history_path = tested
+        .get("desktop_history_path")
+        .and_then(Value::as_str)
+        .expect("desktop history path");
+    assert!(
+        Path::new(desktop_history_path).exists(),
+        "desktop history path should exist: {}",
+        desktop_history_path
+    );
+
+    let diagnostics = harness.json_ok(&[
+        "connect",
+        "diagnostics",
+        "--adapter-id",
+        "desktop-vision-adapter",
+        "--root",
+        harness.root_str(),
+        "--limit",
+        "5",
+        "--format",
+        "json",
+    ]);
+    assert_eq!(
+        diagnostics
+            .get("desktop_recent_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        diagnostics
+            .pointer("/desktop_recent/0/vision_schema")
+            .and_then(Value::as_str),
+        Some("meridian.desktop.vision.v1")
+    );
+}
+
+#[test]
 fn connect_scaffold_upserts_existing_adapter_without_duplicates() {
     let harness = Harness::new("upsert");
     harness.run_ok(&[
@@ -573,7 +659,7 @@ fn connect_validate_rejects_unsafe_security_matrix_for_priority_transports() {
     );
     assert_eq!(
         payload.get("invalid_adapters").and_then(Value::as_u64),
-        Some(5)
+        Some(6)
     );
     let checks = payload
         .get("checks")

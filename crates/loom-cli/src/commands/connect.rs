@@ -3,6 +3,7 @@ use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
 use crate::*;
+use sha2::{Digest, Sha256};
 use serde_json::{json, Value};
 
 const DEFAULT_CONNECT_REGISTRY_PATH: &str = "state/connect/registry.json";
@@ -11,6 +12,7 @@ const DEFAULT_CONNECT_HEALTH_DIR: &str = "state/connect/health";
 const DEFAULT_CONNECT_TESTS_DIR: &str = "state/connect/tests";
 const DEFAULT_CONNECT_LIFECYCLE_DIR: &str = "state/connect/lifecycle";
 const DEFAULT_CONNECT_SANCTIONS_DIR: &str = "state/connect/sanctions";
+const DEFAULT_CONNECT_DESKTOP_DIR: &str = "state/connect/desktop";
 const DEFAULT_CONNECT_LATEST_ARTIFACT_PATH: &str = "artifacts/connect/latest.json";
 const CONNECT_REGISTRY_SCHEMA_V1: &str = "meridian.connect.registry.v1";
 const CONNECT_REGISTRY_SCHEMA_V2: &str = "meridian.connect.registry.v2";
@@ -473,6 +475,30 @@ fn handle_connect_test(args: &[String]) -> LoomResult<()> {
         &connect_tests_history_path(&root, &adapter_id),
         &serde_json::to_string(&test_event).map_err(|error| error.to_string())?,
     )?;
+    let desktop_vision_event = if transport == "desktop" {
+        let event = build_desktop_vision_event(
+            &adapter_id,
+            test_event
+                .get("tested_at")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            test_event
+                .get("test_status")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown"),
+            test_event
+                .get("test_reason")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown"),
+        );
+        append_jsonl(
+            &connect_desktop_history_path(&root, &adapter_id),
+            &serde_json::to_string(&event).map_err(|error| error.to_string())?,
+        )?;
+        Some(event)
+    } else {
+        None
+    };
     if test_reason == "malformed_payload" {
         let _ = append_connect_sanction_event(
             &root,
@@ -505,6 +531,22 @@ fn handle_connect_test(args: &[String]) -> LoomResult<()> {
             .unwrap_or("")
             .to_string(),
     );
+    if let Some(event) = desktop_vision_event.as_ref() {
+        diagnostics["last_desktop_capture_at"] = Value::String(
+            event
+                .get("captured_at")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+        );
+        diagnostics["last_desktop_capture_digest"] = Value::String(
+            event
+                .get("capture_digest_hex")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+        );
+    }
     let test_entries = diagnostics
         .get("test_history_entries")
         .and_then(Value::as_u64)
@@ -570,6 +612,8 @@ fn handle_connect_test(args: &[String]) -> LoomResult<()> {
         "fallback_active": test_status != "pass",
         "tests_history_path": connect_tests_history_path(&root, &adapter_id).display().to_string(),
         "sanctions_path": connect_sanctions_history_path(&root, &adapter_id).display().to_string(),
+        "desktop_history_path": if transport == "desktop" { connect_desktop_history_path(&root, &adapter_id).display().to_string() } else { String::new() },
+        "desktop_vision": desktop_vision_event,
         "registry_path": connect_registry_path(&root).display().to_string(),
         "runtime_contract": CONNECT_RUNTIME_CONTRACT_V2,
         "note": "adapter test diagnostics persisted",
@@ -602,6 +646,8 @@ fn handle_connect_health(args: &[String]) -> LoomResult<()> {
         .ok_or_else(|| format!("adapter '{}' not found", adapter_id))?;
     let enabled = adapter_enabled(adapter);
     let latest_test = read_latest_jsonl_event(&connect_tests_history_path(&root, &adapter_id))?;
+    let latest_desktop_event =
+        read_latest_jsonl_event(&connect_desktop_history_path(&root, &adapter_id))?;
     let test_status = latest_test
         .as_ref()
         .and_then(|event| event.get("test_status"))
@@ -751,6 +797,7 @@ fn handle_connect_health(args: &[String]) -> LoomResult<()> {
         "tests_history_path": connect_tests_history_path(&root, &adapter_id).display().to_string(),
         "lifecycle_history_path": connect_lifecycle_history_path(&root, &adapter_id).display().to_string(),
         "sanctions_path": connect_sanctions_history_path(&root, &adapter_id).display().to_string(),
+        "desktop_history_path": connect_desktop_history_path(&root, &adapter_id).display().to_string(),
         "lifecycle_metrics": {
             "test_history_entries": adapter
                 .pointer("/diagnostics/test_history_entries")
@@ -769,7 +816,9 @@ fn handle_connect_health(args: &[String]) -> LoomResult<()> {
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
             "sanction_events": count_jsonl_events(&connect_sanctions_history_path(&root, &adapter_id))?,
+            "desktop_capture_events": count_jsonl_events(&connect_desktop_history_path(&root, &adapter_id))?,
         },
+        "desktop_vision": latest_desktop_event,
         "note": "adapter health snapshot persisted",
     });
     persist_health_snapshot(&root, &adapter_id, &payload)?;
@@ -838,11 +887,13 @@ fn handle_connect_diagnostics(args: &[String]) -> LoomResult<()> {
     let tests_path = connect_tests_history_path(&root, &adapter_id);
     let lifecycle_path = connect_lifecycle_history_path(&root, &adapter_id);
     let sanctions_path = connect_sanctions_history_path(&root, &adapter_id);
+    let desktop_path = connect_desktop_history_path(&root, &adapter_id);
     let health_path = connect_health_path(&root, &adapter_id);
 
     let tests_recent = read_recent_jsonl_events(&tests_path, limit)?;
     let lifecycle_recent = read_recent_jsonl_events(&lifecycle_path, limit)?;
     let sanctions_recent = read_recent_jsonl_events(&sanctions_path, limit)?;
+    let desktop_recent = read_recent_jsonl_events(&desktop_path, limit)?;
     let health_snapshot = read_optional_json_value(&health_path)?;
     let payload = json!({
         "status": "connect_diagnostics",
@@ -868,14 +919,17 @@ fn handle_connect_diagnostics(args: &[String]) -> LoomResult<()> {
         "tests_recent_count": tests_recent.len() as u64,
         "lifecycle_recent_count": lifecycle_recent.len() as u64,
         "sanctions_recent_count": sanctions_recent.len() as u64,
+        "desktop_recent_count": desktop_recent.len() as u64,
         "tests_recent": tests_recent,
         "lifecycle_recent": lifecycle_recent,
         "sanctions_recent": sanctions_recent,
+        "desktop_recent": desktop_recent,
         "health_snapshot": health_snapshot.unwrap_or(Value::Null),
         "registry_path": connect_registry_path(&root).display().to_string(),
         "tests_history_path": tests_path.display().to_string(),
         "lifecycle_history_path": lifecycle_path.display().to_string(),
         "sanctions_path": sanctions_path.display().to_string(),
+        "desktop_path": desktop_path.display().to_string(),
         "health_path": health_path.display().to_string(),
         "runtime_contract": CONNECT_RUNTIME_CONTRACT_V2,
         "note": "operator diagnostics snapshot for connect adapter lifecycle",
@@ -1678,6 +1732,11 @@ fn connect_sanctions_history_path(root: &Path, adapter_id: &str) -> PathBuf {
         .join(format!("{adapter_id}.jsonl"))
 }
 
+fn connect_desktop_history_path(root: &Path, adapter_id: &str) -> PathBuf {
+    root.join(DEFAULT_CONNECT_DESKTOP_DIR)
+        .join(format!("{adapter_id}.jsonl"))
+}
+
 fn connect_latest_artifact_path(root: &Path) -> PathBuf {
     root.join(DEFAULT_CONNECT_LATEST_ARTIFACT_PATH)
 }
@@ -1983,6 +2042,8 @@ fn default_adapter_diagnostics() -> Value {
         "last_test_status": "unknown",
         "last_test_reason": "",
         "last_test_at": "",
+        "last_desktop_capture_at": "",
+        "last_desktop_capture_digest": "",
         "last_health_status": "unknown",
         "last_health_at": "",
         "test_history_entries": 0,
@@ -2121,6 +2182,15 @@ fn harden_adapter_security_profile(adapter: &mut Value) {
             profile["control_mode"] = Value::String("governed_desktop_bridge".to_string());
             profile["input_guard"] = Value::String("warrant_bound".to_string());
             profile["capture_mode"] = Value::String("receipt_snapshots".to_string());
+            profile["vision_schema"] = Value::String("meridian.desktop.vision.v1".to_string());
+            profile["capture_digest"] = Value::String("sha256".to_string());
+            profile["allowed_actions"] = json!([
+                "screen.capture",
+                "window.focus",
+                "pointer.move",
+                "pointer.click",
+                "keyboard.type",
+            ]);
             profile["health_endpoint"] = Value::String("/health".to_string());
             if profile
                 .get("rate_limit_per_minute")
@@ -2131,6 +2201,8 @@ fn harden_adapter_security_profile(adapter: &mut Value) {
                 profile["rate_limit_per_minute"] = Value::Number(45_u64.into());
             }
             profile["queue_fallback"] = Value::String("local_queue_shadow".to_string());
+            profile["remediation_policy"] =
+                Value::String("fallback_queue_then_sanction".to_string());
         }
         "webhook" => {
             profile["method"] = Value::String("POST".to_string());
@@ -2297,6 +2369,16 @@ fn evaluate_transport_security(adapter: &Value, transport: &str) -> bool {
                     .map(|value| value == "warrant_bound")
                     .unwrap_or(false)
                 && profile
+                    .get("capture_mode")
+                    .and_then(Value::as_str)
+                    .map(|value| value == "receipt_snapshots")
+                    .unwrap_or(false)
+                && profile
+                    .get("vision_schema")
+                    .and_then(Value::as_str)
+                    .map(|value| value == "meridian.desktop.vision.v1")
+                    .unwrap_or(false)
+                && profile
                     .get("health_endpoint")
                     .and_then(Value::as_str)
                     .map(|value| value == "/health")
@@ -2401,6 +2483,41 @@ fn append_connect_sanction_event(
     )
 }
 
+fn build_desktop_vision_event(
+    adapter_id: &str,
+    tested_at: &str,
+    test_status: &str,
+    test_reason: &str,
+) -> Value {
+    let mut hasher = Sha256::new();
+    hasher.update(adapter_id.as_bytes());
+    hasher.update(b":");
+    hasher.update(tested_at.as_bytes());
+    hasher.update(b":");
+    hasher.update(test_status.as_bytes());
+    hasher.update(b":");
+    hasher.update(test_reason.as_bytes());
+    let capture_digest_hex = hex::encode(hasher.finalize());
+    json!({
+        "schema_version": "meridian.connect.desktop_vision_event.v1",
+        "adapter_id": adapter_id,
+        "captured_at": tested_at,
+        "capture_digest_hex": capture_digest_hex,
+        "vision_schema": "meridian.desktop.vision.v1",
+        "frame_source": "governed_desktop_bridge",
+        "action_schema": "meridian.desktop.action.v1",
+        "allowed_actions": ["screen.capture", "window.focus", "pointer.move", "pointer.click", "keyboard.type"],
+        "ack_required": true,
+        "cancel_policy": "court_bound_abort",
+        "test_status": test_status,
+        "test_reason": test_reason,
+        "warrant_bound": true,
+        "authority_checked": true,
+        "court_checked": true,
+        "treasury_gate": true,
+    })
+}
+
 fn value_string(value: Option<&Value>) -> &str {
     value.and_then(Value::as_str).unwrap_or("")
 }
@@ -2488,9 +2605,13 @@ fn transport_profile_for(transport: &str) -> Value {
             "control_mode": "governed_desktop_bridge",
             "input_guard": "warrant_bound",
             "capture_mode": "receipt_snapshots",
+            "vision_schema": "meridian.desktop.vision.v1",
+            "capture_digest": "sha256",
+            "allowed_actions": ["screen.capture", "window.focus", "pointer.move", "pointer.click", "keyboard.type"],
             "rate_limit_per_minute": 45,
             "health_endpoint": "/health",
             "queue_fallback": "local_queue_shadow",
+            "remediation_policy": "fallback_queue_then_sanction",
             "note": "governed desktop control lane with proof-bound interaction envelopes",
         }),
         "webhook" => json!({

@@ -130,14 +130,18 @@ fi
 HEALTH_PATH="${ROOT_DIR}/state/connect/health/${ADAPTER_ID}.json"
 TESTS_PATH="${ROOT_DIR}/state/connect/tests/${ADAPTER_ID}.jsonl"
 LIFECYCLE_PATH="${ROOT_DIR}/state/connect/lifecycle/${ADAPTER_ID}.jsonl"
+DESKTOP_PATH="${ROOT_DIR}/state/connect/desktop/${ADAPTER_ID}.jsonl"
 LATEST_PATH="${ROOT_DIR}/artifacts/connect/latest.json"
 
 [[ -f "${HEALTH_PATH}" ]] || { echo "missing health snapshot: ${HEALTH_PATH}" >&2; exit 1; }
 [[ -f "${TESTS_PATH}" ]] || { echo "missing tests history: ${TESTS_PATH}" >&2; exit 1; }
 [[ -f "${LIFECYCLE_PATH}" ]] || { echo "missing lifecycle history: ${LIFECYCLE_PATH}" >&2; exit 1; }
 [[ -f "${LATEST_PATH}" ]] || { echo "missing latest connect artifact: ${LATEST_PATH}" >&2; exit 1; }
+if [[ "${TRANSPORT}" == "desktop" ]]; then
+  [[ -f "${DESKTOP_PATH}" ]] || { echo "missing desktop history: ${DESKTOP_PATH}" >&2; exit 1; }
+fi
 
-python3 - <<'PY' "${HEALTH_PATH}" "${LATEST_PATH}" "${ADAPTER_ID}"
+python3 - <<'PY' "${HEALTH_PATH}" "${LATEST_PATH}" "${ADAPTER_ID}" "${TRANSPORT}" "${DESKTOP_PATH}"
 import json
 import pathlib
 import sys
@@ -145,6 +149,8 @@ import sys
 health_path = pathlib.Path(sys.argv[1])
 latest_path = pathlib.Path(sys.argv[2])
 adapter_id = sys.argv[3]
+transport = sys.argv[4]
+desktop_path = pathlib.Path(sys.argv[5])
 
 health = json.loads(health_path.read_text())
 if health.get("adapter_id") != adapter_id:
@@ -157,6 +163,17 @@ if latest.get("adapter_id") != adapter_id:
     raise SystemExit(f"latest artifact adapter mismatch: {latest.get('adapter_id')} != {adapter_id}")
 if latest.get("status") not in {"connect_tested", "connect_health", "connect_diagnostics", "connect_enabled", "connect_disabled", "connect_validated", "connect_scaffolded"}:
     raise SystemExit(f"unexpected latest status: {latest.get('status')}")
+
+if transport == "desktop":
+    lines = [line for line in desktop_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    if not lines:
+        raise SystemExit("desktop history is empty")
+    event = json.loads(lines[-1])
+    if event.get("vision_schema") != "meridian.desktop.vision.v1":
+        raise SystemExit(f"unexpected vision schema: {event.get('vision_schema')}")
+    digest = str(event.get("capture_digest_hex") or "")
+    if len(digest) != 64:
+        raise SystemExit(f"invalid desktop capture digest: {digest}")
 PY
 
 echo "[loom-acceptance] PASS adapter lane ${ADAPTER_ID} (${TRANSPORT})"
