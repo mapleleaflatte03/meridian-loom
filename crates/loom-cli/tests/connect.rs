@@ -2315,3 +2315,63 @@ fn connect_c2_hardening_matrix_enforces_rate_limit_malformed_and_sanction_path()
             && item.get("action").and_then(Value::as_str) == Some("manual_court_review_required")
     }));
 }
+
+#[test]
+fn connect_unknown_subcommand_shows_available_commands() {
+    let h = Harness::new("unknown_subcmd");
+    let output = h.run_fail(&["connect", "foobar", "--root", h.root_str()]);
+    assert!(
+        output.contains("unknown connect subcommand 'foobar'"),
+        "should echo the bad subcommand name: {output}"
+    );
+    assert!(
+        output.contains("scaffold") && output.contains("scorecard"),
+        "should list available subcommands: {output}"
+    );
+}
+
+#[test]
+fn connect_adapter_not_found_suggests_list() {
+    let h = Harness::new("not_found_hint");
+    let output = h.run_fail(&[
+        "connect",
+        "health",
+        "--adapter-id",
+        "nonexistent",
+        "--root",
+        h.root_str(),
+        "--format",
+        "json",
+    ]);
+    assert!(
+        output.contains("not found") && output.contains("loom connect list"),
+        "adapter-not-found should suggest `loom connect list`: {output}"
+    );
+}
+
+#[test]
+fn connect_missing_adapter_id_suggests_help() {
+    let h = Harness::new("missing_flag");
+    let output = h.run_fail(&[
+        "connect",
+        "health",
+        "--root",
+        h.root_str(),
+        "--format",
+        "json",
+    ]);
+    assert!(
+        output.contains("missing required flag") && output.contains("--help"),
+        "missing flag error should mention --help: {output}"
+    );
+}
+
+#[test]
+fn connect_help_prints_usage() {
+    let h = Harness::new("help_flag");
+    let output = h.run_ok(&["connect", "--help"]);
+    assert!(
+        output.contains("COMMANDS:") && output.contains("scaffold"),
+        "help output should list commands: {output}"
+    );
+}
