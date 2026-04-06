@@ -153,7 +153,10 @@ fn run() -> LoomResult<()> {
             print_help();
             Ok(())
         }
-        other => Err(format!("unknown command '{}'", other)),
+        other => Err(format!(
+            "unknown command '{}'; run `loom --help` to see available commands",
+            other
+        )),
     }
 }
 

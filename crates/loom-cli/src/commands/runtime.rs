@@ -75,24 +75,19 @@ pub(crate) fn handle_doctor(args: &[String]) -> LoomResult<()> {
             }
         }
         _ => {
+            let checks_json = render_doctor_json(&checks);
             if fix_results.is_empty() {
-                print!("{}", render_doctor_json(&checks));
+                print!("{}", checks_json);
             } else {
-                // Append fix results to JSON output
-                let checks_json = render_doctor_json(&checks);
-                let trimmed = checks_json.trim_end();
-                if trimmed.ends_with(']') {
-                    // Wrap in object with fix_results
-                    println!(
-                        "{{\"checks\":{},\"fix_results\":{:?}}}",
-                        trimmed, fix_results
-                    );
-                } else {
-                    print!("{}", checks_json);
-                    for msg in &fix_results {
-                        eprintln!("{}", msg);
-                    }
-                }
+                let fix_json: Vec<String> = fix_results
+                    .iter()
+                    .map(|s| format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")))
+                    .collect();
+                println!(
+                    "{{\"checks\":{},\"fix_results\":[{}]}}",
+                    checks_json.trim_end(),
+                    fix_json.join(",")
+                );
             }
         }
     }
