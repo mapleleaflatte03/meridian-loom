@@ -2375,3 +2375,44 @@ fn connect_help_prints_usage() {
         "help output should list commands: {output}"
     );
 }
+
+#[test]
+fn doctor_json_fix_emits_valid_json() {
+    let h = Harness::new("doctor_json");
+    let raw = h.run_ok(&["doctor", "--root", h.root_str(), "--format", "json", "--fix"]);
+    let parsed: Value = serde_json::from_str(raw.trim())
+        .unwrap_or_else(|e| panic!("doctor --fix JSON is invalid: {e}\nraw output:\n{raw}"));
+    assert!(
+        parsed.get("checks").is_some(),
+        "JSON output should have 'checks' key: {parsed}"
+    );
+    assert!(
+        parsed.get("fix_results").is_some(),
+        "JSON output should have 'fix_results' key: {parsed}"
+    );
+    let fix_results = parsed["fix_results"].as_array().expect("fix_results should be array");
+    assert!(
+        !fix_results.is_empty(),
+        "fix_results should contain at least one entry"
+    );
+}
+
+#[test]
+fn doctor_human_shows_summary_and_next_step() {
+    let h = Harness::new("doctor_human");
+    let output = h.run_ok(&["doctor", "--root", h.root_str(), "--format", "human"]);
+    assert!(
+        output.contains("overall:") && output.contains("next_step:"),
+        "doctor human should include summary and next_step: {output}"
+    );
+}
+
+#[test]
+fn unknown_top_level_command_suggests_help() {
+    let h = Harness::new("unknown_cmd");
+    let output = h.run_fail(&["nonexistent-command"]);
+    assert!(
+        output.contains("unknown command") && output.contains("--help"),
+        "unknown command error should suggest --help: {output}"
+    );
+}
