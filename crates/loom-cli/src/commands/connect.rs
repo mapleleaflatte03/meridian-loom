@@ -1042,6 +1042,13 @@ fn handle_connect_scorecard(args: &[String]) -> LoomResult<()> {
         "remediation_actions": remediation_actions,
         "runtime_contract": CONNECT_RUNTIME_CONTRACT_V2,
         "adapters": rows,
+        "operator_next_step": if degraded == 0 {
+            "loom connect list --format human"
+        } else if apply_fix {
+            "loom connect health --adapter-id <adapter-id> --format human"
+        } else {
+            "loom connect scorecard --retention-days 30 --fix --format human"
+        },
         "note": "fleet scorecard across connect adapters",
     });
     persist_connect_latest_artifact(&root, &payload)?;
@@ -1064,7 +1071,7 @@ fn validate_connect_scorecard_args(args: &[String]) -> LoomResult<()> {
             }
             _ => {
                 return Err(format!(
-                    "unexpected argument '{}' for `loom connect scorecard`; use `loom connect scorecard --fix` (optional: --root ROOT, --format human|json, --retention-days DAYS)",
+                    "unexpected argument '{}' for `loom connect scorecard`; example: `loom connect scorecard --retention-days 30 --fix` (optional: --root ROOT, --format human|json)",
                     token
                 ));
             }
