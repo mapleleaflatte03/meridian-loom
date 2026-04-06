@@ -175,7 +175,12 @@ fn has_flag(args: &[String], flag: &str) -> bool {
 }
 
 fn required_flag(args: &[String], flag: &str) -> LoomResult<String> {
-    take_value(args, flag).ok_or_else(|| format!("missing required flag {}", flag))
+    take_value(args, flag).ok_or_else(|| {
+        format!(
+            "missing required flag {}; run the command with --help for usage",
+            flag
+        )
+    })
 }
 
 fn parse_f64_flag(args: &[String], flag: &str) -> Option<f64> {

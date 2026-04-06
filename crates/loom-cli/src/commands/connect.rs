@@ -60,10 +60,14 @@ pub(crate) fn handle_connect(args: &[String]) -> LoomResult<()> {
         Some("metrics") => handle_connect_metrics(&args[1..]),
         Some("scorecard") => handle_connect_scorecard(&args[1..]),
         Some("prune") => handle_connect_prune(&args[1..]),
-        _ => Err(
-            "connect supports 'scaffold', 'list', 'validate', 'enable', 'disable', 'test', 'health', 'diagnostics', 'metrics', 'scorecard', and 'prune'"
-                .to_string(),
-        ),
+        Some(unknown) => Err(format!(
+            "unknown connect subcommand '{}'; available: scaffold, list, validate, enable, disable, test, health, diagnostics, metrics, scorecard, prune. Run `loom connect --help` for usage.",
+            unknown
+        )),
+        None => {
+            print_connect_help();
+            Ok(())
+        }
     }
 }
 
@@ -333,7 +337,7 @@ fn handle_connect_toggle(args: &[String], enable: bool) -> LoomResult<()> {
 
     let mut registry = load_connect_registry(&root)?;
     let adapter = find_adapter_mut(&mut registry, &adapter_id)
-        .ok_or_else(|| format!("adapter '{}' not found", adapter_id))?;
+        .ok_or_else(|| format!("adapter '{}' not found; run `loom connect list` to see available adapters", adapter_id))?;
     let previous = adapter_enabled(adapter);
     set_adapter_enabled(adapter, enable);
     let now = chrono_like_timestamp();
@@ -408,7 +412,7 @@ fn handle_connect_test(args: &[String]) -> LoomResult<()> {
 
     let mut registry = load_connect_registry(&root)?;
     let adapter = find_adapter_mut(&mut registry, &adapter_id)
-        .ok_or_else(|| format!("adapter '{}' not found", adapter_id))?;
+        .ok_or_else(|| format!("adapter '{}' not found; run `loom connect list` to see available adapters", adapter_id))?;
     let transport = adapter
         .get("transport")
         .and_then(Value::as_str)
@@ -643,7 +647,7 @@ fn handle_connect_health(args: &[String]) -> LoomResult<()> {
 
     let mut registry = load_connect_registry(&root)?;
     let adapter = find_adapter_mut(&mut registry, &adapter_id)
-        .ok_or_else(|| format!("adapter '{}' not found", adapter_id))?;
+        .ok_or_else(|| format!("adapter '{}' not found; run `loom connect list` to see available adapters", adapter_id))?;
     let enabled = adapter_enabled(adapter);
     let latest_test = read_latest_jsonl_event(&connect_tests_history_path(&root, &adapter_id))?;
     let latest_desktop_event =
@@ -859,7 +863,7 @@ fn handle_connect_metrics(args: &[String]) -> LoomResult<()> {
 
     let registry = load_connect_registry(&root)?;
     let adapter = find_adapter(&registry, &adapter_id)
-        .ok_or_else(|| format!("adapter '{}' not found", adapter_id))?;
+        .ok_or_else(|| format!("adapter '{}' not found; run `loom connect list` to see available adapters", adapter_id))?;
     let configured_retention = adapter
         .pointer("/diagnostics/history_retention_days")
         .and_then(Value::as_u64)
@@ -883,7 +887,7 @@ fn handle_connect_diagnostics(args: &[String]) -> LoomResult<()> {
 
     let registry = load_connect_registry(&root)?;
     let adapter = find_adapter(&registry, &adapter_id)
-        .ok_or_else(|| format!("adapter '{}' not found", adapter_id))?;
+        .ok_or_else(|| format!("adapter '{}' not found; run `loom connect list` to see available adapters", adapter_id))?;
     let tests_path = connect_tests_history_path(&root, &adapter_id);
     let lifecycle_path = connect_lifecycle_history_path(&root, &adapter_id);
     let sanctions_path = connect_sanctions_history_path(&root, &adapter_id);
@@ -1274,7 +1278,7 @@ fn handle_connect_prune(args: &[String]) -> LoomResult<()> {
 
     let mut registry = load_connect_registry(&root)?;
     let adapter = find_adapter_mut(&mut registry, &adapter_id)
-        .ok_or_else(|| format!("adapter '{}' not found", adapter_id))?;
+        .ok_or_else(|| format!("adapter '{}' not found; run `loom connect list` to see available adapters", adapter_id))?;
     let configured_retention = adapter
         .pointer("/diagnostics/history_retention_days")
         .and_then(Value::as_u64)
