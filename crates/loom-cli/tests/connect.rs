@@ -573,7 +573,7 @@ fn connect_validate_rejects_unsafe_security_matrix_for_priority_transports() {
     );
     assert_eq!(
         payload.get("invalid_adapters").and_then(Value::as_u64),
-        Some(5)
+        Some(6)
     );
     let checks = payload
         .get("checks")
