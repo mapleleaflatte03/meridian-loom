@@ -1123,7 +1123,7 @@ fn dispatch_fs_read(
     let response = WasmFsReadResponse {
         decision: WasmHostCallDecision::Allowed,
         path: request.path,
-        bytes_read: content_utf8.as_bytes().len(),
+        bytes_read: content_utf8.len(),
         content_utf8,
         truncated,
         note: format!(

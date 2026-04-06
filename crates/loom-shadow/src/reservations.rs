@@ -256,7 +256,7 @@ fn extract_json_u64(section: &str, key: &str) -> Option<u64> {
     let colon = after.find(':')?;
     let rest = after[colon + 1..].trim_start();
     let end = rest
-        .find(|c: char| c == ',' || c == '}' || c == '\n')
+        .find([',', '}', '\n'])
         .unwrap_or(rest.len());
     rest[..end].trim().parse::<u64>().ok()
 }

@@ -2,7 +2,7 @@ use serde_json::json;
 
 pub type LoomResult<T> = Result<T, String>;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct OutputGuardPolicy {
     pub allow_receipt_hashes: bool,
     pub allow_operator_diagnostics: bool,
@@ -18,15 +18,6 @@ pub struct OutputGuardResult {
     pub deny_reason: Option<String>,
     pub redactions_applied: Vec<String>,
     pub detected_tokens: Vec<String>,
-}
-
-impl Default for OutputGuardPolicy {
-    fn default() -> Self {
-        Self {
-            allow_receipt_hashes: false,
-            allow_operator_diagnostics: false,
-        }
-    }
 }
 
 pub fn guard_user_visible_output(

@@ -127,7 +127,7 @@ pub fn dispatch_schedule_run(
     // Attempt delivery if target exists
     if let Some(target) = record.delivery_target.as_ref() {
         let text = extract_delivery_text(&record.payload_json, &run);
-        match enqueue_channel_delivery(
+        if let Ok(delivery) = enqueue_channel_delivery(
             root,
             &ChannelDeliveryRequest {
                 channel_id: target.channel_id.clone(),
@@ -137,17 +137,14 @@ pub fn dispatch_schedule_run(
                 allow_operator_diagnostics: target.allow_operator_diagnostics,
             },
         ) {
-            Ok(delivery) => {
-                run.delivery_intent_id = Some(delivery.delivery_id.clone());
-                if run.status == "dispatched" {
-                    run.status = if delivery.allowed {
-                        "delivery_queued".to_string()
-                    } else {
-                        "delivery_blocked".to_string()
-                    };
-                }
+            run.delivery_intent_id = Some(delivery.delivery_id.clone());
+            if run.status == "dispatched" {
+                run.status = if delivery.allowed {
+                    "delivery_queued".to_string()
+                } else {
+                    "delivery_blocked".to_string()
+                };
             }
-            Err(_) => {}
         }
     }
 
@@ -224,7 +221,7 @@ pub fn dispatch_heartbeat_run(
     // Attempt delivery if target exists
     if let Some(target) = record.delivery_target.as_ref() {
         let text = extract_delivery_text(&record.payload_json, &run);
-        match enqueue_channel_delivery(
+        if let Ok(delivery) = enqueue_channel_delivery(
             root,
             &ChannelDeliveryRequest {
                 channel_id: target.channel_id.clone(),
@@ -234,17 +231,14 @@ pub fn dispatch_heartbeat_run(
                 allow_operator_diagnostics: target.allow_operator_diagnostics,
             },
         ) {
-            Ok(delivery) => {
-                run.delivery_intent_id = Some(delivery.delivery_id.clone());
-                if run.status == "dispatched" {
-                    run.status = if delivery.allowed {
-                        "delivery_queued".to_string()
-                    } else {
-                        "delivery_blocked".to_string()
-                    };
-                }
+            run.delivery_intent_id = Some(delivery.delivery_id.clone());
+            if run.status == "dispatched" {
+                run.status = if delivery.allowed {
+                    "delivery_queued".to_string()
+                } else {
+                    "delivery_blocked".to_string()
+                };
             }
-            Err(_) => {}
         }
     }
 

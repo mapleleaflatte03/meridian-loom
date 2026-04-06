@@ -277,17 +277,9 @@ pub struct WasmTerminalExecResponse {
     pub note: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct WasmSystemInfoRequest {
     pub security: WasmHostSecurityContext,
-}
-
-impl Default for WasmSystemInfoRequest {
-    fn default() -> Self {
-        Self {
-            security: WasmHostSecurityContext::default(),
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

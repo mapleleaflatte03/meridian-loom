@@ -535,7 +535,7 @@ fn read_skill_manifest(
     let detect_id = value
         .get("name")
         .and_then(Value::as_str)
-        .map(|s| safe_filename(s))
+        .map(safe_filename)
         .filter(|s| !s.is_empty())
         .or_else(|| {
             source_root
