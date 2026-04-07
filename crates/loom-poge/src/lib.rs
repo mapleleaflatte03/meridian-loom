@@ -578,6 +578,94 @@ impl PoGEInterceptor {
 }
 
 // ---------------------------------------------------------------------------
+// Proof Aggregation
+// ---------------------------------------------------------------------------
+
+/// A leaf in a proof aggregation tree — represents one finalized session proof.
+#[derive(Clone, Debug)]
+pub struct ProofLeaf {
+    pub merkle_root: [u8; 32],
+    pub witness_digest: [u8; 32],
+    pub trace_len: u32,
+    pub session_label: String,
+}
+
+impl ProofLeaf {
+    fn hash(&self) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        hasher.update(b"POGE_AGG_LEAF_v1\x00");
+        hasher.update(self.merkle_root);
+        hasher.update(self.witness_digest);
+        hasher.update(self.trace_len.to_be_bytes());
+        hasher.update((self.session_label.len() as u32).to_be_bytes());
+        hasher.update(self.session_label.as_bytes());
+        hasher.finalize().into()
+    }
+}
+
+/// Aggregated proof over multiple session proofs.
+#[derive(Clone, Debug)]
+pub struct AggregateProof {
+    pub aggregate_root: [u8; 32],
+    pub leaf_count: usize,
+    pub total_trace_len: u32,
+    leaf_hashes: Vec<[u8; 32]>,
+}
+
+impl AggregateProof {
+    pub fn aggregate_root_hex(&self) -> String {
+        format!("0x{}", hex::encode(self.aggregate_root))
+    }
+
+    /// Check if a leaf is included in this aggregate.
+    pub fn contains_leaf(&self, leaf: &ProofLeaf) -> bool {
+        let h = leaf.hash();
+        self.leaf_hashes.contains(&h)
+    }
+}
+
+/// Aggregate multiple proof leaves into a single aggregate root.
+///
+/// The aggregate root is a Merkle tree over the leaf hashes.
+/// Order matters — the same leaves in a different order produce a different root.
+pub fn aggregate_proofs(leaves: &[ProofLeaf]) -> Result<AggregateProof, PoGEError> {
+    if leaves.is_empty() {
+        return Ok(AggregateProof {
+            aggregate_root: [0u8; 32],
+            leaf_count: 0,
+            total_trace_len: 0,
+            leaf_hashes: Vec::new(),
+        });
+    }
+    let leaf_hashes: Vec<[u8; 32]> = leaves.iter().map(|l| l.hash()).collect();
+    let total_trace_len: u32 = leaves.iter().map(|l| l.trace_len).sum();
+
+    // Build Merkle tree over leaf hashes
+    let mut current = leaf_hashes.clone();
+    while current.len() > 1 {
+        let mut next = Vec::new();
+        for chunk in current.chunks(2) {
+            if chunk.len() == 2 {
+                let mut hasher = Sha256::new();
+                hasher.update(chunk[0]);
+                hasher.update(chunk[1]);
+                next.push(hasher.finalize().into());
+            } else {
+                next.push(chunk[0]);
+            }
+        }
+        current = next;
+    }
+
+    Ok(AggregateProof {
+        aggregate_root: current[0],
+        leaf_count: leaves.len(),
+        total_trace_len,
+        leaf_hashes,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -1212,5 +1300,108 @@ mod tests {
             let msg = format!("{}", e);
             assert!(!msg.is_empty(), "error message should not be empty");
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Proof Aggregation
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn aggregate_proof_from_multiple_roots() {
+        let roots = vec![
+            ProofLeaf {
+                merkle_root: [1u8; 32],
+                witness_digest: [2u8; 32],
+                trace_len: 5,
+                session_label: "session_a".to_string(),
+            },
+            ProofLeaf {
+                merkle_root: [3u8; 32],
+                witness_digest: [4u8; 32],
+                trace_len: 10,
+                session_label: "session_b".to_string(),
+            },
+        ];
+        let agg = aggregate_proofs(&roots).unwrap();
+        assert_eq!(agg.leaf_count, 2);
+        assert_eq!(agg.total_trace_len, 15);
+        assert_ne!(agg.aggregate_root, [0u8; 32]);
+    }
+
+    #[test]
+    fn aggregate_proof_is_deterministic() {
+        let roots = vec![
+            ProofLeaf {
+                merkle_root: [1u8; 32],
+                witness_digest: [2u8; 32],
+                trace_len: 5,
+                session_label: "a".to_string(),
+            },
+        ];
+        let a1 = aggregate_proofs(&roots).unwrap();
+        let a2 = aggregate_proofs(&roots).unwrap();
+        assert_eq!(a1.aggregate_root, a2.aggregate_root);
+    }
+
+    #[test]
+    fn aggregate_proof_changes_with_order() {
+        let leaf_a = ProofLeaf {
+            merkle_root: [1u8; 32],
+            witness_digest: [2u8; 32],
+            trace_len: 5,
+            session_label: "a".to_string(),
+        };
+        let leaf_b = ProofLeaf {
+            merkle_root: [3u8; 32],
+            witness_digest: [4u8; 32],
+            trace_len: 10,
+            session_label: "b".to_string(),
+        };
+        let agg_ab = aggregate_proofs(&[leaf_a.clone(), leaf_b.clone()]).unwrap();
+        let agg_ba = aggregate_proofs(&[leaf_b, leaf_a]).unwrap();
+        assert_ne!(
+            agg_ab.aggregate_root, agg_ba.aggregate_root,
+            "order matters for aggregate root"
+        );
+    }
+
+    #[test]
+    fn aggregate_proof_empty_returns_zero_root() {
+        let agg = aggregate_proofs(&[]).unwrap();
+        assert_eq!(agg.aggregate_root, [0u8; 32]);
+        assert_eq!(agg.leaf_count, 0);
+    }
+
+    #[test]
+    fn aggregate_proof_hex_format() {
+        let roots = vec![ProofLeaf {
+            merkle_root: [0xABu8; 32],
+            witness_digest: [0xCDu8; 32],
+            trace_len: 1,
+            session_label: "x".to_string(),
+        }];
+        let agg = aggregate_proofs(&roots).unwrap();
+        let hex = agg.aggregate_root_hex();
+        assert_eq!(hex.len(), 66); // 0x + 64 hex chars
+        assert!(hex.starts_with("0x"));
+    }
+
+    #[test]
+    fn verify_leaf_inclusion_in_aggregate() {
+        let leaf = ProofLeaf {
+            merkle_root: [1u8; 32],
+            witness_digest: [2u8; 32],
+            trace_len: 5,
+            session_label: "a".to_string(),
+        };
+        let agg = aggregate_proofs(&[leaf.clone()]).unwrap();
+        assert!(agg.contains_leaf(&leaf));
+        let other = ProofLeaf {
+            merkle_root: [99u8; 32],
+            witness_digest: [100u8; 32],
+            trace_len: 1,
+            session_label: "z".to_string(),
+        };
+        assert!(!agg.contains_leaf(&other));
     }
 }
