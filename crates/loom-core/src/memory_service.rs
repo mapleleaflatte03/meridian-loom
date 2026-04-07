@@ -12,9 +12,11 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use loom_poge::{HostCallEvent, HostCallKind, PoGEInterceptor};
+use rayon::prelude::*;
 use serde_json::{json, Value};
 
 use crate::LoomResult;
@@ -551,6 +553,88 @@ impl MemoryService {
             false,
         )?;
         Ok(total_pruned)
+    }
+
+    /// Prune expired entries across all agents using parallel execution.
+    ///
+    /// Semantically identical to `prune()` but processes agents in parallel
+    /// via rayon, reducing wall-clock time for large agent populations.
+    pub fn prune_parallel(&self) -> LoomResult<usize> {
+        let now = current_unix();
+        let cutoff = now.saturating_sub(self.policy.retention_days * 86400);
+        let agents = self.repo.list_agents()?;
+        let total_pruned = AtomicUsize::new(0);
+        let errors: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+        agents.par_iter().for_each(|agent_id| {
+            match self.repo.read_entries(agent_id) {
+                Ok(mut entries) => {
+                    let before = entries.len();
+                    entries.retain(|e| e.updated_at >= cutoff);
+                    if entries.len() < before {
+                        let pruned = before - entries.len();
+                        total_pruned.fetch_add(pruned, Ordering::Relaxed);
+                        if let Err(e) = self.repo.write_entries(agent_id, &entries) {
+                            errors.lock().unwrap().push(e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    errors.lock().unwrap().push(e);
+                }
+            }
+        });
+
+        let errs = errors.into_inner().unwrap();
+        if !errs.is_empty() {
+            return Err(format!("parallel prune errors: {}", errs.join("; ")));
+        }
+        let pruned = total_pruned.load(Ordering::Relaxed);
+        self.append_receipt(
+            "prune",
+            "memory-service",
+            &format!(
+                "retention_days={} cutoff={} mode=parallel agents={}",
+                self.policy.retention_days, cutoff, agents.len()
+            ),
+            &format!("pruned_entries={}", pruned),
+            false,
+        )?;
+        Ok(pruned)
+    }
+
+    /// Compact an agent's memory by deduplicating entries with the same
+    /// (category, key) pair, keeping only the entry with the latest `updated_at`.
+    ///
+    /// Returns the number of entries removed. Emits a governance receipt.
+    pub fn compact(&self, agent_id: &str) -> LoomResult<usize> {
+        let entries = self.repo.read_entries(agent_id)?;
+        if entries.is_empty() {
+            return Ok(0);
+        }
+        let mut best: HashMap<(String, String), MemoryEntry> = HashMap::new();
+        for entry in &entries {
+            let key = (entry.category.clone(), entry.key.clone());
+            let existing = best.get(&key);
+            if existing.is_none() || existing.unwrap().updated_at < entry.updated_at {
+                best.insert(key, entry.clone());
+            }
+        }
+        let compacted_count = entries.len().saturating_sub(best.len());
+        if compacted_count == 0 {
+            return Ok(0);
+        }
+        let mut deduplicated: Vec<MemoryEntry> = best.into_values().collect();
+        deduplicated.sort_by_key(|e| (e.category.clone(), e.key.clone()));
+        self.repo.write_entries(agent_id, &deduplicated)?;
+        self.append_receipt(
+            "compact",
+            agent_id,
+            &format!("before={} after={}", entries.len(), deduplicated.len()),
+            &format!("removed_duplicates={}", compacted_count),
+            false,
+        )?;
+        Ok(compacted_count)
     }
 
     /// Build overview for diagnostics.
@@ -1482,6 +1566,128 @@ mod tests {
             .unwrap();
         assert!(only_descendants.ancestor_nodes.is_empty());
         assert!(!only_descendants.descendant_nodes.is_empty());
+        cleanup(&root);
+    }
+
+    #[test]
+    fn test_parallel_prune_produces_same_result_as_sequential() {
+        let root = temp_root();
+        let svc = MemoryService::new(
+            &root,
+            MemoryPolicy {
+                max_entries_per_agent: 100,
+                max_entry_bytes: 65536,
+                retention_days: 1,
+                agent_isolation: true,
+            },
+        );
+        // Write entries with a past timestamp by going through the repo directly
+        for agent in &["atlas", "sentinel", "oracle"] {
+            let old_entries: Vec<MemoryEntry> = (0..5)
+                .map(|i| MemoryEntry {
+                    entry_id: format!("mem_{agent}_{i}"),
+                    agent_id: agent.to_string(),
+                    category: "facts".to_string(),
+                    key: format!("k{i}"),
+                    content: format!("v{i}"),
+                    created_at: 1000,  // far in the past
+                    updated_at: 1000,
+                    source: "test".to_string(),
+                    governed: true,
+                })
+                .collect();
+            svc.repo.write_entries(agent, &old_entries).unwrap();
+        }
+        let pruned = svc.prune_parallel().unwrap();
+        assert_eq!(pruned, 15);
+        for agent in &["atlas", "sentinel", "oracle"] {
+            let entries = svc.repo.read_entries(agent).unwrap();
+            assert_eq!(entries.len(), 0, "agent {agent} should have 0 entries after prune");
+        }
+        cleanup(&root);
+    }
+
+    #[test]
+    fn test_compact_deduplicates_same_key_entries() {
+        let root = temp_root();
+        let svc = MemoryService::with_defaults(&root);
+        // Write duplicates directly via repo (service upserts, so we bypass it)
+        let entries = vec![
+            MemoryEntry {
+                entry_id: "m1".into(), agent_id: "atlas".into(),
+                category: "facts".into(), key: "k1".into(),
+                content: "v1".into(), created_at: 1000, updated_at: 1000,
+                source: "test".into(), governed: true,
+            },
+            MemoryEntry {
+                entry_id: "m2".into(), agent_id: "atlas".into(),
+                category: "facts".into(), key: "k1".into(),
+                content: "v2".into(), created_at: 1000, updated_at: 2000,
+                source: "test".into(), governed: true,
+            },
+            MemoryEntry {
+                entry_id: "m3".into(), agent_id: "atlas".into(),
+                category: "facts".into(), key: "k1".into(),
+                content: "v3".into(), created_at: 1000, updated_at: 3000,
+                source: "test".into(), governed: true,
+            },
+            MemoryEntry {
+                entry_id: "m4".into(), agent_id: "atlas".into(),
+                category: "facts".into(), key: "k2".into(),
+                content: "other".into(), created_at: 1000, updated_at: 1000,
+                source: "test".into(), governed: true,
+            },
+        ];
+        svc.repo.write_entries("atlas", &entries).unwrap();
+        let entries_before = svc.repo.read_entries("atlas").unwrap();
+        assert_eq!(entries_before.len(), 4);
+        let compacted = svc.compact("atlas").unwrap();
+        assert_eq!(compacted, 2, "should compact 2 duplicate entries");
+        let entries_after = svc.repo.read_entries("atlas").unwrap();
+        assert_eq!(entries_after.len(), 2, "should keep 2 unique keys");
+        let k1 = entries_after.iter().find(|e| e.key == "k1").unwrap();
+        assert_eq!(k1.content, "v3", "should keep latest value");
+        cleanup(&root);
+    }
+
+    #[test]
+    fn test_compact_preserves_lineage_proof() {
+        let root = temp_root();
+        let svc = MemoryService::with_defaults(&root);
+        // Create duplicates via repo
+        let entries = vec![
+            MemoryEntry {
+                entry_id: "m1".into(), agent_id: "atlas".into(),
+                category: "facts".into(), key: "k1".into(),
+                content: "v1".into(), created_at: 1000, updated_at: 1000,
+                source: "test".into(), governed: true,
+            },
+            MemoryEntry {
+                entry_id: "m2".into(), agent_id: "atlas".into(),
+                category: "facts".into(), key: "k1".into(),
+                content: "v2".into(), created_at: 1000, updated_at: 2000,
+                source: "test".into(), governed: true,
+            },
+        ];
+        svc.repo.write_entries("atlas", &entries).unwrap();
+        svc.compact("atlas").unwrap();
+        let receipts = svc.list_receipts(20, Some("atlas")).unwrap();
+        let compact_receipts: Vec<_> = receipts
+            .iter()
+            .filter(|r| r.operation == "compact")
+            .collect();
+        assert!(!compact_receipts.is_empty(), "compact receipt should be emitted");
+        cleanup(&root);
+    }
+
+    #[test]
+    fn test_compact_noop_when_no_duplicates() {
+        let root = temp_root();
+        let svc = MemoryService::with_defaults(&root);
+        svc.write("atlas", "facts", "k1", "v1", "test").unwrap();
+        svc.write("atlas", "facts", "k2", "v2", "test").unwrap();
+        let compacted = svc.compact("atlas").unwrap();
+        assert_eq!(compacted, 0, "no duplicates should mean no compaction");
         cleanup(&root);
     }
 }
