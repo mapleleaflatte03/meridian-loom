@@ -31,3 +31,19 @@ This repository is a **mirror** of the canonical module at:
 2. Link every mirror sync commit to the monorepo commit/hash.
 3. Keep issue templates and PR template redirecting to monorepo.
 4. Keep README top banner pointing to canonical monorepo path.
+
+## Archive Lock Checklist (Final Pass)
+
+- [ ] GitHub repo description starts with: `[MIRROR - READ ONLY]`.
+- [ ] GitHub repo homepage points to: `https://github.com/mapleleaflatte03/meridian`.
+- [ ] `README.md` top section states this repo is a mirror for `meridian/loom`.
+- [ ] `.github/ISSUE_TEMPLATE/config.yml` has `blank_issues_enabled: false`.
+- [ ] All issue templates redirect users to monorepo issues/discussions/security links.
+- [ ] `.github/pull_request_template.md` redirects PR authors to monorepo path `loom/`.
+- [ ] Branch protection on `main` blocks direct pushes for non-maintainers.
+- [ ] Mirror updates are sync-only from monorepo commits (no feature work here).
+- [ ] Optional hard lock: archive this repo in GitHub UI after redirects are confirmed.
+
+### Completion Gate
+
+Mirror is considered closed when every checkbox above is done and any new issue/PR created in this repo is immediately redirected to the monorepo.
