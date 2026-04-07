@@ -5,6 +5,7 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub mod advanced_primitives;
+pub mod agent_marketplace;
 pub mod agent_runtime;
 pub mod bindings;
 pub mod capabilities;
