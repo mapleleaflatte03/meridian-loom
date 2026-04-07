@@ -1,37 +1,22 @@
 ---
 name: Bug report
-about: Report a reproducible defect in Loom runtime, governance, or operator UX
-title: "[bug] "
-labels: bug
+about: This mirror is read-only. Open bug reports in the canonical monorepo.
+title: "[redirect] "
+labels: ["redirect"]
 assignees: ""
 ---
 
-## Summary
+## Mirror Notice
 
-Describe the failure in one paragraph.
+This repository is a mirror. Please open this issue in the monorepo:
 
-## Reproduction
+- https://github.com/mapleleaflatte03/meridian/issues/new/choose
 
-1. Runtime root:
-2. Command(s):
-3. Expected result:
-4. Actual result:
+## Canonical Target
 
-## Evidence
+- Module path: `loom/`
+- Canonical repo: https://github.com/mapleleaflatte03/meridian
 
-- `loom doctor --root ... --format json` output (redact sensitive values)
-- `loom observe summary --root ... --format json --fix-hints`
-- Relevant artifact paths (`parity`, `shadow`, `auth`, `observability`)
+## Optional Context (for triage only)
 
-## Governance impact
-
-- [ ] Court/sanction behavior affected
-- [ ] Authority approval behavior affected
-- [ ] Treasury/budget behavior affected
-- [ ] Proof receipts/parity behavior affected
-
-## Environment
-
-- Loom version:
-- Kernel path:
-- OS/arch:
+- Existing local hash / evidence:

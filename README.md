@@ -34,6 +34,8 @@
 
 > Canonical source moved to monorepo: https://github.com/mapleleaflatte03/meridian/tree/main/loom  
 > This repository remains as a mirror for compatibility. New onboarding and contribution flow should start from `meridian` monorepo.
+>
+> Mirror policy: [ARCHIVE_POLICY.md](ARCHIVE_POLICY.md)
 
 Loom is the governed local runtime for AI agents. Install in one command, run
 terminal/browser/schedule/personal-agent jobs, and inspect proof receipts

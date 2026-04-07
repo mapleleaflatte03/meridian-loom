@@ -1,31 +1,13 @@
-## What changed
+## Mirror Notice (Read Before Opening)
 
-- 
+This repository is a mirror. New PRs must be opened in the canonical monorepo:
 
-## Why
+- https://github.com/mapleleaflatte03/meridian
+- target path: `loom/`
 
-- 
+## Redirect Checklist
 
-## Tests
+- [ ] I opened the canonical PR in `mapleleaflatte03/meridian`.
+- [ ] I linked the canonical PR URL below.
 
-- [ ] Tests added/updated first
-- [ ] `cargo test --workspace`
-- [ ] `cargo clippy -p meridian-loom --all-targets`
-- [ ] Relevant acceptance lanes executed
-
-## Acceptance lanes run
-
-- [ ] `make acceptance-security-auth-lane`
-- [ ] `make acceptance-observability-lane`
-- [ ] `make acceptance-oss-dx-lane`
-
-## Governance checklist
-
-- [ ] No bypass of court/authority/treasury semantics
-- [ ] PoGE/proof artifacts remain verifiable
-- [ ] Provider config remains agnostic (no provider-specific hardcoded defaults)
-
-## Migration + rollback notes
-
-- Migration:
-- Rollback:
+Canonical PR URL:

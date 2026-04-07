@@ -1,31 +1,22 @@
 ---
 name: Feature request
-about: Propose an operator-grade improvement with governance-safe rollout
-title: "[feature] "
-labels: enhancement
+about: This mirror is read-only. Open feature requests in the canonical monorepo.
+title: "[redirect] "
+labels: ["redirect"]
 assignees: ""
 ---
 
-## Problem
+## Mirror Notice
 
-What operator problem is currently unresolved?
+This repository is a mirror. Please open this request in the monorepo:
 
-## Proposed behavior
+- https://github.com/mapleleaflatte03/meridian/issues/new/choose
 
-Describe expected command/API/UI behavior.
+## Canonical Target
 
-## Tests-first plan
+- Module path: `loom/`
+- Canonical repo: https://github.com/mapleleaflatte03/meridian
 
-- [ ] Unit/integration tests added first
-- [ ] Acceptance lane added or extended
-- [ ] Rollback path documented
+## Optional Context (for triage only)
 
-## Governance compatibility
-
-- [ ] Preserves court/authority/treasury checks
-- [ ] Preserves PoGE/parity evidence
-- [ ] Keeps provider config agnostic
-
-## UX notes (low-code/no-code)
-
-How will non-expert operators use this without deep internals knowledge?
+- Existing design notes:
