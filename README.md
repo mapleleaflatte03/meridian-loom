@@ -32,6 +32,9 @@
 
 # Meridian Loom – Governed Local Agent Runtime v0.1
 
+> Canonical source moved to monorepo: https://github.com/mapleleaflatte03/meridian/tree/main/loom  
+> This repository remains as a mirror for compatibility. New onboarding and contribution flow should start from `meridian` monorepo.
+
 Loom is the governed local runtime for AI agents. Install in one command, run
 terminal/browser/schedule/personal-agent jobs, and inspect proof receipts
 immediately with explicit governance and proof artifacts.
@@ -47,11 +50,16 @@ If you want the shortest honest summary:
 ## 1-command install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mapleleaflatte03/meridian-loom/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/mapleleaflatte03/meridian/main/scripts/install-full.sh | bash
 ```
 
-The installer prefers prebuilt GitHub release assets for the current host and
-falls back to a source build only when no matching asset is available.
+This is the canonical onboarding path for full Meridian (Loom + Kernel + Intelligence).
+
+If you only need runtime-only mirror bootstrap from this repo:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mapleleaflatte03/meridian-loom/main/scripts/install.sh | bash
+```
 
 ## Monorepo bootstrap (optional)
 
