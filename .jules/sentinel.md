@@ -1,0 +1,4 @@
+## 2024-05-18 - Prevent compiler optimizations in manual constant-time string comparisons
+**Vulnerability:** A manual constant-time string comparison function (`constant_time_eq`) using a bitwise XOR loop could be vulnerable to timing attacks if the compiler optimizes the loop, causing it to return early or leak timing information.
+**Learning:** Standard bitwise operations in Rust can still be optimized by LLVM in ways that defeat constant-time guarantees. Relying solely on `|= x ^ y` inside a loop without hinting the compiler to avoid optimization is insufficient for cryptographic constant-time comparisons.
+**Prevention:** Always wrap the comparison logic (e.g., `x ^ y`) with `std::hint::black_box` when implementing manual constant-time comparisons to prevent the compiler from optimizing the critical loop and re-introducing timing side-channels.

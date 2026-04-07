@@ -7024,7 +7024,7 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
     }
     let mut result = 0;
     for (x, y) in a_bytes.iter().zip(b_bytes.iter()) {
-        result |= x ^ y;
+        result |= std::hint::black_box(x ^ y);
     }
     std::hint::black_box(result) == 0
 }
